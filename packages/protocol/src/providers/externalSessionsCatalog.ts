@@ -4,22 +4,22 @@ import {
   CLAUDE_DIRECT_SESSIONS_PROVIDER_ID,
   ClaudeDirectSessionsSourceSchema,
   resolveClaudeDirectSessionsSourceKey,
-} from './claude/directSessions.js';
+} from './claude/externalSessions.js';
 import {
   CODEX_DIRECT_SESSIONS_PROVIDER_ID,
   CodexDirectSessionsSourceSchema,
   resolveCodexDirectSessionsSourceKey,
-} from './codex/directSessions.js';
+} from './codex/externalSessions.js';
 import {
   OPENCODE_DIRECT_SESSIONS_PROVIDER_ID,
   OpenCodeDirectSessionsSourceSchema,
   resolveOpenCodeDirectSessionsSourceKey,
-} from './opencode/directSessions.js';
+} from './opencode/externalSessions.js';
 import {
   OH_MY_PI_DIRECT_SESSIONS_PROVIDER_ID,
   OhMyPiDirectSessionsSourceSchema,
   resolveOhMyPiDirectSessionsSourceKey,
-} from './ohMyPi/directSessions.js';
+} from './ohMyPi/externalSessions.js';
 
 const DIRECT_SESSIONS_PROVIDER_DEFINITIONS = [
   {

@@ -12,13 +12,20 @@ describe('ActionIdSchema', () => {
     expect(ActionIdSchema.parse('subagents.delegate.start')).toBe('subagents.delegate.start');
     expect(ActionIdSchema.parse('session.open')).toBe('session.open');
     expect(ActionIdSchema.parse('execution.run.start')).toBe('execution.run.start');
+    expect(ActionIdSchema.parse('execution.run.ensure')).toBe('execution.run.ensure');
+    expect(ActionIdSchema.parse('execution.run.ensure_or_start')).toBe('execution.run.ensure_or_start');
+    expect(ActionIdSchema.parse('execution.run.stream.start')).toBe('execution.run.stream.start');
+    expect(ActionIdSchema.parse('execution.run.stream.read')).toBe('execution.run.stream.read');
+    expect(ActionIdSchema.parse('execution.run.stream.cancel')).toBe('execution.run.stream.cancel');
     expect(ActionIdSchema.parse('execution.run.wait')).toBe('execution.run.wait');
     expect(ActionIdSchema.parse('prompt_asset.export')).toBe('prompt_asset.export');
     expect(ActionIdSchema.parse('prompt_registry.install')).toBe('prompt_registry.install');
+    expect(ActionIdSchema.parse('daemon.promptAssets.discover')).toBe('daemon.promptAssets.discover');
+    expect(ActionIdSchema.parse('bugreport.collectDiagnostics')).toBe('bugreport.collectDiagnostics');
   });
 
   it('does not accept unknown action ids', () => {
-    expect(() => ActionIdSchema.parse('execution.run.stream.start' as any)).toThrow();
+    expect(() => ActionIdSchema.parse('execution.run.stream.pause' as any)).toThrow();
   });
 
   it('exposes the canonical action id groups', () => {
@@ -35,6 +42,7 @@ describe('ActionIdSchema', () => {
         'session.rollback',
         'session.handoff',
         'session.handoff.prepare_target',
+        'session.handoff.prepare_target_result.get',
         'session.handoff.commit',
         'session.handoff.abort',
         'session.handoff.status.get',
@@ -69,11 +77,24 @@ describe('ActionIdSchema', () => {
         'subagents.delegate.start',
         'voice_agent.start',
       ],
+      subagent_registry: [
+        'sessions.subagents.list',
+        'sessions.subagents.get',
+        'sessions.subagents.watch',
+        'sessions.subagents.upsert',
+        'sessions.subagents.updateStatus',
+        'sessions.subagents.complete',
+      ],
       execution_run_control: [
         'execution.run.start',
         'execution.run.list',
         'execution.run.get',
         'execution.run.send',
+        'execution.run.ensure',
+        'execution.run.ensure_or_start',
+        'execution.run.stream.start',
+        'execution.run.stream.read',
+        'execution.run.stream.cancel',
         'execution.run.stop',
         'execution.run.action',
         'execution.run.wait',
@@ -84,6 +105,14 @@ describe('ActionIdSchema', () => {
         'session.list',
         'session.activity.get',
         'session.messages.recent.get',
+      ],
+      session_transcripts: [
+        'session.log.tail',
+        'transcript.page',
+        'transcript.readAfter',
+        'transcript.follow',
+        'transcript.import',
+        'transcript.search',
       ],
       session_permissions: [
         'session.permission.respond',
@@ -105,6 +134,9 @@ describe('ActionIdSchema', () => {
         'ui.voice_global.reset',
         'ui.voice_agent.teleport',
       ],
+      companion_controls: [
+        'ui.pet.choose',
+      ],
       memory: [
         'memory.search',
         'memory.get_window',
@@ -116,7 +148,24 @@ describe('ActionIdSchema', () => {
         'prompt_asset.export',
         'prompt_registry.install',
       ],
+      daemon_admin: [
+        'daemon.promptAssets.discover',
+        'daemon.promptAssets.delete',
+        'daemon.promptRegistry.scanSource',
+        'daemon.promptRegistry.install',
+        'daemon.filesystem.readFile',
+        'daemon.filesystem.writeFile',
+        'daemon.filesystem.listDirectory',
+        'daemon.filesystem.getDirectoryTree',
+        'daemon.filesystem.listRoots',
+        'daemon.filesystem.browseDirectory',
+        'bugreport.collectDiagnostics',
+        'bugreport.getLogTail',
+        'bugreport.uploadArtifact',
+      ],
       approvals: [
+        'approval.request.list',
+        'approval.request.get',
         'approval.request.create',
         'approval.request.decide',
       ],
@@ -135,6 +184,9 @@ describe('ActionIdSchema', () => {
         'scm.hostingRepository.describePublishTargets',
         'scm.hostingRepository.publish',
       ],
+      scm_diff_summary: [
+        'scm.diffSummary.generate',
+      ],
     });
   });
 
@@ -149,6 +201,7 @@ describe('ActionIdSchema', () => {
       'session.rollback',
       'session.handoff',
       'session.handoff.prepare_target',
+      'session.handoff.prepare_target_result.get',
       'session.handoff.commit',
       'session.handoff.abort',
       'session.handoff.status.get',
@@ -174,10 +227,21 @@ describe('ActionIdSchema', () => {
       'subagents.plan.start',
       'subagents.delegate.start',
       'voice_agent.start',
+      'sessions.subagents.list',
+      'sessions.subagents.get',
+      'sessions.subagents.watch',
+      'sessions.subagents.upsert',
+      'sessions.subagents.updateStatus',
+      'sessions.subagents.complete',
       'execution.run.start',
       'execution.run.list',
       'execution.run.get',
       'execution.run.send',
+      'execution.run.ensure',
+      'execution.run.ensure_or_start',
+      'execution.run.stream.start',
+      'execution.run.stream.read',
+      'execution.run.stream.cancel',
       'execution.run.stop',
       'execution.run.action',
       'execution.run.wait',
@@ -186,6 +250,12 @@ describe('ActionIdSchema', () => {
       'session.list',
       'session.activity.get',
       'session.messages.recent.get',
+      'session.log.tail',
+      'transcript.page',
+      'transcript.readAfter',
+      'transcript.follow',
+      'transcript.import',
+      'transcript.search',
       'session.permission.respond',
       'session.user_action.answer',
       'session.mode.set',
@@ -200,6 +270,7 @@ describe('ActionIdSchema', () => {
       'sessions.external.takeover',
       'ui.voice_global.reset',
       'ui.voice_agent.teleport',
+      'ui.pet.choose',
       'memory.search',
       'memory.get_window',
       'memory.ensure_up_to_date',
@@ -207,6 +278,21 @@ describe('ActionIdSchema', () => {
       'prompt_bundle.update',
       'prompt_asset.export',
       'prompt_registry.install',
+      'daemon.promptAssets.discover',
+      'daemon.promptAssets.delete',
+      'daemon.promptRegistry.scanSource',
+      'daemon.promptRegistry.install',
+      'daemon.filesystem.readFile',
+      'daemon.filesystem.writeFile',
+      'daemon.filesystem.listDirectory',
+      'daemon.filesystem.getDirectoryTree',
+      'daemon.filesystem.listRoots',
+      'daemon.filesystem.browseDirectory',
+      'bugreport.collectDiagnostics',
+      'bugreport.getLogTail',
+      'bugreport.uploadArtifact',
+      'approval.request.list',
+      'approval.request.get',
       'approval.request.create',
       'approval.request.decide',
       'scm.pullRequest.list',
@@ -220,6 +306,7 @@ describe('ActionIdSchema', () => {
       'scm.repository.removeIndexLock',
       'scm.hostingRepository.describePublishTargets',
       'scm.hostingRepository.publish',
+      'scm.diffSummary.generate',
     ]);
   });
 });

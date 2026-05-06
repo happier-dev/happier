@@ -1,5 +1,6 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 
+export * from './sshTunnels.js';
 export * from './pets/index.js';
 
 export type {
@@ -341,10 +342,14 @@ export {
 } from './plugins/actions/v2.js';
 export {
   PluginBackendDefinitionV1Schema,
+  PluginBackendCapabilitiesV1Schema,
+  PluginBackendExecutionRunCapabilitiesV1Schema,
   PluginBackendInstallV1Schema,
   PluginBackendLaunchV1Schema,
   PluginBackendProbeV1Schema,
+  type PluginBackendCapabilitiesV1,
   type PluginBackendDefinitionV1,
+  type PluginBackendExecutionRunCapabilitiesV1,
   type PluginBackendInstallV1,
   type PluginBackendLaunchV1,
   type PluginBackendProbeV1,
@@ -421,6 +426,26 @@ export {
   type PluginSettingsValueSchemaV1,
 } from './plugins/contributions/settings.js';
 export {
+  PluginMcpBackendClientContributionV1Schema,
+  PluginMcpContributesV1Schema,
+  PluginMcpDiscoveryProviderContributionV1Schema,
+  PluginMcpServerContributionV1Schema,
+  PluginMcpServerTransportV1Schema,
+  PluginMcpToolContributionV1Schema,
+  PluginMcpToolNameV1Schema,
+  type PluginMcpBackendClientContributionV1,
+  type PluginMcpContributesV1,
+  type PluginMcpDiscoveryProviderContributionV1,
+  type PluginMcpServerContributionV1,
+  type PluginMcpServerTransportV1,
+  type PluginMcpToolContributionV1,
+  type PluginMcpToolNameV1,
+} from './plugins/contributions/mcp.js';
+export {
+  PluginExecutionRunProfileContributionV2Schema,
+  type PluginExecutionRunProfileContributionV2,
+} from './plugins/contributions/executionRunProfiles.js';
+export {
   PluginNotificationCategoryContributionV2Schema,
   PluginNotificationCategoryKindV1Schema,
   PluginNotificationChannelContributionV2Schema,
@@ -436,6 +461,10 @@ export {
   type ScmHostingProviderContribution,
   type ScmHostingProviderContributionKind,
 } from './plugins/contributions/scmHostingProviders.js';
+export {
+  PluginInstallableContributionV2Schema,
+  type PluginInstallableContributionV2,
+} from './plugins/contributions/installables.js';
 export {
   buildPluginContributionFamilySchemaV2,
   definePluginContributionFamilyV2,
@@ -690,6 +719,27 @@ export {
 } from './connect/connectedServiceSchemas.js';
 
 export {
+  CONNECTED_ACCOUNT_DESCRIPTORS,
+  ConnectedAccountConnectModeDescriptorSchema,
+  ConnectedAccountConnectModeKindSchema,
+  ConnectedAccountDescriptorSchema,
+  ConnectedAccountOauthAddActionModeSchema,
+  ConnectedAccountOauthRefreshBodySchema,
+  ConnectedAccountTokenKindSchema,
+  buildGithubPersonalAccessTokenUrl,
+  getConnectedAccountConnectModesForTarget,
+  getConnectedAccountDescriptor,
+  getConnectedAccountDescriptorsForTarget,
+  requireConnectedAccountDescriptor,
+  type ConnectedAccountConnectModeDescriptor,
+  type ConnectedAccountConnectModeKind,
+  type ConnectedAccountDescriptor,
+  type ConnectedAccountOauthAddActionMode,
+  type ConnectedAccountOauthRefreshBody,
+  type ConnectedAccountTokenKind,
+} from './connect/connectedAccountDescriptors.js';
+
+export {
   openConnectedServiceCredentialCiphertext,
   openConnectedServiceQuotaSnapshotCiphertext,
   sealConnectedServiceCredentialCiphertext,
@@ -702,7 +752,10 @@ export {
   type ConnectedServiceErrorCode,
 } from './connect/connectedServiceErrors.js';
 
-export { buildConnectedServiceCredentialRecord } from './connect/buildConnectedServiceCredentialRecord.js';
+export {
+  buildConnectedAccountCredentialRecordFromTokenInput,
+  buildConnectedServiceCredentialRecord,
+} from './connect/buildConnectedServiceCredentialRecord.js';
 
 export { parseBooleanEnv, parseOptionalBooleanEnv } from './env/parseBooleanEnv.js';
 export type { ServerRetentionCapabilities } from './features/payload/capabilities/serverRetentionCapabilities.js';
@@ -1184,15 +1237,50 @@ export {
 } from './rpcErrors.js';
 export { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklists.js';
 export {
+  BUILT_IN_INSTALLABLE_CONTRIBUTIONS,
+  BUILT_IN_INSTALLABLES_REGISTRY,
   INSTALLABLES_CATALOG,
   INSTALLABLE_KEYS,
+  CODEX_ACP_INSTALLABLE_DESCRIPTOR,
+  InstallableAutoUpdateModeSchema,
+  InstallableConsentModeSchema,
+  InstallableDefaultPolicySchema,
+  InstallableDependencyDescriptorSchema,
+  InstallableSourceKindSchema,
+  InstallableSourceSchema,
+  projectInstallableContribution,
+  resolveInstallablesRegistry,
+  toInstallableCatalogEntry,
   CODEX_ACP_DEP_ID,
   CODEX_ACP_DIST_TAG,
+  AZ_BINARY_NAME,
+  AZ_CLI_SETUP_URL,
+  AZ_DEP_ID,
+  AZ_INSTALLABLE_DESCRIPTOR,
+  AZ_INSTALLABLE_KEY,
+  GH_BINARY_NAME,
+  GH_DEP_ID,
+  GH_DIST_TAG,
+  GH_GITHUB_REPO,
+  GH_INSTALLABLE_DESCRIPTOR,
+  GH_INSTALLABLE_KEY,
+  type InstallableContributionOwner,
   type InstallableAutoUpdateMode,
   type InstallableCatalogEntry,
+  type InstallableConsentMode,
   type InstallableDefaultPolicy,
+  type InstallableDependencyDescriptor,
   type InstallableKey,
   type InstallableKind,
+  type InstallableOwnerProvenance,
+  type InstallableProjectionEntry,
+  type InstallableRegistryContribution,
+  type InstallableRegistryDiagnostic,
+  type InstallableRegistryDiagnosticCode,
+  type InstallableSource,
+  type InstallableSourceKind,
+  type InstallablesRegistry,
+  type ResolveInstallablesRegistryInput,
 } from './installables.js';
 export { applyInstallablePolicyOverride, resolveInstallablePolicy, type InstallablePolicyOverride } from './installablesPolicy.js';
 export { SOCKET_RPC_EVENTS, type SocketRpcEvent } from './socketRpc.js';
@@ -1466,6 +1554,8 @@ export {
   ChangeSetConfidenceSummarySchema,
   FileChangeEvidenceSchema,
   FileChangeKindSchema,
+  RepositoryCheckpointReceiptSchema,
+  RepositoryCheckpointTurnMetadataSchema,
   SessionChangeSetFileSchema,
   SessionChangeSetSchema,
   SessionWorkingTreeMatchedFileSchema,
@@ -1479,6 +1569,8 @@ export {
   type ChangeSetConfidenceSummary,
   type FileChangeEvidence,
   type FileChangeKind,
+  type RepositoryCheckpointReceipt,
+  type RepositoryCheckpointTurnMetadata,
   type SessionChangeSet,
   type SessionChangeSetFile,
   type SessionWorkingTreeMatchedFile,
@@ -1639,6 +1731,7 @@ export {
 } from './scm.js';
 export {
   ScmFollowupActionSchema,
+  ScmHostingProviderCapabilitiesSchema,
   ScmHostingProviderKindSchema,
   ScmHostingProviderRefSchema,
   ScmHostingProviderUrlSafetySchema,
@@ -1669,6 +1762,7 @@ export {
   ScmPullRequestStatusProjectionSchema,
   ScmPullRequestSummarySchema,
   type ScmFollowupAction,
+  type ScmHostingProviderCapabilities,
   type ScmHostingProviderKind,
   type ScmHostingProviderRef,
   type ScmHostingProviderUrlSafety,
@@ -1700,6 +1794,30 @@ export {
   type ScmPullRequestSummary,
 } from './scmPullRequests.js';
 export {
+  ScmDiffSummaryErrorCodeSchema,
+  ScmDiffSummaryGenerateFailureSchema,
+  ScmDiffSummaryGenerateInputSchema,
+  ScmDiffSummaryGenerateOutputSchema,
+  ScmDiffSummaryGenerateSuccessSchema,
+  ScmDiffSummaryMetadataSchema,
+  ScmDiffSummaryModelSelectorSchema,
+  ScmDiffSummarySourceKindSchema,
+  ScmDiffSummarySourceSchema,
+  ScmDiffSummaryTruncationReasonSchema,
+  ScmDiffSummaryTruncationSchema,
+  type ScmDiffSummaryErrorCode,
+  type ScmDiffSummaryGenerateFailure,
+  type ScmDiffSummaryGenerateInput,
+  type ScmDiffSummaryGenerateOutput,
+  type ScmDiffSummaryGenerateSuccess,
+  type ScmDiffSummaryMetadata,
+  type ScmDiffSummaryModelSelector,
+  type ScmDiffSummarySource,
+  type ScmDiffSummarySourceKind,
+  type ScmDiffSummaryTruncation,
+  type ScmDiffSummaryTruncationReason,
+} from './scmDiffSummary.js';
+export {
   ScmHostingRepositoryAuthProfileKindSchema,
   ScmHostingRepositoryAuthStateSchema,
   ScmHostingRepositoryAuthSummarySchema,
@@ -1716,6 +1834,7 @@ export {
   ScmRepositoryInitRequestSchema,
   ScmRepositoryInitResponseSchema,
   ScmRepositoryProvisioningFailureResponseSchema,
+  REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
   ScmRepositoryProvisioningRemediationKindSchema,
   ScmRepositoryProvisioningRemediationSchema,
   ScmRepositoryRemoveIndexLockReasonSchema,
@@ -1837,10 +1956,16 @@ export {
 
 export {
   ExecutionRunIntentSchema,
+  ExecutionRunKindSchema,
   ExecutionRunTransportErrorCodeSchema,
   ExecutionRunDisplaySchema,
   ExecutionRunPublicStateSchema,
   ExecutionRunReplaySeedRequestSchema,
+  ExecutionRunScmCommitMessageScopeV1Schema,
+  ExecutionRunScmCommitMessageInputV1Schema,
+  ExecutionRunScmCommitMessageResultV1Schema,
+  ExecutionRunScmDiffSummaryInputV1Schema,
+  ExecutionRunScmDiffSummaryResultV1Schema,
   ExecutionRunStartRequestSchema,
   ExecutionRunStartResponseSchema,
   ExecutionRunRetentionPolicySchema,
@@ -1873,10 +1998,16 @@ export {
   ExecutionRunTurnStreamEventErrorSchema,
   ExecutionRunStatusSchema,
   type ExecutionRunIntent,
+  type ExecutionRunKind,
   type ExecutionRunTransportErrorCode,
   type ExecutionRunDisplay,
   type ExecutionRunPublicState,
   type ExecutionRunReplaySeedRequest,
+  type ExecutionRunScmCommitMessageScopeV1,
+  type ExecutionRunScmCommitMessageInputV1,
+  type ExecutionRunScmCommitMessageResultV1,
+  type ExecutionRunScmDiffSummaryInputV1,
+  type ExecutionRunScmDiffSummaryResultV1,
   type ExecutionRunStartRequest,
   type ExecutionRunStartResponse,
   type ExecutionRunRetentionPolicy,
@@ -2023,7 +2154,7 @@ export {
   DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1,
   type DirectSessionsSourceKindV1,
   resolveDirectSessionsSourceKey,
-} from './providers/directSessionsCatalog.js';
+} from './providers/externalSessionsCatalog.js';
 
 export {
   DirectSessionsProviderIdSchema,
@@ -2076,7 +2207,7 @@ export {
   type DirectSessionTakeoverResponse,
   type DirectSessionTakeoverPersistRequest,
   type DirectSessionTakeoverPersistResponse,
-} from './directSessions/daemonRpcV1.js';
+} from './sessions/external/daemonRpcV1.js';
 
 export {
   applyObservedProgressToDirectSessionAttentionV1,
@@ -2092,7 +2223,7 @@ export {
   type DirectSessionFollowPolicy,
   type DirectSessionFollowPolicyV1,
   type DirectSessionObservedProgress,
-} from './directSessions/linkedSessionMetadata.js';
+} from './sessions/external/linkedSessionMetadata.js';
 
 export {
   SessionHandoffAbortRequestSchema,
@@ -2168,16 +2299,6 @@ export {
   type TransferChunkEncryptionVector,
 } from './machineTransfer/transferChunkEncryptionVectors.js';
 
-export {
-  EphemeralTaskKindSchema,
-  EphemeralTaskPermissionModeSchema,
-  EphemeralTaskRunRequestSchema,
-  EphemeralTaskRunResponseSchema,
-  type EphemeralTaskKind,
-  type EphemeralTaskPermissionMode,
-  type EphemeralTaskRunRequest,
-  type EphemeralTaskRunResponse,
-} from './ephemeralTasks.js';
 export {
   canonicalizeServerUrlForIdentity,
   createServerUrlComparableKey,
@@ -2290,13 +2411,13 @@ export {
   ReviewChangeTypeSchema,
   ReviewBaseSchema,
   ReviewEngineIdSchema,
-  CodeRabbitReviewEngineInputSchema,
+  ReviewEngineInputSchema,
   ReviewEngineInputsSchema,
   ReviewStartInputSchema,
   type ReviewChangeType,
   type ReviewBase,
   type ReviewEngineId,
-  type CodeRabbitReviewEngineInput,
+  type ReviewEngineInput,
   type ReviewEngineInputs,
   type ReviewStartInput,
 } from './reviews/reviewStart.js';
@@ -2305,15 +2426,6 @@ export {
   ReviewFollowUpInputSchema,
   type ReviewFollowUpInput,
 } from './reviews/reviewFollowUp.js';
-
-export {
-  NativeReviewEngineIdSchema,
-  NativeReviewEngineSpecSchema,
-  listNativeReviewEngines,
-  getNativeReviewEngine,
-  type NativeReviewEngineId,
-  type NativeReviewEngineSpec,
-} from './reviews/reviewEngines.js';
 
 export {
   HappierMetaEnvelopeSchema,

@@ -10,7 +10,15 @@ import type {
     PluginActionsServiceV1,
     PluginApiV1,
     PluginContextV1,
+    AbortServiceV1,
+    EnvRuntimeServiceV1,
+    ErrorRuntimeServiceV1,
+    ExecRuntimeServiceV1,
+    FsRuntimeServiceV1,
+    ManagedServerRuntimeServiceV1,
+    McpRuntimeServiceV1,
     NotificationsServiceV1,
+    ProgressRuntimeServiceV1,
     ProjectsServiceV1,
     PluginAuthServiceV1,
     AccountSettingsServiceV1,
@@ -18,6 +26,9 @@ import type {
     PluginSecretsServiceV1,
     PluginSettingsServiceV1,
     PluginStorageServiceV1,
+    RetryRuntimeServiceV1,
+    TimeoutRuntimeServiceV1,
+    TranscriptsRuntimeServiceV1,
     RegisterBackendEngineV1,
     SubagentRefInputV1,
     WorkspaceRefV1,
@@ -177,6 +188,86 @@ describe('plugin SDK engine contracts', () => {
 
         const api = {} as PluginApiV1;
         expect('fetch' in api).toBe(false);
+    });
+
+    it('exposes A.13 runtime services on context without stale managedTools or RPC escape hatches', () => {
+        const exec = {} as ExecRuntimeServiceV1;
+        const managedServer = {} as ManagedServerRuntimeServiceV1;
+        const errors = {} as ErrorRuntimeServiceV1;
+        const retry = {} as RetryRuntimeServiceV1;
+        const env = {} as EnvRuntimeServiceV1;
+        const fs = {} as FsRuntimeServiceV1;
+        const abort = {} as AbortServiceV1;
+        const timeout = {} as TimeoutRuntimeServiceV1;
+        const progress = {} as ProgressRuntimeServiceV1;
+        const transcripts = {} as TranscriptsRuntimeServiceV1;
+        const context = {
+            exec,
+            managedServer,
+            errors,
+            retry,
+            env,
+            fs,
+            abort,
+            timeout,
+            progress,
+            transcripts,
+        } as PluginContextV1;
+        const contextRecord = context as unknown as Readonly<Record<string, unknown>>;
+
+        expect(context.exec).toBe(exec);
+        expect(context.managedServer).toBe(managedServer);
+        expect(context.errors).toBe(errors);
+        expect(context.retry).toBe(retry);
+        expect(context.env).toBe(env);
+        expect(context.fs).toBe(fs);
+        expect(context.abort).toBe(abort);
+        expect(context.timeout).toBe(timeout);
+        expect(context.progress).toBe(progress);
+        expect(context.transcripts).toBe(transcripts);
+        expect('managedTools' in contextRecord).toBe(false);
+        expect('rpc' in contextRecord).toBe(false);
+        expect('jsonRpcStdio' in contextRecord).toBe(false);
+
+        const api = {} as PluginApiV1;
+        expect('exec' in api).toBe(false);
+        expect('managedServer' in api).toBe(false);
+        expect('retry' in api).toBe(false);
+    });
+
+    it('exposes MCP substrate on runtime context and MCP registration on activate api', () => {
+        const mcp: McpRuntimeServiceV1 = {
+            startServer: async () => ({
+                id: 'acme.server',
+                dispose: async () => undefined,
+            }),
+            createClient: async () => ({
+                id: 'acme.client',
+                dispose: async () => undefined,
+            }),
+            list: async () => [],
+            resolveForSession: async () => [],
+        };
+        const ctx = { mcp } as PluginContextV1;
+
+        expect(ctx.mcp).toBe(mcp);
+        expect(typeof ctx.mcp.startServer).toBe('function');
+        expect(typeof ctx.mcp.createClient).toBe('function');
+        expect(typeof ctx.mcp.list).toBe('function');
+        expect(typeof ctx.mcp.resolveForSession).toBe('function');
+
+        const api = {} as PluginApiV1;
+        expect('mcp' in api).toBe(false);
+
+        const registerMethods: ReadonlyArray<keyof PluginApiV1> = [
+            'registerMcpServer',
+            'registerMcpBackendClient',
+            'registerMcpTool',
+            'registerMcpDiscoveryProvider',
+        ];
+        for (const method of registerMethods) {
+            expect(method in api).toBe(false);
+        }
     });
 
     it('exposes A.11 persistence, event, and narrow auth services only on runtime context', async () => {

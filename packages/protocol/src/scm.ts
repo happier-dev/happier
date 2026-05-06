@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  ScmHostingProviderRefSchema,
+  ScmPullRequestStatusProjectionSchema,
+} from './scmPullRequests.js';
 
 export const SCM_COMMIT_MESSAGE_MAX_LENGTH = 4096;
 export const SCM_COMMIT_PATCH_MAX_COUNT = 256;
@@ -223,6 +227,8 @@ export const ScmWorkingSnapshotSchema = z.object({
   }),
   stashCount: z.number().int().nonnegative().optional(),
   operationState: ScmOperationStateSchema.nullable().optional(),
+  hostingProvider: ScmHostingProviderRefSchema.nullable().optional(),
+  pullRequestStatus: ScmPullRequestStatusProjectionSchema.nullable().optional(),
   hasConflicts: z.boolean(),
   entries: z.array(ScmWorkingEntrySchema),
   totals: z.object({

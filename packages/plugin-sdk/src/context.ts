@@ -1,8 +1,19 @@
 import type { AcpBackendSpecV1 } from './acp/types';
+import type { AbortServiceV1 } from './abort';
 import type { BackendEngineV1 } from './engine';
+import type { EnvRuntimeServiceV1 } from './env';
+import type { ErrorRuntimeServiceV1 } from './errors';
+import type { ExecRuntimeServiceV1 } from './exec';
 import type { FetchRuntimeServiceV1 } from './fetch';
+import type { FsRuntimeServiceV1 } from './fs';
 import type { PluginActionsServiceV1 } from './generated/actions';
+import type { ManagedServerRuntimeServiceV1 } from './managedServer';
+import type { McpRuntimeServiceV1 } from './mcp';
+import type { ProgressRuntimeServiceV1 } from './progress';
+import type { RetryRuntimeServiceV1 } from './retry';
 import type { PluginSessionsServiceV1 } from './sessions';
+import type { TimeoutRuntimeServiceV1 } from './timeout';
+import type { TranscriptsRuntimeServiceV1 } from './transcripts';
 import type {
     AccountSettings,
     PluginSettingsFieldDescriptorV1,
@@ -26,21 +37,7 @@ export interface FeaturesServiceV1 {
     isEnabled(featureId: string): boolean;
 }
 
-export interface ManagedToolsServiceV1 {
-    // Intentionally minimal: concrete spawn/resolve shapes are owned by the runtime lane.
-    // This service exists to prevent plugins from importing host internals for tool resolution/spawn.
-    resolve(toolId: string): Promise<unknown>;
-    // Optional in V1: hosts may initially provide only resolution. When provided, this MUST be binary-safe
-    // (must not assume a system Node/npm/yarn/etc exists) and must apply host policy.
-    spawn?: (request: unknown) => Promise<unknown>;
-}
-
 export type SessionClientServiceV1 = PluginSessionsServiceV1;
-
-export interface TranscriptWriterServiceV1 {
-    // Narrow streaming write port.
-    append(turn: unknown): Promise<void>;
-}
 
 export interface PermissionsServiceV1 {
     requestDecision(request: unknown): Promise<unknown>;
@@ -97,10 +94,6 @@ export interface NotificationsServiceV1 {
     listChannels(): Promise<readonly NotificationChannelDescriptorV1[]>;
     listCategories(): Promise<readonly NotificationCategoryDescriptorV1[]>;
     getUserPreferences(categoryId: string): Promise<NotificationPreferencesV1>;
-}
-
-export interface AbortServiceV1 {
-    readonly signal: AbortSignal;
 }
 
 export interface SubscriptionV1 {
@@ -287,7 +280,13 @@ export interface PluginContextV1 {
     readonly logger: LoggerServiceV1;
     readonly config: ConfigSnapshotServiceV1;
     readonly features: FeaturesServiceV1;
-    readonly managedTools: ManagedToolsServiceV1;
+    readonly exec: ExecRuntimeServiceV1;
+    readonly managedServer: ManagedServerRuntimeServiceV1;
+    readonly mcp: McpRuntimeServiceV1;
+    readonly errors: ErrorRuntimeServiceV1;
+    readonly retry: RetryRuntimeServiceV1;
+    readonly env: EnvRuntimeServiceV1;
+    readonly fs: FsRuntimeServiceV1;
     readonly actions: PluginActionsServiceV1;
     readonly acp: AcpAuthoringServiceV1;
     readonly connection: ConnectionRuntimeServiceV1;
@@ -300,10 +299,12 @@ export interface PluginContextV1 {
     readonly projects: ProjectsServiceV1;
     readonly account: AccountServiceV1;
     readonly sessions: PluginSessionsServiceV1;
-    readonly transcripts: TranscriptWriterServiceV1;
+    readonly transcripts: TranscriptsRuntimeServiceV1;
     readonly permissions: PermissionsServiceV1;
     readonly telemetry: TelemetryServiceV1;
     readonly artifacts: ArtifactSinkServiceV1;
     readonly notifications: NotificationsServiceV1;
     readonly abort: AbortServiceV1;
+    readonly timeout: TimeoutRuntimeServiceV1;
+    readonly progress: ProgressRuntimeServiceV1;
 }

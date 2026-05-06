@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
-import { RuntimeDescriptorV1Schema } from '../sessionMetadata/runtimeDescriptorV1.js';
-import { CODEX_BACKEND_MODES } from '../providers/codex/backendMode.js';
+import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
+import { CODEX_BACKEND_MODES } from '../../providers/codex/backendMode.js';
 import {
   DirectSessionsProviderIdSchema,
   DirectSessionsSourceSchema,
   type DirectSessionsProviderId,
   type DirectSessionsSource,
-} from '../providers/directSessionsCatalog.js';
+} from '../../providers/externalSessionsCatalog.js';
 
 export {
   DirectSessionsProviderIdSchema,

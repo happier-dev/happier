@@ -7,6 +7,11 @@ import {
 import { hasLegacyCustomAcpConcreteBackendId, isLegacyCustomAcpId } from './backendTargets/compat/customAcp.js';
 import { HappierReplayStrategySchema } from './sessionContinueWithReplay.js';
 import { LlmTaskRunnerConfigV1Schema } from './llmTasks/llmTaskRunnerConfigV1.js';
+import {
+  ScmDiffSummaryGenerateInputSchema,
+  ScmDiffSummaryGenerateOutputSchema,
+} from './scmDiffSummary.js';
+import { TurnChangeSetSchema } from './sessionChanges/schemas.js';
 
 export const ExecutionRunIntentSchema = z.enum([
   'review',
@@ -14,8 +19,16 @@ export const ExecutionRunIntentSchema = z.enum([
   'delegate',
   'voice_agent',
   'memory_hints',
+  'scm_commit_message',
+  'scm_diff_summary',
 ]);
 export type ExecutionRunIntent = z.infer<typeof ExecutionRunIntentSchema>;
+
+export const ExecutionRunKindSchema = z.enum([
+  'scm_commit_message.v1',
+  'scm_diff_summary.v1',
+]);
+export type ExecutionRunKind = z.infer<typeof ExecutionRunKindSchema>;
 
 export const ExecutionRunRetentionPolicySchema = z.enum(['ephemeral', 'resumable']);
 export type ExecutionRunRetentionPolicy = z.infer<typeof ExecutionRunRetentionPolicySchema>;
@@ -143,7 +156,48 @@ export const ExecutionRunReplaySeedRequestSchema = z.discriminatedUnion('kind', 
 ]);
 export type ExecutionRunReplaySeedRequest = z.infer<typeof ExecutionRunReplaySeedRequestSchema>;
 
+export const ExecutionRunScmCommitMessageScopeV1Schema = z.object({
+  kind: z.literal('paths'),
+  include: z.array(z.string().min(1)).max(200).optional(),
+}).strict();
+export type ExecutionRunScmCommitMessageScopeV1 = z.infer<typeof ExecutionRunScmCommitMessageScopeV1Schema>;
+
+export const ExecutionRunScmCommitMessageInputV1Schema = z.object({
+  instructions: z.string().optional(),
+  scope: ExecutionRunScmCommitMessageScopeV1Schema.optional(),
+  maxFiles: z.number().int().positive().max(100).optional(),
+  maxTotalDiffChars: z.number().int().positive().max(400_000).optional(),
+}).strict();
+export type ExecutionRunScmCommitMessageInputV1 = z.infer<typeof ExecutionRunScmCommitMessageInputV1Schema>;
+
+export const ExecutionRunScmCommitMessageResultV1Schema = z.object({
+  title: z.string().min(1).max(200),
+  body: z.string().max(20_000),
+  message: z.string().min(1),
+  confidence: z.number().min(0).max(1).optional(),
+}).passthrough();
+export type ExecutionRunScmCommitMessageResultV1 = z.infer<typeof ExecutionRunScmCommitMessageResultV1Schema>;
+
+export const ExecutionRunScmDiffSummaryInputV1Schema = ScmDiffSummaryGenerateInputSchema.extend({
+  turnChangeSet: TurnChangeSetSchema.optional(),
+  maxFiles: z.number().int().positive().max(100).optional(),
+  maxTotalDiffChars: z.number().int().positive().max(400_000).optional(),
+}).passthrough().superRefine((value, ctx) => {
+  if (value.source.kind === 'turnCheckpoint' && !value.turnChangeSet) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'scm_diff_summary.v1 turnCheckpoint runs require CHKPT-2 TurnChangeSet evidence',
+      path: ['turnChangeSet'],
+    });
+  }
+});
+export type ExecutionRunScmDiffSummaryInputV1 = z.infer<typeof ExecutionRunScmDiffSummaryInputV1Schema>;
+
+export const ExecutionRunScmDiffSummaryResultV1Schema = ScmDiffSummaryGenerateOutputSchema;
+export type ExecutionRunScmDiffSummaryResultV1 = z.infer<typeof ExecutionRunScmDiffSummaryResultV1Schema>;
+
 export const ExecutionRunStartRequestSchema = z.object({
+  kind: ExecutionRunKindSchema.optional(),
   intent: ExecutionRunIntentSchema,
   backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema),
   instructions: z.string().optional(),
@@ -157,6 +211,7 @@ export const ExecutionRunStartRequestSchema = z.object({
   bootstrapMode: z.enum(['none', 'ready_handshake']).optional(),
   resumeHandle: ExecutionRunResumeHandleSchema.nullable().optional(),
   replay: ExecutionRunReplaySeedRequestSchema.optional(),
+  intentInput: z.unknown().optional(),
 }).passthrough().superRefine((value, ctx) => {
   if (hasLegacyCustomAcpConcreteBackendId(value.backendTarget)) {
     ctx.addIssue({
@@ -164,6 +219,110 @@ export const ExecutionRunStartRequestSchema = z.object({
       message: 'backendTarget must identify a concrete backend',
       path: ['backendTarget'],
     });
+  }
+  if (value.kind === 'scm_commit_message.v1' || value.intent === 'scm_commit_message') {
+    if (value.kind !== 'scm_commit_message.v1') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'kind must be scm_commit_message.v1 for scm_commit_message runs',
+        path: ['kind'],
+      });
+    }
+    if (value.intent !== 'scm_commit_message') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'intent must be scm_commit_message for scm_commit_message.v1 runs',
+        path: ['intent'],
+      });
+    }
+    if (value.permissionMode !== 'no_tools' && value.permissionMode !== 'read_only') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scm_commit_message.v1 does not allow write-capable permission modes',
+        path: ['permissionMode'],
+      });
+    }
+    if (value.retentionPolicy !== 'ephemeral') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scm_commit_message.v1 must use ephemeral retention',
+        path: ['retentionPolicy'],
+      });
+    }
+    if (value.runClass !== 'bounded') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scm_commit_message.v1 must use bounded runClass',
+        path: ['runClass'],
+      });
+    }
+    if (value.ioMode !== 'request_response') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scm_commit_message.v1 must use request_response ioMode',
+        path: ['ioMode'],
+      });
+    }
+    const parsedInput = ExecutionRunScmCommitMessageInputV1Schema.safeParse(value.intentInput ?? {});
+    if (!parsedInput.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid scm_commit_message.v1 intentInput',
+        path: ['intentInput'],
+      });
+    }
+  }
+  if (value.kind === 'scm_diff_summary.v1' || value.intent === 'scm_diff_summary') {
+    if (value.kind !== 'scm_diff_summary.v1') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'kind must be scm_diff_summary.v1 for scm_diff_summary runs',
+        path: ['kind'],
+      });
+    }
+    if (value.intent !== 'scm_diff_summary') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'intent must be scm_diff_summary for scm_diff_summary.v1 runs',
+        path: ['intent'],
+      });
+    }
+    if (value.permissionMode !== 'no_tools' && value.permissionMode !== 'read_only') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scm_diff_summary.v1 does not allow write-capable permission modes',
+        path: ['permissionMode'],
+      });
+    }
+    if (value.retentionPolicy !== 'ephemeral') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scm_diff_summary.v1 must use ephemeral retention',
+        path: ['retentionPolicy'],
+      });
+    }
+    if (value.runClass !== 'bounded') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scm_diff_summary.v1 must use bounded runClass',
+        path: ['runClass'],
+      });
+    }
+    if (value.ioMode !== 'request_response' && value.ioMode !== 'streaming') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scm_diff_summary.v1 must use request_response or streaming ioMode',
+        path: ['ioMode'],
+      });
+    }
+    const parsedInput = ExecutionRunScmDiffSummaryInputV1Schema.safeParse(value.intentInput ?? {});
+    if (!parsedInput.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid scm_diff_summary.v1 intentInput',
+        path: ['intentInput'],
+      });
+    }
   }
 });
 export type ExecutionRunStartRequest = z.infer<typeof ExecutionRunStartRequestSchema>;

@@ -7,7 +7,7 @@ import {
   isLegacyCustomAcpId,
 } from '../backendTargets/compat/customAcp.js';
 import { isBuiltInBackendAgentId } from '../profiles/builtInBackendProfiles.js';
-import { DirectSessionsProviderIdSchema } from '../providers/directSessionsCatalog.js';
+import { DirectSessionsProviderIdSchema } from '../providers/externalSessionsCatalog.js';
 
 type ActionBackendTargetSelectionInput = Readonly<{
   agentId?: string;

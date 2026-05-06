@@ -389,6 +389,38 @@ describe('createActionExecutor (session control)', () => {
     }));
   });
 
+  it('preserves cursor zero when reading execution-run streams', async () => {
+    const executionRunStreamRead = vi.fn(async () => ({ ok: true, events: [] }));
+    const executor = createExecutor({
+      executionRunStreamRead,
+      resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
+    });
+
+    const res = await executor.execute(
+      'execution.run.stream.read' as any,
+      {
+        sessionId: 's1',
+        runId: 'run-1',
+        streamId: 'stream-1',
+        cursor: 0,
+        maxEvents: 128,
+      },
+      { surface: 'rpc', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true, events: [] } });
+    expect(executionRunStreamRead).toHaveBeenCalledWith(
+      's1',
+      {
+        runId: 'run-1',
+        streamId: 'stream-1',
+        cursor: 0,
+        maxEvents: 128,
+      },
+      { serverId: 'server-a' },
+    );
+  });
+
   it('returns unsupported_action when session.permission.respond is not implemented by deps', async () => {
     const executor = createExecutor({ sessionPermissionRespond: undefined as any });
 

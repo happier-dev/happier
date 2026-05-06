@@ -46,6 +46,9 @@ export {
   type ActionExecuteResult,
   type ActionExecutorContext,
   type ActionExecutorDeps,
+  type ApprovalQueueListItemV1,
+  type ApprovalQueueListResultV1,
+  type ApprovalQueueQueryPlanV1,
 } from './actionExecutor.js';
 
 export { resolveEffectiveActionInputFields, type EffectiveActionInputField } from './actionInputHintsRuntime.js';

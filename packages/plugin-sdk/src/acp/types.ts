@@ -46,6 +46,7 @@ export type AcpMessageMetaHooksV1 = Readonly<{
 }>;
 
 export type AcpTier2ArgvBuilderV1 = (params: Readonly<{
+    baseArgs: readonly string[];
     cwd: string;
     permissionMode?: string;
 }>) => readonly string[] | Promise<readonly string[]>;
@@ -59,7 +60,20 @@ export type AcpTier2PreflightV1 = (params: Readonly<{
     cwd: string;
 }>) => void | Promise<void>;
 
-export type AcpTier2PermissionDecisionV1 = (request: unknown) => unknown | Promise<unknown>;
+export type AcpTier2PermissionDecisionResultV1 = Readonly<{
+    kind: 'allow' | 'deny' | 'defer';
+    rationale?: string;
+}>;
+
+export type AcpTier2PermissionDecisionRequestV1 = Readonly<{
+    toolCallId: string;
+    toolName: string;
+    input: unknown;
+}>;
+
+export type AcpTier2PermissionDecisionV1 = (
+    request: AcpTier2PermissionDecisionRequestV1
+) => AcpTier2PermissionDecisionResultV1 | Promise<AcpTier2PermissionDecisionResultV1>;
 
 export type AcpTransportLifecycleV1 = Readonly<{
     initDelayMs?: number;

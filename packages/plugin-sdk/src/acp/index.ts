@@ -9,6 +9,8 @@ export type {
     AcpPermissionModeArgvSpecV1,
     AcpTier2ArgvBuilderV1,
     AcpTier2EnvBuilderV1,
+    AcpTier2PermissionDecisionRequestV1,
+    AcpTier2PermissionDecisionResultV1,
     AcpTier2PermissionDecisionV1,
     AcpTier2PreflightV1,
     AcpTimeoutsV1,

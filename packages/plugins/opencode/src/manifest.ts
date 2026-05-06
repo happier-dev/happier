@@ -19,7 +19,9 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
         id: 'opencode',
         agentId: 'opencode',
         engine: { kind: 'custom' },
-        capabilities: {},
+        capabilities: {
+          executionRun: { supported: false },
+        },
       },
     ],
   },

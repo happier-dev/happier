@@ -38,6 +38,83 @@ export type {
     SubscriptionV1,
 } from './context';
 export type {
+    AbortListenerV1,
+    AbortServiceV1,
+    AbortSubscriptionV1,
+} from './abort';
+export type {
+    EnvRuntimeServiceV1,
+} from './env';
+export type {
+    ClassifiedRuntimeErrorV1,
+    ErrorRuntimeServiceV1,
+    RuntimeErrorKindV1,
+} from './errors';
+export type {
+    ExecClientHandleV1,
+    ExecLaunchInputV1,
+    ExecProcessHandleV1,
+    ExecRunOptionsV1,
+    ExecRunResultV1,
+    ExecRuntimeServiceV1,
+} from './exec';
+export type {
+    FsEntryV1,
+    FsPathInputV1,
+    FsRuntimeServiceV1,
+    FsStatV1,
+    FsWriteTextInputV1,
+} from './fs';
+export type {
+    ManagedServerHandleV1,
+    ManagedServerHealthCheckV1,
+    ManagedServerRuntimeServiceV1,
+    ManagedServerSnapshotV1,
+    ManagedServerSpecV1,
+    ManagedServerStateV1,
+} from './managedServer';
+export type {
+    McpClientHandleV1,
+    McpClientSpecV1,
+    McpClientTransportV1,
+    McpEndpointTransportV1,
+    McpHostedServerTransportV1,
+    McpManagedServerTransportV1,
+    McpResolveForSessionInputV1,
+    McpResolvedScopeV1,
+    McpRuntimeErrorV1,
+    McpRuntimeServiceV1,
+    McpServerHandleV1,
+    McpServerSpecV1,
+    McpServerTransportV1,
+    McpStdioTransportV1,
+    ResolvedMcpServerSpecV1,
+} from './mcp';
+export type {
+    ProgressHandleV1,
+    ProgressRuntimeServiceV1,
+    ProgressSnapshotV1,
+    ProgressStateV1,
+} from './progress';
+export type {
+    RetryAttemptContextV1,
+    RetryPolicyV1,
+    RetryRuntimeServiceV1,
+} from './retry';
+export type {
+    TimeoutBudgetV1,
+    TimeoutRuntimeServiceV1,
+} from './timeout';
+export type {
+    TranscriptSourceDefinitionV1,
+    TranscriptSourceFollowLeaseV1,
+    TranscriptSourceFollowUpdateV1,
+    TranscriptSourceHandleV1,
+    TranscriptSourcePageV1,
+    TranscriptSourceReadAfterV1,
+    TranscriptsRuntimeServiceV1,
+} from './transcripts';
+export type {
     AccountSettings,
     PluginSettingsFieldDescriptorV1,
     ProjectKeyV1,
@@ -68,8 +145,13 @@ export type {
     PluginApiBackendEngineRegistrationV1,
     PluginApiCommandRegistrationV1,
     PluginApiCoreV1,
+    PluginApiExecutionRunProfileRegistrationV1,
     PluginApiHookRegistrationV1,
     PluginApiLifecycleHandlerRegistrationV1,
+    PluginApiMcpBackendClientRegistrationV1,
+    PluginApiMcpDiscoveryProviderRegistrationV1,
+    PluginApiMcpServerRegistrationV1,
+    PluginApiMcpToolRegistrationV1,
     PluginApiNotificationCategoryRegistrationV1,
     PluginApiNotificationChannelRegistrationV1,
     PluginApiRegisterMethodMapV1,
@@ -92,8 +174,26 @@ export type {
     PluginLifecycleHandlerRequest,
 } from './api';
 export type {
+    ScmHostingProviderCompareUrlInput,
+    ScmHostingProviderDefaultBranchInput,
+    ScmHostingProviderDefaultBranchMetadata,
+    ScmHostingProviderRepositoryCreateInput,
+    ScmHostingProviderRepositoryDescribePublishTargetsInput,
+    ScmHostingProviderRepositoryDescribePublishTargetsResult,
+    ScmHostingProviderRepositoryGetInput,
+    ScmHostingProviderPullRequestCheckoutReferenceInput,
+    ScmHostingProviderPullRequestCheckoutReferenceMetadata,
+    ScmHostingProviderPullRequestCreateInput,
+    ScmHostingProviderPullRequestGetInput,
+    ScmHostingProviderPullRequestListInput,
+    ScmHostingProviderRemoteDetectionInput,
+    ScmHostingProviderResolvedRemote,
     ScmHostingProviderRuntimeAdapter,
+    ScmHostingProviderRuntimeCommandResolution,
+    ScmHostingProviderRuntimeCommandResult,
     ScmHostingProviderRuntimeRegistration,
+    ScmHostingProviderRuntimeServices,
+    ScmHostingProviderRuntimeTokenMaterializationResult,
 } from './scm/hostingProvider';
 export type {
     ExternalSessionAttachParamsV1,

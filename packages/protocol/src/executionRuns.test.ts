@@ -10,7 +10,6 @@ import {
   ExecutionRunStartRequestSchema,
   ExecutionRunTransportErrorCodeSchema,
 } from './executionRuns.js';
-import { EphemeralTaskKindSchema } from './ephemeralTasks.js';
 import { ReviewFindingSchema } from './reviews/ReviewFinding.js';
 import { ReviewFollowUpInputSchema } from './reviews/reviewFollowUp.js';
 import { ReviewFindingsV1Schema } from './structuredMessages/reviewFindingsV1.js';
@@ -28,6 +27,7 @@ describe('executionRuns protocol', () => {
     expect(ExecutionRunIntentSchema.parse('review')).toBe('review');
     expect(ExecutionRunIntentSchema.parse('voice_agent')).toBe('voice_agent');
     expect(ExecutionRunIntentSchema.parse('memory_hints')).toBe('memory_hints');
+    expect(ExecutionRunIntentSchema.parse('scm_commit_message')).toBe('scm_commit_message');
   });
 
   it('validates public state shape', () => {
@@ -134,6 +134,113 @@ describe('executionRuns protocol', () => {
     });
     expect(parsed.intent).toBe('review');
     expect((parsed as any).futureRunFlag).toBe('run-extra');
+  });
+
+  it('validates scm_commit_message.v1 start requests as bounded read-only execution runs', () => {
+    const parsed = ExecutionRunStartRequestSchema.parse({
+      kind: 'scm_commit_message.v1',
+      intent: 'scm_commit_message',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'no_tools',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      intentInput: {
+        instructions: 'Use conventional commits.',
+        scope: { kind: 'paths', include: ['a.txt'] },
+      },
+    });
+
+    expect(parsed.kind).toBe('scm_commit_message.v1');
+    expect(parsed.intent).toBe('scm_commit_message');
+  });
+
+  it('validates scm_diff_summary.v1 start requests as bounded read-only execution runs', () => {
+    const parsed = ExecutionRunStartRequestSchema.parse({
+      kind: 'scm_diff_summary.v1',
+      intent: 'scm_diff_summary',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      intentInput: {
+        cwd: '/repo',
+        source: { kind: 'turnCheckpoint' },
+        turnId: 'turn-1',
+        checkpointReceiptId: 'checkpoint.diff_computed',
+        turnChangeSet: {
+          sessionId: 'sess-1',
+          turnId: 'turn-1',
+          seqRange: { startSeqInclusive: 10, endSeqInclusive: 12 },
+          status: 'completed',
+          provider: 'codex',
+          derivedAt: 1,
+          files: [{
+            filePath: 'src/a.ts',
+            changeKind: 'modified',
+            source: 'scm_checkpoint',
+            confidence: 'exact',
+            provider: 'codex',
+            unifiedDiff: '@@ -1 +1 @@\n-old\n+new\n',
+          }],
+          repositoryCheckpoint: {
+            version: 1,
+            scopeId: 'scope-1',
+            baseRefSource: 'turn_start',
+            contentConfidence: 'exact',
+            attributionScope: 'shared_worktree',
+            receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/1' }],
+          },
+        },
+      },
+    });
+
+    expect(parsed.kind).toBe('scm_diff_summary.v1');
+    expect(parsed.intent).toBe('scm_diff_summary');
+  });
+
+  it('rejects scm_diff_summary.v1 checkpoint starts without TurnChangeSet evidence', () => {
+    expect(() =>
+      ExecutionRunStartRequestSchema.parse({
+        kind: 'scm_diff_summary.v1',
+        intent: 'scm_diff_summary',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        intentInput: {
+          cwd: '/repo',
+          source: { kind: 'turnCheckpoint' },
+          turnId: 'turn-1',
+          checkpointReceiptId: 'checkpoint.diff_computed',
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects write-capable scm_commit_message.v1 start requests', () => {
+    expect(() =>
+      ExecutionRunStartRequestSchema.parse({
+        kind: 'scm_commit_message.v1',
+        intent: 'scm_commit_message',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        permissionMode: 'workspace_write',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects legacy ephemeral task run wrappers as execution-run starts', () => {
+    expect(ExecutionRunStartRequestSchema.safeParse({
+      kind: 'scm.commit_message',
+      sessionId: 'sess_1',
+      input: { backendId: 'claude' },
+      permissionMode: 'no_tools',
+    }).success).toBe(false);
   });
 
   it('accepts V2 backendTarget input on start requests and preserves the canonical backend transport shape', () => {
@@ -671,10 +778,6 @@ describe('executionRuns protocol', () => {
     expect(KNOWN_CANONICAL_TOOL_NAMES_V2.includes('AgentTeamCreate' as any)).toBe(true);
     expect(KNOWN_CANONICAL_TOOL_NAMES_V2.includes('AgentTeamDelete' as any)).toBe(true);
     expect(KNOWN_CANONICAL_TOOL_NAMES_V2.includes('AgentTeamSendMessage' as any)).toBe(true);
-  });
-
-  it('parses supported ephemeral task kinds', () => {
-    expect(EphemeralTaskKindSchema.parse('scm.commit_message')).toBe('scm.commit_message');
   });
 
   it('pins canonical execution-run transport error codes', () => {

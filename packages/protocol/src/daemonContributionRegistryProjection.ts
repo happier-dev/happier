@@ -13,6 +13,7 @@ import {
   PluginUiFieldV2Schema,
 } from './plugins/contributions/v2.js';
 import { PluginOptionalStringSchema } from './plugins/_shared.js';
+import { PluginBackendCapabilitiesV1Schema } from './plugins/backendDefinitionV1.js';
 import { HookCategoryV1Schema } from './hooks/hookCategories.js';
 import { HookExecutionKindV1Schema } from './hooks/hookExecutionSemantics.js';
 import { HookScopeV1Schema } from './hooks/hookScopes.js';
@@ -184,6 +185,7 @@ export const PluginProjectedBackendV2Schema = z.object({
   subtitle: PluginOptionalStringSchema,
   providerAgentId: PluginOptionalStringSchema,
   iconAgentId: PluginOptionalStringSchema,
+  capabilities: PluginBackendCapabilitiesV1Schema,
 }).strict();
 export type PluginProjectedBackendV2 = z.infer<typeof PluginProjectedBackendV2Schema>;
 

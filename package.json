@@ -177,6 +177,7 @@
       "packages/transfers",
       "packages/audio-stream-native",
       "packages/sherpa-native",
+      "packages/ssh-native",
       "packages/relay-server",
       "packages/support",
       "packages/tests"

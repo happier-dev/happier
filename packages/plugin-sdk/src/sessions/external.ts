@@ -16,7 +16,7 @@ export type ExternalSessionTranscriptItemV1 = DirectTranscriptRawMessageV1;
 export type ExternalSessionTranscriptPageResultV1 = DirectTranscriptPageResponse;
 export type ExternalSessionTranscriptReadAfterResultV1 = DirectTranscriptReadAfterResponse;
 
-// Canonical plugin SDK access is ctx.sessions.external.*; directSessions/externalSessions top-level
+// Canonical plugin SDK access is ctx.sessions.external.*; top-level
 // namespaces remain intentionally absent during the wire-compat migration window.
 export type ExternalSessionListCandidatesParamsV1 = Readonly<{
     providerId?: string;

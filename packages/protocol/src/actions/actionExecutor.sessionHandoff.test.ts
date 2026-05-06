@@ -164,6 +164,26 @@ describe('createActionExecutor (session.handoff)', () => {
     });
   });
 
+  it('delegates session.handoff.prepare_target_result.get to the prepare-target-result dependency', async () => {
+    const sessionHandoffPrepareTargetResultGet = vi.fn(async () => ({
+      handoffId: 'handoff_1',
+      status: 'prepared',
+    }));
+    const deps = createDeps({
+      sessionHandoffPrepareTargetResultGet,
+    });
+    const executor = createActionExecutor(deps);
+
+    const result = await executor.execute(
+      'session.handoff.prepare_target_result.get' as any,
+      { handoffId: 'handoff_1' },
+      { surface: 'rpc' },
+    );
+
+    expect(result).toEqual({ ok: true, result: { handoffId: 'handoff_1', status: 'prepared' } });
+    expect(sessionHandoffPrepareTargetResultGet).toHaveBeenCalledWith({ handoffId: 'handoff_1' });
+  });
+
   it('delegates session.handoff.commit to the commit dependency', async () => {
     const sessionHandoffCommit = vi.fn(async () => ({ handoffId: 'handoff_1', status: 'completed' }));
     const deps = createDeps({

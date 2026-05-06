@@ -1,3 +1,10 @@
+export {
+  discoverConfiguredSshHosts,
+  type DiscoverConfiguredSshHostsFs,
+  type DiscoverConfiguredSshHostsOptions,
+  type DiscoveredSshHost,
+  type DiscoveredSshHostSource,
+} from './discoverConfiguredSshHosts.js';
 export { safeBashSingleQuote } from './shellQuote.js';
 export { SSH_PASSWORD_ENV, ensureSshAskpassScriptPath, buildSshAskpassEnv } from './sshAskpass.js';
 export {
@@ -21,6 +28,16 @@ export {
   type OpenSshAuth,
   type OpenSshKnownHostsMode,
 } from './openSshTransport.js';
+
+export {
+  closeOpenSshLocalPortForward,
+  openSshLocalPortForward,
+  withOpenSshLocalPortForward,
+  type CloseOpenSshLocalPortForwardRequest,
+  type OpenSshLocalPortForwardDeps,
+  type OpenSshLocalPortForwardHandle,
+  type OpenSshLocalPortForwardRequest,
+} from './openSshLocalPortForward.js';
 
 export {
   copyLocalDirectoryToRemoteSync,

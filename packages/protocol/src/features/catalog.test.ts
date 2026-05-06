@@ -106,6 +106,9 @@ describe('feature catalog', () => {
     expect(isFeatureId('setup.relay.allowRemoteSshRelayHost')).toBe(true);
     expect(isFeatureId('setup.relayAccess.allowTailscale')).toBe(true);
     expect(isFeatureId('setup.relayAccess.allowCloudflareTunnel')).toBe(true);
+    expect(isFeatureId('setup.ssh.nativeTransport')).toBe(true);
+    expect(FEATURE_CATALOG['setup.ssh.nativeTransport']?.representation).toBe('client');
+    expect(FEATURE_CATALOG['setup.ssh.nativeTransport']?.dependencies).toEqual([]);
   });
 
   it('includes remote host management feature ids', () => {

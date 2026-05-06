@@ -3,6 +3,7 @@ export type ChangeEvidenceSource =
   | 'provider_tool'
   | 'canonical_diff_tool'
   | 'canonical_patch_tool'
+  | 'scm_checkpoint'
   | 'scm_reconciled'
   | 'inferred';
 
@@ -32,6 +33,35 @@ export type FileChangeEvidence = Readonly<{
   description?: string | null;
 }>;
 
+export type RepositoryCheckpointReceiptId =
+  | 'checkpoint.captured'
+  | 'checkpoint.aliased'
+  | 'checkpoint.finalized'
+  | 'checkpoint.diff_computed'
+  | 'checkpoint.cleanup_pruned';
+
+export type RepositoryCheckpointReceipt = Readonly<{
+  id: RepositoryCheckpointReceiptId;
+  ref?: string;
+  commitSha?: string;
+  treeSha?: string;
+  phase?: 'message-start' | 'turn-start' | 'turn-final';
+  prunedCount?: number;
+  refs?: readonly string[];
+}>;
+
+export type RepositoryCheckpointTurnMetadata = Readonly<{
+  version: 1;
+  scopeId: string;
+  startRef?: string;
+  finalRef?: string;
+  baseRefSource: 'turn_start' | 'message_start' | 'previous_final' | 'unavailable';
+  contentConfidence: 'exact' | 'unavailable';
+  attributionScope: 'exclusive_worktree' | 'shared_worktree' | 'unknown';
+  receipts: readonly RepositoryCheckpointReceipt[];
+  unavailableReason?: string;
+}>;
+
 export type TurnChangeSet = Readonly<{
   sessionId: string;
   turnId: string;
@@ -43,6 +73,7 @@ export type TurnChangeSet = Readonly<{
   files: readonly FileChangeEvidence[];
   provider: string;
   derivedAt: number;
+  repositoryCheckpoint?: RepositoryCheckpointTurnMetadata;
 }>;
 
 export type SessionChangeSetFile = Readonly<FileChangeEvidence & {

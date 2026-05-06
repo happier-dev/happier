@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DirectSessionsSourceSchema } from '../../providers/directSessionsCatalog.js';
+import { DirectSessionsSourceSchema } from '../../providers/externalSessionsCatalog.js';
 import { AgentProviderIdV1Schema } from '../../providers/agentProviderIdsV1.js';
 import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
 

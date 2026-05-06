@@ -5,6 +5,7 @@ import { PluginOptionalStringSchema } from '../_shared.js';
 export const PluginPermissionCapabilityV1Schema = z.enum([
   'filesystem.read',
   'filesystem.write',
+  'env',
   'network',
   'process.spawn',
   'agent.request.mutate',

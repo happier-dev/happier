@@ -42,6 +42,26 @@ describe('SCM repository provisioning protocol contracts', () => {
       confirmationToken: 'remove-stale-index-lock',
       lockPath: '/repo/.git/index.lock',
     }).success).toBe(false);
+    expect(requestSchema.safeParse({
+      cwd: '/repo',
+      confirmed: true,
+      confirmationToken: 'remove-stale-index-lock',
+      indexLockPath: '/repo/.git/index.lock',
+    }).success).toBe(false);
+    // Strict: any other unknown caller-supplied path field is rejected
+    // (defense in depth for the path-resolution boundary).
+    expect(requestSchema.safeParse({
+      cwd: '/repo',
+      confirmed: true,
+      confirmationToken: 'remove-stale-index-lock',
+      gitDir: '/repo/.git',
+    }).success).toBe(false);
+    // Confirmation token must be the pinned literal; arbitrary tokens are rejected.
+    expect(requestSchema.safeParse({
+      cwd: '/repo',
+      confirmed: true,
+      confirmationToken: 'arbitrary-string',
+    }).success).toBe(false);
 
     const parsedRequest = requestSchema.parse({
       cwd: '/repo',

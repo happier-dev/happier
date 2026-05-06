@@ -150,6 +150,77 @@ describe('defineAcpBackend', () => {
     expect(readAcpBackendSpec(engine)).toEqual(spec);
   });
 
+  it('keeps Tier-2 callbacks on the ACP backend definition surface', async () => {
+    const spec = {
+      backendId: 'acme.tier2.acp',
+      transport: {
+        kind: 'stdio',
+        launch: {
+          kind: 'executable',
+          command: 'acme-agent',
+          args: ['acp'],
+        },
+      },
+      callbacks: {
+        argvBuilder: ({ baseArgs, cwd, permissionMode }) => [
+          'acme-agent',
+          ...baseArgs,
+          '--cwd',
+          cwd,
+          ...(permissionMode ? ['--mode', permissionMode] : []),
+        ],
+        envBuilder: ({ env }) => ({
+          ...env,
+          ACME_TIER2: '1',
+        }),
+        preflight: async ({ cwd }) => {
+          expect(cwd).toBe('/workspace');
+        },
+        permissionDecision: ({ toolName }) => (
+          toolName === 'read'
+            ? { kind: 'allow', rationale: 'read-only tool' }
+            : { kind: 'defer' }
+        ),
+      },
+    } satisfies AcpBackendSpecV1;
+
+    const engine = defineAcpBackend(spec);
+
+    expect(readAcpBackendSpec(engine)).toEqual(spec);
+    expect(await spec.callbacks.argvBuilder({
+      baseArgs: ['acp', '--permission-mode', 'read-only'],
+      cwd: '/workspace',
+      permissionMode: 'read_only',
+    })).toEqual([
+      'acme-agent',
+      'acp',
+      '--permission-mode',
+      'read-only',
+      '--cwd',
+      '/workspace',
+      '--mode',
+      'read_only',
+    ]);
+    expect(await spec.callbacks.permissionDecision({
+      toolCallId: 'tool-1',
+      toolName: 'read',
+      input: { path: 'README.md' },
+    })).toEqual({
+      kind: 'allow',
+      rationale: 'read-only tool',
+    });
+  });
+
+  it('does not expose a parallel ACP activate hook API', () => {
+    const api = {
+      registerBackendEngine: vi.fn(),
+    } satisfies Pick<PluginApiV1, 'registerBackendEngine'>;
+    const rejectedApiName = ['registerAcp', 'ActivateHook'].join('');
+
+    expect(rejectedApiName in api).toBe(false);
+    expect((api as Readonly<Record<string, unknown>>)[rejectedApiName]).toBeUndefined();
+  });
+
   it('keeps ACP message meta hooks sync-only in public SDK types', () => {
     const spec = {
       backendId: 'acme.sync-meta.acp',

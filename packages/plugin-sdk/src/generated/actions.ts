@@ -3,6 +3,8 @@ import type {
   ScmHostingRepositoryDescribePublishTargetsResponse,
   ScmHostingRepositoryPublishRequest,
   ScmHostingRepositoryPublishResponse,
+  ScmDiffSummaryGenerateInput,
+  ScmDiffSummaryGenerateOutput,
   ScmPullRequestCheckoutRequest,
   ScmPullRequestCheckoutResponse,
   ScmPullRequestGetRequest,
@@ -67,6 +69,13 @@ export type PluginActionsV1 = Readonly<{
       publish: PluginSdkActionMethodV1<
         ScmHostingRepositoryPublishRequest,
         ScmHostingRepositoryPublishResponse
+      >;
+    }>;
+    diffSummary: Readonly<{
+      /** `ctx.actions.scm.diffSummary.generate(...)`. */
+      generate: PluginSdkActionMethodV1<
+        ScmDiffSummaryGenerateInput,
+        ScmDiffSummaryGenerateOutput
       >;
     }>;
   }>;

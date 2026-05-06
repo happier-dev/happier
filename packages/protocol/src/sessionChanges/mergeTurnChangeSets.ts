@@ -8,12 +8,13 @@ import type {
 } from './types.js';
 
 const SOURCE_PRECEDENCE: Record<ChangeEvidenceSource, number> = {
-  provider_native: 0,
-  provider_tool: 1,
-  canonical_diff_tool: 2,
-  canonical_patch_tool: 3,
-  scm_reconciled: 4,
-  inferred: 5,
+  scm_checkpoint: 0,
+  scm_reconciled: 1,
+  canonical_patch_tool: 2,
+  canonical_diff_tool: 3,
+  provider_tool: 4,
+  provider_native: 5,
+  inferred: 6,
 };
 
 const CONFIDENCE_PRECEDENCE: Record<ChangeConfidence, number> = {
@@ -38,6 +39,8 @@ function mergeFileEvidence(current: SessionChangeSetFile | null, next: FileChang
     };
   }
 
+  const source = pickMoreSpecificSource(current.source, next.source);
+
   return {
     ...current,
     previousFilePath: current.previousFilePath ?? next.previousFilePath ?? null,
@@ -46,8 +49,8 @@ function mergeFileEvidence(current: SessionChangeSetFile | null, next: FileChang
     oldText: current.oldText ?? next.oldText ?? null,
     newText: next.newText ?? current.newText ?? null,
     binary: current.binary ?? next.binary,
-    source: pickMoreSpecificSource(current.source, next.source),
-    confidence: pickWeakerConfidence(current.confidence, next.confidence),
+    source,
+    confidence: source === 'scm_checkpoint' ? 'exact' : pickWeakerConfidence(current.confidence, next.confidence),
     provider: next.provider || current.provider,
     providerTurnId: next.providerTurnId ?? current.providerTurnId ?? null,
     providerMessageId: next.providerMessageId ?? current.providerMessageId ?? null,

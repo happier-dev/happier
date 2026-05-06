@@ -1,26 +1,197 @@
 import { z } from 'zod';
 
-import {
-  ScmDefaultBranchPushPolicySchema,
-  ScmBranchSourceRefSchema,
-  ScmOperationErrorCodeSchema,
-  ScmOptionalBranchSourceRefSchema,
-  ScmRequestBaseSchema,
-} from './scm.js';
+const SCM_PULL_REQUEST_OPERATION_ERROR_CODES = {
+  NOT_REPOSITORY: 'NOT_REPOSITORY',
+  INVALID_PATH: 'INVALID_PATH',
+  INVALID_REQUEST: 'INVALID_REQUEST',
+  COMMAND_FAILED: 'COMMAND_FAILED',
+  CHANGE_APPLY_FAILED: 'CHANGE_APPLY_FAILED',
+  COMMIT_REQUIRED: 'COMMIT_REQUIRED',
+  CONFLICTING_WORKTREE: 'CONFLICTING_WORKTREE',
+  REMOTE_AUTH_REQUIRED: 'REMOTE_AUTH_REQUIRED',
+  REMOTE_UPSTREAM_REQUIRED: 'REMOTE_UPSTREAM_REQUIRED',
+  REMOTE_NON_FAST_FORWARD: 'REMOTE_NON_FAST_FORWARD',
+  REMOTE_FF_ONLY_REQUIRED: 'REMOTE_FF_ONLY_REQUIRED',
+  REMOTE_REJECTED: 'REMOTE_REJECTED',
+  REMOTE_NOT_FOUND: 'REMOTE_NOT_FOUND',
+  REMOTE_ALREADY_EXISTS: 'REMOTE_ALREADY_EXISTS',
+  BRANCH_OPERATION_IN_PROGRESS: 'BRANCH_OPERATION_IN_PROGRESS',
+  BRANCH_OPERATION_NOT_IN_PROGRESS: 'BRANCH_OPERATION_NOT_IN_PROGRESS',
+  FEATURE_UNSUPPORTED: 'FEATURE_UNSUPPORTED',
+  BACKEND_UNAVAILABLE: 'BACKEND_UNAVAILABLE',
+} as const;
 
-export {
-  ScmDefaultBranchPushPolicySchema,
-  type ScmDefaultBranchPushPolicy,
-} from './scm.js';
+const ScmOperationErrorCodeSchema = z.enum([
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.NOT_REPOSITORY,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.INVALID_PATH,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.INVALID_REQUEST,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.COMMAND_FAILED,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.CHANGE_APPLY_FAILED,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.COMMIT_REQUIRED,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.REMOTE_UPSTREAM_REQUIRED,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.REMOTE_NON_FAST_FORWARD,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.REMOTE_FF_ONLY_REQUIRED,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.REMOTE_REJECTED,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.REMOTE_ALREADY_EXISTS,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.BRANCH_OPERATION_IN_PROGRESS,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.BRANCH_OPERATION_NOT_IN_PROGRESS,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+  SCM_PULL_REQUEST_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+]);
+
+const ScmBackendIdSchema = z.enum(['git', 'sapling']);
+
+const ScmBackendPreferenceSchema = z.object({
+  kind: z.literal('prefer'),
+  backendId: ScmBackendIdSchema,
+});
+
+const ScmRequestBaseSchema = z.object({
+  cwd: z.string().optional(),
+  backendPreference: ScmBackendPreferenceSchema.optional(),
+});
+
+export const ScmDefaultBranchPushPolicySchema = z.enum([
+  'allow',
+  'requires-feature-branch',
+  'deny',
+]);
+export type ScmDefaultBranchPushPolicy = z.infer<typeof ScmDefaultBranchPushPolicySchema>;
+
+const CONTROL_CHAR_REGEX = /[\u0000-\u001F\u007F]/;
+
+function hasUnsupportedBranchRefSyntax(value: string): boolean {
+  if (CONTROL_CHAR_REGEX.test(value)) return true;
+  if (value.includes('\\')) return true;
+  if (value.includes('//')) return true;
+  if (value.startsWith('/') || value.endsWith('/')) return true;
+  if (value.includes('@{') || value.includes('..')) return true;
+  return (
+    value.startsWith('+') ||
+    value.startsWith('.') ||
+    value.endsWith('.') ||
+    value.endsWith('.lock') ||
+    value.includes(':') ||
+    value.includes('^') ||
+    value.includes('~') ||
+    value.includes('?') ||
+    value.includes('*') ||
+    value.includes('[')
+  );
+}
+
+function normalizeScmPullRequestBranchSourceRef(value: string | undefined): { ok: true; sourceRef: string } | { ok: false; error: string } {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized) {
+    return { ok: false, error: 'Source ref is required' };
+  }
+  if (normalized.startsWith('-')) {
+    return { ok: false, error: 'Source ref cannot start with "-"' };
+  }
+  if (/\s/.test(normalized)) {
+    return { ok: false, error: 'Source ref must not contain whitespace' };
+  }
+  if (hasUnsupportedBranchRefSyntax(normalized)) {
+    return { ok: false, error: 'Source ref contains unsupported syntax' };
+  }
+  return { ok: true, sourceRef: normalized };
+}
+
+const ScmBranchSourceRefSchema = z.string().transform((value, ctx) => {
+  const result = normalizeScmPullRequestBranchSourceRef(value);
+  if (!result.ok) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: result.error,
+    });
+    return z.NEVER;
+  }
+  return result.sourceRef;
+});
+
+const ScmOptionalBranchSourceRefSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+  return value.trim() ? value : undefined;
+}, ScmBranchSourceRefSchema.optional());
 
 export const ScmHostingProviderKindSchema = z.enum([
   'github',
   'gitlab',
   'bitbucket',
+  'azure-devops',
   'custom',
   'unknown',
 ]);
 export type ScmHostingProviderKind = z.infer<typeof ScmHostingProviderKindSchema>;
+
+const ScmHostingProviderPullRequestCapabilitiesSchema = z.object({
+  list: z.boolean().default(false),
+  get: z.boolean().default(false),
+  create: z.boolean().default(false),
+  checkout: z.boolean().default(false),
+  prepareWorktree: z.boolean().default(false),
+  runStacked: z.boolean().default(false),
+}).strict().default({
+  list: false,
+  get: false,
+  create: false,
+  checkout: false,
+  prepareWorktree: false,
+  runStacked: false,
+});
+
+const ScmHostingProviderRepositoryProvisioningCapabilitiesSchema = z.object({
+  describeTargets: z.boolean().default(false),
+  createRepository: z.boolean().default(false),
+  publish: z.boolean().default(false),
+}).strict().default({
+  describeTargets: false,
+  createRepository: false,
+  publish: false,
+});
+
+const ScmHostingProviderReviewThreadCapabilitiesSchema = z.object({
+  read: z.boolean().default(false),
+  write: z.boolean().default(false),
+}).strict().default({
+  read: false,
+  write: false,
+});
+
+export const ScmHostingProviderCapabilitiesSchema = z.object({
+  compareUrl: z.boolean().default(false),
+  openUrl: z.boolean().default(false),
+  pullRequests: ScmHostingProviderPullRequestCapabilitiesSchema,
+  repositoryProvisioning: ScmHostingProviderRepositoryProvisioningCapabilitiesSchema,
+  reviewThreads: ScmHostingProviderReviewThreadCapabilitiesSchema,
+}).strict().default({
+  compareUrl: false,
+  openUrl: false,
+  pullRequests: {
+    list: false,
+    get: false,
+    create: false,
+    checkout: false,
+    prepareWorktree: false,
+    runStacked: false,
+  },
+  repositoryProvisioning: {
+    describeTargets: false,
+    createRepository: false,
+    publish: false,
+  },
+  reviewThreads: {
+    read: false,
+    write: false,
+  },
+});
+export type ScmHostingProviderCapabilities =
+  z.infer<typeof ScmHostingProviderCapabilitiesSchema>;
 
 export const ScmHostingProviderUrlSafetySchema = z
   .object({
@@ -131,6 +302,7 @@ export const ScmFollowupActionSchema = z.union([
       purpose: z.enum(['pullRequest', 'compose']),
       url: z.string().url(),
       allowedBaseUrl: z.string().url(),
+      urlSafety: ScmHostingProviderUrlSafetySchema.default({ allowedSchemes: ['https:'] }),
     })
     .passthrough(),
   z.object({ kind: z.literal('none') }).passthrough(),

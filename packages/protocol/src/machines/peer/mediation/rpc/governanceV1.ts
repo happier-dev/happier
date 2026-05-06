@@ -53,6 +53,25 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER]: 'sessions.external.transcript.readAfter',
   [RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER]: 'sessions.external.takeover',
   [RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST]: 'sessions.external.takeover',
+  [RPC_METHODS.DAEMON_PROMPT_ASSETS_DISCOVER]: 'daemon.promptAssets.discover',
+  [RPC_METHODS.DAEMON_PROMPT_ASSETS_DELETE]: 'daemon.promptAssets.delete',
+  [RPC_METHODS.DAEMON_PROMPT_REGISTRY_SCAN_SOURCE]: 'daemon.promptRegistry.scanSource',
+  [RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL]: 'daemon.promptRegistry.install',
+  [RPC_METHODS.READ_FILE]: 'daemon.filesystem.readFile',
+  [RPC_METHODS.WRITE_FILE]: 'daemon.filesystem.writeFile',
+  [RPC_METHODS.LIST_DIRECTORY]: 'daemon.filesystem.listDirectory',
+  [RPC_METHODS.GET_DIRECTORY_TREE]: 'daemon.filesystem.getDirectoryTree',
+  [RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS]: 'daemon.filesystem.listRoots',
+  [RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY]: 'daemon.filesystem.browseDirectory',
+  [RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS]: 'bugreport.collectDiagnostics',
+  [RPC_METHODS.BUGREPORT_GET_LOG_TAIL]: 'bugreport.getLogTail',
+  [RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT]: 'bugreport.uploadArtifact',
+  [RPC_METHODS.SESSION_LOG_TAIL]: 'session.log.tail',
+  [RPC_METHODS.TRANSCRIPT_PAGE]: 'transcript.page',
+  [RPC_METHODS.TRANSCRIPT_READ_AFTER]: 'transcript.readAfter',
+  [RPC_METHODS.TRANSCRIPT_FOLLOW]: 'transcript.follow',
+  [RPC_METHODS.TRANSCRIPT_IMPORT]: 'transcript.import',
+  [RPC_METHODS.TRANSCRIPT_SEARCH]: 'transcript.search',
   [RPC_METHODS.SCM_PULL_REQUEST_LIST]: 'scm.pullRequest.list',
   [RPC_METHODS.SCM_PULL_REQUEST_GET]: 'scm.pullRequest.get',
   [RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE]: 'scm.pullRequest.openOrReuse',
@@ -64,6 +83,7 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK]: 'scm.repository.removeIndexLock',
   [RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS]: 'scm.hostingRepository.describePublishTargets',
   [RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH]: 'scm.hostingRepository.publish',
+  [RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE]: 'scm.diffSummary.generate',
 } satisfies Readonly<Record<string, string>>);
 
 const PMS5_DIRECT_INTERNAL_METHODS = new Set<string>([
@@ -83,6 +103,21 @@ const PMS5_DIRECT_INTERNAL_METHODS = new Set<string>([
   RPC_METHODS.CAPABILITIES_DESCRIBE,
 ]);
 
+const PROMPT_TRANSFER_INTERNAL_METHODS = new Set<string>([
+  RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_INIT,
+  RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_CHUNK,
+  RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_FINALIZE,
+  RPC_METHODS.DAEMON_PROMPT_ASSETS_UPLOAD_ABORT,
+  RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+  RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_CHUNK,
+  RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_FINALIZE,
+  RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_ABORT,
+  RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
+  RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_CHUNK,
+  RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_FINALIZE,
+  RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_ABORT,
+]);
+
 export function resolveMachineRpcGovernance(method: string): MachineRpcGovernanceMetadataV1 {
   const actionSpecId = ACTION_SPEC_RPC_METHOD_IDS[method as keyof typeof ACTION_SPEC_RPC_METHOD_IDS];
   if (actionSpecId) {
@@ -91,6 +126,7 @@ export function resolveMachineRpcGovernance(method: string): MachineRpcGovernanc
   if (
     method === RPC_METHODS.STOP_DAEMON
     || PMS5_DIRECT_INTERNAL_METHODS.has(method)
+    || PROMPT_TRANSFER_INTERNAL_METHODS.has(method)
   ) {
     return { rpcClassification: 'internal_only' };
   }

@@ -255,6 +255,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  'setup.ssh.nativeTransport': {
+    description: 'Build-time policy gate: whether the optional native SSH transport substrate is available.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
   'setup.providers.allowProviderSetup': {
     description: 'Build-time policy gate: whether provider onboarding/setup surfaces are allowed.',
     defaultFailMode: 'fail_closed',

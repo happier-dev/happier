@@ -8,8 +8,8 @@ import {
   DirectSessionLinkEnsureRequestSchema,
   DirectSessionsSourceSchema,
 } from './daemonRpcV1';
-import { AgentProviderIdV1Schema } from '../providers/agentProviderIdsV1';
-import { resolveDirectSessionsSourceKey } from '../providers/directSessionsCatalog';
+import { AgentProviderIdV1Schema } from '../../providers/agentProviderIdsV1';
+import { resolveDirectSessionsSourceKey } from '../../providers/externalSessionsCatalog';
 
 describe('DirectSessionsProviderIdSchema', () => {
   it('stays scoped to direct-session browsing providers even when daemon-facing provider ids grow', () => {

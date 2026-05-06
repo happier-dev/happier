@@ -86,6 +86,82 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (approvals)', () => {
+  it('lists approval requests through the bounded approval artifact store dependency', async () => {
+    const approvalsList = vi.fn(async () => ({
+      items: [
+        {
+          artifactId: 'a1',
+          status: 'open',
+          actionId: 'session.message.send',
+          summary: 'Send message',
+          updatedAtMs: 2,
+        },
+      ],
+      queryPlan: {
+        kind: 'approval_artifact_header_scan',
+        hydratedTranscripts: false,
+      },
+    }));
+
+    const executor = createExecutor({ approvalsList } as any);
+    const res = await executor.execute(
+      'approval.request.list' as any,
+      { status: 'open', limit: 5 },
+      { surface: 'rpc', serverId: 'server-1' },
+    );
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        items: [
+          {
+            artifactId: 'a1',
+            status: 'open',
+            actionId: 'session.message.send',
+            summary: 'Send message',
+            updatedAtMs: 2,
+          },
+        ],
+        queryPlan: {
+          kind: 'approval_artifact_header_scan',
+          hydratedTranscripts: false,
+        },
+      },
+    });
+    expect(approvalsList).toHaveBeenCalledWith({
+      status: 'open',
+      limit: 5,
+      serverId: 'server-1',
+    });
+  });
+
+  it('gets approval requests through the keyed approval artifact dependency', async () => {
+    const request = createApprovalRequest();
+    const approvalsGet = vi.fn(async () => request);
+
+    const executor = createExecutor({ approvalsGet });
+    const res = await executor.execute(
+      'approval.request.get' as any,
+      { artifactId: 'a1' },
+      { surface: 'rpc', serverId: 'server-1' },
+    );
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        artifactId: 'a1',
+        request,
+        queryPlan: {
+          kind: 'approval_artifact_id_lookup',
+          backingStore: 'ArtifactStore',
+          boundedBy: 'approval artifact id',
+          hydratedTranscripts: false,
+        },
+      },
+    });
+    expect(approvalsGet).toHaveBeenCalledWith({ artifactId: 'a1', serverId: 'server-1' });
+  });
+
   it('does not route non-surfaced actions through approvals even when a policy requires approvals', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
 

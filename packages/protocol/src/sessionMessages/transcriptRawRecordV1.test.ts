@@ -70,19 +70,58 @@ describe('TranscriptRawRecordV1Schema', () => {
     expect(parsed.success).toBe(true);
   });
 
-  it('parses codex turn_aborted lifecycle records', () => {
-    const parsed = TranscriptRawRecordV1Schema.safeParse({
-      role: 'agent',
-      content: {
-        type: 'codex',
-        data: {
-          type: 'turn_aborted',
+  it.each(['turn_failed', 'turn_cancelled', 'turn_aborted'] as const)(
+    'parses codex %s lifecycle records',
+    (type) => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse({
+        role: 'agent',
+        content: {
+          type: 'codex',
+          data: { type },
         },
-      },
-    });
+      });
 
-    expect(parsed.success).toBe(true);
-  });
+      expect(parsed.success).toBe(true);
+    },
+  );
+
+  it.each(['turn_failed', 'turn_cancelled', 'turn_aborted'] as const)(
+    'parses acp %s lifecycle records',
+    (type) => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse({
+        role: 'agent',
+        content: {
+          type: 'acp',
+          provider: 'gemini',
+          data: {
+            type,
+            id: 'turn_1',
+          },
+        },
+      });
+
+      expect(parsed.success).toBe(true);
+    },
+  );
+
+  it.each(['turn_failed', 'turn_cancelled', 'turn_aborted'] as const)(
+    'parses session task-lifecycle %s events',
+    (event) => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse({
+        role: 'agent',
+        content: {
+          type: 'event',
+          id: 'event_1',
+          data: {
+            type: 'task-lifecycle',
+            event,
+          },
+        },
+      });
+
+      expect(parsed.success).toBe(true);
+    },
+  );
 
   it('parses assistant content blocks with unknown types (forward compatibility)', () => {
     const parsed = TranscriptRawRecordV1Schema.safeParse({

@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { DirectTranscriptRawMessageV1Schema } from './directSessions/daemonRpcV1.js';
+import { DirectTranscriptRawMessageV1Schema } from './sessions/external/daemonRpcV1.js';
 import { ExecutionRunPublicStateSchema } from './executionRuns.js';
 import { SessionStoredMessageContentSchema } from './sessionMessages/sessionStoredMessageContent.js';
+import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from './sessions/control/runtimeIssueV1.js';
 
 const TimestampMsSchema = z.number().int().min(0);
 const Base64Schema = z.string();
@@ -69,6 +70,8 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     lastViewedSessionSeq: z.number().int().min(0).optional(),
     pendingPermissionRequestCount: z.number().int().min(0).optional(),
     pendingUserActionRequestCount: z.number().int().min(0).optional(),
+    latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
+    lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
     archivedAt: TimestampMsSchema.nullable().optional(),
   }).passthrough(),
   z.object({

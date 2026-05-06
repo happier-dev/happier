@@ -177,6 +177,31 @@ describe('scm protocol contracts', () => {
                 canAbort: true,
             },
             hasConflicts: false,
+            hostingProvider: {
+                id: 'scm.github',
+                kind: 'github',
+                displayName: 'GitHub',
+                baseUrl: 'https://github.com',
+                nameWithOwner: 'happier-dev/happier',
+                remoteName: 'origin',
+            },
+            pullRequestStatus: {
+                provider: {
+                    id: 'scm.github',
+                    kind: 'github',
+                    displayName: 'GitHub',
+                    baseUrl: 'https://github.com',
+                    nameWithOwner: 'happier-dev/happier',
+                    remoteName: 'origin',
+                },
+                headBranch: 'main',
+                baseBranch: 'origin/main',
+                openPullRequest: null,
+                composeUrl: 'https://github.com/happier-dev/happier/compare/origin/main...main',
+                authState: 'unknown',
+                checkedAt: 123,
+                cacheTtlMs: 30000,
+            },
             entries: [],
             totals: {
                 includedFiles: 0,
@@ -215,9 +240,100 @@ describe('scm protocol contracts', () => {
             canContinue: true,
             canAbort: true,
         });
+        expect(response.snapshot?.hostingProvider).toMatchObject({
+            id: 'scm.github',
+            kind: 'github',
+            nameWithOwner: 'happier-dev/happier',
+        });
+        expect(response.snapshot?.pullRequestStatus).toMatchObject({
+            headBranch: 'main',
+            baseBranch: 'origin/main',
+            composeUrl: 'https://github.com/happier-dev/happier/compare/origin/main...main',
+        });
         expect(response.snapshot?.totals.pendingFiles).toBe(0);
         expect(response.snapshot?.capabilities.changeSetModel).toBe('index');
         expect(response.snapshot?.capabilities.supportedDiffAreas).toEqual(['included', 'pending', 'both']);
+    });
+
+    it('validates pull-request status projection with the canonical pull-request schema', () => {
+        const result = ScmWorkingSnapshotSchema.safeParse({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: 123,
+            repo: {
+                isRepo: true,
+                rootPath: '/repo',
+                backendId: 'git',
+                mode: '.git',
+                worktrees: [],
+                remotes: [],
+            },
+            capabilities: {
+                readStatus: true,
+                readDiffFile: true,
+                readDiffCommit: true,
+                readLog: true,
+                writeInclude: true,
+                writeExclude: true,
+                writeCommit: true,
+                writeCommitPathSelection: true,
+                writeCommitLineSelection: true,
+                writeBackout: true,
+                writeRemoteFetch: true,
+                writeRemotePull: true,
+                writeRemotePush: true,
+                worktreeCreate: true,
+                changeSetModel: 'index',
+                supportedDiffAreas: ['included', 'pending', 'both'],
+            },
+            branch: {
+                head: 'feature/pr-cache',
+                upstream: 'origin/main',
+                ahead: 0,
+                behind: 0,
+                detached: false,
+            },
+            hasConflicts: false,
+            pullRequestStatus: {
+                provider: {
+                    id: 'scm.github',
+                    kind: 'github',
+                    displayName: 'GitHub',
+                    baseUrl: 'https://github.com',
+                    nameWithOwner: 'happier-dev/happier',
+                    remoteName: 'origin',
+                },
+                headBranch: 'feature/pr-cache',
+                baseBranch: 'main',
+                openPullRequest: {
+                    provider: {
+                        id: 'scm.github',
+                        kind: 'github',
+                        displayName: 'GitHub',
+                        baseUrl: 'https://github.com',
+                        nameWithOwner: 'happier-dev/happier',
+                        remoteName: 'origin',
+                    },
+                    number: 42,
+                    url: 'https://github.com/happier-dev/happier/pull/42',
+                    baseBranch: 'main',
+                    headBranch: 'feature/pr-cache',
+                    state: 'open',
+                },
+                authState: 'authenticated',
+            },
+            entries: [],
+            totals: {
+                includedFiles: 0,
+                pendingFiles: 0,
+                untrackedFiles: 0,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
+        });
+
+        expect(result.success).toBe(false);
     });
 
     it('defaults omitted working snapshot remotes to an empty list', () => {

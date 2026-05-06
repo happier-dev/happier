@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { EphemeralTaskRunResponseSchema } from '@happier-dev/protocol';
+import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, type ExecutionRunGetResponse } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -26,9 +26,13 @@ function runGit(cwd: string, args: string[]): string {
   }).trim();
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
 const run = createRunDirs({ runLabel: 'core' });
 
-describe('core e2e: ephemeral task scm.commit_message', () => {
+describe('core e2e: execution run scm_commit_message.v1', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
 
@@ -38,7 +42,7 @@ describe('core e2e: ephemeral task scm.commit_message', () => {
   }, 60_000);
 
   it('generates a deterministic commit message via fake Claude', async () => {
-    const testDir = run.testDir(`ephemeral-task-commit-message-${randomUUID()}`);
+    const testDir = run.testDir(`execution-run-commit-message-${randomUUID()}`);
     server = await startServerLight({ testDir });
     const serverBaseUrl = server.baseUrl;
     const auth = await createTestAuth(serverBaseUrl);
@@ -112,22 +116,48 @@ describe('core e2e: ephemeral task scm.commit_message', () => {
     expect(typeof sessionId).toBe('string');
     if (typeof sessionId !== 'string' || sessionId.length === 0) throw new Error('Missing sessionId from daemon spawn-session');
 
-    const res = await callSessionRpc({
+    const started = await callSessionRpc({
       ui,
       sessionId,
-      method: SESSION_RPC_METHODS.EPHEMERAL_TASK_RUN,
+      method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
       req: {
-        kind: 'scm.commit_message',
-        sessionId,
-        input: { backendId: 'claude', scope: { kind: 'paths', include: ['README.md'] } },
+        kind: 'scm_commit_message.v1',
+        intent: 'scm_commit_message',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         permissionMode: 'read_only',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        intentInput: {
+          scope: { kind: 'paths', include: ['README.md'] },
+        },
       },
       secret,
-      schema: EphemeralTaskRunResponseSchema,
+      schema: ExecutionRunStartResponseSchema,
       timeoutMs: 40_000,
     });
 
-    expect(res.ok).toBe(true);
-    expect((res as any).result?.message).toBe('feat: ephemeral commit message');
+    let completed: ExecutionRunGetResponse | null = null;
+    await waitFor(async () => {
+      const res = await callSessionRpc({
+        ui,
+        sessionId,
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+        req: {
+          runId: started.runId,
+          includeStructured: true,
+        },
+        secret,
+        schema: ExecutionRunGetResponseSchema,
+        timeoutMs: 40_000,
+      });
+      if (res.run.status === 'running') return false;
+      completed = res;
+      return true;
+    }, { timeoutMs: 40_000 });
+
+    if (!completed) throw new Error('Missing completed execution run');
+    expect(completed.run.status).toBe('succeeded');
+    expect(readRecord(completed.latestToolResult)?.message).toBe('feat: ephemeral commit message');
   }, 240_000);
 });

@@ -11,6 +11,28 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function pluginManifestSource(input: Readonly<{
+  id: string;
+  capabilities?: readonly string[];
+  contributes?: string;
+}>): string {
+  return [
+    'export const PLUGIN_MANIFEST = Object.freeze({',
+    '  schemaVersion: 2,',
+    `  id: ${JSON.stringify(input.id)},`,
+    '  version: "0.0.0",',
+    `  displayName: ${JSON.stringify(input.id)},`,
+    '  description: "Test plugin manifest.",',
+    '  engines: { happier: "^0.0.0" },',
+    `  runtime: { apiVersion: 1, capabilities: ${JSON.stringify(input.capabilities ?? [])} },`,
+    '  targets: {},',
+    '  capabilities: { permissions: [] },',
+    `  contributes: ${input.contributes ?? '{}'},`,
+    '});',
+    '',
+  ].join('\n');
+}
+
 test('generateBundledPluginEntries writes deterministic bundled plugin contribution outputs', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-'));
 
@@ -26,7 +48,7 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/claude/src/manifest.ts'),
-    'export const PLUGIN_MANIFEST = Object.freeze({ id: "claude", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+    pluginManifestSource({ id: 'claude', capabilities: ['agents'] }),
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src/agent'), { recursive: true });
@@ -39,7 +61,7 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   mkdirSync(resolve(repoRoot, 'packages/plugins/codex/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/codex/src/manifest.ts'),
-    'export const PLUGIN_MANIFEST = Object.freeze({ id: "codex", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+    pluginManifestSource({ id: 'codex', capabilities: ['agents'] }),
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/codex/src/agent'), { recursive: true });
@@ -82,6 +104,7 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS/);
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_BACKEND_CONTRIBUTIONS/);
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS/);
+  assert.match(cliOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
   assert.match(cliOut, /@happier-dev\/plugins-claude/);
   assert.match(cliOut, /@happier-dev\/plugins-codex/);
   assert.ok(
@@ -140,7 +163,7 @@ test('generateBundledPluginEntries skips reservation-only plugin packages', asyn
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/claude/src/manifest.ts'),
-    'export const PLUGIN_MANIFEST = Object.freeze({ id: "claude", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+    pluginManifestSource({ id: 'claude', capabilities: ['agents'] }),
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src/agent'), { recursive: true });
@@ -194,16 +217,11 @@ test('generateBundledPluginEntries projects non-agent plugin packages without ag
   mkdirSync(resolve(repoRoot, 'packages/plugins/scm-github/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/scm-github/src/manifest.ts'),
-    [
-      'export const PLUGIN_MANIFEST = Object.freeze({',
-      '  schemaVersion: 2,',
-      '  id: "scm-github",',
-      '  version: "0.0.0",',
-      '  runtime: { apiVersion: 1, capabilities: ["scmHostingProviders"] },',
-      '  contributes: { scmHostingProviders: [{ id: "github", kind: "github", displayName: "GitHub" }] },',
-      '});',
-      '',
-    ].join('\n'),
+    pluginManifestSource({
+      id: 'scm-github',
+      capabilities: ['scmHostingProviders'],
+      contributes: '{ scmHostingProviders: [{ id: "github", kind: "github", displayName: "GitHub", baseUrl: "https://github.com" }] }',
+    }),
     'utf8',
   );
 
@@ -231,6 +249,10 @@ test('generateBundledPluginEntries projects non-agent plugin packages without ag
   );
   assert.match(cliOut, /@happier-dev\/plugins-scm-github/);
   assert.match(cliOut, /"pluginId":\s*"scm-github"/);
+  assert.match(cliOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
+  assert.match(cliOut, /id:\s*"github"/);
+  assert.match(cliOut, /definition:\s*Object\.freeze\(\{/);
+  assert.match(cliOut, /"kind":\s*"github"/);
   assert.doesNotMatch(cliOut, /"agentId":\s*"scm-github"/);
 
   const agentsOut = readFileSync(
@@ -238,6 +260,57 @@ test('generateBundledPluginEntries projects non-agent plugin packages without ag
     'utf8',
   );
   assert.doesNotMatch(agentsOut, /scm-github/);
+});
+
+test('generateBundledPluginEntries rejects malformed bundled SCM provider contributions', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-invalid-scm-'));
+
+  writeJson(resolve(repoRoot, 'packages/plugins/scm-github/package.json'), {
+    name: '@happier-dev/plugins-scm-github',
+    version: '0.0.0',
+  });
+
+  mkdirSync(resolve(repoRoot, 'packages/plugins/scm-github/src'), { recursive: true });
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/scm-github/src/manifest.ts'),
+    [
+      'export const PLUGIN_MANIFEST = Object.freeze({',
+      '  schemaVersion: 2,',
+      '  id: "scm-github",',
+      '  version: "0.0.0",',
+      '  displayName: "GitHub SCM hosting provider",',
+      '  description: "Detects GitHub remotes.",',
+      '  engines: { happier: "^0.0.0" },',
+      '  runtime: { apiVersion: 1, capabilities: ["scmHostingProviders"] },',
+      '  targets: {},',
+      '  capabilities: { permissions: [] },',
+      '  contributes: { scmHostingProviders: [{ id: "scm.github", kind: "github", displayName: "GitHub", baseUrl: "not-a-url" }] },',
+      '});',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  mkdirSync(resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources'), { recursive: true });
+  mkdirSync(resolve(repoRoot, 'apps/ui/sources/agents/registry'), { recursive: true });
+  mkdirSync(resolve(repoRoot, 'packages/agents/src/generated'), { recursive: true });
+  mkdirSync(resolve(repoRoot, 'packages/agents/src/definitions'), { recursive: true });
+
+  writeFileSync(
+    resolve(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts'),
+    'export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Object.freeze([]);\n',
+    'utf8',
+  );
+  writeFileSync(
+    resolve(repoRoot, 'packages/agents/src/definitions/agentDefinition.ts'),
+    'export type AgentDefinition = Readonly<{ id: string } & Record<string, unknown>>;\n',
+    'utf8',
+  );
+
+  await assert.rejects(
+    () => generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
+    /Invalid PLUGIN_MANIFEST/,
+  );
 });
 
 test('generateBundledPluginEntries fails for agent-capable plugin packages without agent definitions', async () => {
@@ -250,16 +323,7 @@ test('generateBundledPluginEntries fails for agent-capable plugin packages witho
   mkdirSync(resolve(repoRoot, 'packages/plugins/placeholder/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/placeholder/src/manifest.ts'),
-    [
-      'export const PLUGIN_MANIFEST = Object.freeze({',
-      '  schemaVersion: 2,',
-      '  id: "placeholder",',
-      '  version: "0.0.0",',
-      '  runtime: { apiVersion: 1, capabilities: ["agents"] },',
-      '  contributes: {},',
-      '});',
-      '',
-    ].join('\n'),
+    pluginManifestSource({ id: 'placeholder', capabilities: ['agents'] }),
     'utf8',
   );
 
@@ -296,16 +360,7 @@ test('generateBundledPluginEntries uses AGENT_DEFINITION.id as the runtime agent
   mkdirSync(resolve(repoRoot, 'packages/plugins/ohmypi/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/ohmypi/src/manifest.ts'),
-    [
-      'export const PLUGIN_MANIFEST = Object.freeze({',
-      '  schemaVersion: 2,',
-      '  id: "ohmypi",',
-      '  version: "0.0.0",',
-      '  runtime: { apiVersion: 1, capabilities: ["agents"] },',
-      '  contributes: {},',
-      '});',
-      '',
-    ].join('\n'),
+    pluginManifestSource({ id: 'ohmypi', capabilities: ['agents'] }),
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/ohmypi/src/agent'), { recursive: true });

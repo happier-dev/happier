@@ -5,6 +5,7 @@ export const ChangeEvidenceSourceSchema = z.enum([
   'provider_tool',
   'canonical_diff_tool',
   'canonical_patch_tool',
+  'scm_checkpoint',
   'scm_reconciled',
   'inferred',
 ]);
@@ -36,6 +37,36 @@ export const FileChangeEvidenceSchema = z.object({
   description: z.string().nullable().optional(),
 }).strict();
 
+export const RepositoryCheckpointReceiptIdSchema = z.enum([
+  'checkpoint.captured',
+  'checkpoint.aliased',
+  'checkpoint.finalized',
+  'checkpoint.diff_computed',
+  'checkpoint.cleanup_pruned',
+]);
+
+export const RepositoryCheckpointReceiptSchema = z.object({
+  id: RepositoryCheckpointReceiptIdSchema,
+  ref: z.string().min(1).optional(),
+  commitSha: z.string().min(1).optional(),
+  treeSha: z.string().min(1).optional(),
+  phase: z.enum(['message-start', 'turn-start', 'turn-final']).optional(),
+  prunedCount: z.number().int().nonnegative().optional(),
+  refs: z.array(z.string().min(1)).optional(),
+}).strict();
+
+export const RepositoryCheckpointTurnMetadataSchema = z.object({
+  version: z.literal(1),
+  scopeId: z.string().min(1),
+  startRef: z.string().min(1).optional(),
+  finalRef: z.string().min(1).optional(),
+  baseRefSource: z.enum(['turn_start', 'message_start', 'previous_final', 'unavailable']),
+  contentConfidence: z.enum(['exact', 'unavailable']),
+  attributionScope: z.enum(['exclusive_worktree', 'shared_worktree', 'unknown']),
+  receipts: z.array(RepositoryCheckpointReceiptSchema),
+  unavailableReason: z.string().min(1).optional(),
+}).strict();
+
 export const TurnChangeSetSchema = z.object({
   sessionId: z.string().min(1),
   turnId: z.string().min(1),
@@ -50,6 +81,7 @@ export const TurnChangeSetSchema = z.object({
   files: z.array(FileChangeEvidenceSchema),
   provider: z.string().min(1),
   derivedAt: z.number().finite(),
+  repositoryCheckpoint: RepositoryCheckpointTurnMetadataSchema.optional(),
 }).strict();
 
 export const SessionChangeSetFileSchema = FileChangeEvidenceSchema.extend({
@@ -96,6 +128,8 @@ export type ChangeEvidenceSource = z.infer<typeof ChangeEvidenceSourceSchema>;
 export type ChangeConfidence = z.infer<typeof ChangeConfidenceSchema>;
 export type FileChangeKind = z.infer<typeof FileChangeKindSchema>;
 export type FileChangeEvidence = z.infer<typeof FileChangeEvidenceSchema>;
+export type RepositoryCheckpointReceipt = z.infer<typeof RepositoryCheckpointReceiptSchema>;
+export type RepositoryCheckpointTurnMetadata = z.infer<typeof RepositoryCheckpointTurnMetadataSchema>;
 export type TurnChangeSet = z.infer<typeof TurnChangeSetSchema>;
 export type SessionChangeSetFile = z.infer<typeof SessionChangeSetFileSchema>;
 export type ChangeSetConfidenceSummary = z.infer<typeof ChangeSetConfidenceSummarySchema>;

@@ -4,7 +4,7 @@ import {
   DIRECT_SESSIONS_PROVIDER_IDS,
   DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1,
   resolveDirectSessionsSourceKey,
-} from './directSessionsCatalog.js';
+} from './externalSessionsCatalog.js';
 
 describe('directSessionsCatalog', () => {
   it('exposes the canonical direct-session provider ids grouped by source kind', () => {

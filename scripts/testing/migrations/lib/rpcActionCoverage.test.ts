@@ -11,6 +11,16 @@ function serverRequiredPolicy(method) {
   };
 }
 
+function actionSpecBoundPolicy(method, actionSpecId) {
+  return {
+    method,
+    routeClass: 'server_required',
+    serverRequiredReason: 'action_spec_bound',
+    rpcClassification: 'action_spec_bound',
+    actionSpecId,
+  };
+}
+
 test('validateRpcActionCoverage allows unclassified methods only through deny-default server route policy', () => {
   const result = validateRpcActionCoverage({
     rpcMethods: { DEMO_STATUS_GET: 'demo.status.get' },
@@ -163,9 +173,9 @@ test('validateRpcActionCoverage rejects methods classified as both action-bound 
   });
 
   assert.equal(result.ok, false);
-  assert.deepEqual(
-    result.errors.map((error) => error.code),
-    ['rpc-method-conflicting-classification'],
+  assert.equal(
+    result.errors.some((error) => error.code === 'rpc-method-conflicting-classification'),
+    true,
   );
 });
 
@@ -192,8 +202,264 @@ test('validateRpcActionCoverage rejects route policy governance that omits Actio
   });
 
   assert.equal(result.ok, false);
+  assert.equal(
+    result.errors.some((error) => error.code === 'route-policy-governance-mismatch'),
+    true,
+  );
+});
+
+test('validateRpcActionCoverage rejects rpc ActionSpecs omitted from generic registration and exceptions', () => {
+  const result = validateRpcActionCoverage({
+    rpcMethods: { DEMO_ACTION: 'demo.action' },
+    sessionRpcMethods: {},
+    genericActionSpecRpcMethods: [],
+    actionSpecRpcExceptions: [],
+    actionSpecs: [
+      {
+        id: 'demo.action',
+        surfaces: { rpc: true },
+        bindings: { rpcMethod: 'demo.action' },
+      },
+    ],
+    internalOnlyEntries: [],
+    machineRpcRoutePolicies: [actionSpecBoundPolicy('demo.action', 'demo.action')],
+  });
+
+  assert.equal(result.ok, false);
   assert.deepEqual(
     result.errors.map((error) => error.code),
-    ['route-policy-governance-mismatch'],
+    ['action-rpc-method-not-generically-registered'],
+  );
+});
+
+test('validateRpcActionCoverage treats scoped ActionSpec aliases as generic registrations', () => {
+  const result = validateRpcActionCoverage({
+    rpcMethods: {
+      DEMO_ACTION: 'daemon.externalSessions.demo',
+      DEMO_ACTION_LEGACY: 'daemon.directSessions.demo',
+    },
+    sessionRpcMethods: {},
+    actionSpecRpcExceptions: [],
+    actionSpecs: [
+      {
+        id: 'sessions.external.demo',
+        surfaces: { rpc: true },
+        bindings: {
+          rpcMethod: 'daemon.externalSessions.demo',
+          rpcMethodAliases: ['daemon.directSessions.demo'],
+        },
+      },
+    ],
+    internalOnlyEntries: [],
+    machineRpcRoutePolicies: [
+      actionSpecBoundPolicy('daemon.externalSessions.demo', 'sessions.external.demo'),
+      actionSpecBoundPolicy('daemon.directSessions.demo', 'sessions.external.demo'),
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.actionBoundRpcMethods, [
+    'daemon.directSessions.demo',
+    'daemon.externalSessions.demo',
+  ]);
+});
+
+test('validateRpcActionCoverage does not infer generic coverage from arbitrary ActionSpec rows', () => {
+  const result = validateRpcActionCoverage({
+    rpcMethods: { DEMO_ACTION: 'demo.action' },
+    sessionRpcMethods: {},
+    actionSpecs: [
+      {
+        id: 'demo.action',
+        surfaces: { rpc: true },
+        bindings: { rpcMethod: 'demo.action' },
+      },
+    ],
+    internalOnlyEntries: [],
+    machineRpcRoutePolicies: [actionSpecBoundPolicy('demo.action', 'demo.action')],
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.errors.map((error) => error.code),
+    ['action-rpc-method-not-generically-registered'],
+  );
+});
+
+test('validateRpcActionCoverage classifies prompt transfer control RPCs as internal transport', () => {
+  const result = validateRpcActionCoverage();
+  const promptTransferMethods = [
+    'daemon.promptAssets.upload.init',
+    'daemon.promptAssets.upload.chunk',
+    'daemon.promptAssets.upload.finalize',
+    'daemon.promptAssets.upload.abort',
+    'daemon.promptAssets.download.init',
+    'daemon.promptAssets.download.chunk',
+    'daemon.promptAssets.download.finalize',
+    'daemon.promptAssets.download.abort',
+    'daemon.promptRegistry.download.init',
+    'daemon.promptRegistry.download.chunk',
+    'daemon.promptRegistry.download.finalize',
+    'daemon.promptRegistry.download.abort',
+  ];
+
+  assert.equal(result.ok, true);
+  for (const method of promptTransferMethods) {
+    assert.equal(result.unclassifiedRpcMethods.includes(method), false, method);
+    assert.equal(result.internalOnlyRpcMethods.includes(method), true, method);
+  }
+});
+
+test('validateRpcActionCoverage accepts required methods from canonical generic registrar scopes', () => {
+  const result = validateRpcActionCoverage({
+    rpcMethods: { SESSIONS_SUBAGENTS_INSPECT: 'sessions.subagents.inspect' },
+    sessionRpcMethods: {},
+    actionSpecs: [
+      {
+        id: 'sessions.subagents.inspect',
+        surfaces: { rpc: true },
+        bindings: { rpcMethod: 'sessions.subagents.inspect' },
+      },
+    ],
+    internalOnlyEntries: [],
+    machineRpcRoutePolicies: [actionSpecBoundPolicy('sessions.subagents.inspect', 'sessions.subagents.inspect')],
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.errors, []);
+});
+
+test('validateRpcActionCoverage rejects invalid action rpc exception metadata', () => {
+  const result = validateRpcActionCoverage({
+    rpcMethods: { DEMO_ACTION: 'demo.action' },
+    sessionRpcMethods: {},
+    genericActionSpecRpcMethods: [],
+    actionSpecRpcExceptions: [
+      {
+        method: 'demo.action',
+        actionId: 'demo.action',
+        reason: 'not_a_real_reason',
+        ownerPacket: '',
+        rationale: '',
+        retirement: 'Retire when the fixture is generic.',
+      },
+    ],
+    actionSpecs: [
+      {
+        id: 'demo.action',
+        surfaces: { rpc: true },
+        bindings: { rpcMethod: 'demo.action' },
+      },
+    ],
+    internalOnlyEntries: [],
+    machineRpcRoutePolicies: [actionSpecBoundPolicy('demo.action', 'demo.action')],
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.errors.map((error) => error.code),
+    [
+      'invalid-action-spec-rpc-exception',
+      'invalid-action-spec-rpc-exception',
+      'invalid-action-spec-rpc-exception',
+    ],
+  );
+});
+
+test('validateRpcActionCoverage rejects packet-owned coordination exceptions without retirement', () => {
+  const result = validateRpcActionCoverage({
+    rpcMethods: { DEMO_ACTION: 'demo.action' },
+    sessionRpcMethods: {},
+    genericActionSpecRpcMethods: [],
+    actionSpecRpcExceptions: [
+      {
+        method: 'demo.action',
+        actionId: 'demo.action',
+        reason: 'packet_owned_coordination',
+        ownerPacket: 'A.fixture',
+        rationale: 'Fixture packet-owned coordination.',
+      },
+    ],
+    actionSpecs: [
+      {
+        id: 'demo.action',
+        surfaces: { rpc: true },
+        bindings: { rpcMethod: 'demo.action' },
+      },
+    ],
+    internalOnlyEntries: [],
+    machineRpcRoutePolicies: [actionSpecBoundPolicy('demo.action', 'demo.action')],
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.errors.map((error) => error.code),
+    ['invalid-action-spec-rpc-exception'],
+  );
+});
+
+test('validateRpcActionCoverage rejects exceptions for required generic ActionSpec rpc methods', () => {
+  const result = validateRpcActionCoverage({
+    rpcMethods: { SESSIONS_SUBAGENTS_LIST: 'sessions.subagents.list' },
+    sessionRpcMethods: {},
+    genericActionSpecRpcMethods: [],
+    actionSpecRpcExceptions: [
+      {
+        method: 'sessions.subagents.list',
+        actionId: 'sessions.subagents.list',
+        reason: 'custom_context_extraction',
+        ownerPacket: 'A.fixture',
+        rationale: 'Fixture should be generic.',
+        retirement: 'Retire by registering through the generic registrar.',
+      },
+    ],
+    actionSpecs: [
+      {
+        id: 'sessions.subagents.list',
+        surfaces: { rpc: true },
+        bindings: { rpcMethod: 'sessions.subagents.list' },
+      },
+    ],
+    internalOnlyEntries: [],
+    machineRpcRoutePolicies: [actionSpecBoundPolicy('sessions.subagents.list', 'sessions.subagents.list')],
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.errors.map((error) => error.code),
+    ['action-rpc-exception-generically-servable'],
+  );
+});
+
+test('validateRpcActionCoverage rejects duplicate generic and exception ownership', () => {
+  const result = validateRpcActionCoverage({
+    rpcMethods: { DEMO_ACTION: 'demo.action' },
+    sessionRpcMethods: {},
+    genericActionSpecRpcMethods: ['demo.action'],
+    actionSpecRpcExceptions: [
+      {
+        method: 'demo.action',
+        actionId: 'demo.action',
+        reason: 'custom_result_envelope',
+        ownerPacket: 'A.fixture',
+        rationale: 'Fixture custom envelope.',
+        retirement: 'Retire when the fixture is generic.',
+      },
+    ],
+    actionSpecs: [
+      {
+        id: 'demo.action',
+        surfaces: { rpc: true },
+        bindings: { rpcMethod: 'demo.action' },
+      },
+    ],
+    internalOnlyEntries: [],
+    machineRpcRoutePolicies: [actionSpecBoundPolicy('demo.action', 'demo.action')],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.errors.some((error) => error.code === 'duplicate-action-rpc-method-coverage'),
+    true,
   );
 });

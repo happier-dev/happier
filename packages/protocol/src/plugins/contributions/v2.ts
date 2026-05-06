@@ -22,8 +22,17 @@ import {
   ScmHostingProviderContributionSchema,
 } from './scmHostingProviders.js';
 import {
+  PluginInstallableContributionV2Schema,
+} from './installables.js';
+import {
+  PluginMcpContributesV1Schema,
+} from './mcp.js';
+import {
   PluginSettingsContributionV2Schema,
 } from './settings.js';
+import {
+  PluginExecutionRunProfileContributionV2Schema,
+} from './executionRunProfiles.js';
 import {
   buildPluginContributionFamilySchemaV2,
   definePluginContributionFamilyV2,
@@ -339,16 +348,22 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'resources', schema: PluginResourceContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'uiDescriptors', schema: PluginUiDescriptorContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'settings', schema: PluginSettingsContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: 'executionRunProfiles', schema: PluginExecutionRunProfileContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'notifications', schema: PluginNotificationCategoryContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'notificationChannels', schema: PluginNotificationChannelContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'scmHostingProviders', schema: ScmHostingProviderContributionSchema }),
+  definePluginContributionFamilyV2({ family: 'installables', schema: PluginInstallableContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'hooks', schema: PluginHookContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'lifecycleHandlers', schema: PluginLifecycleHandlerContributionV2Schema }),
 ] as const;
 
-export const PluginContributesV2Schema = buildPluginContributionFamilySchemaV2(
+const PluginContributesV2BaseSchema = buildPluginContributionFamilySchemaV2(
   PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2,
-).superRefine((value, ctx) => {
+);
+
+export const PluginContributesV2Schema = PluginContributesV2BaseSchema.extend({
+  mcp: PluginMcpContributesV1Schema,
+}).superRefine((value, ctx) => {
   if (hasOwn(value, LEGACY_ACTIVITY_PROVIDER_FAMILY)) {
     rejectForbiddenKey(ctx, LEGACY_ACTIVITY_PROVIDER_FAMILY, 'Activity providers were folded into contributes.notifications; use notification categories instead.');
   }

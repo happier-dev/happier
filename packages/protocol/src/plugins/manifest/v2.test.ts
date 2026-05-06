@@ -94,6 +94,78 @@ describe('plugin manifest v2 contracts', () => {
     expect(manifestSchema!.safeParse(stalePermissionManifest).success).toBe(false);
   });
 
+  it('normalizes backend execution-run capability support to the nested contract', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const defaultSupported = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.backend-default',
+      version: '1.0.0',
+      displayName: 'Acme Backend Default',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: ['backends'] },
+      contributes: {
+        agents: [
+          {
+            kindVersion: 1,
+            id: 'acme.agent',
+            display: { name: 'Acme Agent' },
+            ownedBackendIds: ['acme.backend'],
+          },
+        ],
+        backends: [
+          {
+            kindVersion: 1,
+            id: 'acme.backend',
+            agentId: 'acme.agent',
+            engine: { kind: 'custom' },
+          },
+        ],
+      },
+      capabilities: { permissions: [] },
+    });
+
+    expect(defaultSupported.contributes.backends[0]?.capabilities).toEqual({
+      executionRun: { supported: true },
+    });
+
+    const explicitOptOut = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.backend-opt-out',
+      version: '1.0.0',
+      displayName: 'Acme Backend Opt Out',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: ['backends'] },
+      contributes: {
+        agents: [
+          {
+            kindVersion: 1,
+            id: 'acme.agent',
+            display: { name: 'Acme Agent' },
+            ownedBackendIds: ['acme.backend'],
+          },
+        ],
+        backends: [
+          {
+            kindVersion: 1,
+            id: 'acme.backend',
+            agentId: 'acme.agent',
+            engine: { kind: 'custom' },
+            capabilities: {
+              executionRun: { supported: false },
+            },
+          },
+        ],
+      },
+      capabilities: { permissions: [] },
+    });
+
+    expect(explicitOptOut.contributes.backends[0]?.capabilities).toEqual({
+      executionRun: { supported: false },
+    });
+  });
+
   it('accepts notification contribution families while rejecting stale activity providers', () => {
     const manifestSchema = readSchemaExport('PluginManifestV2Schema');
     expect(manifestSchema).toBeDefined();
@@ -209,13 +281,173 @@ describe('plugin manifest v2 contracts', () => {
       expect.objectContaining({
         id: 'acme.scm.github',
         kind: 'github',
-        urlSafety: {
+        urlSafety: expect.objectContaining({
           allowedSchemes: ['https:'],
-        },
+        }),
       }),
     ]);
     expect(parsed.contributes.agents).toEqual([]);
     expect(parsed.contributes.backends).toEqual([]);
+  });
+
+  it('accepts nested MCP contribution families and rejects raw credential fields', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const parsed = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.mcp',
+      version: '1.0.0',
+      displayName: 'Acme MCP',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: ['mcp'] },
+      contributes: {
+        mcp: {
+          servers: [
+            {
+              id: 'acme.hosted',
+              kind: 'mcp.server',
+              version: '1.0.0',
+              name: 'acme-hosted',
+              transport: 'hosted',
+            },
+          ],
+          tools: [
+            {
+              id: 'acme.tool',
+              kind: 'mcp.tool',
+              version: '1.0.0',
+              name: 'ext.acme.search',
+            },
+          ],
+        },
+      },
+      capabilities: { permissions: [] },
+    });
+
+    expect(parsed.contributes.mcp.servers.map((server: { name: string }) => server.name)).toEqual(['acme-hosted']);
+    expect(parsed.contributes.mcp.tools.map((tool: { name: string }) => tool.name)).toEqual(['ext.acme.search']);
+    expect(parsed.runtime.capabilities).toContain('mcp');
+
+    const withRawCredential = {
+      schemaVersion: 2,
+      id: 'acme.mcp',
+      version: '1.0.0',
+      displayName: 'Acme MCP',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: [] },
+      contributes: {
+        mcp: {
+          servers: [
+            {
+              id: 'acme.remote',
+              kind: 'mcp.server',
+              version: '1.0.0',
+              name: 'acme-remote',
+              transport: 'http',
+              url: 'https://mcp.example.test',
+              clientSecret: 'raw-value',
+            },
+          ],
+        },
+      },
+      capabilities: {},
+    };
+
+    expect(manifestSchema!.safeParse(withRawCredential).success).toBe(false);
+  });
+
+  it('validates non-agent installable contributions in nested contributes', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const parsed = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.installables',
+      version: '1.0.0',
+      displayName: 'Acme Installables',
+      engines: { happier: '^0.2.0' },
+      runtime: { apiVersion: 1, capabilities: [] },
+      contributes: {
+        installables: [
+          {
+            id: 'acme-tool',
+            key: 'acme-tool',
+            kind: 'dep',
+            version: '1',
+            capabilityId: 'dep.acme-tool',
+            display: {
+              name: 'Acme Tool',
+            },
+            description: 'Acme tool dependency',
+            source: {
+              kind: 'manual_only',
+              setupUrl: 'https://example.com/acme-tool',
+            },
+            binary: {
+              commands: ['acme-tool'],
+              systemFirst: true,
+            },
+            defaultPolicy: {
+              autoInstallWhenNeeded: false,
+              autoUpdateMode: 'notify',
+            },
+            consent: {
+              install: 'required',
+              update: 'required',
+            },
+          },
+        ],
+      },
+    });
+
+    expect(parsed.contributes.installables).toEqual([
+      expect.objectContaining({
+        key: 'acme-tool',
+        capabilityId: 'dep.acme-tool',
+        source: expect.objectContaining({ kind: 'manual_only' }),
+      }),
+    ]);
+
+    expect(manifestSchema!.safeParse({
+      schemaVersion: 2,
+      id: 'acme.invalid-installables',
+      version: '1.0.0',
+      displayName: 'Invalid Installables',
+      engines: { happier: '^0.2.0' },
+      runtime: { apiVersion: 1, capabilities: [] },
+      contributes: {
+        installables: [
+          {
+            id: 'bad-tool',
+            key: 'bad-tool',
+            kind: 'dep',
+            version: '1',
+            capabilityId: 'dep.bad-tool',
+            display: {
+              name: 'Bad Tool',
+            },
+            description: 'Bad dependency',
+            source: {
+              kind: 'shell_script',
+              command: 'curl https://example.com/install.sh | sh',
+            },
+            binary: {
+              commands: ['bad-tool'],
+              systemFirst: true,
+            },
+            defaultPolicy: {
+              autoInstallWhenNeeded: false,
+              autoUpdateMode: 'notify',
+            },
+            consent: {
+              install: 'required',
+              update: 'required',
+            },
+          },
+        ],
+      },
+    }).success).toBe(false);
   });
 
   it('validates descriptor-driven settings contributions through the shared descriptor base', () => {
@@ -312,5 +544,81 @@ describe('plugin manifest v2 contracts', () => {
     };
 
     expect(manifestSchema!.safeParse(invalidSecretDescriptor).success).toBe(false);
+  });
+
+  it('validates execution-run profile contributions through the shared descriptor base', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const parsed = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.execution-runs',
+      version: '1.0.0',
+      displayName: 'Acme Execution Runs',
+      engines: {
+        happier: '^1.0.0',
+      },
+      runtime: {
+        apiVersion: 1,
+        capabilities: ['executionRunProfiles'],
+      },
+      contributes: {
+        executionRunProfiles: [
+          {
+            id: 'acme.review.profile',
+            kind: 'executionRun.profile',
+            version: '1.0.0',
+            intent: 'review',
+            displayKey: 'plugins.acme.executionRuns.review.label',
+            order: 10,
+            hidden: true,
+          },
+        ],
+      },
+      capabilities: {
+        permissions: [],
+      },
+    });
+
+    expect(parsed.contributes.executionRunProfiles).toEqual([
+      expect.objectContaining({
+        id: 'acme.review.profile',
+        kind: 'executionRun.profile',
+        intent: 'review',
+        hidden: true,
+        redaction: 'none',
+      }),
+    ]);
+
+    expect(manifestSchema!.safeParse({
+      schemaVersion: 2,
+      id: 'acme.execution-runs.secret',
+      version: '1.0.0',
+      displayName: 'Acme Execution Runs Secret',
+      engines: {
+        happier: '^1.0.0',
+      },
+      runtime: {
+        apiVersion: 1,
+        capabilities: ['executionRunProfiles'],
+      },
+      contributes: {
+        executionRunProfiles: [
+          {
+            id: 'acme.review.profile',
+            kind: 'executionRun.profile',
+            version: '1.0.0',
+            intent: 'review',
+            displayKey: 'plugins.acme.executionRuns.review.label',
+            metadata: {
+              accessToken: 'secret',
+            },
+          },
+        ],
+      },
+      capabilities: {
+        permissions: [],
+      },
+    }).success).toBe(false);
   });
 });

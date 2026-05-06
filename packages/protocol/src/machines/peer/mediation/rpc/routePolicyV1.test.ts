@@ -148,4 +148,26 @@ describe('MachineRpcRoutePolicyV1', () => {
       actionSpecId: 'execution.run.stream.read',
     });
   });
+
+  it('identifies session transcript RPC governance from A.12 transcript ActionSpec bindings', async () => {
+    const protocol = await importRpcPolicy();
+    expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
+    if ('importError' in protocol) throw protocol.importError;
+
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.SESSION_LOG_TAIL)).toMatchObject({
+      routeClass: 'server_required',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'session.log.tail',
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.TRANSCRIPT_PAGE)).toMatchObject({
+      routeClass: 'server_required',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'transcript.page',
+    });
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.TRANSCRIPT_IMPORT)).toMatchObject({
+      routeClass: 'server_required',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'transcript.import',
+    });
+  });
 });

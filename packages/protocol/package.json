@@ -22,6 +22,14 @@
       "types": "./dist/rpc.d.ts",
       "default": "./dist/rpc.js"
     },
+    "./actions": {
+      "types": "./dist/actions/index.d.ts",
+      "default": "./dist/actions/index.js"
+    },
+    "./actions/actionSpecs": {
+      "types": "./dist/actions/actionSpecs.d.ts",
+      "default": "./dist/actions/actionSpecs.js"
+    },
     "./rpcErrors": {
       "types": "./dist/rpcErrors.d.ts",
       "default": "./dist/rpcErrors.js"

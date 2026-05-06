@@ -114,6 +114,45 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('approval.request.decide').surfaces.cli).toBe(true);
   });
 
+  it('binds approval queue RPC wire methods to ActionSpec rows', () => {
+    const expectedBindings = new Map([
+      ['approval.request.list', 'approval.request.list'],
+      ['approval.request.get', 'approval.request.get'],
+      ['approval.request.create', 'approval.request.create'],
+      ['approval.request.decide', 'approval.request.decide'],
+    ]);
+
+    for (const [actionId, rpcMethod] of expectedBindings) {
+      const spec = getActionSpec(actionId as any);
+
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+    }
+  });
+
+  it('accepts canceled approval status in approval list filters', () => {
+    const spec = getActionSpec('approval.request.list' as any);
+
+    expect(spec.inputSchema.parse({ status: 'canceled', limit: 10 })).toEqual({
+      status: 'canceled',
+      limit: 10,
+    });
+    expect(spec.inputHints?.fields.find((field) => field.path === 'status')?.options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ value: 'canceled' }),
+      ]),
+    );
+  });
+
+  it('registers pet chooser slash aliases as a UI-only action', () => {
+    const spec = getActionSpec('ui.pet.choose');
+    expect(spec.slash?.tokens).toEqual(['/pet', '/h.pet']);
+    expect(spec.placements).toContain('slash_command');
+    expect(spec.surfaces.ui).toBe(true);
+    expect(spec.surfaces.mcp).toBe(false);
+    expect(spec.surfaces.cli).toBe(false);
+  });
+
   it('projects SCM pull-request actions through RPC and SDK surfaces only', () => {
     const expected: readonly [ActionId, 'read' | 'write' | 'external' | 'danger'][] = [
       ['scm.pullRequest.list', 'read'],
@@ -177,22 +216,76 @@ describe('Action Spec Registry', () => {
       ]));
   });
 
-  it('projects external-session actions through legacy direct-session RPC bindings and real SDK names only', () => {
-    const expected: readonly [ActionId, string, string | null, 'read' | 'write' | 'danger'][] = [
-      ['sessions.external.candidates.list', RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST, 'sessions.external.listCandidates', 'read'],
-      ['sessions.external.link.ensure', RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE, null, 'write'],
-      ['sessions.external.attach', RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH, null, 'write'],
-      ['sessions.external.detach', RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH, null, 'write'],
-      ['sessions.external.followPolicy.set', RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET, null, 'write'],
-      ['sessions.external.status.get', RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET, null, 'read'],
-      ['sessions.external.transcript.page', RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE, 'sessions.external.pageTranscript', 'read'],
-      ['sessions.external.transcript.readAfter', RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER, 'sessions.external.readAfterTranscript', 'read'],
-      ['sessions.external.takeover', RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER, 'sessions.external.takeover', 'danger'],
+  it('projects SCM diff-summary generation through RPC and SDK surfaces only', () => {
+    const spec = getActionSpec('scm.diffSummary.generate' as ActionId);
+
+    expect(spec.bindings?.rpcMethod).toBe('scm.diffSummary.generate');
+    expect(spec.bindings?.sdkMethod).toBe('scm.diffSummary.generate');
+    expect(spec.surfaces.rpc).toBe(true);
+    expect(spec.surfaces.sdk).toBe(true);
+    expect(spec.surfaces.ui).toBe(false);
+    expect(spec.surfaces.mcp).toBe(false);
+    expect(spec.surfaces.voice).toBe(false);
+    expect(spec.surfaces.session_agent).toBe(false);
+    expect(spec.sideEffectClass).toBe('external');
+    expect(spec.safety).toBe('safe');
+
+    expect(spec.inputSchema.parse({
+      cwd: '/repo',
+      source: { kind: 'turnCheckpoint' },
+      checkpointReceiptId: 'checkpoint.diff_computed',
+    })).toMatchObject({
+      cwd: '/repo',
+      source: { kind: 'turnCheckpoint' },
+      checkpointReceiptId: 'checkpoint.diff_computed',
+    });
+
+    expect(() => spec.inputSchema.parse({
+      cwd: '/repo',
+      source: { kind: 'turnCheckpoint' },
+    })).toThrow();
+
+    expect(spec.outputSchema.parse({
+      success: true,
+      summaryMarkdown: 'Changed one file.',
+      sourceKey: 'checkpoint:checkpoint.diff_computed',
+      checkpointReceiptId: 'checkpoint.diff_computed',
+      metadata: {
+        source: { kind: 'turnCheckpoint' },
+        sourceKey: 'checkpoint:checkpoint.diff_computed',
+        checkpointReceiptId: 'checkpoint.diff_computed',
+        contentConfidence: 'exact',
+        attributionScope: 'unknown',
+      },
+      truncation: {
+        reason: 'diffBytes',
+        droppedFiles: 2,
+      },
+    })).toMatchObject({
+      success: true,
+      summaryMarkdown: 'Changed one file.',
+      sourceKey: 'checkpoint:checkpoint.diff_computed',
+      truncation: { reason: 'diffBytes', droppedFiles: 2 },
+    });
+  });
+
+  it('projects external-session actions through canonical external-session RPC bindings and legacy direct-session aliases', () => {
+    const expected: readonly [ActionId, string, string, string | null, 'read' | 'write' | 'danger'][] = [
+      ['sessions.external.candidates.list', RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST, RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY, 'sessions.external.listCandidates', 'read'],
+      ['sessions.external.link.ensure', RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE, RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE_LEGACY, null, 'write'],
+      ['sessions.external.attach', RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY, null, 'write'],
+      ['sessions.external.detach', RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY, null, 'write'],
+      ['sessions.external.followPolicy.set', RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET, RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY, null, 'write'],
+      ['sessions.external.status.get', RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET, RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY, null, 'read'],
+      ['sessions.external.transcript.page', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY, 'sessions.external.pageTranscript', 'read'],
+      ['sessions.external.transcript.readAfter', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER, RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY, 'sessions.external.readAfterTranscript', 'read'],
+      ['sessions.external.takeover', RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER, RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY, 'sessions.external.takeover', 'danger'],
     ];
 
-    for (const [id, rpcMethod, sdkMethod, sideEffectClass] of expected) {
+    for (const [id, rpcMethod, legacyRpcMethod, sdkMethod, sideEffectClass] of expected) {
       const spec = getActionSpec(id);
       expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+      expect(spec.bindings?.rpcMethodAliases).toContain(legacyRpcMethod);
       expect(spec.bindings?.sdkMethod ?? null).toBe(sdkMethod);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.sdk).toBe(sdkMethod !== null);
@@ -203,8 +296,78 @@ describe('Action Spec Registry', () => {
 
     const takeover = getActionSpec('sessions.external.takeover');
     expect(takeover.bindings?.rpcMethodAliases).toEqual([
-      RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST,
+      RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
+      RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY,
     ]);
+  });
+
+  it('binds non-external transcript RPC wire methods to ActionSpec rows', () => {
+    const expectedBindings = new Map([
+      ['session.log.tail', RPC_METHODS.SESSION_LOG_TAIL],
+      ['transcript.page', RPC_METHODS.TRANSCRIPT_PAGE],
+      ['transcript.readAfter', RPC_METHODS.TRANSCRIPT_READ_AFTER],
+      ['transcript.follow', RPC_METHODS.TRANSCRIPT_FOLLOW],
+      ['transcript.import', RPC_METHODS.TRANSCRIPT_IMPORT],
+      ['transcript.search', RPC_METHODS.TRANSCRIPT_SEARCH],
+    ]);
+
+    for (const [actionId, rpcMethod] of expectedBindings) {
+      const spec = getActionSpec(actionId as ActionId);
+
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+      expect(spec.surfaces.sdk).toBe(false);
+      expect(spec.surfaces.mcp).toBe(false);
+      expect(spec.surfaces.voice).toBe(false);
+    }
+  });
+
+  it('keeps transcript action schemas bounded by cursor, offset, count, and query inputs', () => {
+    expect(getActionSpec('session.log.tail' as ActionId).inputSchema.parse({
+      path: '/tmp/session.log',
+      maxBytes: 4096,
+      offset: 12,
+    })).toMatchObject({ maxBytes: 4096, offset: 12 });
+
+    expect(getActionSpec('transcript.page' as ActionId).inputSchema.parse({
+      sessionId: 'session-1',
+      cursor: 'cursor-1',
+      maxBytes: 4096,
+      maxItems: 25,
+    })).toMatchObject({ sessionId: 'session-1', cursor: 'cursor-1', maxItems: 25 });
+
+    expect(getActionSpec('transcript.readAfter' as ActionId).inputSchema.parse({
+      sessionId: 'session-1',
+      cursor: 'cursor-1',
+      maxBytes: 4096,
+      maxItems: 25,
+    })).toMatchObject({ cursor: 'cursor-1', maxItems: 25 });
+
+    expect(getActionSpec('transcript.follow' as ActionId).inputSchema.parse({
+      sessionId: 'session-1',
+      cursor: 'tail',
+      leaseId: 'lease-1',
+      maxBytes: 4096,
+      maxItems: 25,
+    })).toMatchObject({ leaseId: 'lease-1', cursor: 'tail' });
+
+    expect(getActionSpec('transcript.import' as ActionId).inputSchema.parse({
+      sessionId: 'session-1',
+      items: [{ id: 'item-1', role: 'user', content: { t: 'plain', v: { text: 'hello' } } }],
+      maxItems: 1,
+    })).toMatchObject({ sessionId: 'session-1', maxItems: 1 });
+
+    expect(getActionSpec('transcript.search' as ActionId).inputSchema.parse({
+      sessionId: 'session-1',
+      query: 'permission',
+      cursor: 'cursor-1',
+      maxItems: 10,
+    })).toMatchObject({ query: 'permission', cursor: 'cursor-1' });
+
+    expect(() => getActionSpec('transcript.search' as ActionId).inputSchema.parse({
+      sessionId: 'session-1',
+      query: '',
+    })).toThrow();
   });
 
   it('accepts explicit execution.run.list filter fields in the action schema', () => {
@@ -231,6 +394,11 @@ describe('Action Spec Registry', () => {
       ['execution.run.list', SESSION_RPC_METHODS.EXECUTION_RUN_LIST, 'read'],
       ['execution.run.get', SESSION_RPC_METHODS.EXECUTION_RUN_GET, 'read'],
       ['execution.run.send', SESSION_RPC_METHODS.EXECUTION_RUN_SEND, 'write'],
+      ['execution.run.ensure', SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, 'write'],
+      ['execution.run.ensure_or_start', SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, 'write'],
+      ['execution.run.stream.start', SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, 'write'],
+      ['execution.run.stream.read', SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ, 'read'],
+      ['execution.run.stream.cancel', SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL, 'write'],
       ['execution.run.stop', SESSION_RPC_METHODS.EXECUTION_RUN_STOP, 'write'],
       ['execution.run.action', SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, 'write'],
     ];
@@ -326,6 +494,13 @@ describe('Action Spec Registry', () => {
   it('registers both friendly and namespaced slash aliases for review.start', () => {
     const spec = getActionSpec('review.start');
     expect(spec.slash?.tokens).toEqual(['/review', '/h.review']);
+  });
+
+  it('keeps review.start input hints engine-generic', () => {
+    const spec = getActionSpec('review.start');
+    const fieldPaths = spec.inputHints?.fields.map((field) => field.path) ?? [];
+
+    expect(fieldPaths.filter((path) => path.startsWith('engines.'))).toEqual([]);
   });
 
   it('exposes execution.run.start for cli and external mcp surfaces', () => {
@@ -568,9 +743,25 @@ describe('Action Spec Registry', () => {
       ['session.rollback', 'session.rollback'],
       ['session.handoff', 'daemon.sessionHandoff.start'],
       ['session.handoff.prepare_target', 'daemon.sessionHandoff.prepareTarget'],
+      ['session.handoff.prepare_target_result.get', 'daemon.sessionHandoff.prepareTargetResult.get'],
       ['session.handoff.commit', 'daemon.sessionHandoff.commit'],
       ['session.handoff.abort', 'daemon.sessionHandoff.abort'],
       ['session.handoff.status.get', 'daemon.sessionHandoff.status.get'],
+    ]);
+
+    for (const [actionId, rpcMethod] of expectedBindings) {
+      const spec = getActionSpec(actionId as any);
+
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+    }
+  });
+
+  it('binds session permission RPC wire methods to existing ActionSpec rows', () => {
+    const expectedBindings = new Map([
+      ['session.permission.respond', 'session.permission.respond'],
+      ['session.user_action.answer', 'session.user_action.answer'],
+      ['session.permission_mode.set', 'session.permission_mode.set'],
     ]);
 
     for (const [actionId, rpcMethod] of expectedBindings) {
@@ -591,6 +782,33 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('prompt_bundle.update').safety).toBe('danger');
     expect(getActionSpec('prompt_asset.export').safety).toBe('danger');
     expect(getActionSpec('prompt_registry.install').safety).toBe('danger');
+  });
+
+  it('binds daemon administrative RPC methods to ActionSpec rows', () => {
+    const expectedBindings = new Map([
+      ['daemon.promptAssets.discover', RPC_METHODS.DAEMON_PROMPT_ASSETS_DISCOVER],
+      ['daemon.promptAssets.delete', RPC_METHODS.DAEMON_PROMPT_ASSETS_DELETE],
+      ['daemon.promptRegistry.scanSource', RPC_METHODS.DAEMON_PROMPT_REGISTRY_SCAN_SOURCE],
+      ['daemon.promptRegistry.install', RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL],
+      ['daemon.filesystem.readFile', RPC_METHODS.READ_FILE],
+      ['daemon.filesystem.writeFile', RPC_METHODS.WRITE_FILE],
+      ['daemon.filesystem.listDirectory', RPC_METHODS.LIST_DIRECTORY],
+      ['daemon.filesystem.getDirectoryTree', RPC_METHODS.GET_DIRECTORY_TREE],
+      ['daemon.filesystem.listRoots', RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS],
+      ['daemon.filesystem.browseDirectory', RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY],
+      ['bugreport.collectDiagnostics', RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS],
+      ['bugreport.getLogTail', RPC_METHODS.BUGREPORT_GET_LOG_TAIL],
+      ['bugreport.uploadArtifact', RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT],
+    ]);
+
+    for (const [actionId, rpcMethod] of expectedBindings) {
+      const spec = getActionSpec(actionId as ActionId);
+
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.bindings?.rpcMethod).toBe(rpcMethod);
+      expect(spec.surfaces.mcp).toBe(false);
+      expect(spec.surfaces.sdk).toBe(false);
+    }
   });
 
   it('accepts installMode for prompt asset export and registry install actions', () => {
@@ -819,6 +1037,43 @@ describe('Action Spec Registry', () => {
       instructions: 'Do it.',
     });
     expect(parsed.permissionMode).toBe('workspace_write');
+  });
+
+  it('projects subagent registry actions through ActionSpec RPC bindings', () => {
+    const expected = [
+      'sessions.subagents.list',
+      'sessions.subagents.get',
+      'sessions.subagents.watch',
+      'sessions.subagents.upsert',
+      'sessions.subagents.updateStatus',
+      'sessions.subagents.complete',
+    ] as const;
+
+    for (const id of expected) {
+      const spec = getActionSpec(id);
+      expect(spec.bindings?.rpcMethod).toBe(id);
+      expect(spec.surfaces.rpc).toBe(true);
+      expect(spec.surfaces.sdk).toBe(false);
+    }
+
+    expect(getActionSpec('sessions.subagents.list').inputSchema.parse({
+      parentSessionId: 'session-1',
+      groupId: 'group-1',
+    })).toEqual({
+      parentSessionId: 'session-1',
+      groupId: 'group-1',
+    });
+    expect(getActionSpec('sessions.subagents.upsert').inputSchema.parse({
+      id: 'subagent-1',
+      parentSessionId: 'session-1',
+      origin: 'plugin',
+      kind: 'custom',
+    })).toMatchObject({
+      id: 'subagent-1',
+      parentSessionId: 'session-1',
+      origin: 'plugin',
+      kind: 'custom',
+    });
   });
 
   it('defaults voice agent start to long-lived streaming', () => {

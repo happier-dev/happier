@@ -6,6 +6,8 @@ export const ConnectedServiceIdSchema = z.enum([
     'anthropic',
     'claude-subscription',
     'gemini',
+    'github',
+    'bitbucket',
 ]);
 
 export type ConnectedServiceId = z.infer<typeof ConnectedServiceIdSchema>;
@@ -44,7 +46,9 @@ const OauthCredentialPayloadSchema = z.object({
 });
 
 const TokenCredentialPayloadSchema = z.object({
-    token: z.string().min(1),
+    // Trim before length-check so a whitespace-only token is rejected at the
+    // schema boundary, not just defensively downstream in materializers.
+    token: z.string().trim().min(1),
     providerAccountId: z.string().min(1).nullable(),
     providerEmail: z.string().min(1).nullable(),
     raw: z.unknown().nullable(),
@@ -67,7 +71,7 @@ export const ConnectedServiceCredentialRecordV1Schema = z.discriminatedUnion('ki
     }),
     ConnectedServiceCredentialBaseSchema.extend({
         kind: z.literal('token'),
-        oauth: z.null(),
+        oauth: z.null().optional(),
         token: TokenCredentialPayloadSchema,
     }),
 ]);

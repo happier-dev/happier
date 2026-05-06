@@ -9,6 +9,7 @@ import {
   getProviderDefinition,
   getProviderCliRuntimeSpec,
 } from '@happier-dev/agents';
+import { PluginManifestV2Schema } from '@happier-dev/protocol';
 
 const PLUGIN_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
@@ -16,12 +17,14 @@ type Mode = 'write' | 'check';
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
-type PluginManifestJson = Readonly<Record<string, unknown> & { id: string }>;
+type JsonObject = Readonly<{ [key: string]: JsonValue }>;
+type PluginManifestJson = JsonObject & Readonly<{ id: string }>;
 type BundledPluginPackage = Readonly<{
   pluginPackageId: string;
   pluginId: string;
   packageName: string;
   packageVersion: string;
+  manifest: PluginManifestJson;
   agentId?: string;
   agentDefinition?: JsonValue;
 }>;
@@ -131,6 +134,20 @@ function renderJsonLiteral(value: JsonValue, indent = 2): string {
   return JSON.stringify(deepSortJson(value), null, indent) ?? 'null';
 }
 
+function readManifestContributionArray(manifest: PluginManifestJson, family: string): readonly JsonValue[] {
+  const contributes = manifest.contributes;
+  if (!isRecord(contributes)) return [];
+  const value = contributes[family];
+  return Array.isArray(value) ? value : [];
+}
+
+function readRequiredContributionId(value: JsonValue, family: string, pluginPackageId: string): string {
+  if (!isRecord(value) || typeof value.id !== 'string' || value.id.trim().length === 0) {
+    throw new Error(`Invalid ${family} contribution in ${pluginPackageId}: expected object with non-empty string id`);
+  }
+  return value.id;
+}
+
 async function loadPluginAgentDefinition(repoRoot: string, pluginPackageId: string): Promise<JsonValue> {
   const definitionPath = resolve(repoRoot, 'packages/plugins', pluginPackageId, 'src/agent/definition.ts');
   if (!existsSync(definitionPath)) {
@@ -163,13 +180,15 @@ async function loadPluginManifest(repoRoot: string, pluginPackageId: string): Pr
     throw new Error(`Expected PLUGIN_MANIFEST export in ${manifestPath}`);
   }
 
-  const manifest = mod.PLUGIN_MANIFEST;
+  const manifest = JSON.parse(JSON.stringify(mod.PLUGIN_MANIFEST)) as unknown;
+  assertJsonSerializable(manifest);
 
-  if (!isRecord(manifest) || typeof manifest.id !== 'string') {
-    throw new Error(`Invalid PLUGIN_MANIFEST in ${manifestPath} (expected object with string id)`);
+  const parsed = PluginManifestV2Schema.safeParse(manifest);
+  if (!parsed.success) {
+    throw new Error(`Invalid PLUGIN_MANIFEST in ${manifestPath}: ${parsed.error.message}`);
   }
 
-  return manifest;
+  return parsed.data as PluginManifestJson;
 }
 
 function manifestDeclaresAgentRuntime(manifest: JsonValue): boolean {
@@ -229,6 +248,7 @@ async function readBundledPluginPackages(repoRoot: string): Promise<readonly Bun
       pluginId: manifest.id,
       packageName: expectedPackageName,
       packageVersion: pkgJson.version,
+      manifest,
       ...(agentDefinition ? { agentId: agentDefinition.id, agentDefinition } : {}),
     });
   }
@@ -289,6 +309,21 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
     pluginId: entry.pluginId,
     pluginPackageId: entry.pluginPackageId,
   }));
+  const metadataByPluginPackageId = new Map(metadata.map((entry) => [entry.pluginPackageId, entry] as const));
+  const scmHostingProviderContributions = params.pluginPackages.flatMap((entry) => (
+    readManifestContributionArray(entry.manifest, 'scmHostingProviders').map((definition) => {
+      const contributionId = readRequiredContributionId(definition, 'scmHostingProviders', entry.pluginPackageId);
+      const contributionMetadata = metadataByPluginPackageId.get(entry.pluginPackageId);
+      if (!contributionMetadata) {
+        throw new Error(`Missing bundled plugin metadata for ${entry.pluginPackageId}`);
+      }
+      return {
+        id: contributionId,
+        definition,
+        metadata: contributionMetadata,
+      };
+    })
+  ));
 
   const lines: string[] = [];
   lines.push('/* eslint-disable @typescript-eslint/naming-convention */');
@@ -316,6 +351,7 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   lines.push('  ResolvedBackendContribution,');
   lines.push('  ResolvedCatalogEntry,');
   lines.push('  ResolvedProviderContribution,');
+  lines.push('  ResolvedScmHostingProviderContribution,');
   lines.push('} from \'../types\';');
   lines.push('');
   lines.push('export type BundledFirstPartyPluginMetadata = Readonly<{');
@@ -423,6 +459,29 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   lines.push('    } satisfies ResolvedProviderContribution);');
   lines.push('  }),');
   lines.push(');');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS: readonly ResolvedScmHostingProviderContribution[] = Object.freeze([');
+  for (const contribution of scmHostingProviderContributions) {
+    lines.push('  Object.freeze({');
+    lines.push(`    id: ${JSON.stringify(contribution.id)},`);
+    lines.push('    provenance: \'first_party\',');
+    lines.push('    source: { kind: \'bundled\' },');
+    lines.push(`    pluginId: ${JSON.stringify(contribution.metadata.pluginId)},`);
+    lines.push(`    manifestPath: ${JSON.stringify(contribution.metadata.manifestPath)},`);
+    lines.push(`    manifestDigest: ${JSON.stringify(contribution.metadata.manifestDigest)},`);
+    lines.push(`    daemonEntryPath: ${JSON.stringify(contribution.metadata.packageName)},`);
+    lines.push(`    sourceSpec: ${renderJsonLiteral({
+      kind: 'package',
+      locator: contribution.metadata.packageName,
+      trustPolicy: 'local_trusted',
+      installPolicy: 'link',
+      resolvedVersion: contribution.metadata.packageVersion,
+      resolvedDigest: contribution.metadata.manifestDigest,
+    })},`);
+    lines.push(`    definition: Object.freeze(${renderJsonLiteral(contribution.definition)}),`);
+    lines.push('  } satisfies ResolvedScmHostingProviderContribution),');
+  }
+  lines.push(']);');
   lines.push('');
   lines.push('const backendCatalogDefinitionsById = new Map<AgentId, BuiltInBackendCatalogDefinition>(');
   lines.push('  getAllBackendDefinitions().map((definition) => [definition.id, definition] as const),');

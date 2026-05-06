@@ -17,9 +17,15 @@ import type { PromptRegistryConfiguredSourceV1 } from '../promptLibrary/promptRe
 import { BackendTargetKeySchema, buildBackendTargetKey, parseBackendTargetKey } from '../backendTargets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.js';
 import type { SessionRollbackTarget } from '../sessionRollback.js';
+import type {
+  SubagentRefInputV1,
+  SubagentStatusV1,
+  SubagentLifecycleDetailV1,
+} from '../sessions/subagents/subagentRefV1.js';
 import {
   type SessionHandoffAbortRequest,
   type SessionHandoffCommitRequest,
+  type SessionHandoffPrepareTargetResultGetRequest,
   type SessionHandoffPrepareTargetRequest,
   type SessionHandoffStatusGetRequest,
   SessionHandoffWorkspaceTransferSchema,
@@ -68,12 +74,40 @@ export type ActionExecutorContext = Readonly<{
   bypassApprovals?: boolean;
 }>;
 
+export type ApprovalQueueListItemV1 = Readonly<{
+  artifactId: string;
+  status: ApprovalRequestV1['status'];
+  actionId: ActionId;
+  summary: string;
+  sessionId?: string;
+  serverId?: string;
+  updatedAtMs: number;
+}>;
+
+export type ApprovalQueueQueryPlanV1 = Readonly<{
+  kind: 'approval_artifact_header_scan' | 'bounded_approval_artifact_header_scan' | 'approval_artifact_id_lookup';
+  backingStore?: 'ArtifactStore';
+  boundedBy?: string;
+  serverLimit?: number;
+  hydratedTranscripts: false;
+}>;
+
+export type ApprovalQueueListResultV1 = Readonly<{
+  items: readonly ApprovalQueueListItemV1[];
+  queryPlan: ApprovalQueueQueryPlanV1;
+}>;
+
 export type ActionExecutorDeps = Readonly<{
   // Execution runs (session-scoped RPC)
   executionRunStart: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunList: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunGet: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunSend: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
+  executionRunEnsure?: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
+  executionRunEnsureOrStart?: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
+  executionRunStreamStart?: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
+  executionRunStreamRead?: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
+  executionRunStreamCancel?: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunStop: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunAction: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
   executionRunWait: (sessionId: string, request: any, opts?: Readonly<{ serverId?: string | null }>) => Promise<unknown>;
@@ -91,6 +125,7 @@ export type ActionExecutorDeps = Readonly<{
     serverId?: string | null;
   }>) => Promise<unknown>;
   sessionHandoffPrepareTarget?: (args: SessionHandoffPrepareTargetRequest) => Promise<unknown>;
+  sessionHandoffPrepareTargetResultGet?: (args: SessionHandoffPrepareTargetResultGetRequest) => Promise<unknown>;
   sessionHandoffCommit?: (args: SessionHandoffCommitRequest) => Promise<unknown>;
   sessionHandoffAbort?: (args: SessionHandoffAbortRequest) => Promise<unknown>;
   sessionHandoffStatusGet?: (args: SessionHandoffStatusGetRequest) => Promise<unknown>;
@@ -145,6 +180,9 @@ export type ActionExecutorDeps = Readonly<{
     sessionId: string;
     decision: 'allow' | 'deny';
     requestId?: string | null;
+    allowedTools?: readonly string[];
+    updatedPermissions?: unknown;
+    execPolicyAmendment?: unknown;
     serverId?: string | null;
   }>) => Promise<unknown>;
   sessionUserActionAnswer?: (args: Readonly<{
@@ -154,6 +192,8 @@ export type ActionExecutorDeps = Readonly<{
     decision?: 'approve' | 'reject' | 'request_changes';
     reason?: string;
     updatedPermissions?: unknown;
+    allowedTools?: readonly string[];
+    execPolicyAmendment?: unknown;
     serverId?: string | null;
   }>) => Promise<unknown>;
   sessionModeSet: (args: Readonly<{ sessionId: string; modeId: string }>) => Promise<unknown>;
@@ -198,9 +238,34 @@ export type ActionExecutorDeps = Readonly<{
   daemonMemoryEnsureUpToDate: (args: Readonly<{ machineId: string; sessionId?: string; serverId?: string | null }>) => Promise<unknown>;
 
   // Approval queue (optional)
+  approvalsList?: (args: Readonly<{
+    status?: ApprovalRequestV1['status'] | null;
+    limit?: number | null;
+    serverId?: string | null;
+  }>) => Promise<ApprovalQueueListResultV1>;
   approvalsCreate?: (args: Readonly<{ request: ApprovalRequestV1; serverId?: string | null }>) => Promise<{ artifactId: string }>;
   approvalsGet?: (args: Readonly<{ artifactId: string; serverId?: string | null }>) => Promise<ApprovalRequestV1 | null>;
   approvalsUpdate?: (args: Readonly<{ artifactId: string; request: ApprovalRequestV1; serverId?: string | null }>) => Promise<{ ok: true } | { ok: false; errorCode: string; error: string }>;
+
+  // Provider-neutral session subagent projections (optional until A.12-subagents host owner is wired).
+  subagentsList?: (args: Readonly<{ parentSessionId?: string; groupId?: string | null; limit?: number }>) => Promise<unknown>;
+  subagentsGet?: (args: Readonly<{ id: string; parentSessionId?: string }>) => Promise<unknown>;
+  subagentsWatch?: (args: Readonly<{ parentSessionId?: string; id?: string }>) => Promise<unknown>; // Returns the initial snapshot from the bounded host watcher path.
+  subagentsUpsert?: (args: SubagentRefInputV1) => Promise<unknown>;
+  subagentsUpdateStatus?: (args: Readonly<{
+    id: string;
+    parentSessionId?: string;
+    status: SubagentStatusV1;
+    lifecycleDetail?: SubagentLifecycleDetailV1;
+    completedAt?: number;
+  }>) => Promise<unknown>;
+  subagentsComplete?: (args: Readonly<{
+    id: string;
+    parentSessionId?: string;
+    status?: Extract<SubagentStatusV1, 'completed' | 'failed' | 'aborted'>;
+    lifecycleDetail?: SubagentLifecycleDetailV1;
+    completedAt?: number;
+  }>) => Promise<unknown>;
 
   promptDocUpdate?: (args: Readonly<{
     artifactId: string;
@@ -583,6 +648,29 @@ function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCod
   return { errorCode: 'action_failed', error: message || 'action_failed' };
 }
 
+function readActionFailureEnvelope(result: unknown): Extract<ActionExecuteResult, Readonly<{ ok: false }>> | null {
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+  const record = result as Readonly<Record<string, unknown>>;
+  if (record.ok !== false || typeof record.errorCode !== 'string') {
+    return null;
+  }
+  const errorCode = record.errorCode.trim();
+  if (!errorCode) {
+    return null;
+  }
+  const error = typeof record.error === 'string' && record.error.trim().length > 0
+    ? record.error
+    : errorCode;
+  return { ok: false, errorCode, error };
+}
+
+function completeSubagentActionResult(result: unknown): ActionExecuteResult {
+  const failure = readActionFailureEnvelope(result);
+  return failure ?? { ok: true, result };
+}
+
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }> {
@@ -596,7 +684,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
     const spec = getActionSpec(actionId);
     const approvalRequired = ctx.bypassApprovals ? false : deps.isActionApprovalRequired?.(actionId, ctx) === true;
-    const isApprovalAction = actionId === 'approval.request.create' || actionId === 'approval.request.decide';
+    const isApprovalAction = actionId === 'approval.request.list'
+      || actionId === 'approval.request.get'
+      || actionId === 'approval.request.create'
+      || actionId === 'approval.request.decide';
     if (!isActionEnabled(spec, ctx)) {
       return { ok: false, errorCode: 'action_disabled', error: 'action_disabled' };
     }
@@ -812,6 +903,81 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           };
         }
 
+        if (actionId === 'sessions.subagents.list') {
+          if (!deps.subagentsList) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.subagents.list' };
+          }
+          const parentSessionId = normalizeId((parsed.data as any).parentSessionId) || normalizeId(ctx.defaultSessionId);
+          const res = await deps.subagentsList({
+            ...(parentSessionId ? { parentSessionId } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'groupId')
+              ? { groupId: normalizeId((parsed.data as any).groupId) || null }
+              : {}),
+            ...(typeof (parsed.data as any).limit === 'number' ? { limit: (parsed.data as any).limit } : {}),
+          });
+          return completeSubagentActionResult(res);
+        }
+
+        if (actionId === 'sessions.subagents.get') {
+          if (!deps.subagentsGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.subagents.get' };
+          }
+          const parentSessionId = normalizeId((parsed.data as any).parentSessionId) || normalizeId(ctx.defaultSessionId);
+          const res = await deps.subagentsGet({
+            id: String((parsed.data as any).id),
+            ...(parentSessionId ? { parentSessionId } : {}),
+          });
+          return completeSubagentActionResult(res);
+        }
+
+        if (actionId === 'sessions.subagents.watch') {
+          if (!deps.subagentsWatch) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.subagents.watch' };
+          }
+          const parentSessionId = normalizeId((parsed.data as any).parentSessionId) || normalizeId(ctx.defaultSessionId);
+          const res = await deps.subagentsWatch({
+            ...(parentSessionId ? { parentSessionId } : {}),
+            ...(normalizeId((parsed.data as any).id) ? { id: normalizeId((parsed.data as any).id) } : {}),
+          });
+          return completeSubagentActionResult(res);
+        }
+
+        if (actionId === 'sessions.subagents.upsert') {
+          if (!deps.subagentsUpsert) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.subagents.upsert' };
+          }
+          const res = await deps.subagentsUpsert(parsed.data as SubagentRefInputV1);
+          return completeSubagentActionResult(res);
+        }
+
+        if (actionId === 'sessions.subagents.updateStatus') {
+          if (!deps.subagentsUpdateStatus) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.subagents.updateStatus' };
+          }
+          const res = await deps.subagentsUpdateStatus(parsed.data as {
+            id: string;
+            parentSessionId: string;
+            status: SubagentStatusV1;
+            lifecycleDetail?: SubagentLifecycleDetailV1;
+            completedAt?: number;
+          });
+          return completeSubagentActionResult(res);
+        }
+
+        if (actionId === 'sessions.subagents.complete') {
+          if (!deps.subagentsComplete) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.subagents.complete' };
+          }
+          const res = await deps.subagentsComplete(parsed.data as {
+            id: string;
+            parentSessionId: string;
+            status?: Extract<SubagentStatusV1, 'completed' | 'failed' | 'aborted'>;
+            lifecycleDetail?: SubagentLifecycleDetailV1;
+            completedAt?: number;
+          });
+          return completeSubagentActionResult(res);
+        }
+
         if (actionId === 'execution.run.start') {
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
@@ -853,6 +1019,86 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               ? (parsed.data as any).delivery
               : 'steer_if_supported',
             ...((parsed.data as any).resume === true ? { resume: true } : {}),
+          }, opts);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'execution.run.ensure') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.executionRunEnsure) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.ensure' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const opts = serverId ? { serverId } : undefined;
+          const res = await deps.executionRunEnsure(sessionId, {
+            runId: (parsed.data as any).runId,
+            ...((parsed.data as any).resume === true ? { resume: true } : {}),
+          }, opts);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'execution.run.ensure_or_start') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.executionRunEnsureOrStart) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.ensure_or_start' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const opts = serverId ? { serverId } : undefined;
+          const res = await deps.executionRunEnsureOrStart(sessionId, {
+            ...((parsed.data as any).runId ? { runId: (parsed.data as any).runId } : {}),
+            ...((parsed.data as any).start ? { start: (parsed.data as any).start } : {}),
+            ...((parsed.data as any).resume === true ? { resume: true } : {}),
+          }, opts);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'execution.run.stream.start') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.executionRunStreamStart) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.stream.start' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const opts = serverId ? { serverId } : undefined;
+          const res = await deps.executionRunStreamStart(sessionId, {
+            runId: (parsed.data as any).runId,
+            message: (parsed.data as any).message,
+            ...((parsed.data as any).displayMessage ? { displayMessage: (parsed.data as any).displayMessage } : {}),
+            ...((parsed.data as any).resume === true ? { resume: true } : {}),
+          }, opts);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'execution.run.stream.read') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.executionRunStreamRead) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.stream.read' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const opts = serverId ? { serverId } : undefined;
+          const res = await deps.executionRunStreamRead(sessionId, {
+            runId: (parsed.data as any).runId,
+            streamId: (parsed.data as any).streamId,
+            ...(typeof (parsed.data as any).cursor === 'number' ? { cursor: (parsed.data as any).cursor } : {}),
+            ...(typeof (parsed.data as any).maxEvents === 'number' ? { maxEvents: (parsed.data as any).maxEvents } : {}),
+          }, opts);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'execution.run.stream.cancel') {
+          const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+          if (!deps.executionRunStreamCancel) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.stream.cancel' };
+          }
+          const serverId = resolveServerIdForSession(deps, ctx, sessionId);
+          const opts = serverId ? { serverId } : undefined;
+          const res = await deps.executionRunStreamCancel(sessionId, {
+            runId: (parsed.data as any).runId,
+            streamId: (parsed.data as any).streamId,
           }, opts);
           return { ok: true, result: res };
         }
@@ -957,6 +1203,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.prepare_target' };
           }
           const res = await deps.sessionHandoffPrepareTarget(parsed.data as SessionHandoffPrepareTargetRequest);
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.handoff.prepare_target_result.get') {
+          if (!deps.sessionHandoffPrepareTargetResultGet) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.handoff.prepare_target_result.get' };
+          }
+          const res = await deps.sessionHandoffPrepareTargetResultGet(parsed.data as SessionHandoffPrepareTargetResultGetRequest);
           return { ok: true, result: res };
         }
 
@@ -1231,6 +1485,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             sessionId,
             decision: (parsed.data as any).decision,
             requestId: Object.prototype.hasOwnProperty.call(parsed.data, 'requestId') ? (((parsed.data as any).requestId ?? null) as any) : null,
+            ...(Array.isArray((parsed.data as any).allowedTools) ? { allowedTools: (parsed.data as any).allowedTools } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'updatedPermissions') ? { updatedPermissions: (parsed.data as any).updatedPermissions } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'execPolicyAmendment') ? { execPolicyAmendment: (parsed.data as any).execPolicyAmendment } : {}),
             ...(serverId ? { serverId } : {}),
           });
           return { ok: true, result: res };
@@ -1253,6 +1510,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(typeof (parsed.data as any).decision === 'string' ? { decision: (parsed.data as any).decision } : {}),
             ...(typeof (parsed.data as any).reason === 'string' ? { reason: (parsed.data as any).reason } : {}),
             ...(Object.prototype.hasOwnProperty.call(parsed.data, 'updatedPermissions') ? { updatedPermissions: (parsed.data as any).updatedPermissions } : {}),
+            ...(Array.isArray((parsed.data as any).allowedTools) ? { allowedTools: (parsed.data as any).allowedTools } : {}),
+            ...(Object.prototype.hasOwnProperty.call(parsed.data, 'execPolicyAmendment') ? { execPolicyAmendment: (parsed.data as any).execPolicyAmendment } : {}),
             ...(serverId ? { serverId } : {}),
           });
           return { ok: true, result: res };
@@ -1516,6 +1775,45 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: true, result: res };
         }
 
+      if (actionId === 'approval.request.list') {
+        if (!deps.approvalsList) {
+          return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
+        }
+
+        const limitRaw = (parsed.data as any).limit;
+        const listed = await deps.approvalsList({
+          status: typeof (parsed.data as any).status === 'string' ? (parsed.data as any).status : null,
+          limit: typeof limitRaw === 'number' ? limitRaw : null,
+          serverId: normalizeId(ctx.serverId) || null,
+        });
+        return { ok: true, result: listed };
+      }
+
+      if (actionId === 'approval.request.get') {
+        if (!deps.approvalsGet) {
+          return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
+        }
+
+        const artifactId = normalizeId((parsed.data as any).artifactId);
+        if (!artifactId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+
+        const request = await deps.approvalsGet({ artifactId, serverId: normalizeId(ctx.serverId) || null });
+        if (!request) return { ok: false, errorCode: 'approval_not_found', error: 'approval_not_found' };
+        return {
+          ok: true,
+          result: {
+            artifactId,
+            request,
+            queryPlan: {
+              kind: 'approval_artifact_id_lookup',
+              backingStore: 'ArtifactStore',
+              boundedBy: 'approval artifact id',
+              hydratedTranscripts: false,
+            },
+          },
+        };
+      }
+
       if (actionId === 'approval.request.create') {
         if (!deps.approvalsCreate) {
           return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:approvals' };
@@ -1523,7 +1821,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         const now = Date.now();
         const targetActionId = (parsed.data as any).actionId as ActionId;
-        if (targetActionId === 'approval.request.create' || targetActionId === 'approval.request.decide') {
+        if (targetActionId === 'approval.request.list'
+          || targetActionId === 'approval.request.get'
+          || targetActionId === 'approval.request.create'
+          || targetActionId === 'approval.request.decide') {
           return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
         }
 

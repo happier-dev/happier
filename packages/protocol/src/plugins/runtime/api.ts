@@ -10,6 +10,8 @@ export const PluginRuntimeCapabilityFamilyV1Schema = z.enum([
   'resources',
   'uiDescriptors',
   'settings',
+  'executionRunProfiles',
+  'mcp',
   'notifications',
   'scmHostingProviders',
   'lifecycle',

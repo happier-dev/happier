@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-
-import { getNativeReviewEngine, listNativeReviewEngines } from './reviewEngines.js';
+import { readFileSync } from 'node:fs';
 
 describe('reviewEngines', () => {
-  it('exposes CodeRabbit as a native review engine', () => {
-    const all = listNativeReviewEngines();
-    expect(all.map((e) => e.id)).toContain('coderabbit');
-    expect(getNativeReviewEngine('coderabbit')?.title).toBe('CodeRabbit');
+  it('does not expose a host-native review engine fallback API', () => {
+    const source = readFileSync(new URL('./reviewEngines.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toContain(['Native', 'ReviewEngine'].join(''));
+    expect(source).not.toContain(['list', 'Native', 'ReviewEngines'].join(''));
+    expect(source).not.toContain(['get', 'Native', 'ReviewEngine'].join(''));
   });
 });
-

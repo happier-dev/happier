@@ -19,18 +19,18 @@ function readProtocolSchema<TValue = unknown>(name: string): ZodLikeSchema<TValu
 describe('SCM pull-request protocol contracts', () => {
   it('accepts provider taxonomy and PR summaries without provider behavior', () => {
     const provider = readProtocolSchema<protocol.ScmHostingProviderRef>('ScmHostingProviderRefSchema').parse({
-      id: 'github:happier-dev/happier',
-      kind: 'github',
-      displayName: 'GitHub',
-      baseUrl: 'https://github.com',
-      nameWithOwner: 'happier-dev/happier',
+      id: 'azure-devops:acme/project/happier',
+      kind: 'azure-devops',
+      displayName: 'Azure DevOps',
+      baseUrl: 'https://dev.azure.com/acme',
+      nameWithOwner: 'acme/project/happier',
       remoteName: 'origin',
       futureProviderMetadata: true,
     });
 
     expect(provider).toMatchObject({
-      kind: 'github',
-      baseUrl: 'https://github.com',
+      kind: 'azure-devops',
+      baseUrl: 'https://dev.azure.com/acme',
       urlSafety: {
         allowedSchemes: ['https:'],
       },
@@ -41,7 +41,7 @@ describe('SCM pull-request protocol contracts', () => {
       number: 42,
       providerNativeId: '42',
       title: 'Add PR support',
-      url: 'https://github.com/happier-dev/happier/pull/42',
+      url: 'https://dev.azure.com/acme/project/_git/happier/pullrequest/42',
       baseBranch: 'main',
       headBranch: 'feature/scm-pr',
       headSha: 'abc123',
@@ -58,7 +58,7 @@ describe('SCM pull-request protocol contracts', () => {
     });
 
     expect(summary.state).toBe('draft');
-    expect(summary.provider.kind).toBe('github');
+    expect(summary.provider.kind).toBe('azure-devops');
   });
 
   it('accepts numeric URL and head-branch PR references', () => {
@@ -93,6 +93,24 @@ describe('SCM pull-request protocol contracts', () => {
       purpose: 'pullRequest',
       url: 'https://github.com/happier-dev/happier/pull/42',
       allowedBaseUrl: 'https://github.com',
+      // urlSafety is materialized from its `.default({allowedSchemes:['https:']})` per FD-0052 Rule 13:
+      // every openUrl follow-up must carry the allowed-schemes contract so the UI can validate
+      // before opening, even when the server omits the field for backward compat.
+      urlSafety: { allowedSchemes: ['https:'] },
+    });
+    // Caller-supplied urlSafety is preserved verbatim (e.g. a provider that allows http+https).
+    expect(schema.parse({
+      kind: 'openUrl',
+      purpose: 'pullRequest',
+      url: 'https://github.com/happier-dev/happier/pull/42',
+      allowedBaseUrl: 'https://github.com',
+      urlSafety: { allowedSchemes: ['https:', 'http:'] },
+    })).toEqual({
+      kind: 'openUrl',
+      purpose: 'pullRequest',
+      url: 'https://github.com/happier-dev/happier/pull/42',
+      allowedBaseUrl: 'https://github.com',
+      urlSafety: { allowedSchemes: ['https:', 'http:'] },
     });
     expect(schema.parse({ kind: 'none' })).toEqual({ kind: 'none' });
     expect(schema.safeParse({

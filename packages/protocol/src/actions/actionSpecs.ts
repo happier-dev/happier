@@ -5,9 +5,21 @@ import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlace
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { ActionInputPredicateSchema, type ActionInputPredicate } from './actionInputPredicates.js';
 import { MemorySearchQueryV1Schema } from '../memory/memorySearch.js';
-import { ApprovalRequestCreatedBySchema } from '../approvals/approvalRequestV1.js';
-import { PromptRegistryConfiguredSourceV1Schema } from '../promptLibrary/promptRegistriesV1.js';
-import { PromptAssetInstallModeV1Schema, PromptAssetScopeV1Schema } from '../promptLibrary/promptAssetsV1.js';
+import { ApprovalRequestCreatedBySchema, ApprovalRequestStatusSchema } from '../approvals/approvalRequestV1.js';
+import {
+  PromptRegistryConfiguredSourceV1Schema,
+  PromptRegistryInstallRequestV1Schema,
+  PromptRegistryScanSourceRequestV1Schema,
+} from '../promptLibrary/promptRegistriesV1.js';
+import {
+  PromptAssetDeleteRequestSchema,
+  PromptAssetDiscoverRequestSchema,
+  PromptAssetInstallModeV1Schema,
+  PromptAssetScopeV1Schema,
+} from '../promptLibrary/promptAssetsV1.js';
+import {
+  DaemonFilesystemListDirectoryRequestSchema,
+} from '../machineFileBrowser.js';
 import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.js';
 import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
@@ -29,7 +41,7 @@ import {
   DirectTranscriptPageResponseSchema,
   DirectTranscriptReadAfterRequestSchema,
   DirectTranscriptReadAfterResponseSchema,
-} from '../directSessions/daemonRpcV1.js';
+} from '../sessions/external/daemonRpcV1.js';
 import {
   ScmPullRequestCheckoutRequestSchema,
   ScmPullRequestCheckoutResponseSchema,
@@ -57,19 +69,30 @@ import {
   ScmRepositoryRemoveIndexLockResponseSchema,
 } from '../scmRepositoryProvisioning.js';
 import {
+  ScmDiffSummaryGenerateInputSchema,
+  ScmDiffSummaryGenerateOutputSchema,
+} from '../scmDiffSummary.js';
+import {
   ExternalSessionTakeoverInputV1Schema,
   ExternalSessionTakeoverResultV1Schema,
 } from '../sessions/external/takeoverV1.js';
+import {
+  SubagentLifecycleDetailV1Schema,
+  SubagentRefInputV1Schema,
+  SubagentRefV1Schema,
+  SubagentStatusV1Schema,
+} from '../sessions/subagents/subagentRefV1.js';
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
 import {
   SessionHandoffAbortRequestSchema,
   SessionHandoffCommitRequestSchema,
+  SessionHandoffPrepareTargetResultGetRequestSchema,
   SessionHandoffPrepareTargetRequestSchema,
   SessionHandoffStatusGetRequestSchema,
   SessionHandoffWorkspaceTransferSchema,
 } from '../sessionControl/handoff/handoffSchemas.js';
 import { SessionContinueWithReplayRpcParamsSchema } from '../sessionContinueWithReplay.js';
-import { SESSION_RPC_METHODS } from '../rpc.js';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 
 const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
@@ -289,7 +312,44 @@ export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
   placements: readonly ActionUiPlacement[];
 }>;
 
+const DAEMON_ADMIN_RPC_SURFACES = Object.freeze({
+  ui: false,
+  voice: false,
+  session_agent: false,
+  mcp: false,
+  cli: false,
+  rpc: true,
+  sdk: false,
+} satisfies ActionSurfaces);
+
+const DAEMON_ADMIN_INPUT_HINTS = Object.freeze({
+  fields: [],
+} satisfies ActionInputHints);
+
 const EmptyObjectSchema = z.object({}).strict();
+const PassthroughEmptyObjectSchema = z.object({}).passthrough();
+const DaemonFilesystemReadFileInputSchema = z.object({
+  path: z.string().min(1),
+}).passthrough();
+const DaemonFilesystemWriteFileInputSchema = z.object({
+  path: z.string().min(1),
+  content: z.string(),
+  expectedHash: z.string().nullable().optional(),
+}).passthrough();
+const DaemonFilesystemListDirectoryInputSchema = z.object({
+  path: z.string().min(1),
+}).passthrough();
+const DaemonFilesystemGetDirectoryTreeInputSchema = z.object({
+  path: z.string().min(1),
+  maxDepth: z.number().int().min(0),
+}).passthrough();
+const BugReportGetLogTailInputSchema = z.object({
+  path: z.string().min(1).optional(),
+  maxBytes: z.number().int().min(1024).max(1_000_000).optional(),
+}).passthrough();
+const BugReportUploadArtifactInputSchema = z.object({
+  uploadUrl: z.string().optional(),
+}).passthrough();
 const OptionalSessionIdInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
 }).passthrough();
@@ -378,6 +438,38 @@ const ExecutionRunGetInputSchema = ExecutionRunIdInputSchema.extend({
 const ExecutionRunSendInputSchema = ExecutionRunIdInputSchema.extend({
   message: z.string().min(1),
   resume: z.boolean().optional(),
+}).passthrough();
+
+const ExecutionRunEnsureInputSchema = ExecutionRunIdInputSchema.extend({
+  resume: z.boolean().optional(),
+}).passthrough();
+
+const ExecutionRunEnsureOrStartInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  runId: z.string().min(1).nullable().optional(),
+  start: ExecutionRunStartRequestSchema.optional(),
+  resume: z.boolean().optional(),
+}).passthrough().superRefine((value, ctx) => {
+  const runId = typeof value.runId === 'string' ? value.runId.trim() : '';
+  if (!runId && !value.start) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'start is required when runId is missing' });
+  }
+});
+
+const ExecutionRunStreamStartInputSchema = ExecutionRunIdInputSchema.extend({
+  message: z.string().min(1),
+  displayMessage: z.string().min(1).optional(),
+  resume: z.boolean().optional(),
+}).passthrough();
+
+const ExecutionRunStreamReadInputSchema = ExecutionRunIdInputSchema.extend({
+  streamId: z.string().min(1),
+  cursor: z.number().int().min(0),
+  maxEvents: z.number().int().min(1).max(256).optional(),
+}).passthrough();
+
+const ExecutionRunStreamCancelInputSchema = ExecutionRunIdInputSchema.extend({
+  streamId: z.string().min(1),
 }).passthrough();
 
 const ExecutionRunActionInputSchema = ExecutionRunIdInputSchema.extend({
@@ -618,6 +710,118 @@ const SessionRecentMessagesInputSchema = z.object({
   maxCharsPerMessage: z.number().int().min(0).max(50_000).nullable().optional(),
 }).passthrough();
 
+const SessionLogTailInputSchema = z.object({
+  path: z.string().min(1),
+  maxBytes: z.number().int().min(1).max(1_000_000).optional(),
+  offset: z.number().int().min(0).optional(),
+}).passthrough();
+
+const TranscriptPageInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  cursor: z.string().min(1).nullable().optional(),
+  maxBytes: z.number().int().min(1).max(1_000_000).optional(),
+  maxItems: z.number().int().min(1).max(500).optional(),
+}).passthrough();
+
+const TranscriptReadAfterInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  cursor: z.string().min(1),
+  maxBytes: z.number().int().min(1).max(1_000_000).optional(),
+  maxItems: z.number().int().min(1).max(500).optional(),
+}).passthrough();
+
+const TranscriptFollowInputSchema = TranscriptReadAfterInputSchema.extend({
+  leaseId: z.string().min(1).optional(),
+  idleTtlMs: z.number().int().min(1).max(3_600_000).optional(),
+}).passthrough();
+
+const TranscriptImportInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  items: z.array(z.unknown()).min(1).max(500),
+  maxItems: z.number().int().min(1).max(500).optional(),
+}).passthrough();
+
+const TranscriptSearchInputSchema = z.object({
+  sessionId: z.string().min(1).optional(),
+  query: z.string().trim().min(1),
+  cursor: z.string().min(1).optional(),
+  maxBytes: z.number().int().min(1).max(1_000_000).optional(),
+  maxItems: z.number().int().min(1).max(100).optional(),
+  maxReads: z.number().int().min(1).max(50).optional(),
+}).passthrough();
+
+const TranscriptPageOutputSchema = z.object({
+  ok: z.boolean().optional(),
+  items: z.array(z.unknown()),
+  nextCursor: z.string().nullable(),
+  hasMore: z.boolean().optional(),
+  tailCursor: z.string().nullable().optional(),
+  truncated: z.boolean(),
+}).passthrough();
+
+const TranscriptReadAfterOutputSchema = z.object({
+  ok: z.boolean().optional(),
+  items: z.array(z.unknown()),
+  nextCursor: z.string().nullable(),
+  truncated: z.boolean(),
+}).passthrough();
+
+const TranscriptFollowOutputSchema = TranscriptReadAfterOutputSchema.extend({
+  leaseId: z.string().min(1).optional(),
+}).passthrough();
+
+const TranscriptImportOutputSchema = z.object({
+  ok: z.boolean(),
+  imported: z.number().int().min(0).optional(),
+  cursor: z.string().nullable().optional(),
+}).passthrough();
+
+const SessionLogTailOutputSchema = z.object({
+  success: z.boolean().optional(),
+  ok: z.boolean().optional(),
+  path: z.string().optional(),
+  tail: z.string().optional(),
+  truncated: z.boolean().optional(),
+  error: z.string().optional(),
+}).passthrough();
+
+const SubagentListInputSchema = z.object({
+  parentSessionId: z.string().trim().min(1).optional(),
+  groupId: z.string().trim().min(1).nullable().optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+}).passthrough();
+
+const SubagentGetInputSchema = z.object({
+  id: z.string().trim().min(1),
+  parentSessionId: z.string().trim().min(1).optional(),
+}).passthrough();
+
+const SubagentWatchInputSchema = z.object({
+  parentSessionId: z.string().trim().min(1).optional(),
+  id: z.string().trim().min(1).optional(),
+}).passthrough();
+
+const SubagentStatusUpdateInputSchema = z.object({
+  id: z.string().trim().min(1),
+  parentSessionId: z.string().trim().min(1),
+  status: SubagentStatusV1Schema,
+  lifecycleDetail: SubagentLifecycleDetailV1Schema.optional(),
+  completedAt: z.number().int().nonnegative().optional(),
+}).passthrough();
+
+const SubagentCompleteInputSchema = z.object({
+  id: z.string().trim().min(1),
+  parentSessionId: z.string().trim().min(1),
+  status: z.enum(['completed', 'failed', 'aborted']).optional(),
+  lifecycleDetail: SubagentLifecycleDetailV1Schema.optional(),
+  completedAt: z.number().int().nonnegative().optional(),
+}).passthrough();
+
+const SubagentWatchSnapshotOutputSchema = z.object({
+  kind: z.literal('snapshot'),
+  subagents: z.array(SubagentRefV1Schema),
+}).passthrough();
+
 const MemorySearchInputSchema = z.object({
   machineId: z.string().min(1),
   query: MemorySearchQueryV1Schema,
@@ -645,6 +849,15 @@ const ApprovalRequestCreateInputSchema = z.object({
   summary: z.string().min(1),
   createdBy: ApprovalRequestCreatedBySchema,
   preview: z.unknown().optional(),
+}).passthrough();
+
+const ApprovalRequestListInputSchema = z.object({
+  status: ApprovalRequestStatusSchema.optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+}).passthrough();
+
+const ApprovalRequestGetInputSchema = z.object({
+  artifactId: z.string().min(1),
 }).passthrough();
 
 const ApprovalRequestDecideInputSchema = z.object({
@@ -848,7 +1061,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
         {
           path: 'base.kind',
           title: 'Base selection',
-          description: 'How to define the review base for tools that need it (e.g. CodeRabbit).',
+          description: 'How to define the review base for engines that need it.',
           widget: 'select',
           required: true,
           options: [
@@ -872,14 +1085,6 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
           widget: 'text',
           visibleWhen: { op: 'eq', path: 'base.kind', value: 'commit' },
           requiredWhen: { op: 'eq', path: 'base.kind', value: 'commit' },
-        },
-        {
-          path: 'engines.coderabbit.configFiles',
-          title: 'CodeRabbit config files',
-          description: 'Optional extra config file(s) to pass to CodeRabbit via --config.',
-          widget: 'text_list',
-          listSeparator: 'comma',
-          visibleWhen: { op: 'includes', path: 'engineIds', value: 'coderabbit' },
         },
       ],
     },
@@ -1030,6 +1235,178 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     inputSchema: VoiceAgentStartInputSchema,
   },
   {
+    id: 'sessions.subagents.list',
+    title: 'List session subagents',
+    description: 'Return bounded provider-neutral subagent projections for a session.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SESSIONS_SUBAGENTS_LIST },
+    sideEffectClass: 'read',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    outputSchema: z.array(SubagentRefV1Schema),
+    inputSchema: SubagentListInputSchema,
+    inputHints: {
+      title: 'List session subagents',
+      description: 'Reads a bounded provider-neutral subagent projection snapshot.',
+      fields: [
+        { path: 'parentSessionId', title: 'Parent session id', widget: 'text' },
+        { path: 'groupId', title: 'Group id', widget: 'text' },
+        { path: 'limit', title: 'Limit', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.subagents.get',
+    title: 'Get session subagent',
+    description: 'Return one provider-neutral subagent projection by id.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SESSIONS_SUBAGENTS_GET },
+    sideEffectClass: 'read',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    outputSchema: SubagentRefV1Schema.nullable(),
+    inputSchema: SubagentGetInputSchema,
+    inputHints: {
+      title: 'Get session subagent',
+      fields: [
+        { path: 'id', title: 'Subagent id', widget: 'text', required: true },
+        { path: 'parentSessionId', title: 'Parent session id', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.subagents.watch',
+    title: 'Watch session subagents',
+    description: 'Register the bounded host subagent watcher path and return its initial typed projection snapshot.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SESSIONS_SUBAGENTS_WATCH },
+    sideEffectClass: 'read',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    outputSchema: SubagentWatchSnapshotOutputSchema,
+    inputSchema: SubagentWatchInputSchema,
+    inputHints: {
+      title: 'Watch session subagents',
+      description: 'Uses the bounded host subagent watcher path and returns the initial snapshot for the RPC caller.',
+      fields: [
+        { path: 'parentSessionId', title: 'Parent session id', widget: 'text' },
+        { path: 'id', title: 'Subagent id', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.subagents.upsert',
+    title: 'Upsert session subagent',
+    description: 'Create or replace a provider-neutral subagent projection with owner-authority enforcement.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SESSIONS_SUBAGENTS_UPSERT },
+    sideEffectClass: 'write',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    outputSchema: SubagentRefV1Schema,
+    inputSchema: SubagentRefInputV1Schema,
+    inputHints: {
+      title: 'Upsert session subagent',
+      fields: [
+        { path: 'id', title: 'Subagent id', widget: 'text', required: true },
+        { path: 'parentSessionId', title: 'Parent session id', widget: 'text', required: true },
+        { path: 'origin', title: 'Origin', widget: 'text', required: true },
+        { path: 'kind', title: 'Kind', widget: 'text', required: true },
+        { path: 'status', title: 'Status', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.subagents.updateStatus',
+    title: 'Update session subagent status',
+    description: 'Update subagent lifecycle status with owner-authority enforcement.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SESSIONS_SUBAGENTS_UPDATE_STATUS },
+    sideEffectClass: 'write',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    outputSchema: SubagentRefV1Schema,
+    inputSchema: SubagentStatusUpdateInputSchema,
+    inputHints: {
+      title: 'Update session subagent status',
+      fields: [
+        { path: 'id', title: 'Subagent id', widget: 'text', required: true },
+        { path: 'parentSessionId', title: 'Parent session id', widget: 'text', required: true },
+        { path: 'status', title: 'Status', widget: 'text', required: true },
+        { path: 'completedAt', title: 'Completed at', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'sessions.subagents.complete',
+    title: 'Complete session subagent',
+    description: 'Mark a subagent terminal with owner-authority enforcement.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SESSIONS_SUBAGENTS_COMPLETE },
+    sideEffectClass: 'write',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    outputSchema: SubagentRefV1Schema,
+    inputSchema: SubagentCompleteInputSchema,
+    inputHints: {
+      title: 'Complete session subagent',
+      fields: [
+        { path: 'id', title: 'Subagent id', widget: 'text', required: true },
+        { path: 'parentSessionId', title: 'Parent session id', widget: 'text', required: true },
+        { path: 'status', title: 'Terminal status', widget: 'text' },
+        { path: 'completedAt', title: 'Completed at', widget: 'text' },
+      ],
+    },
+  },
+  {
     id: 'execution.run.start',
     title: 'Start execution run',
     description: 'Start a new execution run within a session.',
@@ -1173,6 +1550,151 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     },
     outputSchema: z.unknown(),
     inputSchema: ExecutionRunSendInputSchema,
+  },
+  {
+    id: 'execution.run.ensure',
+    title: 'Ensure execution run',
+    description: 'Ensure an existing execution run is active or resumable.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE },
+    sideEffectClass: 'write',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: true,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Ensure a run',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'runId', title: 'Run id', widget: 'text', required: true },
+        { path: 'resume', title: 'Resume if needed', widget: 'toggle' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: ExecutionRunEnsureInputSchema,
+  },
+  {
+    id: 'execution.run.ensure_or_start',
+    title: 'Ensure or start execution run',
+    description: 'Ensure an existing execution run, or start a new one when no run id is supplied.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START },
+    sideEffectClass: 'write',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: true,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Ensure or start a run',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'runId', title: 'Run id', widget: 'text' },
+        { path: 'start', title: 'Start request (json)', widget: 'textarea' },
+        { path: 'resume', title: 'Resume if needed', widget: 'toggle' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: ExecutionRunEnsureOrStartInputSchema,
+  },
+  {
+    id: 'execution.run.stream.start',
+    title: 'Start execution run stream',
+    description: 'Start a bounded streaming turn for an execution run.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START },
+    sideEffectClass: 'write',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: true,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Start a run stream',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'runId', title: 'Run id', widget: 'text', required: true },
+        { path: 'message', title: 'Message', widget: 'textarea', required: true },
+        { path: 'displayMessage', title: 'Display message', widget: 'textarea' },
+        { path: 'resume', title: 'Resume if needed', widget: 'toggle' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: ExecutionRunStreamStartInputSchema,
+  },
+  {
+    id: 'execution.run.stream.read',
+    title: 'Read execution run stream',
+    description: 'Read bounded deltas from an execution-run stream cursor.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ },
+    sideEffectClass: 'read',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: true,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Read a run stream',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'runId', title: 'Run id', widget: 'text', required: true },
+        { path: 'streamId', title: 'Stream id', widget: 'text', required: true },
+        { path: 'cursor', title: 'Cursor', widget: 'text' },
+        { path: 'maxEvents', title: 'Max events', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: ExecutionRunStreamReadInputSchema,
+  },
+  {
+    id: 'execution.run.stream.cancel',
+    title: 'Cancel execution run stream',
+    description: 'Cancel a bounded streaming turn for an execution run.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL },
+    sideEffectClass: 'write',
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: true,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Cancel a run stream',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'runId', title: 'Run id', widget: 'text', required: true },
+        { path: 'streamId', title: 'Stream id', widget: 'text', required: true },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: ExecutionRunStreamCancelInputSchema,
   },
   {
     id: 'execution.run.stop',
@@ -1424,6 +1946,29 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     },
     outputSchema: z.unknown(),
     inputSchema: SessionHandoffPrepareTargetRequestSchema,
+  },
+  {
+    id: 'session.handoff.prepare_target_result.get',
+    title: 'Get session handoff target preparation result',
+    description: 'Read the prepared-target result for an in-progress session handoff.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.sessionHandoff.prepareTargetResult.get' },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'Get handoff prepare-target result',
+      fields: [{ path: 'handoffId', title: 'Handoff id', widget: 'text', required: true }],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionHandoffPrepareTargetResultGetRequestSchema,
   },
   {
     id: 'session.handoff.commit',
@@ -1833,7 +2378,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Update the permission intent (read_only/workspace_write/etc) for the specified session.',
     safety: 'safe',
     placements: [],
-    bindings: { mcpToolName: 'session_permission_mode_set' },
+    bindings: { mcpToolName: 'session_permission_mode_set', rpcMethod: 'session.permission_mode.set' },
     examples: {
       mcp: { argsExample: '{"sessionId":"{{sessionId}}","permissionMode":"read_only"}' },
     },
@@ -1843,7 +2388,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       session_agent: true,
       mcp: true,
       cli: true,
-      rpc: false,
+      rpc: true,
       sdk: false,
       },
     inputHints: {
@@ -2042,7 +2587,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'processPermissionRequest', mcpToolName: 'session_permission_respond' },
+    bindings: { voiceClientToolName: 'processPermissionRequest', mcpToolName: 'session_permission_respond', rpcMethod: 'session.permission.respond' },
     examples: {
       voice: { argsExample: '{"sessionId":"{{sessionId}}","decision":"allow"}' },
     },
@@ -2052,7 +2597,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       session_agent: true,
       mcp: true,
       cli: true,
-      rpc: false,
+      rpc: true,
       sdk: false,
       },
     inputHints: {
@@ -2082,7 +2627,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: ['voice_panel'],
     prompting: { voiceHotPath: true },
-    bindings: { voiceClientToolName: 'answerUserActionRequest', mcpToolName: 'session_user_action_answer' },
+    bindings: { voiceClientToolName: 'answerUserActionRequest', mcpToolName: 'session_user_action_answer', rpcMethod: 'session.user_action.answer' },
     examples: {
       voice: {
         argsExample:
@@ -2095,7 +2640,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       session_agent: true,
       mcp: true,
       cli: true,
-      rpc: false,
+      rpc: true,
       sdk: false,
       },
     inputHints: {
@@ -2360,6 +2905,30 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       rpc: false,
       sdk: false,
       },
+    outputSchema: z.unknown(),
+    inputSchema: EmptyObjectSchema,
+  },
+  {
+    id: 'ui.pet.choose',
+    title: 'Choose pet',
+    description: 'Open pet settings so the user can choose or manage their companion.',
+    safety: 'safe',
+    placements: ['slash_command'],
+    slash: { tokens: ['/pet', '/h.pet'] },
+    inputHints: {
+      title: 'Choose pet',
+      description: 'Open pet settings.',
+      fields: [],
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: false,
+    },
     outputSchema: z.unknown(),
     inputSchema: EmptyObjectSchema,
   },
@@ -2665,21 +3234,257 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     },
   },
   {
+    id: 'daemon.promptAssets.discover',
+    title: 'Discover prompt assets',
+    description: 'Discover provider-native prompt assets through the daemon prompt asset adapter registry.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.promptAssets.discover' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: PromptAssetDiscoverRequestSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.promptAssets.delete',
+    title: 'Delete prompt asset',
+    description: 'Delete a provider-native prompt asset through the daemon prompt asset adapter registry.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.promptAssets.delete' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'danger',
+    outputSchema: z.unknown(),
+    inputSchema: PromptAssetDeleteRequestSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.promptRegistry.scanSource',
+    title: 'Scan prompt registry source',
+    description: 'Scan a configured prompt registry source through the daemon prompt registry adapter registry.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.promptRegistry.scanSource' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: PromptRegistryScanSourceRequestV1Schema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.promptRegistry.install',
+    title: 'Install prompt registry asset',
+    description: 'Install a prompt registry item through bundle-capable prompt asset adapters.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.promptRegistry.install' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'danger',
+    outputSchema: z.unknown(),
+    inputSchema: PromptRegistryInstallRequestV1Schema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.filesystem.readFile',
+    title: 'Read file',
+    description: 'Read a bounded file through daemon filesystem path authorization.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'readFile' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: DaemonFilesystemReadFileInputSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.filesystem.writeFile',
+    title: 'Write file',
+    description: 'Write a bounded file through daemon filesystem path authorization.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: 'writeFile' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'danger',
+    outputSchema: z.unknown(),
+    inputSchema: DaemonFilesystemWriteFileInputSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.filesystem.listDirectory',
+    title: 'List directory',
+    description: 'List a directory through daemon filesystem path authorization.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'listDirectory' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: DaemonFilesystemListDirectoryInputSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.filesystem.getDirectoryTree',
+    title: 'Get directory tree',
+    description: 'Read a bounded directory tree through daemon filesystem path authorization.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'getDirectoryTree' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: DaemonFilesystemGetDirectoryTreeInputSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.filesystem.listRoots',
+    title: 'List filesystem roots',
+    description: 'List bounded machine file-browser roots resolved from daemon filesystem access policy.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.filesystem.listRoots' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: EmptyObjectSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'daemon.filesystem.browseDirectory',
+    title: 'Browse filesystem directory',
+    description: 'List a machine file-browser directory constrained to a configured browse root.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'daemon.filesystem.listDirectory' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: DaemonFilesystemListDirectoryRequestSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'bugreport.collectDiagnostics',
+    title: 'Collect bug report diagnostics',
+    description: 'Collect bounded, redacted daemon diagnostics for a bug report.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'bugreport.collectDiagnostics' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: PassthroughEmptyObjectSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'bugreport.getLogTail',
+    title: 'Read bug report log tail',
+    description: 'Read a bounded daemon log tail from diagnostics-approved candidate paths.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'bugreport.getLogTail' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: BugReportGetLogTailInputSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'bugreport.uploadArtifact',
+    title: 'Upload bug report artifact',
+    description: 'Return daemon-side bug report artifact upload availability without exposing secret material.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'bugreport.uploadArtifact' },
+    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    sideEffectClass: 'none',
+    outputSchema: z.unknown(),
+    inputSchema: BugReportUploadArtifactInputSchema,
+    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+  },
+  {
+    id: 'approval.request.list',
+    title: 'List approval requests',
+    description: 'List approval queue entries from targeted approval artifact headers.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'approval.request.list' },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+      },
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: ApprovalRequestListInputSchema,
+    inputHints: {
+      title: 'List approval requests',
+      description: 'Reads bounded approval queue metadata from artifact headers without transcript hydration.',
+      fields: [
+        {
+          path: 'status',
+          title: 'Status',
+          widget: 'select',
+          options: [
+            { value: 'open', label: 'Open' },
+            { value: 'approved', label: 'Approved' },
+            { value: 'rejected', label: 'Rejected' },
+            { value: 'executed', label: 'Executed' },
+            { value: 'failed', label: 'Failed' },
+            { value: 'canceled', label: 'Canceled' },
+          ],
+        },
+        { path: 'limit', title: 'Limit', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'approval.request.get',
+    title: 'Get approval request',
+    description: 'Fetch one approval request by approval artifact id.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: 'approval.request.get' },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+      },
+    sideEffectClass: 'read',
+    outputSchema: z.unknown(),
+    inputSchema: ApprovalRequestGetInputSchema,
+    inputHints: {
+      title: 'Get approval request',
+      fields: [
+        { path: 'artifactId', title: 'Approval artifact id', widget: 'text', required: true },
+      ],
+    },
+  },
+  {
     id: 'approval.request.create',
     title: 'Create approval request',
     description: 'Create an approval request for another action to run.',
     safety: 'danger',
     placements: [],
-    bindings: { mcpToolName: 'approval_request_decide' },
+    bindings: { mcpToolName: 'approval_request_create', rpcMethod: 'approval.request.create' },
     surfaces: {
       ui: true,
       voice: false,
       session_agent: true,
       mcp: true,
       cli: true,
-      rpc: false,
+      rpc: true,
       sdk: false,
       },
+    sideEffectClass: 'write',
     outputSchema: z.unknown(),
     inputSchema: ApprovalRequestCreateInputSchema,
     inputHints: {
@@ -2698,16 +3503,17 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     description: 'Approve or reject an approval request.',
     safety: 'danger',
     placements: [],
-    bindings: { mcpToolName: 'approval_request_decide' },
+    bindings: { mcpToolName: 'approval_request_decide', rpcMethod: 'approval.request.decide' },
     surfaces: {
       ui: true,
       voice: false,
       session_agent: false,
       mcp: true,
       cli: true,
-      rpc: false,
+      rpc: true,
       sdk: false,
       },
+    sideEffectClass: 'write',
     outputSchema: z.unknown(),
     inputSchema: ApprovalRequestDecideInputSchema,
     inputHints: {
@@ -2728,13 +3534,190 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     },
   },
   {
+    id: 'session.log.tail',
+    title: 'Tail session log',
+    description: 'Read a bounded byte tail from an allowed session log file.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.SESSION_LOG_TAIL },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'read',
+    outputSchema: SessionLogTailOutputSchema,
+    inputSchema: SessionLogTailInputSchema,
+    inputHints: {
+      title: 'Tail session log',
+      fields: [
+        { path: 'path', title: 'Log path', widget: 'text', required: true },
+        { path: 'maxBytes', title: 'Maximum bytes', widget: 'text' },
+        { path: 'offset', title: 'File offset', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'transcript.page',
+    title: 'Page session transcript',
+    description: 'Read a bounded older transcript page using cursor-backed storage.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.TRANSCRIPT_PAGE },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'read',
+    outputSchema: TranscriptPageOutputSchema,
+    inputSchema: TranscriptPageInputSchema,
+    inputHints: {
+      title: 'Page session transcript',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'cursor', title: 'Cursor', widget: 'text' },
+        { path: 'maxBytes', title: 'Maximum bytes', widget: 'text' },
+        { path: 'maxItems', title: 'Maximum items', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'transcript.readAfter',
+    title: 'Read session transcript after cursor',
+    description: 'Read bounded transcript deltas after a cursor.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.TRANSCRIPT_READ_AFTER },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'read',
+    outputSchema: TranscriptReadAfterOutputSchema,
+    inputSchema: TranscriptReadAfterInputSchema,
+    inputHints: {
+      title: 'Read session transcript after cursor',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'cursor', title: 'Cursor', widget: 'text', required: true },
+        { path: 'maxBytes', title: 'Maximum bytes', widget: 'text' },
+        { path: 'maxItems', title: 'Maximum items', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'transcript.follow',
+    title: 'Follow session transcript',
+    description: 'Create or refresh a retained bounded transcript follow lease.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.TRANSCRIPT_FOLLOW },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'read',
+    outputSchema: TranscriptFollowOutputSchema,
+    inputSchema: TranscriptFollowInputSchema,
+    inputHints: {
+      title: 'Follow session transcript',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'cursor', title: 'Cursor', widget: 'text', required: true },
+        { path: 'leaseId', title: 'Lease id', widget: 'text' },
+        { path: 'maxBytes', title: 'Maximum bytes', widget: 'text' },
+        { path: 'maxItems', title: 'Maximum items', widget: 'text' },
+        { path: 'idleTtlMs', title: 'Idle TTL milliseconds', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'transcript.import',
+    title: 'Import session transcript rows',
+    description: 'Import a bounded batch of transcript rows through the session transcript writer owner.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.TRANSCRIPT_IMPORT },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'write',
+    outputSchema: TranscriptImportOutputSchema,
+    inputSchema: TranscriptImportInputSchema,
+    inputHints: {
+      title: 'Import session transcript rows',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'items', title: 'Transcript rows', widget: 'textarea', required: true },
+        { path: 'maxItems', title: 'Maximum items', widget: 'text' },
+      ],
+    },
+  },
+  {
+    id: 'transcript.search',
+    title: 'Search session transcript',
+    description: 'Search transcript rows through bounded forward cursor reads.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.TRANSCRIPT_SEARCH },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    sideEffectClass: 'read',
+    outputSchema: TranscriptReadAfterOutputSchema,
+    inputSchema: TranscriptSearchInputSchema,
+    inputHints: {
+      title: 'Search session transcript',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'query', title: 'Query', widget: 'text', required: true },
+        { path: 'cursor', title: 'Cursor', widget: 'text' },
+        { path: 'maxBytes', title: 'Maximum bytes', widget: 'text' },
+        { path: 'maxItems', title: 'Maximum items', widget: 'text' },
+        { path: 'maxReads', title: 'Maximum reads', widget: 'text' },
+      ],
+    },
+  },
+  {
     id: 'sessions.external.candidates.list',
     title: 'List external session candidates',
-    description: 'List attachable external session candidates through the legacy direct-session machine RPC.',
+    description: 'List attachable external session candidates through the external-session machine RPC.',
     safety: 'safe',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.directSessions.candidates.list',
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY],
       sdkMethod: 'sessions.external.listCandidates',
     },
     surfaces: {
@@ -2768,7 +3751,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'danger',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.directSessions.link.ensure',
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE_LEGACY],
     },
     surfaces: {
       ui: false,
@@ -2801,7 +3785,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'danger',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.directSessions.attach',
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH_LEGACY],
     },
     surfaces: {
       ui: false,
@@ -2835,7 +3820,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'danger',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.directSessions.detach',
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH_LEGACY],
     },
     surfaces: {
       ui: false,
@@ -2865,7 +3851,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'danger',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.directSessions.followPolicy.set',
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY],
     },
     surfaces: {
       ui: false,
@@ -2898,7 +3885,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.directSessions.status.get',
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET_LEGACY],
     },
     surfaces: {
       ui: false,
@@ -2930,7 +3918,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.directSessions.transcript.page',
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE_LEGACY],
       sdkMethod: 'sessions.external.pageTranscript',
     },
     surfaces: {
@@ -2969,7 +3958,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'safe',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.directSessions.transcript.readAfter',
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER,
+      rpcMethodAliases: [RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY],
       sdkMethod: 'sessions.external.readAfterTranscript',
     },
     surfaces: {
@@ -3004,8 +3994,11 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     safety: 'danger',
     placements: [],
     bindings: {
-      rpcMethod: 'daemon.directSessions.takeover',
-      rpcMethodAliases: ['daemon.directSessions.takeoverPersist'],
+      rpcMethod: RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER,
+      rpcMethodAliases: [
+        RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
+        RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY,
+      ],
       sdkMethod: 'sessions.external.takeover',
     },
     surfaces: {
@@ -3496,6 +4489,51 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
           ],
         },
         { path: 'pushCurrentBranch', title: 'Push current branch', widget: 'checkbox' },
+      ],
+    },
+  },
+  {
+    id: 'scm.diffSummary.generate',
+    title: 'Generate source-control diff summary',
+    description: 'Generate a buffered AI summary for checkpoint-backed or working-tree source-control changes.',
+    safety: 'safe',
+    placements: [],
+    bindings: {
+      rpcMethod: RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE,
+      sdkMethod: 'scm.diffSummary.generate',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'external',
+    outputSchema: ScmDiffSummaryGenerateOutputSchema,
+    inputSchema: ScmDiffSummaryGenerateInputSchema,
+    inputHints: {
+      title: 'Generate diff summary',
+      description: 'Summaries for turn checkpoints must resolve CHKPT-2 TurnChangeSet evidence by turn id or checkpoint receipt.',
+      fields: [
+        { path: 'cwd', title: 'Repository directory', widget: 'text', required: true },
+        {
+          path: 'source.kind',
+          title: 'Summary source',
+          widget: 'select',
+          required: true,
+          options: [
+            { value: 'turnCheckpoint', label: 'Turn checkpoint' },
+            { value: 'workingTree', label: 'Working tree' },
+          ],
+        },
+        { path: 'turnId', title: 'Turn id', widget: 'text' },
+        { path: 'checkpointReceiptId', title: 'Checkpoint receipt id', widget: 'text' },
+        { path: 'modelSelector.profileId', title: 'Model profile id', widget: 'text' },
+        { path: 'modelSelector.modelId', title: 'Model id', widget: 'text' },
+        { path: 'modelSelector.backendTargetKey', title: 'Backend target key', widget: 'text' },
       ],
     },
   },

@@ -1,5 +1,15 @@
 import { INTERNAL_ONLY_RPC_METHODS, validateInternalOnlyRpcMethodEntries, type InternalOnlyRpcMethodEntry } from '../../../../apps/cli/src/rpc/handlers/_internalAllowlist.ts';
 import {
+  ACTION_SPEC_RPC_EXCEPTIONS,
+  ACTION_SPEC_RPC_EXCEPTION_REASONS,
+  type ActionSpecRpcException,
+} from '../../../../apps/cli/src/rpc/handlers/actionSpecRpcExceptions.ts';
+import {
+  collectActionSpecRpcMethodsForScopes,
+  isActionSpecRpcSpecInScopes,
+  REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES,
+} from '../../../../apps/cli/src/rpc/handlers/actionSpecRpcRegistration.ts';
+import {
   ACTION_SPECS,
   MACHINE_RPC_ROUTE_POLICIES,
   type MachineRpcRoutePolicyV1,
@@ -17,6 +27,10 @@ export type RpcActionCoverageFindingCode =
   | 'internal-only-method-not-registered'
   | 'action-rpc-method-missing-binding'
   | 'action-rpc-method-not-registered'
+  | 'action-rpc-method-not-generically-registered'
+  | 'action-rpc-exception-generically-servable'
+  | 'duplicate-action-rpc-method-coverage'
+  | 'invalid-action-spec-rpc-exception'
   | 'duplicate-action-rpc-method'
   | 'rpc-method-conflicting-classification'
   | 'rpc-method-missing-route-policy'
@@ -49,6 +63,8 @@ export type ValidateRpcActionCoverageOptions = Readonly<{
   rpcMethods?: Readonly<Record<string, string>>;
   sessionRpcMethods?: Readonly<Record<string, string>>;
   actionSpecs?: readonly RpcActionCoverageActionSpec[];
+  genericActionSpecRpcMethods?: readonly string[];
+  actionSpecRpcExceptions?: readonly ActionSpecRpcException[];
   internalOnlyEntries?: readonly InternalOnlyRpcMethodEntry[];
   machineRpcRoutePolicies?: readonly Pick<
     MachineRpcRoutePolicyV1,
@@ -58,6 +74,10 @@ export type ValidateRpcActionCoverageOptions = Readonly<{
 
 function normalizeMethod(value: string): string {
   return value.trim();
+}
+
+function normalizeMetadataString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function collectRegisteredRpcMethods(options: ValidateRpcActionCoverageOptions): readonly string[] {
@@ -79,6 +99,50 @@ function pushWarning(
   finding: Omit<RpcActionCoverageFinding, 'severity'>,
 ): void {
   warnings.push({ severity: 'warning', ...finding });
+}
+
+const ACTION_SPEC_RPC_EXCEPTION_REASON_SET = new Set<string>(ACTION_SPEC_RPC_EXCEPTION_REASONS);
+
+function collectActionSpecRpcMethods(
+  actionSpecs: readonly RpcActionCoverageActionSpec[],
+): readonly { actionId: string; method: string }[] {
+  const methods: { actionId: string; method: string }[] = [];
+  for (const spec of actionSpecs) {
+    if (spec.surfaces?.rpc !== true) {
+      continue;
+    }
+    const method = normalizeMethod(spec.bindings?.rpcMethod ?? '');
+    if (method) {
+      methods.push({ actionId: spec.id, method });
+    }
+    for (const alias of spec.bindings?.rpcMethodAliases ?? []) {
+      const normalizedAlias = normalizeMethod(alias);
+      if (normalizedAlias) {
+        methods.push({ actionId: spec.id, method: normalizedAlias });
+      }
+    }
+  }
+  return methods;
+}
+
+function collectDefaultGenericActionSpecRpcMethods(input: Readonly<{
+  actionSpecs: readonly RpcActionCoverageActionSpec[];
+}>): readonly string[] {
+  return collectActionSpecRpcMethodsForScopes(
+    input.actionSpecs,
+    REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES,
+  );
+}
+
+function collectDefaultGenericActionSpecRpcActionIds(input: Readonly<{
+  actionSpecs: readonly RpcActionCoverageActionSpec[];
+}>): ReadonlySet<string> {
+  return new Set(
+    input.actionSpecs
+      .filter((spec) => isActionSpecRpcSpecInScopes(spec, REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES))
+      .map((spec) => spec.id)
+      .filter(Boolean),
+  );
 }
 
 function registerActionBoundMethod(input: Readonly<{
@@ -109,12 +173,112 @@ function registerActionBoundMethod(input: Readonly<{
   input.actionBoundByMethod.set(input.method, input.spec.id);
 }
 
+function validateActionSpecRpcExceptions(input: Readonly<{
+  errors: RpcActionCoverageFinding[];
+  exceptions: readonly ActionSpecRpcException[];
+  genericMethodSet: ReadonlySet<string>;
+  requiredGenericActionIds: ReadonlySet<string>;
+}>): ReadonlySet<string> {
+  const exceptionMethods = new Set<string>();
+
+  for (const exception of input.exceptions) {
+    const method = normalizeMethod(exception.method);
+    if (!method) {
+      pushError(input.errors, {
+        code: 'invalid-action-spec-rpc-exception',
+        message: 'ActionSpec RPC exception entries must declare a non-empty method.',
+      });
+      continue;
+    }
+
+    if (exceptionMethods.has(method)) {
+      pushError(input.errors, {
+        code: 'invalid-action-spec-rpc-exception',
+        method,
+        message: `ActionSpec RPC exception method is declared more than once: ${method}`,
+      });
+    }
+    exceptionMethods.add(method);
+
+    if (!ACTION_SPEC_RPC_EXCEPTION_REASON_SET.has(String(exception.reason))) {
+      pushError(input.errors, {
+        code: 'invalid-action-spec-rpc-exception',
+        method,
+        message: `ActionSpec RPC exception declares an invalid reason: ${method}`,
+      });
+    }
+
+    if (!normalizeMetadataString(exception.ownerPacket)) {
+      pushError(input.errors, {
+        code: 'invalid-action-spec-rpc-exception',
+        method,
+        message: `ActionSpec RPC exception requires an owner packet: ${method}`,
+      });
+    }
+
+    if (!normalizeMetadataString(exception.rationale)) {
+      pushError(input.errors, {
+        code: 'invalid-action-spec-rpc-exception',
+        method,
+        message: `ActionSpec RPC exception requires a rationale: ${method}`,
+      });
+    }
+
+    const hasRetirement = Boolean(normalizeMetadataString(exception.retirement));
+    const hasPermanence = Boolean(normalizeMetadataString(exception.permanence));
+    if (!hasRetirement && !hasPermanence && exception.reason !== 'packet_owned_coordination') {
+      pushError(input.errors, {
+        code: 'invalid-action-spec-rpc-exception',
+        method,
+        message: `ActionSpec RPC exception requires a retirement condition or permanence rationale: ${method}`,
+      });
+    }
+
+    if (exception.reason === 'packet_owned_coordination' && !hasRetirement) {
+      pushError(input.errors, {
+        code: 'invalid-action-spec-rpc-exception',
+        method,
+        message: `Packet-owned ActionSpec RPC coordination exception requires a retirement condition: ${method}`,
+      });
+    }
+
+    if (
+      (exception.actionId && input.requiredGenericActionIds.has(exception.actionId))
+      || input.genericMethodSet.has(method)
+    ) {
+      pushError(input.errors, {
+        code: 'action-rpc-exception-generically-servable',
+        ...(exception.actionId ? { actionId: exception.actionId } : {}),
+        method,
+        message: `Required-generic ActionSpec RPC method must not be excepted from generic registration: ${method}`,
+      });
+    }
+
+    if (input.genericMethodSet.has(method)) {
+      pushError(input.errors, {
+        code: 'duplicate-action-rpc-method-coverage',
+        ...(exception.actionId ? { actionId: exception.actionId } : {}),
+        method,
+        message: `ActionSpec RPC method cannot be both generically registered and excepted: ${method}`,
+      });
+    }
+  }
+
+  return exceptionMethods;
+}
+
 export function validateRpcActionCoverage(
   options: ValidateRpcActionCoverageOptions = {},
 ): RpcActionCoverageReport {
   const registeredMethods = collectRegisteredRpcMethods(options);
   const registeredMethodSet = new Set(registeredMethods);
   const actionSpecs = options.actionSpecs ?? ACTION_SPECS;
+  const actionSpecRpcExceptions = options.actionSpecRpcExceptions ?? ACTION_SPEC_RPC_EXCEPTIONS;
+  const genericActionSpecRpcMethods = options.genericActionSpecRpcMethods ?? collectDefaultGenericActionSpecRpcMethods({
+    actionSpecs,
+  });
+  const genericActionSpecRpcMethodSet = new Set(genericActionSpecRpcMethods.map(normalizeMethod).filter(Boolean));
+  const requiredGenericActionIds = collectDefaultGenericActionSpecRpcActionIds({ actionSpecs });
   const internalOnlyEntries = options.internalOnlyEntries ?? INTERNAL_ONLY_RPC_METHODS;
   const usesDefaultRpcInventory = !options.rpcMethods && !options.sessionRpcMethods;
   const machineRpcRoutePolicies = options.machineRpcRoutePolicies ?? (
@@ -123,6 +287,13 @@ export function validateRpcActionCoverage(
   const errors: RpcActionCoverageFinding[] = [];
   const warnings: RpcActionCoverageFinding[] = [];
   const actionBoundByMethod = new Map<string, string>();
+
+  const actionSpecRpcExceptionMethods = validateActionSpecRpcExceptions({
+    errors,
+    exceptions: actionSpecRpcExceptions,
+    genericMethodSet: genericActionSpecRpcMethodSet,
+    requiredGenericActionIds,
+  });
 
   const internalOnlyValidation = validateInternalOnlyRpcMethodEntries(internalOnlyEntries);
   for (const error of internalOnlyValidation.errors) {
@@ -192,6 +363,32 @@ export function validateRpcActionCoverage(
   }
 
   const actionBoundMethods = new Set(actionBoundByMethod.keys());
+  for (const [method, actionId] of actionBoundByMethod) {
+    if (genericActionSpecRpcMethodSet.has(method) || actionSpecRpcExceptionMethods.has(method)) {
+      continue;
+    }
+    pushError(errors, {
+      code: 'action-rpc-method-not-generically-registered',
+      actionId,
+      method,
+      message: `RPC-surfaced ActionSpec method is not covered by generic registration or a typed exception: ${actionId} -> ${method}`,
+    });
+  }
+  for (const exception of actionSpecRpcExceptions) {
+    const method = normalizeMethod(exception.method);
+    if (!method || !exception.actionId || !actionBoundByMethod.has(method)) {
+      continue;
+    }
+    const boundActionId = actionBoundByMethod.get(method);
+    if (boundActionId !== exception.actionId) {
+      pushError(errors, {
+        code: 'invalid-action-spec-rpc-exception',
+        actionId: exception.actionId,
+        method,
+        message: `ActionSpec RPC exception action id does not match binding metadata: ${method}`,
+      });
+    }
+  }
   const unclassifiedMethods = registeredMethods.filter((method) => (
     !actionBoundMethods.has(method) && !internalOnlyMethods.has(method)
   ));

@@ -71,6 +71,15 @@ async function dragFromMainContentTitlebar(page: Page): Promise<void> {
     await page.mouse.up();
 }
 
+async function doubleClickMainContentTitlebar(page: Page): Promise<void> {
+    const sidebarBox = await page.getByTestId('desktop-sidebar-chrome').boundingBox();
+    if (!sidebarBox) {
+        throw new Error('missing desktop sidebar chrome bounds');
+    }
+
+    await page.mouse.dblclick(sidebarBox.x + sidebarBox.width + 96, 40);
+}
+
 test.describe('ui e2e: desktop sidebar chrome', () => {
     test.describe.configure({ mode: 'serial' });
 
@@ -148,6 +157,16 @@ test.describe('ui e2e: desktop sidebar chrome', () => {
                 },
             });
 
+        await doubleClickMainContentTitlebar(page);
+        await expect
+            .poll(async () => readFakeTauriDesktopState(page), { timeout: 60_000 })
+            .toMatchObject({
+                controls: {
+                    toggleMaximizeCount: 1,
+                },
+                isMaximized: true,
+            });
+
         await page.getByTestId('desktop-window-controls-minimize').click();
         await page.getByTestId('desktop-window-controls-toggle-maximize').click();
         await page.getByTestId('desktop-window-controls-close').click();
@@ -158,9 +177,9 @@ test.describe('ui e2e: desktop sidebar chrome', () => {
                 controls: {
                     closeCount: 1,
                     minimizeCount: 1,
-                    toggleMaximizeCount: 1,
+                    toggleMaximizeCount: 2,
                 },
-                isMaximized: true,
+                isMaximized: false,
             });
     });
 

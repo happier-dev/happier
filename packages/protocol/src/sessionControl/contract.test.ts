@@ -68,6 +68,72 @@ describe('sessionControl contract exports', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('validates primary turn status and sanitized runtime issue fields on session summaries', () => {
+    expect(typeof (protocol as any).TurnTerminalStatusV1Schema?.safeParse).toBe('function');
+    expect(typeof (protocol as any).PrimaryTurnStatusV1Schema?.safeParse).toBe('function');
+    expect(typeof (protocol as any).SessionRuntimeIssueV1Schema?.safeParse).toBe('function');
+    expect((protocol as any).TurnTerminalStatusV1Schema.safeParse('failed').success).toBe(true);
+    expect((protocol as any).PrimaryTurnStatusV1Schema.safeParse('in_progress').success).toBe(true);
+
+    const runtimeIssue = {
+      v: 1,
+      scope: 'primary_session',
+      status: 'failed',
+      code: 'auth_error',
+      source: 'auth_error',
+      occurredAt: 123,
+      provider: 'codex',
+      providerTurnId: 'turn_1',
+      sanitizedPreview: 'Authentication failed',
+    };
+
+    const issueParsed = (protocol as any).SessionRuntimeIssueV1Schema.safeParse(runtimeIssue);
+    expect(issueParsed.success).toBe(true);
+
+    const summaryParsed = (protocol as any).SessionSummarySchema.safeParse({
+      id: 'sess_123',
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      encryption: { type: 'dataKey' },
+      latestTurnStatus: 'failed',
+      lastRuntimeIssue: runtimeIssue,
+    });
+    expect(summaryParsed.success).toBe(true);
+  });
+
+  it('validates primary turn status and sanitized runtime issue fields on v2 session records', () => {
+    const runtimeIssue = {
+      v: 1,
+      scope: 'primary_session',
+      status: 'failed',
+      code: 'permission_blocked',
+      source: 'permission_blocked',
+      occurredAt: 456,
+      sessionSeq: 7,
+      provider: 'claude',
+    };
+
+    const parsed = (protocol as any).V2SessionRecordSchema.safeParse({
+      id: 'sess_123',
+      seq: 7,
+      createdAt: 1,
+      updatedAt: 2,
+      active: false,
+      activeAt: 0,
+      metadata: '{}',
+      metadataVersion: 1,
+      agentState: null,
+      agentStateVersion: 1,
+      dataEncryptionKey: null,
+      latestTurnStatus: 'failed',
+      lastRuntimeIssue: runtimeIssue,
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it('validates a session_wait envelope shape', () => {
     const schema = (protocol as any).SessionWaitEnvelopeSchema;
     const parsed = schema.safeParse({

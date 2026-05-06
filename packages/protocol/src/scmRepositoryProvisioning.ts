@@ -111,20 +111,17 @@ export const ScmRepositoryInitResponseSchema = z.union([
 export type ScmRepositoryInitResponse =
   z.infer<typeof ScmRepositoryInitResponseSchema>;
 
+// FD-0055 / Rule 12: stale index-lock recovery is a narrow, confirmed,
+// path-validated `index.lock` removal action. The confirmation token is pinned
+// to a single audit-grade literal so callers cannot smuggle ad-hoc values
+// through the dispatch boundary, and `.strict()` rejects any caller-supplied
+// `lockPath`/`indexLockPath`/etc. so backend resolution remains authoritative.
+export const REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN = 'remove-stale-index-lock' as const;
+
 export const ScmRepositoryRemoveIndexLockRequestSchema = ScmRequestBaseSchema.extend({
   confirmed: z.literal(true),
-  confirmationToken: z.string().min(1),
-})
-  .passthrough()
-  .superRefine((value, ctx) => {
-    if (Object.prototype.hasOwnProperty.call(value, 'lockPath')) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'lockPath must be resolved by the SCM backend',
-        path: ['lockPath'],
-      });
-    }
-  });
+  confirmationToken: z.literal(REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN),
+}).strict();
 export type ScmRepositoryRemoveIndexLockRequest =
   z.infer<typeof ScmRepositoryRemoveIndexLockRequestSchema>;
 

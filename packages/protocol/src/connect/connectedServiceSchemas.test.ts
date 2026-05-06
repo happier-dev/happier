@@ -14,6 +14,8 @@ describe('connectedServiceSchemas', () => {
         expect(ConnectedServiceIdSchema.parse('anthropic')).toBe('anthropic');
         expect(ConnectedServiceIdSchema.parse('claude-subscription')).toBe('claude-subscription');
         expect(ConnectedServiceIdSchema.parse('gemini')).toBe('gemini');
+        expect(ConnectedServiceIdSchema.parse('github')).toBe('github');
+        expect(ConnectedServiceIdSchema.parse('bitbucket')).toBe('bitbucket');
     });
 
     it('parses an oauth credential record', () => {
@@ -46,13 +48,12 @@ describe('connectedServiceSchemas', () => {
         const now = Date.now();
         const rec = ConnectedServiceCredentialRecordV1Schema.parse({
             v: 1,
-            serviceId: 'anthropic',
+            serviceId: 'github',
             profileId: 'default',
             kind: 'token',
             createdAt: now,
             updatedAt: now,
             expiresAt: null,
-            oauth: null,
             token: {
                 token: 'setup-token',
                 providerAccountId: null,
@@ -61,7 +62,32 @@ describe('connectedServiceSchemas', () => {
             },
         });
         expect(rec.kind).toBe('token');
-        expect(rec.serviceId).toBe('anthropic');
+        expect(rec.serviceId).toBe('github');
+        expect(rec.expiresAt).toBeNull();
+        expect('oauth' in rec).toBe(false);
+    });
+
+    it('parses a Bitbucket API token record with email or username metadata', () => {
+        const now = Date.now();
+        const rec = ConnectedServiceCredentialRecordV1Schema.parse({
+            v: 1,
+            serviceId: 'bitbucket',
+            profileId: 'work',
+            kind: 'token',
+            createdAt: now,
+            updatedAt: now,
+            expiresAt: null,
+            token: {
+                token: 'bb-api-token',
+                providerAccountId: 'dev@example.com',
+                providerEmail: 'dev@example.com',
+                raw: null,
+            },
+        });
+        expect(rec.kind).toBe('token');
+        expect(rec.serviceId).toBe('bitbucket');
+        expect(rec.token.providerEmail).toBe('dev@example.com');
+        expect('oauth' in rec).toBe(false);
     });
 
     it('parses sealed credential payloads', () => {
@@ -124,6 +150,52 @@ describe('connectedServiceSchemas', () => {
                 token: null,
             });
         }).toThrow();
+    });
+
+    it('parses a legacy token record that still carries explicit oauth: null', () => {
+        // Migration regression: prior shipped clients persisted token records with
+        // `oauth: null`. The schema flipped to `oauth: z.null().optional()`; both
+        // shapes must continue to parse so existing on-disk records keep working.
+        const now = Date.now();
+        const legacyRec = ConnectedServiceCredentialRecordV1Schema.parse({
+            v: 1,
+            serviceId: 'github',
+            profileId: 'default',
+            kind: 'token',
+            createdAt: now,
+            updatedAt: now,
+            expiresAt: null,
+            oauth: null,
+            token: {
+                token: 'github_pat_legacy',
+                providerAccountId: null,
+                providerEmail: null,
+                raw: null,
+            },
+        });
+        expect(legacyRec.kind).toBe('token');
+        expect(legacyRec.serviceId).toBe('github');
+    });
+
+    it('rejects whitespace-only token credentials at the schema boundary', () => {
+        const now = Date.now();
+        expect(
+            ConnectedServiceCredentialRecordV1Schema.safeParse({
+                v: 1,
+                serviceId: 'github',
+                profileId: 'default',
+                kind: 'token',
+                createdAt: now,
+                updatedAt: now,
+                expiresAt: null,
+                token: {
+                    token: '   ',
+                    providerAccountId: null,
+                    providerEmail: null,
+                    raw: null,
+                },
+            }).success,
+        ).toBe(false);
     });
 
     it('accepts profile ids that contain ":"', () => {

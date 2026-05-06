@@ -8,6 +8,20 @@ import {
 import { SubAgentRunResultV2Schema } from '../tools/v2/index.js';
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
 import { ActionDefinitionIdV1Schema, ActionDefinitionSummaryV1Schema } from '../extensions/actionDefinitionV1.js';
+import {
+  PrimaryTurnStatusV1Schema,
+  SessionRuntimeIssueV1Schema,
+} from '../sessions/control/runtimeIssueV1.js';
+export {
+  PrimaryTurnStatusV1Schema,
+  SessionRuntimeIssueSourceV1Schema,
+  SessionRuntimeIssueV1Schema,
+  TurnTerminalStatusV1Schema,
+  type PrimaryTurnStatusV1,
+  type SessionRuntimeIssueSourceV1,
+  type SessionRuntimeIssueV1,
+  type TurnTerminalStatusV1,
+} from '../sessions/control/runtimeIssueV1.js';
 
 export const SessionControlErrorCodeSchema = z.enum([
   'not_authenticated',
@@ -20,6 +34,12 @@ export const SessionControlErrorCodeSchema = z.enum([
   'execution_run_invalid_action_input',
   'execution_run_stream_not_found',
   'execution_run_not_allowed',
+  'subagent_write_forbidden',
+  'subagent_not_found',
+  'subagent_parent_session_required',
+  'subagent_capacity_exceeded',
+  'subagent_watch_capacity_exceeded',
+  'subagent_session_scope_forbidden',
   'run_depth_exceeded',
   'conflict',
   'timeout',
@@ -94,6 +114,8 @@ export const SessionSummarySchema = z.object({
   encryption: z.object({
     type: z.enum(['legacy', 'dataKey']),
   }).passthrough(),
+  latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
+  lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
 }).passthrough();
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -182,6 +204,8 @@ export const V2SessionRecordSchema = z
     pendingVersion: z.number().int().min(0).optional(),
     dataEncryptionKey: z.string().nullable(),
     share: SessionShareSchema.nullable().optional(),
+    latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
+    lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
   })
   .passthrough();
 export type V2SessionRecord = z.infer<typeof V2SessionRecordSchema>;
