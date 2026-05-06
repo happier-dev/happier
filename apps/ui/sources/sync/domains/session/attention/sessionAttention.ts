@@ -4,6 +4,7 @@ import { readDirectSessionLink } from '@/sync/domains/session/external/readDirec
 import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { deriveSessionAttentionState } from './deriveSessionAttentionState';
 export { deriveSessionAttentionState } from './deriveSessionAttentionState';
 export type { SessionAttentionState } from './types';
 
@@ -62,7 +63,17 @@ export function deriveSessionAttentionFlags(
 
 export function hasSessionAttention(session: Session, options?: SessionAttentionOptions): boolean {
     const flags = deriveSessionAttentionFlags(session, options);
+    const attentionState = deriveSessionAttentionState({
+        latestTurnStatus: session.latestTurnStatus ?? null,
+        lastRuntimeIssue: session.lastRuntimeIssue ?? null,
+        running: session.active === true,
+        waiting: flags.hasPendingPermissionRequests
+            || flags.hasPendingUserActionRequests
+            || flags.hasQueuedUserInput,
+        review: flags.hasUnread,
+    });
     return (
+        attentionState === 'failed' ||
         flags.hasUnread ||
         flags.hasPendingPermissionRequests ||
         flags.hasPendingUserActionRequests ||
