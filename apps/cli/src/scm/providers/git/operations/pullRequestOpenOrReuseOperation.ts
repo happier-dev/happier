@@ -266,11 +266,15 @@ export function createGitPullRequestOpenOrReuseOperation(
             if (!provider) {
                 return errorResponse('No supported SCM hosting provider detected for this repository', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
             }
+            const resolvedProvider = provider;
             const headBranch = request.head ?? snapshot.branch.head;
             if (!headBranch || snapshot.branch.detached) {
                 return errorResponse('Cannot open a pull request without an active branch', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
             }
             const baseBranch = request.base;
+            if (!baseBranch) {
+                return errorResponse('Cannot open a pull request without a base branch', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
+            }
             const policy = evaluateDefaultBranchPullRequestPolicy({
                 policy: snapshot.capabilities.defaultBranchPushPolicy ?? 'deny',
                 currentBranch: snapshot.branch.head,
@@ -287,13 +291,13 @@ export function createGitPullRequestOpenOrReuseOperation(
             }
 
             const registry = await readRegistry();
-            const adapter = registry.getAdapter(provider.id);
+            const adapter = registry.getAdapter(resolvedProvider.id);
             const writeAdapter = isPullRequestWriteAdapter(adapter) ? adapter : null;
-            const authProfileKey = readAuthProfileKey(writeAdapter, provider);
+            const authProfileKey = readAuthProfileKey(writeAdapter, resolvedProvider);
             const cacheKey = buildCacheKey({
                 context,
                 snapshot,
-                provider,
+                provider: resolvedProvider,
                 baseBranch,
                 headBranch,
                 authProfileKey,
@@ -303,7 +307,7 @@ export function createGitPullRequestOpenOrReuseOperation(
             if (cached?.kind === 'success') {
                 const cachedMatch = findMatchingPullRequest({
                     pullRequests: cached.pullRequests,
-                    provider,
+                    provider: resolvedProvider,
                     baseBranch,
                     headBranch,
                 });
@@ -313,7 +317,7 @@ export function createGitPullRequestOpenOrReuseOperation(
             }
 
             const compareUrl = registry.buildCompareUrl({
-                provider,
+                provider: resolvedProvider,
                 base: baseBranch,
                 head: headBranch,
             });
@@ -331,8 +335,8 @@ export function createGitPullRequestOpenOrReuseOperation(
                         kind: 'openUrl',
                         purpose: 'compose',
                         url: compareUrl.url,
-                        allowedBaseUrl: provider.baseUrl,
-                        urlSafety: provider.urlSafety,
+                        allowedBaseUrl: resolvedProvider.baseUrl,
+                        urlSafety: resolvedProvider.urlSafety,
                     },
                     authState: 'authentication_required',
                 };
@@ -345,7 +349,7 @@ export function createGitPullRequestOpenOrReuseOperation(
             async function listOpenPullRequests(): Promise<readonly ScmPullRequestSummary[]> {
                 if (!writeAdapter?.listPullRequests) return [];
                 return await writeAdapter.listPullRequests({
-                    provider,
+                    provider: resolvedProvider,
                     base: baseBranch,
                     head: headBranch,
                     state: 'open',
@@ -356,7 +360,7 @@ export function createGitPullRequestOpenOrReuseOperation(
             try {
                 const existing = findMatchingPullRequest({
                     pullRequests: await listOpenPullRequests(),
-                    provider,
+                    provider: resolvedProvider,
                     baseBranch,
                     headBranch,
                 });
@@ -404,7 +408,7 @@ export function createGitPullRequestOpenOrReuseOperation(
 
             try {
                 const created = await writeAdapter.createPullRequest({
-                    provider,
+                    provider: resolvedProvider,
                     base: baseBranch,
                     head: headBranch,
                     title: request.title ?? headBranch,
@@ -422,7 +426,7 @@ export function createGitPullRequestOpenOrReuseOperation(
             } catch (error) {
                 const duplicateHint = await readValidatedDuplicateHint({
                     adapter: writeAdapter,
-                    provider,
+                    provider: resolvedProvider,
                     baseBranch,
                     headBranch,
                     error,
@@ -433,7 +437,7 @@ export function createGitPullRequestOpenOrReuseOperation(
                 }
                 const listedAfterDuplicate = findMatchingPullRequest({
                     pullRequests: await listOpenPullRequests(),
-                    provider,
+                    provider: resolvedProvider,
                     baseBranch,
                     headBranch,
                 });

@@ -37,7 +37,7 @@ describe('ScmDiffSummaryProfile', () => {
       request: {
         kind: 'scm_diff_summary.v1',
         intent: 'scm_diff_summary',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
         runClass: 'bounded',
@@ -74,7 +74,7 @@ describe('ScmDiffSummaryProfile', () => {
         sidechainId: 'call-1',
         intent: 'scm_diff_summary',
         backendId: 'claude',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         instructions: 'prompt',
         intentInput: {
           source: { kind: 'turnCheckpoint' },
