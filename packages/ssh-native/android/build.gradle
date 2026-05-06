@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.happier.ssh'
+version = '0.0.0'
+
+android {
+  namespace "dev.happier.ssh"
+  defaultConfig {
+    versionCode 1
+    versionName version
+  }
+}

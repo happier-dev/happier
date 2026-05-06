@@ -1,0 +1,10 @@
+{
+  "name": "HappierSshNative",
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["HappierSshNativeModule"]
+  },
+  "android": {
+    "modules": ["dev.happier.ssh.HappierSshNativeModule"]
+  }
+}
