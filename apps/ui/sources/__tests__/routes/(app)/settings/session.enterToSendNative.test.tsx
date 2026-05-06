@@ -56,6 +56,7 @@ describe('Session settings (native enter-to-send)', () => {
         const enterToSendItem = items.find((item) => item.props?.title === 'settingsFeatures.enterToSend');
 
         expect(enterToSendItem).toBeTruthy();
+        expect(enterToSendItem?.props?.subtitle).toBe('settingsSession.inputBehavior.enterToSendEnabledNativeSubtitle');
         expect(enterToSendItem?.props?.showChevron).toBe(false);
         expect(enterToSendItem?.props?.rightElement?.props?.value).toBe(true);
     });
