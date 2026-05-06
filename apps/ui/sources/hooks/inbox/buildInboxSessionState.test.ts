@@ -159,7 +159,10 @@ describe('buildInboxSessionState', () => {
             serverName: 'Server A',
             session: makeUnreadRenderable({
                 id: 'voice-carrier',
-                metadata: { hiddenSystemSession: true },
+                metadata: {
+                    path: '/tmp/voice-carrier',
+                    hiddenSystemSession: true,
+                },
                 hasUnreadMessages: true,
             }),
         };
