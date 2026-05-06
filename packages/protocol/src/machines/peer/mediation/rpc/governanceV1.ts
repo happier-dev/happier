@@ -12,9 +12,23 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.STOP_SESSION]: 'session.stop',
   [RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY]: 'session.continue_with_replay',
   [RPC_METHODS.SESSION_FORK]: 'session.fork',
+  [RPC_METHODS.SESSION_PERMISSION_RESPOND]: 'session.permission.respond',
+  [RPC_METHODS.SESSION_USER_ACTION_ANSWER]: 'session.user_action.answer',
+  [RPC_METHODS.SESSION_PERMISSION_MODE_SET]: 'session.permission_mode.set',
+  [RPC_METHODS.APPROVAL_REQUEST_LIST]: 'approval.request.list',
+  [RPC_METHODS.APPROVAL_REQUEST_GET]: 'approval.request.get',
+  [RPC_METHODS.APPROVAL_REQUEST_CREATE]: 'approval.request.create',
+  [RPC_METHODS.APPROVAL_REQUEST_DECIDE]: 'approval.request.decide',
+  [RPC_METHODS.SESSIONS_SUBAGENTS_LIST]: 'sessions.subagents.list',
+  [RPC_METHODS.SESSIONS_SUBAGENTS_GET]: 'sessions.subagents.get',
+  [RPC_METHODS.SESSIONS_SUBAGENTS_WATCH]: 'sessions.subagents.watch',
+  [RPC_METHODS.SESSIONS_SUBAGENTS_UPSERT]: 'sessions.subagents.upsert',
+  [RPC_METHODS.SESSIONS_SUBAGENTS_UPDATE_STATUS]: 'sessions.subagents.updateStatus',
+  [RPC_METHODS.SESSIONS_SUBAGENTS_COMPLETE]: 'sessions.subagents.complete',
   [SESSION_RPC_METHODS.SESSION_ROLLBACK]: 'session.rollback',
   [RPC_METHODS.DAEMON_SESSION_HANDOFF_START]: 'session.handoff',
   [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET]: 'session.handoff.prepare_target',
+  [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET]: 'session.handoff.prepare_target_result.get',
   [RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT]: 'session.handoff.commit',
   [RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT]: 'session.handoff.abort',
   [RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET]: 'session.handoff.status.get',
@@ -22,6 +36,11 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [SESSION_RPC_METHODS.EXECUTION_RUN_LIST]: 'execution.run.list',
   [SESSION_RPC_METHODS.EXECUTION_RUN_GET]: 'execution.run.get',
   [SESSION_RPC_METHODS.EXECUTION_RUN_SEND]: 'execution.run.send',
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE]: 'execution.run.ensure',
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START]: 'execution.run.ensure_or_start',
+  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START]: 'execution.run.stream.start',
+  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ]: 'execution.run.stream.read',
+  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL]: 'execution.run.stream.cancel',
   [SESSION_RPC_METHODS.EXECUTION_RUN_STOP]: 'execution.run.stop',
   [SESSION_RPC_METHODS.EXECUTION_RUN_ACTION]: 'execution.run.action',
   [RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST]: 'sessions.external.candidates.list',
@@ -64,14 +83,6 @@ const PMS5_DIRECT_INTERNAL_METHODS = new Set<string>([
   RPC_METHODS.CAPABILITIES_DESCRIBE,
 ]);
 
-const A12_EXECUTION_RUN_INTERNAL_METHODS = new Set<string>([
-  SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
-  SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
-  SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
-  SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ,
-  SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL,
-]);
-
 export function resolveMachineRpcGovernance(method: string): MachineRpcGovernanceMetadataV1 {
   const actionSpecId = ACTION_SPEC_RPC_METHOD_IDS[method as keyof typeof ACTION_SPEC_RPC_METHOD_IDS];
   if (actionSpecId) {
@@ -80,7 +91,6 @@ export function resolveMachineRpcGovernance(method: string): MachineRpcGovernanc
   if (
     method === RPC_METHODS.STOP_DAEMON
     || PMS5_DIRECT_INTERNAL_METHODS.has(method)
-    || A12_EXECUTION_RUN_INTERNAL_METHODS.has(method)
   ) {
     return { rpcClassification: 'internal_only' };
   }

@@ -132,7 +132,7 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
   });
 
-  it('identifies execution-run session RPC governance from A.12-execution-runs', async () => {
+  it('identifies execution-run session RPC governance from A.12 ActionSpec bindings', async () => {
     const protocol = await importRpcPolicy();
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
     if ('importError' in protocol) throw protocol.importError;
@@ -144,7 +144,8 @@ describe('MachineRpcRoutePolicyV1', () => {
     });
     expect(protocol.resolveMachineRpcRoutePolicy(SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ)).toMatchObject({
       routeClass: 'server_required',
-      rpcClassification: 'internal_only',
+      rpcClassification: 'action_spec_bound',
+      actionSpecId: 'execution.run.stream.read',
     });
   });
 });
