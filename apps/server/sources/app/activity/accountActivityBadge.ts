@@ -6,6 +6,8 @@ export type SessionActivityBadgeInputs = Readonly<{
     lastViewedSessionSeq?: number | null;
     pendingPermissionRequestCount?: number | null;
     pendingUserActionRequestCount?: number | null;
+    latestTurnStatus?: string | null;
+    lastRuntimeIssue?: string | null;
     active?: boolean | null;
     archivedAt?: Date | null;
 }>;
@@ -17,6 +19,8 @@ type SessionActivityBadgeRow = Readonly<{
     lastViewedSessionSeq: number | null;
     pendingPermissionRequestCount: number | null;
     pendingUserActionRequestCount: number | null;
+    latestTurnStatus: string | null;
+    lastRuntimeIssue: string | null;
     active: boolean;
     archivedAt: Date | null;
 }>;
@@ -32,12 +36,16 @@ export function computeSessionContributesToActivityBadge(session: SessionActivit
         typeof session.pendingPermissionRequestCount === "number" ? session.pendingPermissionRequestCount : 0;
     const pendingUserActionRequestCount =
         typeof session.pendingUserActionRequestCount === "number" ? session.pendingUserActionRequestCount : 0;
+    const hasFailedPrimaryRuntimeIssue =
+        session.latestTurnStatus === "failed"
+        && typeof session.lastRuntimeIssue === "string"
+        && session.lastRuntimeIssue.trim().length > 0;
 
     const hasUnread =
         typeof lastViewedSessionSeq === "number"
             ? seq > lastViewedSessionSeq
             : seq > 0;
-    return hasUnread || pendingCount > 0 || pendingPermissionRequestCount > 0 || pendingUserActionRequestCount > 0;
+    return hasFailedPrimaryRuntimeIssue || hasUnread || pendingCount > 0 || pendingPermissionRequestCount > 0 || pendingUserActionRequestCount > 0;
 }
 
 export function didSessionActivityBadgeContributionChange(
@@ -68,6 +76,8 @@ export async function computeAccountActivityBadgeCounts(accountIds: ReadonlyArra
             lastViewedSessionSeq: true,
             pendingPermissionRequestCount: true,
             pendingUserActionRequestCount: true,
+            latestTurnStatus: true,
+            lastRuntimeIssue: true,
             active: true,
             archivedAt: true,
         },

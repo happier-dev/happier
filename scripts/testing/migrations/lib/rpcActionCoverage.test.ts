@@ -333,7 +333,7 @@ test('validateRpcActionCoverage rejects invalid action rpc exception metadata', 
   const result = validateRpcActionCoverage({
     rpcMethods: { DEMO_ACTION: 'demo.action' },
     sessionRpcMethods: {},
-    genericActionSpecRpcMethods: [],
+    genericActionSpecRpcMethods: ['sessions.subagents.list'],
     actionSpecRpcExceptions: [
       {
         method: 'demo.action',
