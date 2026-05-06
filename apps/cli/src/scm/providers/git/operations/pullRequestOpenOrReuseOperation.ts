@@ -393,12 +393,12 @@ export function createGitPullRequestOpenOrReuseOperation(
                 if (plan.kind === 'publish_active_branch') {
                     const published = await publishActiveBranch({
                         context,
-	                        request: {
-	                            ...(request.cwd ? { cwd: request.cwd } : {}),
-	                        },
-	                        headBranch: resolvedHeadBranch,
-	                        reason: plan.reason,
-	                    });
+                        request: {
+                            ...(request.cwd ? { cwd: request.cwd } : {}),
+                        },
+                        headBranch: resolvedHeadBranch,
+                        reason: plan.reason,
+                    });
                     if (!published.success) {
                         return errorResponse(
                             published.error ?? 'Failed to publish active branch before opening pull request',
@@ -408,41 +408,41 @@ export function createGitPullRequestOpenOrReuseOperation(
                 }
             }
 
-	            try {
-	                const created = await writeAdapter.createPullRequest({
-	                    provider: resolvedProvider,
-	                    base: resolvedBaseBranch,
-	                    head: resolvedHeadBranch,
-	                    title: request.title ?? resolvedHeadBranch,
-	                    ...(request.body !== undefined ? { body: request.body } : {}),
-	                    runtimeServices: readRuntimeServices(),
-	                });
+            try {
+                const created = await writeAdapter.createPullRequest({
+                    provider: resolvedProvider,
+                    base: resolvedBaseBranch,
+                    head: resolvedHeadBranch,
+                    title: request.title ?? resolvedHeadBranch,
+                    ...(request.body !== undefined ? { body: request.body } : {}),
+                    runtimeServices: readRuntimeServices(),
+                });
                 invalidatePrStatusCacheAfterSuccessfulScmMutation({
-	                    cache,
-	                    response: { success: true },
-	                    context,
-	                    headBranch: resolvedHeadBranch,
-	                });
+                    cache,
+                    response: { success: true },
+                    context,
+                    headBranch: resolvedHeadBranch,
+                });
                 cache.setSuccess({ key: cacheKey, pullRequests: [created] });
                 return createSuccessfulResponse({ pullRequest: created, reused: false });
             } catch (error) {
-	                const duplicateHint = await readValidatedDuplicateHint({
-	                    adapter: writeAdapter,
-	                    provider: resolvedProvider,
-	                    baseBranch: resolvedBaseBranch,
-	                    headBranch: resolvedHeadBranch,
-	                    error,
-	                });
+                const duplicateHint = await readValidatedDuplicateHint({
+                    adapter: writeAdapter,
+                    provider: resolvedProvider,
+                    baseBranch: resolvedBaseBranch,
+                    headBranch: resolvedHeadBranch,
+                    error,
+                });
                 if (duplicateHint) {
                     cache.setSuccess({ key: cacheKey, pullRequests: [duplicateHint] });
                     return createSuccessfulResponse({ pullRequest: duplicateHint, reused: true });
                 }
-	                const listedAfterDuplicate = findMatchingPullRequest({
-	                    pullRequests: await listOpenPullRequests(),
-	                    provider: resolvedProvider,
-	                    baseBranch: resolvedBaseBranch,
-	                    headBranch: resolvedHeadBranch,
-	                });
+                const listedAfterDuplicate = findMatchingPullRequest({
+                    pullRequests: await listOpenPullRequests(),
+                    provider: resolvedProvider,
+                    baseBranch: resolvedBaseBranch,
+                    headBranch: resolvedHeadBranch,
+                });
                 if (listedAfterDuplicate) {
                     cache.setSuccess({ key: cacheKey, pullRequests: [listedAfterDuplicate] });
                     return createSuccessfulResponse({ pullRequest: listedAfterDuplicate, reused: true });
