@@ -45,6 +45,82 @@ function parseArgsValue(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function jsonSchemaToZod(schema: unknown): z.ZodTypeAny {
+  const record = asRecord(schema);
+  if (!record) return z.any();
+
+  const anyOf = Array.isArray(record.anyOf) ? record.anyOf.map((entry) => jsonSchemaToZod(entry)) : null;
+  if (anyOf && anyOf.length > 0) {
+    const [first, ...rest] = anyOf;
+    return rest.reduce<z.ZodTypeAny>((current, entry) => z.union([current, entry]), first);
+  }
+
+  const oneOf = Array.isArray(record.oneOf) ? record.oneOf.map((entry) => jsonSchemaToZod(entry)) : null;
+  if (oneOf && oneOf.length > 0) {
+    const [first, ...rest] = oneOf;
+    return rest.reduce<z.ZodTypeAny>((current, entry) => z.union([current, entry]), first);
+  }
+
+  if (Array.isArray(record.enum) && record.enum.length > 0) {
+    const literals = record.enum.map((entry) => z.literal(entry));
+    const [first, ...rest] = literals;
+    return rest.reduce<z.ZodTypeAny>((current, entry) => z.union([current, entry]), first);
+  }
+
+  const typeValue = record.type;
+  if (Array.isArray(typeValue) && typeValue.length > 0) {
+    const entries = typeValue.map((entry) => jsonSchemaToZod({ ...record, type: entry }));
+    const [first, ...rest] = entries;
+    return rest.reduce<z.ZodTypeAny>((current, entry) => z.union([current, entry]), first);
+  }
+
+  switch (typeValue) {
+    case 'string':
+      return z.string();
+    case 'number':
+      return z.number();
+    case 'integer':
+      return z.number().int();
+    case 'boolean':
+      return z.boolean();
+    case 'null':
+      return z.null();
+    case 'array': {
+      return z.array(jsonSchemaToZod(record.items));
+    }
+    case 'object': {
+      const properties = asRecord(record.properties) ?? {};
+      const required = new Set(Array.isArray(record.required) ? record.required.filter((entry): entry is string => typeof entry === 'string') : []);
+      const shape: Record<string, z.ZodTypeAny> = {};
+      for (const [key, value] of Object.entries(properties)) {
+        const propertySchema = jsonSchemaToZod(value);
+        shape[key] = required.has(key) ? propertySchema : propertySchema.optional();
+      }
+
+      let objectSchema = z.object(shape);
+      if (record.additionalProperties === false) return objectSchema.strict();
+
+      const additionalProperties = asRecord(record.additionalProperties);
+      if (additionalProperties) return objectSchema.catchall(jsonSchemaToZod(additionalProperties));
+
+      return objectSchema.passthrough();
+    }
+    default:
+      return z.any();
+  }
+}
+
+function getRegisteredInputSchema(tool: unknown): z.ZodTypeAny {
+  const record = asRecord(tool);
+  if (!record) return z.any();
+  return jsonSchemaToZod(record.inputSchema);
+}
+
 async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> {
   const client = new Client({ name: 'happier-remote-bridge', version: '1.0.0' }, { capabilities: {} });
 
@@ -101,9 +177,10 @@ async function main(): Promise<void> {
       {
         description: typeof tool?.description === 'string' ? tool.description : undefined,
         title: typeof tool?.title === 'string' ? tool.title : undefined,
-        // The SDK expects a Zod schema for input validation. Remote `listTools` returns JSON schema.
-        // Prefer permissive validation here and let the remote server enforce its own schema.
-        inputSchema: z.any(),
+        // Preserve the remote JSON schema so downstream clients can see required
+        // arguments. If the remote tool omits a usable schema, fall back to
+        // permissive validation and let the remote server enforce its own rules.
+        inputSchema: getRegisteredInputSchema(tool),
         _meta: tool?.inputSchema ? { remoteInputSchema: tool.inputSchema } : undefined,
       } as any,
       (async (argsOrExtra: unknown, extra?: unknown) => {

@@ -49,6 +49,23 @@ async function startTestMcpHttpServer(): Promise<{ url: string; stop: () => void
         isError: false as const,
       }),
     );
+    mcp.registerTool(
+      'remember',
+      {
+        description: 'Remember',
+        inputSchema: z
+          .object({
+            content: z.string(),
+            context: z.union([z.string(), z.null()]).optional(),
+            tags: z.union([z.array(z.string()), z.null()]).optional(),
+          })
+          .passthrough(),
+      } as any,
+      async (args: any) => ({
+        content: [{ type: 'text' as const, text: String(args?.content ?? '') }],
+        isError: false as const,
+      }),
+    );
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -87,6 +104,23 @@ async function startTestMcpSseServer(): Promise<{ url: string; stop: () => void 
         { description: 'Echo', inputSchema: z.object({ text: z.string() }).passthrough() } as any,
         async (args: any) => ({
           content: [{ type: 'text' as const, text: String(args?.text ?? '') }],
+          isError: false as const,
+        }),
+      );
+      mcp.registerTool(
+        'remember',
+        {
+          description: 'Remember',
+          inputSchema: z
+            .object({
+              content: z.string(),
+              context: z.union([z.string(), z.null()]).optional(),
+              tags: z.union([z.array(z.string()), z.null()]).optional(),
+            })
+            .passthrough(),
+        } as any,
+        async (args: any) => ({
+          content: [{ type: 'text' as const, text: String(args?.content ?? '') }],
           isError: false as const,
         }),
       );
@@ -162,10 +196,24 @@ describe('remoteMcpStdioBridge', () => {
       const tools = await client.listTools();
       const names = (tools.tools ?? []).map((t: any) => String(t.name));
       expect(names).toContain('echo');
+      expect(names).toContain('remember');
+
+      const rememberTool = (tools.tools ?? []).find((t: any) => t?.name === 'remember');
+      expect(rememberTool?.inputSchema).toMatchObject({
+        type: 'object',
+        required: ['content'],
+        properties: {
+          content: { type: 'string' },
+        },
+      });
 
       const res = await client.callTool({ name: 'echo', arguments: { text: 'hi' } });
       const text = String((res as any)?.content?.[0]?.text ?? '');
       expect(text).toBe('hi');
+
+      const rememberRes = await client.callTool({ name: 'remember', arguments: { content: 'store this', tags: ['workflow'] } });
+      const rememberText = String((rememberRes as any)?.content?.[0]?.text ?? '');
+      expect(rememberText).toBe('store this');
 
       await client.close();
     } finally {
@@ -204,9 +252,23 @@ describe('remoteMcpStdioBridge', () => {
       const client = new Client({ name: 'bridge-test-sse', version: '1.0.0' }, { capabilities: {} });
       await client.connect(transport);
 
+      const tools = await client.listTools();
+      const rememberTool = (tools.tools ?? []).find((t: any) => t?.name === 'remember');
+      expect(rememberTool?.inputSchema).toMatchObject({
+        type: 'object',
+        required: ['content'],
+        properties: {
+          content: { type: 'string' },
+        },
+      });
+
       const res = await client.callTool({ name: 'echo', arguments: { text: 'hi' } });
       const text = String((res as any)?.content?.[0]?.text ?? '');
       expect(text).toBe('hi');
+
+      const rememberRes = await client.callTool({ name: 'remember', arguments: { content: 'store this', tags: ['workflow'] } });
+      const rememberText = String((rememberRes as any)?.content?.[0]?.text ?? '');
+      expect(rememberText).toBe('store this');
 
       await client.close();
     } finally {
