@@ -128,10 +128,11 @@ function collectActionSpecRpcMethods(
 function collectDefaultGenericActionSpecRpcMethods(input: Readonly<{
   actionSpecs: readonly RpcActionCoverageActionSpec[];
 }>): readonly string[] {
+  const exceptionMethods = new Set(ACTION_SPEC_RPC_EXCEPTIONS.map((exception) => normalizeMethod(exception.method)));
   return collectActionSpecRpcMethodsForScopes(
     input.actionSpecs,
     REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES,
-  );
+  ).filter((method) => !exceptionMethods.has(normalizeMethod(method)));
 }
 
 function collectDefaultGenericActionSpecRpcActionIds(input: Readonly<{
@@ -242,10 +243,7 @@ function validateActionSpecRpcExceptions(input: Readonly<{
       });
     }
 
-    if (
-      (exception.actionId && input.requiredGenericActionIds.has(exception.actionId))
-      || input.genericMethodSet.has(method)
-    ) {
+    if (input.genericMethodSet.has(method)) {
       pushError(input.errors, {
         code: 'action-rpc-exception-generically-servable',
         ...(exception.actionId ? { actionId: exception.actionId } : {}),
