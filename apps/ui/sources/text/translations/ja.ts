@@ -2149,7 +2149,6 @@ localTailscale: {
       kind: {
         'relay-access-provider': 'Relay access',
         'ssh-tunnel-desktop': 'Desktop SSH tunnel',
-        'ssh-tunnel-native': 'Native SSH tunnel',
         'server-profile-url': 'Server URL',
         'peer-mediation': 'Peer mediation',
         'manual-url': 'Manual URL',

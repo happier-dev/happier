@@ -1,22 +1,5 @@
 import type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
 
-export type NativeSshSystemTaskCapability = Readonly<{
-    available: boolean;
-    unavailableReason?:
-        | 'feature-disabled'
-        | 'native-module-missing'
-        | 'unsupported-platform'
-        | 'missing-credentials'
-        | 'host-key-untrusted'
-        | 'build-not-included'
-        | 'engine-unavailable';
-    supportedTaskKinds: readonly ['remote.ssh.bootstrapMachine.v1'];
-}>;
-
-export type SystemTaskBridgeCapabilities = Readonly<{
-    nativeSsh?: NativeSshSystemTaskCapability;
-}>;
-
 export type SystemTaskRunnerMode = 'tauri' | 'native' | 'dev' | 'unavailable';
 
 export type SystemTaskRunStatus =
@@ -46,7 +29,6 @@ export type SystemTaskBridgeListenerSet = Readonly<{
 }>;
 
 export type SystemTaskBridge = Readonly<{
-    capabilities?: SystemTaskBridgeCapabilities;
     start: (spec: SystemTaskSpec) => Promise<string>;
     subscribe: (
         taskId: string,
@@ -60,7 +42,6 @@ export type SystemTasksBridge = SystemTaskBridge;
 
 export type SystemTaskRunner = Readonly<{
     mode: SystemTaskRunnerMode;
-    capabilities?: SystemTaskBridgeCapabilities;
     start: (spec: SystemTaskSpec) => Promise<string>;
     cancel: (taskId: string) => Promise<void>;
     respond: (taskId: string, answer: unknown) => Promise<void>;
