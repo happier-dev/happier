@@ -214,6 +214,10 @@ export const BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS: readonly Re
   "trustPolicy": "local_trusted"
 },
     definition: Object.freeze({
+  "auth": {
+    "cloudOnly": false,
+    "materializationKinds": []
+  },
   "baseUrl": "https://dev.azure.com",
   "capabilities": {
     "compareUrl": true,
@@ -278,6 +282,13 @@ export const BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS: readonly Re
   "trustPolicy": "local_trusted"
 },
     definition: Object.freeze({
+  "auth": {
+    "cloudOnly": true,
+    "credentialPayloadKind": "bitbucket_basic_auth",
+    "materializationKinds": [
+      "scm_hosting_basic_auth"
+    ]
+  },
   "baseUrl": "https://bitbucket.org",
   "capabilities": {
     "compareUrl": true,
@@ -339,6 +350,10 @@ export const BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS: readonly Re
   "trustPolicy": "local_trusted"
 },
     definition: Object.freeze({
+  "auth": {
+    "cloudOnly": false,
+    "materializationKinds": []
+  },
   "baseUrl": "https://github.com",
   "capabilities": {
     "compareUrl": true,
@@ -406,6 +421,10 @@ export const BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS: readonly Re
   "trustPolicy": "local_trusted"
 },
     definition: Object.freeze({
+  "auth": {
+    "cloudOnly": false,
+    "materializationKinds": []
+  },
   "baseUrl": "https://gitlab.com",
   "capabilities": {
     "compareUrl": true,
