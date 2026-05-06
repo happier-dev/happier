@@ -11,6 +11,16 @@ function readObject(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+function readOperationError(value: unknown): { ok: false; error: string; errorCode?: string } | null {
+    const record = readObject(value);
+    if (record?.ok !== false || typeof record.error !== 'string') return null;
+    return {
+        ok: false,
+        error: record.error,
+        ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
+    };
+}
+
 export async function generateScmCommitMessage(params: Readonly<{
     sessionId: string;
     backendId: string;
@@ -46,9 +56,8 @@ export async function generateScmCommitMessage(params: Readonly<{
         },
     );
 
-    if ('ok' in started && started.ok === false) {
-        return { ok: false, error: started.error, ...(started.errorCode ? { errorCode: started.errorCode } : {}) };
-    }
+    const startError = readOperationError(started);
+    if (startError) return startError;
 
     const startedRecord = readObject(started);
     const runId = typeof startedRecord?.runId === 'string' ? startedRecord.runId.trim() : '';
@@ -58,9 +67,8 @@ export async function generateScmCommitMessage(params: Readonly<{
 
     for (let attempt = 0; attempt < COMMIT_MESSAGE_RESULT_POLL_ATTEMPTS; attempt += 1) {
         const res = await sessionExecutionRunGet(params.sessionId, { runId, includeStructured: true });
-        if ('ok' in res && res.ok === false) {
-            return { ok: false, error: res.error, ...(res.errorCode ? { errorCode: res.errorCode } : {}) };
-        }
+        const getError = readOperationError(res);
+        if (getError) return getError;
 
         const responseRecord = readObject(res);
         const runRecord = readObject(responseRecord?.run);
