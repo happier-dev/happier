@@ -859,10 +859,8 @@ describe('executionRuns session RPC handlers', () => {
           backendId: 'review-bot',
           permissionMode: 'no_tools',
           backendTarget: {
-            kind: 'backend',
+            kind: 'configuredAcpBackend',
             backendId: 'review-bot',
-            configuredBackendId: 'review-bot',
-            sourceKind: 'configured',
           },
         }),
       ]);
