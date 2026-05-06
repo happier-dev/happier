@@ -147,6 +147,17 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
             continue;
         }
 
+        const handler = async (input: unknown) => {
+            const executor = await resolveActionExecutor(params);
+            const result = await dispatchActionFromRpc({
+                actionId: actionId as ActionId,
+                input,
+                ...buildActionExecutorContextHints(input),
+                executor,
+            });
+            return unwrapActionResultForRpc(result);
+        };
+
         for (const method of collectRpcMethodsForSpec(spec)) {
             if (exceptionMethods.has(method)) {
                 continue;
@@ -161,16 +172,7 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
             }
             registeredMethods.set(method, actionId);
 
-            params.rpcHandlerManager.registerHandler(method, async (input: unknown) => {
-                const executor = await resolveActionExecutor(params);
-                const result = await dispatchActionFromRpc({
-                    actionId: actionId as ActionId,
-                    input,
-                    ...buildActionExecutorContextHints(input),
-                    executor,
-                });
-                return unwrapActionResultForRpc(result);
-            });
+            params.rpcHandlerManager.registerHandler(method, handler);
         }
     }
 }

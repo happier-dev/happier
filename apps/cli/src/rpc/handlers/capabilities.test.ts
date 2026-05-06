@@ -52,11 +52,12 @@ describe('createCliCapabilitiesService dep.az', () => {
             const service = await createCliCapabilitiesService();
             const described = service.describe() as CapabilitiesDescribeResponse;
 
-            expect(described.capabilities.find((capability) => capability.id === 'dep.az')).toMatchObject({
+            const azCapability = described.capabilities.find((capability) => capability.id === 'dep.az');
+            expect(azCapability).toMatchObject({
                 id: 'dep.az',
                 kind: 'dep',
-                methods: undefined,
             });
+            expect(azCapability).not.toHaveProperty('methods');
         } finally {
             await removeTempDir(home);
             envScope.restore();

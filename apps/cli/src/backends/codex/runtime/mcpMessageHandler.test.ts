@@ -258,6 +258,54 @@ describe('createCodexMcpMessageHandler', () => {
     });
   });
 
+  it.each([
+    ['turn_failed', 'failed'],
+    ['turn_cancelled', 'cancelled'],
+    ['turn_aborted', 'aborted'],
+  ] as const)('treats %s as a terminal turn event', async (type, label) => {
+    let thinking = false;
+    let currentTaskId: string | null = null;
+    const keepAlive = vi.fn();
+    const sendReady = vi.fn();
+    const session = {
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendCodexMessage: vi.fn(),
+      sendSessionEvent: vi.fn(),
+      keepAlive,
+    };
+    const messageBuffer = { addMessage: vi.fn() };
+    const logger = { debug: vi.fn() };
+    const diffProcessor = { processDiff: vi.fn() };
+
+    const handler = createCodexMcpMessageHandler({
+      logger,
+      session,
+      messageBuffer,
+      sendReady,
+      publishCodexThreadIdToMetadata: vi.fn(),
+      diffProcessor,
+      getCurrentTaskId: () => currentTaskId,
+      setCurrentTaskId: (next: string | null) => {
+        currentTaskId = next;
+      },
+      getThinking: () => thinking,
+      setThinking: (next: boolean) => {
+        thinking = next;
+      },
+    });
+
+    handler({ type: 'task_started' });
+    handler({ type });
+
+    expect(thinking).toBe(false);
+    expect(keepAlive).toHaveBeenCalledWith(false, 'remote');
+    expect(messageBuffer.addMessage).toHaveBeenCalledWith(`Turn ${label}`, 'status');
+    await vi.waitFor(() => {
+      expect(sendReady).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('streams agent_message text through transcript-vNext instead of creating standalone Codex rows', () => {
     vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
     vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
