@@ -48,6 +48,7 @@ describe('ApiMachineClient SCM handlers', () => {
     expect(rpc.hasHandler(RPC_METHODS.SCM_PULL_REQUEST_LIST)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.SCM_PULL_REQUEST_GET)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK)).toBe(true);
   });
 

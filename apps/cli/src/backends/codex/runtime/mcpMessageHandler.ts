@@ -37,6 +37,20 @@ type UiForwarderDeps = {
   session: Pick<ApiSessionClient, 'sendSessionEvent'>;
 };
 
+function readCodexTerminalTurnEvent(message: unknown): { label: string; reason: string } | null {
+  const type = (message as { type?: unknown })?.type;
+  if (type === 'turn_failed') {
+    return { label: 'failed', reason: 'turn_failed' };
+  }
+  if (type === 'turn_cancelled') {
+    return { label: 'cancelled', reason: 'turn_cancelled' };
+  }
+  if (type === 'turn_aborted') {
+    return { label: 'aborted', reason: 'turn_aborted' };
+  }
+  return null;
+}
+
 export function forwardCodexStatusToUi(opts: UiForwarderDeps & { messageText: string }): void {
   opts.messageBuffer.addMessage(opts.messageText, 'status');
   opts.session.sendSessionEvent({ type: 'message', message: opts.messageText });
@@ -115,11 +129,14 @@ export function createCodexMcpMessageHandler(opts: {
       void streamedTranscriptWriter.flushAll({ reason: 'turn-end' }).finally(() => {
         opts.sendReady();
       });
-    } else if (message?.type === 'turn_aborted') {
-      opts.messageBuffer.addMessage('Turn aborted', 'status');
-      void streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'turn_aborted' }).finally(() => {
-        opts.sendReady();
-      });
+    } else {
+      const terminalEvent = readCodexTerminalTurnEvent(message);
+      if (terminalEvent) {
+        opts.messageBuffer.addMessage(`Turn ${terminalEvent.label}`, 'status');
+        void streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: terminalEvent.reason }).finally(() => {
+          opts.sendReady();
+        });
+      }
     }
 
     if (message?.type === 'task_started') {
@@ -129,7 +146,7 @@ export function createCodexMcpMessageHandler(opts: {
         opts.session.keepAlive(true, 'remote');
       }
     }
-    if (message?.type === 'task_complete' || message?.type === 'turn_aborted') {
+    if (message?.type === 'task_complete' || readCodexTerminalTurnEvent(message)) {
       if (opts.getThinking()) {
         opts.logger.debug('thinking completed');
         opts.setThinking(false);

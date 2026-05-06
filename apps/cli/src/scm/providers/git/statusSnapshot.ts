@@ -30,6 +30,7 @@ export function createGitCapabilities() {
     return createGitScmCapabilities({
         readHostingProvider: true,
         readPullRequestStatus: true,
+        writePullRequestCreate: true,
         writeRepositoryInit: true,
         writeRepositoryRemoveIndexLock: true,
     });

@@ -31,6 +31,8 @@ import type {
     ScmPullRequestListResponse,
     ScmPullRequestOpenComposeRequest,
     ScmPullRequestOpenComposeResponse,
+    ScmPullRequestOpenOrReuseRequest,
+    ScmPullRequestOpenOrReuseResponse,
     ScmRemoteAddRequest,
     ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
@@ -315,6 +317,10 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmPullRequestOpenComposeRequest;
     }): Promise<ScmPullRequestOpenComposeResponse>;
+    pullRequestOpenOrReuse?(input: {
+        context: ScmBackendContext;
+        request: ScmPullRequestOpenOrReuseRequest;
+    }): Promise<ScmPullRequestOpenOrReuseResponse>;
     repositoryInit?(input: {
         context: ScmBackendContext;
         request: ScmRepositoryInitRequest;

@@ -32,6 +32,7 @@ import {
     gitPullRequestList,
     gitPullRequestOpenCompose,
 } from './operations/pullRequestReadOperations';
+import { gitPullRequestOpenOrReuse } from './operations/pullRequestOpenOrReuseOperation';
 import { gitDiffCommit, gitDiffFile, gitLogList } from './operations/readOperations';
 import { gitRemoteAdd, gitRemoteRemove, gitRemoteSetUrl } from './operations/remoteManagementOperations';
 import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './operations/remoteOperations';
@@ -146,6 +147,7 @@ export function createGitBackend(): ScmBackend {
         pullRequestList: gitPullRequestList,
         pullRequestGet: gitPullRequestGet,
         pullRequestOpenCompose: gitPullRequestOpenCompose,
+        pullRequestOpenOrReuse: gitPullRequestOpenOrReuse,
         repositoryInit: gitRepositoryInit,
         removeIndexLock: gitRemoveIndexLock,
         stashList: gitStashList,

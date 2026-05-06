@@ -38,6 +38,8 @@ import type {
     ScmPullRequestListResponse,
     ScmPullRequestOpenComposeRequest,
     ScmPullRequestOpenComposeResponse,
+    ScmPullRequestOpenOrReuseRequest,
+    ScmPullRequestOpenOrReuseResponse,
     ScmRepositoryInitRequest,
     ScmRepositoryInitResponse,
     ScmRepositoryRemoveIndexLockRequest,
@@ -452,6 +454,20 @@ export function registerScmHandlers(
                     selection.backend.pullRequestOpenCompose
                         ? selection.backend.pullRequestOpenCompose({ context, request })
                         : notRepositoryResponse<ScmPullRequestOpenComposeResponse>(),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse>(
+        RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE,
+        async (request) =>
+            runScmRoute<ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmPullRequestOpenOrReuseResponse>(),
+                runWithBackend: async ({ context, selection }) =>
+                    selection.backend.pullRequestOpenOrReuse
+                        ? selection.backend.pullRequestOpenOrReuse({ context, request })
+                        : notRepositoryResponse<ScmPullRequestOpenOrReuseResponse>(),
             })
     );
 
