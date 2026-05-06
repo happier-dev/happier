@@ -318,6 +318,9 @@ function isAcceptedAllowlistPath(filePath: string): boolean {
 
 function isPermissionOwnedPath(filePath: string): boolean {
   const normalizedPath = normalizeRepoPath(filePath).toLowerCase();
+  if (isAcceptedAllowlistPath(filePath)) {
+    return false;
+  }
   if (normalizedPath.startsWith('apps/cli/src/agent/permissions/')) {
     return true;
   }
