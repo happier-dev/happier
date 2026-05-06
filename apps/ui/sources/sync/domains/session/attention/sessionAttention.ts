@@ -66,11 +66,11 @@ export function hasSessionAttention(session: Session, options?: SessionAttention
     const attentionState = deriveSessionAttentionState({
         latestTurnStatus: session.latestTurnStatus ?? null,
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
-        running: session.active === true,
-        waiting: flags.hasPendingPermissionRequests
+        isRunning: session.active === true,
+        hasWaitingActivity: flags.hasPendingPermissionRequests
             || flags.hasPendingUserActionRequests
             || flags.hasQueuedUserInput,
-        review: flags.hasUnread,
+        hasReviewActivity: flags.hasUnread,
     });
     return (
         attentionState === 'failed' ||
