@@ -45,6 +45,8 @@ function selectSessionActivityBadgeInputs() {
         lastViewedSessionSeq: true,
         pendingPermissionRequestCount: true,
         pendingUserActionRequestCount: true,
+        latestTurnStatus: true,
+        lastRuntimeIssue: true,
         active: true,
         archivedAt: true,
     } as const;
@@ -59,6 +61,8 @@ function toSessionActivityBadgeInputs(
         lastViewedSessionSeq: value?.lastViewedSessionSeq ?? null,
         pendingPermissionRequestCount: value?.pendingPermissionRequestCount ?? 0,
         pendingUserActionRequestCount: value?.pendingUserActionRequestCount ?? 0,
+        latestTurnStatus: value?.latestTurnStatus ?? null,
+        lastRuntimeIssue: value?.lastRuntimeIssue ?? null,
         active: value?.active ?? true,
         archivedAt: value?.archivedAt ?? null,
     };
