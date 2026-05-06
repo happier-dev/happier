@@ -10,6 +10,7 @@ import type {
 
 import { ApiClient } from '@/api/api';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
+import { getAzDepStatus } from '@/capabilities/deps/az';
 import { getGhDepStatus } from '@/capabilities/deps/gh';
 import { readCredentials, type Credentials } from '@/persistence';
 import {
@@ -36,6 +37,7 @@ type RuntimeServicesDeps = Readonly<{
         timeoutMs: number;
         env?: Readonly<Record<string, string>>;
     }>) => Promise<ScmHostingProviderRuntimeCommandResult>;
+    getAzDepStatus?: typeof getAzDepStatus;
 }>;
 
 function credentialMaterial(credentials: Credentials) {
@@ -113,6 +115,7 @@ function createDefaultDeps(): RuntimeServicesDeps {
     return {
         readCredentials,
         createApi: (credentials) => ApiClient.create(credentials),
+        getAzDepStatus,
         getGhDepStatus,
         runCommand: (input) =>
             runCliCommandBestEffort({
@@ -168,6 +171,17 @@ export function createScmHostingProviderRuntimeServices(
             };
         },
         async resolveInstallableCommand(input) {
+            if (input.capabilityId === 'dep.az') {
+                const status = await deps.getAzDepStatus?.({ onlyIfInstalled: true });
+                if (!status?.installed || !status.binPath || !status.resolvedSource) {
+                    return { kind: 'missing' };
+                }
+                return {
+                    kind: 'available',
+                    source: status.resolvedSource,
+                    binPath: status.binPath,
+                };
+            }
             if (input.capabilityId !== 'dep.gh') return { kind: 'missing' };
             const status = await deps.getGhDepStatus({ onlyIfInstalled: true });
             if (!status.installed || !status.binPath || !status.resolvedSource) {

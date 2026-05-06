@@ -94,6 +94,19 @@ function serverRequiredRows(
   return methods.map((method) => serverRequired(method, serverRequiredReason, rationale, scope));
 }
 
+function actionSpecServerRequired(
+  method: MachineRpcMethod,
+  serverRequiredReason: MachineRpcServerRequiredReason,
+  rationale: string,
+  actionSpecId: string,
+  scope?: MachineRpcRoutePolicyScopeV1,
+): MachineRpcRoutePolicyV1 {
+  return {
+    ...serverRequired(method, serverRequiredReason, rationale, scope),
+    actionSpecId,
+  };
+}
+
 const DIRECT_EPHEMERAL_POLICIES = Object.freeze([
   directEphemeral(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST, 'Daemon-local execution run registry read; no server persistence, transcript write, or cross-device fanout.'),
   directEphemeral(RPC_METHODS.DAEMON_MEMORY_STATUS, 'Daemon-local memory worker status read with no mutation or server persistence.'),
@@ -155,11 +168,6 @@ const LOCAL_MUTATION_METHODS = [
   RPC_METHODS.DAEMON_PROMPT_REGISTRY_SCAN_SOURCE,
   RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL,
   RPC_METHODS.DAEMON_MARKETPLACE_SOURCE_REGISTRY_SET,
-  RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE,
-  RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH,
-  RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH,
-  RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET,
-  RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER,
   RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE,
   RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH,
   RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH,
@@ -214,8 +222,6 @@ const AMBIGUOUS_READ_OR_EXTERNAL_METHODS = [
   RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE,
   RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE,
   RPC_METHODS.DAEMON_PROMPT_ASSETS_DISCOVER,
-  RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST,
-  RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET,
   RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST,
   RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET,
   RPC_METHODS.PREVIEW_ENV,
@@ -271,6 +277,15 @@ const AUTOMATION_METHODS = [
 
 export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   ...DIRECT_EPHEMERAL_POLICIES,
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE, 'destructive_or_recovery_mutation', 'External-session link creation mutates durable session linkage and stays server-routed.', 'sessions.external.link.ensure'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH, 'destructive_or_recovery_mutation', 'External-session attach mutates follow leases and stays server-routed.', 'sessions.external.attach'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH, 'destructive_or_recovery_mutation', 'External-session detach mutates follow leases and stays server-routed.', 'sessions.external.detach'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET, 'destructive_or_recovery_mutation', 'External-session follow policy changes background follow state and stay server-routed.', 'sessions.external.followPolicy.set'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER, 'destructive_or_recovery_mutation', 'External-session takeover moves ownership into Happier runtime and stays server-routed.', 'sessions.external.takeover'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST, 'ambiguous', 'External-session candidate discovery can expose local provider metadata and stays server-routed.', 'sessions.external.candidates.list'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET, 'ambiguous', 'External-session status reads process/provider state and stay server-routed.', 'sessions.external.status.get'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, 'reconnect_catch_up', 'External-session transcript page reads participate in reconnect/catch-up semantics and stay server-routed.', 'sessions.external.transcript.page'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER, 'reconnect_catch_up', 'External-session transcript read-after reads participate in reconnect/catch-up semantics and stay server-routed.', 'sessions.external.transcript.readAfter'),
   ...serverRequiredRows(SESSION_DURABLE_METHODS, 'durable_session_write', 'Session and execution-run lifecycle/state methods remain server-required because they can assign sequence, write durable session state, or fan out across devices.', SESSION_SERVER_REQUIRED_SCOPE),
   ...serverRequiredRows(TRANSFER_CONTROL_METHODS, 'server_persistence', 'Transfer control-plane RPC remains server-required; PMS bounded-transfer flows own direct byte movement and durable token/control reconciliation.'),
   ...serverRequiredRows(LOCAL_MUTATION_METHODS, 'destructive_or_recovery_mutation', 'Daemon-local or repository mutation is not low-risk direct RPC without a later ActionSpec command-receipt packet.'),
@@ -279,8 +294,6 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   ...serverRequiredRows(AUTOMATION_METHODS, 'automation', 'Automation and invocation surfaces stay server-required until separate policy and command-receipt semantics are accepted.'),
   serverRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE, 'reconnect_catch_up', 'Transcript page reads participate in reconnect/catch-up semantics and stay server-routed.'),
   serverRequired(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER, 'reconnect_catch_up', 'Transcript read-after reads participate in reconnect/catch-up semantics and stay server-routed.'),
-  serverRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, 'reconnect_catch_up', 'External-session transcript page reads participate in reconnect/catch-up semantics and stay server-routed.'),
-  serverRequired(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER, 'reconnect_catch_up', 'External-session transcript read-after reads participate in reconnect/catch-up semantics and stay server-routed.'),
   serverRequired(RPC_METHODS.KILL_SESSION, 'durable_session_write', 'Session kill is a durable/destructive lifecycle mutation and must stay server-routed.', SESSION_SERVER_REQUIRED_SCOPE),
   serverRequired(RPC_METHODS.BASH, 'ambiguous', 'Shell execution has broad side-effect and access-policy ambiguity and must stay server-routed.'),
 ] satisfies readonly MachineRpcRoutePolicyV1[]);
