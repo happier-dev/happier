@@ -124,6 +124,29 @@ describe('promptInput', () => {
     expect(rl.close).toHaveBeenCalledTimes(1);
   });
 
+  it('suppresses readline echo for secret process-stdio prompts', async () => {
+    stdinRef.value = { isTTY: false, label: 'stdin-pipe' } as unknown as NodeJS.ReadStream;
+    const writeSpy = vi.fn();
+    stdoutRef.value = { isTTY: true, label: 'stdout-tty', write: writeSpy } as unknown as NodeJS.WriteStream;
+    const rl = {
+      question: vi.fn((prompt: string, resolve: (value: string) => void) => {
+        expect(prompt).toBe('');
+        resolve('secret value');
+      }),
+      close: vi.fn(),
+      _writeToOutput: vi.fn(),
+    };
+    createInterfaceMock.mockReturnValue(rl);
+
+    const { promptSecretInput } = await import('./promptInput');
+    await expect(promptSecretInput('Secret: ')).resolves.toBe('secret value');
+
+    expect(writeSpy).toHaveBeenNthCalledWith(1, 'Secret: ');
+    expect(writeSpy).toHaveBeenNthCalledWith(2, '\n');
+    expect(rl._writeToOutput).not.toHaveBeenCalled();
+    expect(rl.close).toHaveBeenCalledTimes(1);
+  });
+
   it('does not attempt /dev/tty on Windows', async () => {
     platformRef.value = 'win32';
     existsSyncMock.mockReturnValue(true);

@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 
-import { canonicalizeDirectSessionsPath } from '@/session/directSessions/sourceValidation';
+import { canonicalizeDirectSessionsPath } from '@/session/external/sourceValidation';
 import { getTerminalId } from '@/agent/terminalRuntime/providers/getTerminalId';
 
-import { resolveConfiguredOhMyPiAgentDir } from '../directSessions/resolveOhMyPiAgentDir';
+import { resolveConfiguredOhMyPiAgentDir } from '../session/external/resolveOhMyPiAgentDir';
 
 export type ResolveOhMyPiTerminalRuntimeBreadcrumbParams = Readonly<{
     cwd: string;

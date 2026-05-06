@@ -33,6 +33,15 @@ function extractResultText(message: unknown): string | null {
     return typeof msg.result === 'string' && msg.result.trim().length > 0 ? msg.result : null;
 }
 
+function readAgentSdkResultFailure(message: unknown): string | null {
+    const msg: any = message;
+    if (!msg || typeof msg !== 'object' || msg.type !== 'result') return null;
+    const subtype = typeof msg.subtype === 'string' ? msg.subtype : '';
+    if (subtype !== 'error_max_turns' && subtype !== 'error_during_execution') return null;
+    const resultText = extractResultText(message);
+    return resultText ? `${subtype}: ${resultText}` : subtype;
+}
+
 export async function runClaudeAgentSdkStreamLoop(params: {
     response: AsyncIterable<unknown>;
     shapeLogger: { log: (shape: string, payload: unknown) => void };
@@ -145,6 +154,11 @@ export async function runClaudeAgentSdkStreamLoop(params: {
         }
 
         if (message && message.type === 'result') {
+            const failure = readAgentSdkResultFailure(message);
+            if (failure) {
+                throw new Error(failure);
+            }
+
             const resultText = extractResultText(message);
             params.turnOutputRuntime.bufferResultAssistantTextIfNeeded(message, resultText);
 

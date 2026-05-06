@@ -323,6 +323,7 @@ export class ClaudeLocalPermissionBridge {
 
         const timeoutMs = this.resolveResponseTimeout(params.toolName);
         if (timeoutMs !== null) {
+            // L-25 ALLOWLIST: localPermissionBridge non-interactive opt-in arrival latency
             const timeout = setTimeout(() => {
                 timedOut = true;
                 controller.abort(PERMISSION_TIMED_OUT_REASON);

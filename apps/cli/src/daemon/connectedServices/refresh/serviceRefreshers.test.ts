@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { getConnectedAccountDescriptor } from '@happier-dev/protocol';
 
-import { refreshClaudeSubscriptionOauthTokens, refreshGeminiOauthTokens, refreshOpenAiCodexOauthTokens } from './serviceRefreshers';
+import { refreshConnectedAccountOauthTokens } from './serviceRefreshers';
 
 describe('serviceRefreshers', () => {
   it('refreshes OpenAI Codex tokens through injected runtime fetch without using global fetch', async () => {
@@ -24,11 +25,12 @@ describe('serviceRefreshers', () => {
     }));
 
     const params = {
+      serviceId: 'openai-codex' as const,
       refreshToken: 'old-refresh',
       now: 1000,
       runtimeFetch,
     };
-    const refreshed = await refreshOpenAiCodexOauthTokens(params);
+    const refreshed = await refreshConnectedAccountOauthTokens(params);
 
     expect(globalFetch).not.toHaveBeenCalled();
     expect(runtimeFetch).toHaveBeenCalledWith(expect.objectContaining({
@@ -58,7 +60,8 @@ describe('serviceRefreshers', () => {
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const now = 1000;
-    const refreshed = await refreshOpenAiCodexOauthTokens({
+    const refreshed = await refreshConnectedAccountOauthTokens({
+      serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now,
     });
@@ -80,7 +83,8 @@ describe('serviceRefreshers', () => {
     }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await expect(refreshOpenAiCodexOauthTokens({
+    await expect(refreshConnectedAccountOauthTokens({
+      serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 1000,
     })).rejects.toThrow(/access_token/i);
@@ -104,7 +108,8 @@ describe('serviceRefreshers', () => {
 
     const now = 2000;
     try {
-      const refreshed = await refreshClaudeSubscriptionOauthTokens({
+      const refreshed = await refreshConnectedAccountOauthTokens({
+        serviceId: 'claude-subscription',
         refreshToken: 'old-refresh',
         now,
       });
@@ -139,7 +144,8 @@ describe('serviceRefreshers', () => {
     }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await expect(refreshClaudeSubscriptionOauthTokens({
+    await expect(refreshConnectedAccountOauthTokens({
+      serviceId: 'claude-subscription',
       refreshToken: 'old-refresh',
       now: 2000,
     })).rejects.toThrow(/access_token/i);
@@ -163,7 +169,8 @@ describe('serviceRefreshers', () => {
 
     const now = 3000;
     try {
-      const refreshed = await refreshGeminiOauthTokens({
+      const refreshed = await refreshConnectedAccountOauthTokens({
+        serviceId: 'gemini',
         refreshToken: 'old-refresh',
         now,
       });
@@ -187,6 +194,119 @@ describe('serviceRefreshers', () => {
     }
   });
 
+  it('refreshes standard OAuth tokens from descriptor metadata by service id', async () => {
+    const previousTokenUrl = process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL;
+    const previousClientId = process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID;
+    process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = 'https://example.test/claude/token';
+    process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID = 'claude-client';
+
+    const runtimeFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      text: async () => '',
+      json: async () => ({
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+        expires_in: 90,
+      }),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+
+    try {
+      const refreshed = await refreshConnectedAccountOauthTokens({
+        serviceId: 'claude-subscription',
+        refreshToken: 'old-refresh',
+        now: 4000,
+        runtimeFetch,
+      });
+
+      expect(runtimeFetch).toHaveBeenCalledWith(expect.objectContaining({
+        url: 'https://example.test/claude/token',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'refresh_token',
+          refresh_token: 'old-refresh',
+          client_id: 'claude-client',
+        }),
+      }));
+      expect(refreshed).toEqual({
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        idToken: null,
+        expiresAt: 94_000,
+      });
+    } finally {
+      process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = previousTokenUrl;
+      process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID = previousClientId;
+    }
+  });
+
+  it('parses standard OAuth refresh responses from descriptor payload mapping', async () => {
+    const descriptor = getConnectedAccountDescriptor('openai-codex');
+    if (!descriptor?.oauth) throw new Error('fixture');
+    const runtimeFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      text: async () => '',
+      json: async () => ({
+        access_token: 'mapped-access',
+        refresh_token: 'mapped-refresh',
+        id_token: 'mapped-id',
+        expires_in: 7,
+      }),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+
+    const refreshed = await refreshConnectedAccountOauthTokens({
+      serviceId: 'openai-codex',
+      refreshToken: 'old-refresh',
+      now: 5000,
+      runtimeFetch,
+    });
+
+    expect(refreshed).toEqual({
+      accessToken: 'mapped-access',
+      refreshToken: 'mapped-refresh',
+      idToken: 'mapped-id',
+      expiresAt: 12_000,
+    });
+  });
+
+  it('preserves existing standard OAuth refresh edge-case parsing', async () => {
+    const runtimeFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      text: async () => '',
+      json: async () => ({
+        access_token: 'new-access',
+        refresh_token: '',
+        id_token: '',
+        expires_in: 0,
+      }),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    }));
+
+    const refreshed = await refreshConnectedAccountOauthTokens({
+      serviceId: 'openai-codex',
+      refreshToken: 'old-refresh',
+      now: 7000,
+      runtimeFetch,
+    });
+
+    expect(refreshed).toEqual({
+      accessToken: 'new-access',
+      refreshToken: 'old-refresh',
+      idToken: '',
+      expiresAt: 7000,
+    });
+  });
+
   it('throws when Gemini refresh response is missing access_token', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
@@ -197,7 +317,8 @@ describe('serviceRefreshers', () => {
     }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await expect(refreshGeminiOauthTokens({
+    await expect(refreshConnectedAccountOauthTokens({
+      serviceId: 'gemini',
       refreshToken: 'old-refresh',
       now: 3000,
     })).rejects.toThrow(/access_token/i);

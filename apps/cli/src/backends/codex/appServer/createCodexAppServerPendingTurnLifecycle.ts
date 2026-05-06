@@ -1,7 +1,9 @@
-import { randomUUID } from 'node:crypto';
-
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { configuration } from '@/configuration';
+import {
+    recordPrimaryTurnCompleted,
+    surfacePrimarySessionRuntimeIssue,
+} from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 import {
     formatCodexAppServerErrorForUi,
@@ -83,6 +85,9 @@ export function createCodexAppServerPendingTurnLifecycle(params: Readonly<{
         params.setPendingTurnStartSeqInclusive(null);
         params.setTurnInFlight(false);
         params.setThinking(false);
+        if (options?.flushReason === 'turn-end') {
+            await recordPrimaryTurnCompleted({ session: params.session });
+        }
         if (options?.flushReason) {
             if (options.insideBridgeWork === true) {
                 await params.assistantReasoningProjector.flush(options.flushReason);
@@ -148,13 +153,22 @@ export function createCodexAppServerPendingTurnLifecycle(params: Readonly<{
     };
 
     const abortPendingTurnWithFailure = async (failure: Error): Promise<void> => {
+        const activeTurn = params.getPendingTurn();
         params.session.sendCodexMessage({
             type: 'message',
             message: formatCodexAppServerErrorForUi(failure),
         });
-        params.session.sendCodexMessage({
-            type: 'turn_aborted',
-            id: randomUUID(),
+        await surfacePrimarySessionRuntimeIssue({
+            provider: 'codex',
+            cause: 'status_error',
+            error: failure,
+            providerTurnId: activeTurn?.turnId ?? params.getLatestPendingTurnId(),
+            session: {
+                sendAgentMessage: (_provider, body) => params.session.sendCodexMessage(body),
+                ...(typeof params.session.updatePrimaryTurnRuntimeState === 'function'
+                    ? { updatePrimaryTurnRuntimeState: (record) => params.session.updatePrimaryTurnRuntimeState(record) }
+                    : {}),
+            },
         });
         await finishPendingTurn({
             error: failure,

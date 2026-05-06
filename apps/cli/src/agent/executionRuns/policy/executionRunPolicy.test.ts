@@ -9,6 +9,12 @@ describe('isSafePermissionModeForIntent', () => {
     expect(isSafePermissionModeForIntent('memory_hints' as any, 'workspace_write')).toBe(false);
   });
 
+  it('treats scm_commit_message as read-only or no-tools only', () => {
+    expect(isSafePermissionModeForIntent('scm_commit_message' as any, 'no_tools')).toBe(true);
+    expect(isSafePermissionModeForIntent('scm_commit_message' as any, 'read_only')).toBe(true);
+    expect(isSafePermissionModeForIntent('scm_commit_message' as any, 'workspace_write')).toBe(false);
+  });
+
   it('accepts canonical UI read-only aliases for safe review-like intents', () => {
     expect(isSafePermissionModeForIntent('review' as any, 'read-only')).toBe(true);
     expect(isSafePermissionModeForIntent('plan' as any, 'read only')).toBe(true);

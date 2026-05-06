@@ -11,6 +11,14 @@ export function buildTurnChangeSetDiffInput(params: Readonly<{
     return {
         files: params.turnChangeSet.files.map((file) => ({
             file_path: file.filePath,
+            change_kind: file.changeKind,
+            ...(file.previousFilePath ? { previous_file_path: file.previousFilePath } : {}),
+            ...(typeof file.binary === 'boolean' ? { binary: file.binary } : {}),
+            source: file.source,
+            confidence: file.confidence,
+            provider: file.provider,
+            ...(file.providerTurnId ? { provider_turn_id: file.providerTurnId } : {}),
+            ...(file.providerMessageId ? { provider_message_id: file.providerMessageId } : {}),
             ...(typeof file.unifiedDiff === 'string' && file.unifiedDiff.trim().length > 0 ? { unified_diff: file.unifiedDiff } : {}),
             ...(typeof file.oldText === 'string' ? { oldText: file.oldText } : {}),
             ...(typeof file.newText === 'string' ? { newText: file.newText } : {}),

@@ -1021,8 +1021,8 @@ describe('automationWorker integration', () => {
 
     const spawnSession = vi.fn(async () => ({ type: 'success' as const, sessionId: 'session-budget-1' }));
 
-    const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentEphemeralTasks: 1 });
-    expect(budgetRegistry.tryAcquireEphemeralTask('busy', 'ephemeral_task')).toBe(true);
+    const budgetRegistry = new ExecutionBudgetRegistry({ maxConcurrentExecutionRuns: 1, maxConcurrentOneShotTasks: 1 });
+    expect(budgetRegistry.tryAcquireOneShotTask('busy', 'automation')).toBe(true);
 
     const worker = startAutomationWorker({
       token: 'token-budget-1',

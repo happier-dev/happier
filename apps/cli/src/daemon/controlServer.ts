@@ -15,7 +15,14 @@ import { mergeSpawnSessionOptions, SpawnDaemonSessionRequestSchema } from '@/rpc
 import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@happier-dev/protocol';
+import {
+  SshTunnelEnsureRequestSchema,
+  SshTunnelProbeRequestSchema,
+  SshTunnelReleaseRequestSchema,
+  SshTunnelStopRequestSchema,
+} from '@happier-dev/protocol';
 import { readAuthenticationStatus } from '@/api/client/httpStatusError';
+import { toSshTunnelErrorResponse, type SshTunnelSupervisor } from '@/daemon/ssh/tunnels';
 
 const DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
 const DAEMON_CONTROL_BODY_LIMIT_BYTES_ENV_KEY = 'HAPPIER_DAEMON_CONTROL_BODY_LIMIT_BYTES';
@@ -55,6 +62,7 @@ export function createDaemonControlApp({
   beforeShutdown,
   onHappySessionWebhook,
   controlToken,
+  sshTunnels,
 }: {
   getChildren: () => TrackedSession[];
   machineId: string;
@@ -64,6 +72,7 @@ export function createDaemonControlApp({
   beforeShutdown?: () => Promise<void>;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void;
   controlToken: string;
+  sshTunnels?: Pick<SshTunnelSupervisor, 'ensureTunnel' | 'listTunnels' | 'probeTunnel' | 'releaseTunnel' | 'stopTunnel'>;
 }): FastifyInstance {
   void machineId;
   const normalizedControlToken = controlToken.trim();
@@ -157,6 +166,157 @@ export function createDaemonControlApp({
           happySessionId: child.happySessionId!,
           pid: child.pid
         }))
+    }
+  });
+
+  typed.post('/ssh-tunnels/ensure', {
+    schema: {
+      body: z.unknown(),
+      response: {
+        200: z.unknown(),
+        400: z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }),
+        401: authSchema401,
+        503: z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }).passthrough(),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (!sshTunnels) {
+      reply.code(503);
+      return { ok: false as const, errorCode: 'ssh_tunnel_unavailable', error: 'ssh_tunnel_unavailable' };
+    }
+    const parsed = SshTunnelEnsureRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false as const, errorCode: 'ssh_tunnel_invalid_request', error: 'ssh_tunnel_invalid_request' };
+    }
+    try {
+      return { ok: true as const, lease: await sshTunnels.ensureTunnel(parsed.data) };
+    } catch (error) {
+      const response = toSshTunnelErrorResponse(error);
+      if (response) {
+        reply.code(503);
+        return response;
+      }
+      throw error;
+    }
+  });
+
+  typed.post('/ssh-tunnels/list', {
+    schema: {
+      response: {
+        200: z.unknown(),
+        401: authSchema401,
+        503: z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }).passthrough(),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (_request, reply) => {
+    if (!sshTunnels) {
+      reply.code(503);
+      return { ok: false as const, errorCode: 'ssh_tunnel_unavailable', error: 'ssh_tunnel_unavailable' };
+    }
+    return { ok: true as const, tunnels: await sshTunnels.listTunnels() };
+  });
+
+  typed.post('/ssh-tunnels/probe', {
+    schema: {
+      body: z.unknown(),
+      response: {
+        200: z.unknown(),
+        400: z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }),
+        401: authSchema401,
+        503: z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }).passthrough(),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (!sshTunnels) {
+      reply.code(503);
+      return { ok: false as const, errorCode: 'ssh_tunnel_unavailable', error: 'ssh_tunnel_unavailable' };
+    }
+    const parsed = SshTunnelProbeRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false as const, errorCode: 'ssh_tunnel_invalid_request', error: 'ssh_tunnel_invalid_request' };
+    }
+    try {
+      return { ok: true as const, health: await sshTunnels.probeTunnel(parsed.data.tunnelKey) };
+    } catch (error) {
+      const response = toSshTunnelErrorResponse(error);
+      if (response) {
+        reply.code(503);
+        return response;
+      }
+      throw error;
+    }
+  });
+
+  typed.post('/ssh-tunnels/release', {
+    schema: {
+      body: z.unknown(),
+      response: {
+        200: z.unknown(),
+        400: z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }),
+        401: authSchema401,
+        503: z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }).passthrough(),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (!sshTunnels) {
+      reply.code(503);
+      return { ok: false as const, errorCode: 'ssh_tunnel_unavailable', error: 'ssh_tunnel_unavailable' };
+    }
+    const parsed = SshTunnelReleaseRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false as const, errorCode: 'ssh_tunnel_invalid_request', error: 'ssh_tunnel_invalid_request' };
+    }
+    try {
+      await sshTunnels.releaseTunnel(parsed.data.leaseId);
+      return { ok: true as const };
+    } catch (error) {
+      const response = toSshTunnelErrorResponse(error);
+      if (response) {
+        reply.code(503);
+        return response;
+      }
+      throw error;
+    }
+  });
+
+  typed.post('/ssh-tunnels/stop', {
+    schema: {
+      body: z.unknown(),
+      response: {
+        200: z.unknown(),
+        400: z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }),
+        401: authSchema401,
+        503: z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string() }).passthrough(),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (!sshTunnels) {
+      reply.code(503);
+      return { ok: false as const, errorCode: 'ssh_tunnel_unavailable', error: 'ssh_tunnel_unavailable' };
+    }
+    const parsed = SshTunnelStopRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { ok: false as const, errorCode: 'ssh_tunnel_invalid_request', error: 'ssh_tunnel_invalid_request' };
+    }
+    try {
+      await sshTunnels.stopTunnel(parsed.data.tunnelKey);
+      return { ok: true as const };
+    } catch (error) {
+      const response = toSshTunnelErrorResponse(error);
+      if (response) {
+        reply.code(503);
+        return response;
+      }
+      throw error;
     }
   });
 
@@ -467,6 +627,7 @@ export function startDaemonControlServer({
   beforeShutdown,
   onHappySessionWebhook,
   controlToken,
+  sshTunnels,
 }: {
   getChildren: () => TrackedSession[];
   machineId: string;
@@ -476,6 +637,7 @@ export function startDaemonControlServer({
   beforeShutdown?: () => Promise<void>;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void;
   controlToken: string;
+  sshTunnels?: Pick<SshTunnelSupervisor, 'ensureTunnel' | 'listTunnels' | 'probeTunnel' | 'releaseTunnel' | 'stopTunnel'>;
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = createDaemonControlApp({
@@ -487,6 +649,7 @@ export function startDaemonControlServer({
       beforeShutdown,
       onHappySessionWebhook,
       controlToken,
+      sshTunnels,
     });
 
     app.listen({ port: 0, host: '127.0.0.1' }, (err, address) => {

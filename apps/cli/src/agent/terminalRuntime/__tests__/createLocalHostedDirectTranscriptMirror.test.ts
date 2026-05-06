@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import type { DirectSessionProviderOps } from '@/session/directSessions/providerOps';
+import type { DirectSessionProviderOps } from '@/session/external/providerOps';
 import { createLocalHostedDirectTranscriptMirror } from '../createLocalHostedDirectTranscriptMirror';
 
 describe('createLocalHostedDirectTranscriptMirror', () => {

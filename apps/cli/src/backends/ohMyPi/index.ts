@@ -4,7 +4,7 @@ import { createBuiltInEntry } from '@/agent/acp/catalog/builtIn/entry';
 
 export const agent = createBuiltInEntry('ohMyPi', {
   getDirectSessionProviderOps: async () =>
-    (await import('@/backends/ohMyPi/directSessions/providerOps')).ohMyPiDirectSessionProviderOps,
+    (await import('@/backends/ohMyPi/externalSessions/providerOps')).ohMyPiDirectSessionProviderOps,
   getConnectedServicesMaterializer: async () =>
     (await import('@/backends/ohMyPi/connectedServices/createOhMyPiConnectedServicesMaterializer'))
       .createOhMyPiConnectedServicesMaterializer(),

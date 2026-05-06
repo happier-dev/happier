@@ -77,6 +77,70 @@ describe("artifactsRoutes (AccountChange integration)", () => {
         });
     }
 
+    it("bounds artifact listing with an explicit limit query", async () => {
+        const account = await seedAccount();
+        for (const index of [1, 2, 3]) {
+            await db.artifact.create({
+                data: {
+                    id: `44444444-4444-4444-8444-44444444444${index}`,
+                    accountId: account.id,
+                    header: Buffer.from(`head-${index}`),
+                    headerVersion: 1,
+                    body: Buffer.from(`body-${index}`),
+                    bodyVersion: 1,
+                    dataEncryptionKey: Buffer.from(`key-${index}`),
+                    seq: index,
+                },
+            });
+        }
+
+        await withAuthenticatedTestApp(
+            (app) => artifactsRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "GET",
+                    url: "/v1/artifacts?limit=2",
+                    headers: { "x-test-user-id": account.id },
+                });
+
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toHaveLength(2);
+            },
+        );
+    });
+
+    it("uses a bounded default when artifact listing omits limit", async () => {
+        const account = await seedAccount();
+        for (let index = 0; index < 550; index += 1) {
+            await db.artifact.create({
+                data: {
+                    id: `55555555-5555-4555-8555-${String(index).padStart(12, "0")}`,
+                    accountId: account.id,
+                    header: Buffer.from(`head-${index}`),
+                    headerVersion: 1,
+                    body: Buffer.from(`body-${index}`),
+                    bodyVersion: 1,
+                    dataEncryptionKey: Buffer.from(`key-${index}`),
+                    seq: index,
+                },
+            });
+        }
+
+        await withAuthenticatedTestApp(
+            (app) => artifactsRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "GET",
+                    url: "/v1/artifacts",
+                    headers: { "x-test-user-id": account.id },
+                });
+
+                expect(res.statusCode).toBe(200);
+                expect(res.json()).toHaveLength(500);
+            },
+        );
+    });
+
     it("marks artifact create and emits new-artifact using returned cursor", async () => {
         const account = await seedAccount();
         const artifactId = "11111111-1111-4111-8111-111111111111";

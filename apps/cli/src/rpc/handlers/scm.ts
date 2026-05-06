@@ -32,8 +32,16 @@ import type {
     ScmRemoteRequest,
     ScmRemoteResponse,
     ScmRemoteSetUrlRequest,
+    ScmPullRequestGetRequest,
+    ScmPullRequestGetResponse,
+    ScmPullRequestListRequest,
+    ScmPullRequestListResponse,
+    ScmPullRequestOpenComposeRequest,
+    ScmPullRequestOpenComposeResponse,
     ScmRepositoryInitRequest,
     ScmRepositoryInitResponse,
+    ScmRepositoryRemoveIndexLockRequest,
+    ScmRepositoryRemoveIndexLockResponse,
     ScmStashApplyRequest,
     ScmStashApplyResponse,
     ScmStashDropRequest,
@@ -61,7 +69,10 @@ import {
     notRepositoryResponse,
     runScmRoute,
 } from '@/scm/rpc/dispatch';
-import { runScmRepositoryInitRoute } from '@/scm/rpc/repositoryProvisioningDispatch';
+import {
+    runScmRepositoryInitRoute,
+    runScmRepositoryRemoveIndexLockRoute,
+} from '@/scm/rpc/repositoryProvisioningDispatch';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 export function registerScmHandlers(
@@ -402,10 +413,61 @@ export function registerScmHandlers(
             })
     );
 
+    rpcHandlerManager.registerHandler<ScmPullRequestListRequest, ScmPullRequestListResponse>(
+        RPC_METHODS.SCM_PULL_REQUEST_LIST,
+        async (request) =>
+            runScmRoute<ScmPullRequestListRequest, ScmPullRequestListResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmPullRequestListResponse>(),
+                runWithBackend: async ({ context, selection }) =>
+                    selection.backend.pullRequestList
+                        ? selection.backend.pullRequestList({ context, request })
+                        : notRepositoryResponse<ScmPullRequestListResponse>(),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmPullRequestGetRequest, ScmPullRequestGetResponse>(
+        RPC_METHODS.SCM_PULL_REQUEST_GET,
+        async (request) =>
+            runScmRoute<ScmPullRequestGetRequest, ScmPullRequestGetResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmPullRequestGetResponse>(),
+                runWithBackend: async ({ context, selection }) =>
+                    selection.backend.pullRequestGet
+                        ? selection.backend.pullRequestGet({ context, request })
+                        : notRepositoryResponse<ScmPullRequestGetResponse>(),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse>(
+        RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
+        async (request) =>
+            runScmRoute<ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmPullRequestOpenComposeResponse>(),
+                runWithBackend: async ({ context, selection }) =>
+                    selection.backend.pullRequestOpenCompose
+                        ? selection.backend.pullRequestOpenCompose({ context, request })
+                        : notRepositoryResponse<ScmPullRequestOpenComposeResponse>(),
+            })
+    );
+
     rpcHandlerManager.registerHandler<ScmRepositoryInitRequest, ScmRepositoryInitResponse>(
         RPC_METHODS.SCM_REPOSITORY_INIT,
         async (request) =>
             runScmRepositoryInitRoute({
+                request,
+                ...routeBase,
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse>(
+        RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK,
+        async (request) =>
+            runScmRepositoryRemoveIndexLockRoute({
                 request,
                 ...routeBase,
             })

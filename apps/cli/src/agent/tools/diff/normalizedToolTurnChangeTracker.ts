@@ -129,38 +129,10 @@ export class NormalizedToolTurnChangeTracker {
             return;
         }
 
-        for (const file of pending.files) {
-            if (typeof file.oldText === 'string' && typeof file.newText === 'string') {
-                this.collector.observeTextDiff({
-                    filePath: file.filePath,
-                    oldText: file.oldText,
-                    newText: file.newText,
-                    source: 'provider_tool',
-                    confidence: 'exact',
-                    ...(file.description ? { description: file.description } : {}),
-                });
-                continue;
-            }
-
-            if (typeof file.unifiedDiff === 'string' && file.unifiedDiff.trim().length > 0) {
-                this.collector.observeUnifiedDiff({
-                    filePath: file.filePath,
-                    unifiedDiff: file.unifiedDiff,
-                    source: 'provider_tool',
-                    confidence: 'exact',
-                    ...(file.description ? { description: file.description } : {}),
-                });
-                continue;
-            }
-
-            this.collector.observeUnifiedDiff({
-                filePath: file.filePath,
-                unifiedDiff: buildPlaceholderUnifiedDiff(file.filePath, file.description ?? 'Diff'),
-                source: 'provider_tool',
-                confidence: 'best_effort',
-                description: file.description ?? 'Diff',
-            });
-        }
+        this.collector.observeCanonicalDiff({
+            files: pending.files,
+            turnMetadata: pending.turnMetadata,
+        });
     }
 
     completeTurn(params: Readonly<{

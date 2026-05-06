@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline';
 import spawn from 'cross-spawn';
 
 import type { AgentMessage } from '@/agent/core';
+import type { SurfacePrimarySessionRuntimeIssueInput } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 import { logger } from '@/ui/logger';
 import {
@@ -46,6 +47,7 @@ export type PiRpcProcessLifecycleContext = Readonly<{
   emitMessage: (message: AgentMessage) => void;
   rejectAllPending: (error: Error) => void;
   rejectPendingTurn: (error: Error) => void;
+  surfacePrimarySessionRuntimeIssue?: (input: SurfacePrimarySessionRuntimeIssueInput) => void | Promise<void>;
   handleStdoutLine: (line: string) => void;
   handleStderrLine: (line: string) => void;
   getState: () => Promise<PiRpcStateData>;
@@ -120,6 +122,11 @@ export function spawnPiRpcProcess(
     }
     context.rejectAllPending(new Error(`Pi IO error: ${resolved.message}`));
     context.rejectPendingTurn(new Error('Pi process terminated'));
+    void context.surfacePrimarySessionRuntimeIssue?.({
+      provider: 'pi',
+      cause: 'stream_error',
+      error: resolved,
+    });
   };
 
   child.stdin.on('error', handleIoError);
@@ -134,11 +141,16 @@ export function spawnPiRpcProcess(
     });
     context.rejectAllPending(new Error(`Pi process error: ${error instanceof Error ? error.message : String(error)}`));
     context.rejectPendingTurn(new Error('Pi process terminated'));
+    void context.surfacePrimarySessionRuntimeIssue?.({
+      provider: 'pi',
+      cause: 'process_exit',
+      error,
+    });
   });
 
   child.on('exit', (code, signal) => {
+    const detail = `Pi process exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`;
     if (!context.isDisposed()) {
-      const detail = `Pi process exited (code=${code ?? 'null'}, signal=${signal ?? 'null'})`;
       context.emitMessage({
         type: 'status',
         status: code === 0 ? 'stopped' : 'error',
@@ -147,6 +159,11 @@ export function spawnPiRpcProcess(
     }
     context.rejectAllPending(new Error('Pi process exited'));
     context.rejectPendingTurn(new Error('Pi process exited'));
+    void context.surfacePrimarySessionRuntimeIssue?.({
+      provider: 'pi',
+      cause: code === 0 ? 'session_error' : 'process_exit',
+      error: detail,
+    });
     context.setProcess(null);
   });
 }

@@ -8,7 +8,6 @@ import {
   type SessionHandoffStatus,
   type TransferEndpointCandidate,
 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { SessionHandoffPrepareTargetJobRecordInput } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import type { SessionHandoffSourceExportRecord } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
@@ -16,7 +15,6 @@ import type { SessionHandoffProviderBundle } from '../../../session/handoff/type
 import { validateSessionHandoffWorkspaceTransferSourcePath } from '../../../session/handoff/workspaceReplication/validateSessionHandoffWorkspaceTransferSourcePath';
 import { validateSessionHandoffWorkspaceTransferStrategy } from '../../../session/handoff/workspaceReplication/validateSessionHandoffWorkspaceTransferStrategy';
 import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
-import type { RpcHandlerManager } from '../../rpc/RpcHandlerManager';
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 import {
   prepareDeferredDirectPeerStart,
@@ -70,7 +68,6 @@ type PrepareStartedStateResult = Readonly<{
 }>;
 
 export type RegisterSessionHandoffStartRpcHandlerInput = Readonly<{
-  rpcHandlerManager: RpcHandlerManager;
   loadSessionMetadata: (
     sessionId: string,
     sourceMachineId?: string,
@@ -161,11 +158,10 @@ function shouldDeferSourcePreparation(
   return false;
 }
 
-export function registerSessionHandoffStartRpcHandler(
+export function createSessionHandoffStartActionHandler(
   params: RegisterSessionHandoffStartRpcHandlerInput,
-): void {
+): (raw: unknown) => Promise<unknown> {
   const {
-    rpcHandlerManager,
     loadSessionMetadata,
     machineTransferChannelPresent,
     directPeerTransfer,
@@ -183,7 +179,7 @@ export function registerSessionHandoffStartRpcHandler(
     invalidRequest,
   } = params;
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_START, async (raw: unknown) => {
+  return async (raw: unknown) => {
     const parsed = SessionHandoffStartRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
@@ -474,5 +470,5 @@ export function registerSessionHandoffStartRpcHandler(
         status,
       } as const;
     }
-  });
+  };
 }

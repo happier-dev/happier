@@ -159,13 +159,24 @@ export async function captureGitRepositoryCheckpoint(
             checkpointRef: input.checkpointRef,
             commitSha,
             treeSha,
-            receipts: [{
-                id: REPOSITORY_CHECKPOINT_RECEIPT_IDS.captured,
-                ref: input.checkpointRef.ref,
-                commitSha,
-                treeSha,
-                phase: input.checkpointRef.phase,
-            }],
+            receipts: [
+                {
+                    id: REPOSITORY_CHECKPOINT_RECEIPT_IDS.captured,
+                    ref: input.checkpointRef.ref,
+                    commitSha,
+                    treeSha,
+                    phase: input.checkpointRef.phase,
+                },
+                ...(input.checkpointRef.phase === 'turn-final'
+                    ? [{
+                        id: REPOSITORY_CHECKPOINT_RECEIPT_IDS.finalized,
+                        ref: input.checkpointRef.ref,
+                        commitSha,
+                        treeSha,
+                        phase: input.checkpointRef.phase,
+                    } as const]
+                    : []),
+            ],
         };
     } finally {
         temporaryIndex.tempIndex.cleanup();

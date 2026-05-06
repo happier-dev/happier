@@ -124,6 +124,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
         encryptionMode: 'plain',
         logger: () => undefined,
       }),
+      token: 'token-1',
       metadataPath: '/tmp/project',
       metadata: createTestMetadata({ path: '/tmp/project' }),
       sessionId: 's1',
@@ -134,6 +135,10 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sendUserTextMessageCommitted: vi.fn(async () => {}),
       sendAgentMessageCommitted: vi.fn(async () => {}),
       sendAgentMessageEphemeral: vi.fn(),
+      getTranscriptQueryContext: () => ({
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'dataKey',
+      }),
       getAgentStateRequestStore: () => requestStore as never,
       persistVoiceAgentRunMetadataFromPublicRun: vi.fn(),
       socketEmitExecutionRunUpdated: vi.fn(),

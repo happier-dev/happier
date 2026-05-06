@@ -1,43 +1,59 @@
-function resolveNonEmptyEnv(raw: string | undefined, fallback: string): string {
-  if (typeof raw !== 'string') return fallback;
-  const trimmed = raw.trim();
-  return trimmed ? trimmed : fallback;
+import type { ConnectedServiceId } from '@happier-dev/protocol';
+
+import { resolveConnectedAccountOauthConfig } from '../descriptors/connectedAccountOauthConfig';
+
+const DEFAULT_GEMINI_CLIENT_SECRET = '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l';
+
+function resolveOauthConfigValue(serviceId: ConnectedServiceId, env: NodeJS.ProcessEnv): Readonly<{
+  clientId: string;
+  tokenUrl: string;
+}> {
+  return resolveConnectedAccountOauthConfig({
+    serviceId,
+    env,
+    resolveConfidentialClientValue: resolveHostConfidentialClientValue,
+  });
 }
 
-const DEFAULT_OPENAI_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-const DEFAULT_OPENAI_CODEX_TOKEN_URL = 'https://auth.openai.com/oauth/token';
-
-const DEFAULT_CLAUDE_SUBSCRIPTION_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const DEFAULT_CLAUDE_SUBSCRIPTION_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
-
-const DEFAULT_GEMINI_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
-const DEFAULT_GEMINI_CLIENT_SECRET = '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l';
-const DEFAULT_GEMINI_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+function resolveHostConfidentialClientValue(
+  resolverKey: string,
+  envKey: string,
+  env: NodeJS.ProcessEnv,
+): string {
+  const raw = env[envKey];
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  if (resolverKey === 'connectedServices.gemini.oauthConfidentialClient') return DEFAULT_GEMINI_CLIENT_SECRET;
+  throw new Error(`Unsupported connected-service confidential OAuth resolver: ${resolverKey}`);
+}
 
 export function resolveOpenAiCodexOauthClientId(env: NodeJS.ProcessEnv): string {
-  return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_CLIENT_ID, DEFAULT_OPENAI_CODEX_CLIENT_ID);
+  return resolveOauthConfigValue('openai-codex', env).clientId;
 }
 
 export function resolveOpenAiCodexOauthTokenUrl(env: NodeJS.ProcessEnv): string {
-  return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL, DEFAULT_OPENAI_CODEX_TOKEN_URL);
+  return resolveOauthConfigValue('openai-codex', env).tokenUrl;
 }
 
 export function resolveClaudeSubscriptionOauthClientId(env: NodeJS.ProcessEnv): string {
-  return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID, DEFAULT_CLAUDE_SUBSCRIPTION_CLIENT_ID);
+  return resolveOauthConfigValue('claude-subscription', env).clientId;
 }
 
 export function resolveClaudeSubscriptionOauthTokenUrl(env: NodeJS.ProcessEnv): string {
-  return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL, DEFAULT_CLAUDE_SUBSCRIPTION_TOKEN_URL);
+  return resolveOauthConfigValue('claude-subscription', env).tokenUrl;
 }
 
 export function resolveGeminiOauthClientId(env: NodeJS.ProcessEnv): string {
-  return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_ID, DEFAULT_GEMINI_CLIENT_ID);
+  return resolveOauthConfigValue('gemini', env).clientId;
 }
 
 export function resolveGeminiOauthClientSecret(env: NodeJS.ProcessEnv): string {
-  return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET, DEFAULT_GEMINI_CLIENT_SECRET);
+  return resolveHostConfidentialClientValue(
+    'connectedServices.gemini.oauthConfidentialClient',
+    'HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET',
+    env,
+  );
 }
 
 export function resolveGeminiOauthTokenUrl(env: NodeJS.ProcessEnv): string {
-  return resolveNonEmptyEnv(env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL, DEFAULT_GEMINI_TOKEN_URL);
+  return resolveOauthConfigValue('gemini', env).tokenUrl;
 }

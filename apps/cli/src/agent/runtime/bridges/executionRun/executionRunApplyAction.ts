@@ -7,7 +7,11 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
+import {
+  resolveExecutionRunIntentProfile,
+  resolveExecutionRunIntentProfileFromCatalog,
+  type ExecutionRunProfileContributionCatalog,
+} from '@/agent/executionRuns/profiles/intentRegistry';
 import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
 import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { buildExecutionRunProfileStartParams } from './profileStart';
@@ -39,6 +43,7 @@ export async function applyExecutionRunAction(args: Readonly<{
   ) => Promise<void>;
   parentProvider: ACPProvider;
   onVoiceAgentWelcomed?: (runId: string, welcomedEpoch: number) => Promise<void> | void;
+  profileCatalog?: ExecutionRunProfileContributionCatalog;
 }>): Promise<ExecutionRunActionResult> {
   const run = args.runs.get(args.runId);
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
@@ -51,8 +56,6 @@ export async function applyExecutionRunAction(args: Readonly<{
       const target = run.backendTarget;
       if (!target) return false;
       if (target.kind !== 'builtInAgent') return false;
-      // Coderabbit runs are not follow-up capable unless we can resume the original vendor session.
-      if (target.agentId === 'coderabbit') return false;
       return true;
     })();
     if (!canResume && !canFallback) {
@@ -112,6 +115,7 @@ export async function applyExecutionRunAction(args: Readonly<{
       runClass: 'bounded',
       ioMode: 'streaming',
       ...(run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}),
+      ...(run.profileId ? { profileId: run.profileId } : {}),
       parentRunId: run.runId,
     });
 
@@ -177,7 +181,9 @@ export async function applyExecutionRunAction(args: Readonly<{
     }
   }
 
-  const profile = resolveExecutionRunIntentProfile(run.intent);
+  const profile = args.profileCatalog
+    ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, run.intent, run.profileId)
+    : resolveExecutionRunIntentProfile(run.intent);
   if (!profile.applyAction) {
     return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Unsupported action' };
   }

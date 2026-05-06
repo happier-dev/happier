@@ -1,3 +1,5 @@
+import { ScmHostingProviderCapabilitiesSchema } from '@happier-dev/protocol';
+
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 
 export const scmHostingProviderProjectionFamily = definePluginProjectionFamilyV2({
@@ -17,6 +19,9 @@ export const scmHostingProviderProjectionFamily = definePluginProjectionFamilyV2
                             displayName: provider.definition.displayName,
                             baseUrl: provider.definition.baseUrl,
                             urlSafety: provider.definition.urlSafety,
+                            capabilities: ScmHostingProviderCapabilitiesSchema.parse(
+                                provider.definition.capabilities ?? {},
+                            ),
                         },
                     ]),
             ),

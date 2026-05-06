@@ -102,6 +102,7 @@ function requireFinalPluginAcpEngine(backend: unknown): AcpBackendSpecV1 {
     ...(isRecord(engine.bootstrap) ? { bootstrap: engine.bootstrap as AcpBackendSpecV1['bootstrap'] } : {}),
     ...(isRecord(engine.messageMeta) ? { messageMeta: engine.messageMeta as AcpBackendSpecV1['messageMeta'] } : {}),
     ...(isRecord(engine.mcp) ? { mcp: engine.mcp as AcpBackendSpecV1['mcp'] } : {}),
+    ...(isRecord(engine.callbacks) ? { callbacks: engine.callbacks as AcpBackendSpecV1['callbacks'] } : {}),
   };
 }
 

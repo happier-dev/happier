@@ -25,7 +25,7 @@ export type SessionClientInteractionApi = Readonly<{
     onUserMessage: (callback: (data: UserMessage) => void) => void;
     waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
     ensureMetadataSnapshot: (opts?: { timeoutMs?: number; abortSignal?: AbortSignal }) => Promise<Metadata | null>;
-    refreshSessionSnapshotFromServerBestEffort: (opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+    refreshSessionSnapshotFromServerBestEffort: (opts?: { reason?: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }) => Promise<void>;
     close: () => Promise<void>;
     installSessionSocketEventHandlers: (socket: Socket<ServerToClientEvents, ClientToServerEvents>) => void;
     listPendingMessageQueueV2LocalIds: () => Promise<string[]>;
@@ -75,7 +75,7 @@ export function createSessionClientInteractionApi(
         getDaemonInitialPromptSeeded: () => boolean;
         setDaemonInitialPromptSeeded: (value: boolean) => void;
         enqueueSessionUserMessage: (params: Readonly<{ text: string; localId?: string; meta?: Record<string, unknown> }>) => void;
-        syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+        syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }) => Promise<void>;
         maybeScheduleUserSocketDisconnect: () => void;
         handleSessionScopedUpdate: (data: Update) => void;
         clearStartupMessageCatchUpRetryTimer: () => void;

@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 
 import type { Metadata } from '@/api/types';
 import { publishSessionRuntimeDescriptor } from '@/agent/runtime/identity/publication/runtimeDescriptor';
-import { inferCodexDirectSessionsSourceFromHome } from '@/backends/codex/directSessions/homeEntries';
+import { inferCodexDirectSessionsSourceFromHome } from '@/backends/codex/externalSessions/homeEntries';
 import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happier-dev/agents';
 import {
   normalizeCodexBackendMode,

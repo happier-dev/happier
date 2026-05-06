@@ -10,7 +10,7 @@ function resolveProtocolDistPath(): string {
 }
 
 function resolveProtocolDirectSessionsDistPath(): string {
-  return resolve(__dirname, '../../../../packages/protocol/dist/directSessions/daemonRpcV1.js');
+  return resolve(__dirname, '../../../../packages/protocol/dist/externalSessions/daemonRpcV1.js');
 }
 
 describe('protocol direct sessions dist runtime import', () => {

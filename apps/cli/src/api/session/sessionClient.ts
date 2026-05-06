@@ -49,6 +49,7 @@ import {
     scheduleNextStartupCatchUpRetryViaPort,
 } from './client/lifecycle/startupCatchUpRuntime';
 import type { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -366,6 +367,7 @@ export class ApiSessionClient extends EventEmitter {
         });
         registerSessionClientRuntimeHandlers({
             rpcHandlerManager: this.rpcHandlerManager,
+            token: this.token,
             metadataPath: this.metadata?.path ?? process.cwd(),
             metadata: this.metadata,
             sessionId: this.sessionId,
@@ -376,6 +378,10 @@ export class ApiSessionClient extends EventEmitter {
             sendUserTextMessageCommitted: (text, opts) => this.sendUserTextMessageCommitted(text, opts),
             sendAgentMessageCommitted: (provider, body, opts) => this.sendAgentMessageCommitted(provider, body, opts),
             sendAgentMessageEphemeral: (provider, body, opts) => this.sendAgentMessageEphemeral(provider, body, opts),
+            getTranscriptQueryContext: () => ({
+                encryptionKey: this.encryptionKey,
+                encryptionVariant: this.encryptionVariant,
+            }),
             getAgentStateRequestStore: () => this.getAgentStateRequestStore(),
             persistVoiceAgentRunMetadataFromPublicRun: (run, welcomedEpoch) =>
                 this.persistVoiceAgentRunMetadataFromPublicRun(run, welcomedEpoch),
@@ -514,7 +520,7 @@ export class ApiSessionClient extends EventEmitter {
         void this.sessionConnectionSupervisor.start();
     }
 
-    private syncSessionSnapshotFromServer(opts: { reason: 'connect' | 'waitForMetadataUpdate' }): Promise<void> {
+    private syncSessionSnapshotFromServer(opts: { reason: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }): Promise<void> {
         if (this.closed) return Promise.resolve();
         if (this.snapshotSyncInFlight) return this.snapshotSyncInFlight;
 
@@ -671,7 +677,7 @@ export class ApiSessionClient extends EventEmitter {
      * This is useful when metadata/agentState may have been updated by another client (e.g. daemon RPC)
      * and this runner needs the latest snapshot before making turn decisions (e.g. replaySeedV1).
      */
-    async refreshSessionSnapshotFromServerBestEffort(opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }): Promise<void> {
+    async refreshSessionSnapshotFromServerBestEffort(opts?: { reason?: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }): Promise<void> {
         await this.interactionApi.refreshSessionSnapshotFromServerBestEffort(opts);
     }
 
@@ -837,6 +843,32 @@ export class ApiSessionClient extends EventEmitter {
                 },
                 syncSessionSnapshotFromServer: () => this.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' }),
                 handler,
+            });
+        });
+    }
+
+    updatePrimaryTurnRuntimeState(state: {
+        latestTurnStatus: PrimaryTurnStatusV1;
+        lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
+    }): Promise<void> {
+        return this.agentStateLock.inLock(async () => {
+            await updateSessionAgentStateWithAck({
+                socket: this.socket as any,
+                sessionId: this.sessionId,
+                sessionEncryptionMode: this.sessionEncryptionMode,
+                encryptionKey: this.encryptionKey,
+                encryptionVariant: this.encryptionVariant,
+                getAgentState: () => this.agentState,
+                setAgentState: (agentState) => {
+                    this.agentState = agentState;
+                },
+                getAgentStateVersion: () => this.agentStateVersion,
+                setAgentStateVersion: (version) => {
+                    this.agentStateVersion = version;
+                },
+                syncSessionSnapshotFromServer: () => this.syncSessionSnapshotFromServer({ reason: 'primaryTurnRuntimeState' }),
+                handler: (agentState) => agentState,
+                runtimeIssueSummaryV1: state,
             });
         });
     }

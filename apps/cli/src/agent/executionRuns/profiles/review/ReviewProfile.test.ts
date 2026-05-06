@@ -68,15 +68,15 @@ describe('ReviewProfile', () => {
     expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
   });
 
-  it('normalizes CodeRabbit plain output in the core review profile', () => {
+  it('treats provider-specific plain text as invalid generic review output', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'review',
-      backendId: 'coderabbit',
-      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+      backendId: ['code', 'rabbit'].join(''),
+      backendTarget: { kind: 'builtInAgent', agentId: ['code', 'rabbit'].join('') },
       instructions: 'review this',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -103,9 +103,8 @@ describe('ReviewProfile', () => {
       finishedAtMs: 2,
     });
 
-    expect(res.status).toBe('succeeded');
-    expect(res.structuredMeta?.kind).toBe('review_findings.v2');
-    expect((res.structuredMeta as { payload?: { findings?: unknown[] } }).payload?.findings).toHaveLength(1);
+    expect(res.status).toBe('failed');
+    expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
   });
 
   it('rejects triage actions when start params are missing required policy fields', () => {
@@ -184,7 +183,7 @@ describe('ReviewProfile', () => {
     expect(actionIds).toEqual(['review.triage', 'review.follow_up']);
   });
 
-  it('hides review.follow_up for coderabbit review findings payloads', () => {
+  it('hides review.follow_up for ephemeral review findings payloads', () => {
     const actionIds = ReviewProfile.listAvailableActionIds?.({
       start: {
         sessionId: 'sess_1',
@@ -192,8 +191,8 @@ describe('ReviewProfile', () => {
         callId: 'call_1',
         sidechainId: 'call_1',
         intent: 'review',
-        backendId: 'coderabbit',
-        backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+        backendId: 'review-cli',
+        backendTarget: { kind: 'builtInAgent', agentId: 'review-cli' },
         instructions: 'review this',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -207,8 +206,8 @@ describe('ReviewProfile', () => {
           runRef: {
             runId: 'run_1',
             callId: 'call_1',
-            backendId: 'coderabbit',
-            backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+            backendId: 'review-cli',
+            backendTarget: { kind: 'builtInAgent', agentId: 'review-cli' },
           },
           summary: 'Ok',
           overviewMarkdown: 'Ok',

@@ -2,19 +2,15 @@ import {
   SessionHandoffPrepareTargetResultGetRequestSchema,
   type SessionHandoffStatus,
 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
   createSessionHandoffPrepareTargetJobStore,
   type SessionHandoffPrepareTargetJobRecord,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 
-import type { RpcHandlerManager } from '../../rpc/RpcHandlerManager';
-
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 
 export type RegisterSessionHandoffPrepareTargetResultGetRpcHandlerInput = Readonly<{
-  rpcHandlerManager: RpcHandlerManager;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   readPersistedPrepareJob: (params: Readonly<{
     handoffId: string;
@@ -30,11 +26,10 @@ export type RegisterSessionHandoffPrepareTargetResultGetRpcHandlerInput = Readon
   }>;
 }>;
 
-export function registerSessionHandoffPrepareTargetResultGetRpcHandler(
+export function createSessionHandoffPrepareTargetResultGetActionHandler(
   params: RegisterSessionHandoffPrepareTargetResultGetRpcHandlerInput,
-): void {
+): (raw: unknown) => Promise<unknown> {
   const {
-    rpcHandlerManager,
     prepareJobStore,
     readPersistedPrepareJob,
     maybeRecoverPrepareTargetJobMissingRunner,
@@ -42,7 +37,7 @@ export function registerSessionHandoffPrepareTargetResultGetRpcHandler(
     invalidRequest,
   } = params;
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET, async (raw: unknown) => {
+  return async (raw: unknown) => {
     const parsed = SessionHandoffPrepareTargetResultGetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
@@ -86,5 +81,5 @@ export function registerSessionHandoffPrepareTargetResultGetRpcHandler(
       }
     }
     return { ok: false, errorCode: 'not_found' } as const;
-  });
+  };
 }

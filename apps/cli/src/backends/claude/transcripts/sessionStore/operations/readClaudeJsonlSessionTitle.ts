@@ -1,5 +1,5 @@
 import { readJsonlFileForward } from '../../../../../api/session/fileBackedTranscripts/jsonl/readJsonlForward';
-import { readDirectSessionTitleCandidate } from '../../../../../api/directSessions/title/readDirectSessionTitleCandidate';
+import { readDirectSessionTitleCandidate } from '../../../../../api/session/external/title/readDirectSessionTitleCandidate';
 
 const TITLE_SCAN_CHUNK_MAX_BYTES = 128 * 1024;
 const TITLE_SCAN_CHUNK_MAX_ITEMS = 64;

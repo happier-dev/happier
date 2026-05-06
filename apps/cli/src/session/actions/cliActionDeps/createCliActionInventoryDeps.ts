@@ -1,4 +1,4 @@
-import { listNativeReviewEngines, readBackendTargetRefV2, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, type ActionExecutorDeps } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 import { buildAgentBackendInventoryItems } from '@/session/actions/inventory/buildAgentBackendInventoryItems';
@@ -77,11 +77,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   return {
     reviewEnginesList: async ({ sessionId }) => ({
       sessionId,
-      items: listNativeReviewEngines().map((engine) => ({
-        engineId: engine.id,
-        label: engine.title,
-        enabled: true,
-      })),
+      items: [],
     }),
     agentsBackendsList: async (args) => ({
       items: await buildAgentBackendInventoryItems({

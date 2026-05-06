@@ -14,6 +14,7 @@ import {
   OS_USER_FILESYSTEM_ACCESS_POLICY,
   type FilesystemAccessPolicy,
 } from './accessPolicy/filesystemAccessPolicy';
+import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 
 function normalizeAllowedDirectories(getDirectories?: () => ReadonlyArray<string>): string[] {
   const value = getDirectories?.() ?? [];
@@ -33,6 +34,12 @@ export function registerFileSystemHandlers(
     accessPolicy?: FilesystemAccessPolicy;
     getAdditionalAllowedReadDirs?: () => ReadonlyArray<string>;
     getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
+    actionExecutor?: RpcActionExecutor;
+    directoryLimits?: Readonly<{
+      listMaxEntries?: number;
+      treeMaxDepth?: number;
+      treeMaxNodes?: number;
+    }>;
   }>,
 ): Readonly<{
   transferSessionStore: TransferSessionStore;
@@ -54,17 +61,25 @@ export function registerFileSystemHandlers(
     workingDirectory,
     accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
+    actionExecutor: opts?.actionExecutor,
   });
   registerWriteFileHandler(rpcHandlerManager, {
     workingDirectory,
     accessPolicy,
     getAdditionalAllowedWriteDirs: resolveWriteDirs,
+    actionExecutor: opts?.actionExecutor,
   });
   registerDirectoryHandlers(rpcHandlerManager, {
     workingDirectory,
     accessPolicy,
     getAdditionalAllowedReadDirs: resolveReadDirs,
     getAdditionalAllowedWriteDirs: resolveWriteDirs,
+    actionExecutor: opts?.actionExecutor,
+    limits: {
+      listMaxEntries: opts?.directoryLimits?.listMaxEntries ?? configuration.filesDirectoryListMaxEntries,
+      treeMaxDepth: opts?.directoryLimits?.treeMaxDepth ?? configuration.filesDirectoryTreeMaxDepth,
+      treeMaxNodes: opts?.directoryLimits?.treeMaxNodes ?? configuration.filesDirectoryTreeMaxNodes,
+    },
   });
   registerPathMutationHandlers(rpcHandlerManager, {
     workingDirectory,

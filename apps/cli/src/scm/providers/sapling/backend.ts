@@ -166,6 +166,27 @@ export function createSaplingBackend(): ScmBackend {
                 error: 'The selected backend does not support remote publish operations',
             };
         },
+        async pullRequestList() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support pull request operations',
+            };
+        },
+        async pullRequestGet() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support pull request operations',
+            };
+        },
+        async pullRequestOpenCompose() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support pull request operations',
+            };
+        },
         async stashList() {
             return {
                 success: false,

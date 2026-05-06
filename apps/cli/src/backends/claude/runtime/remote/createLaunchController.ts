@@ -21,6 +21,7 @@ import { createClaudeRemoteDispatchCallbacks } from './createDispatchCallbacks';
 import { createClaudeRemoteQueuedPromptCoordinator } from './createQueuedPromptCoordinator';
 import { seedClaudeRemoteTeamInboxFromTranscriptPath } from './seedTeamInboxFromTranscriptPath';
 import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 type ClaudeRemoteTeamInboxBridge = Readonly<{
     observe: (message: RawJSONLines) => void;
@@ -77,6 +78,12 @@ function resolveClaudeCodeExitCode(error: unknown): number | null {
     if (!match) return null;
     const parsed = Number.parseInt(match[1], 10);
     return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function resolveClaudeRemoteLaunchRuntimeIssueCause(
+    error: unknown,
+): 'process_exit' | 'status_error' {
+    return resolveClaudeCodeExitCode(error) === null ? 'status_error' : 'process_exit';
 }
 
 function resolveClaudeCodeArtifacts(error: unknown): ClaudeCodeArtifacts | null {
@@ -375,6 +382,12 @@ export function createClaudeRemoteLaunchController(params: Readonly<{
                 }
             } else {
                 const exitCode = resolveClaudeCodeExitCode(error);
+                await surfacePrimarySessionRuntimeIssue({
+                    provider: 'claude',
+                    cause: resolveClaudeRemoteLaunchRuntimeIssueCause(error),
+                    error,
+                    session: params.session.client,
+                });
                 if (exitCode === 1) {
                     const artifacts = resolveClaudeCodeArtifacts(error);
                     const tailText = artifacts ? await formatClaudeCodeArtifactsTailForUi(artifacts) : '';

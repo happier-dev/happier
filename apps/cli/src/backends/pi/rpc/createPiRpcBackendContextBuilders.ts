@@ -1,4 +1,5 @@
 import type { AgentMessage, SessionId } from '@/agent/core';
+import type { SurfacePrimarySessionRuntimeIssueInput } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 import type { PendingRpcRequest } from './rpcSupport';
 import type {
@@ -52,6 +53,7 @@ export function createPiRpcBackendContextBuilders(params: Readonly<{
   messageHandlers: ReadonlySet<(message: AgentMessage) => void>;
   openPromptRequestIds: Set<string>;
   publishUsageStatsBestEffort: () => Promise<void>;
+  surfacePrimarySessionRuntimeIssue?: (input: SurfacePrimarySessionRuntimeIssueInput) => void | Promise<void>;
   handleStdoutLine: (line: string) => void;
   handleStderrLine: (line: string) => void;
 }>): Readonly<{
@@ -120,6 +122,7 @@ export function createPiRpcBackendContextBuilders(params: Readonly<{
         openPromptRequestIds: params.openPromptRequestIds,
         resolvePendingTurn: params.resolvePendingTurn,
         rejectPendingTurn: params.rejectPendingTurn,
+        surfacePrimarySessionRuntimeIssue: params.surfacePrimarySessionRuntimeIssue,
         publishUsageStatsBestEffort: params.publishUsageStatsBestEffort,
       }),
     createProcessLifecycleContext: () =>
@@ -148,6 +151,7 @@ export function createPiRpcBackendContextBuilders(params: Readonly<{
           rejectAllPiRpcPendingRequests(params.pendingRequests, error);
         },
         rejectPendingTurn: params.rejectPendingTurn,
+        surfacePrimarySessionRuntimeIssue: params.surfacePrimarySessionRuntimeIssue,
         handleStdoutLine: params.handleStdoutLine,
         handleStderrLine: params.handleStderrLine,
         getState: params.getState,

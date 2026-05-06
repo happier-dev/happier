@@ -10,7 +10,7 @@ export type ExecutionRunManagerStartParams = Readonly<{
   instructions?: string;
   /**
    * Intent-scoped configuration. The execution-run substrate treats this as opaque,
-   * but backends/engines may interpret it (e.g. native review CLIs like CodeRabbit).
+   * but execution-run profiles and backends may interpret it.
    */
   intentInput?: unknown;
   display?: ExecutionRunDisplay;
@@ -51,6 +51,7 @@ export type ExecutionRunState = Readonly<{
   sessionId: string;
   depth: number;
   intent: ExecutionRunManagerStartParams['intent'];
+  profileId?: string | null;
   backendTarget: BackendTargetRefV1;
   backendId: string;
   instructions: string;

@@ -1,10 +1,21 @@
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { executePluginActionIfAvailable } from '@/plugins/projection/actions/execute';
+import {
+  createSessionTranscriptFollowLeaseRegistry,
+} from '@/api/session/transcriptQueries';
+import {
+  executeCliTranscriptAction,
+  type CliTranscriptActionExecutorOptions,
+} from './executeCliTranscriptAction';
+
+type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0] & CliTranscriptActionExecutorOptions;
 
 export function createCliActionExecutor(
-  params: Parameters<typeof createCliActionExecutorHarness>[0],
+  params: CliActionExecutorParams,
 ): ReturnType<typeof createCliActionExecutorHarness>['executor'] {
   const base = createCliActionExecutorHarness(params).executor;
+  const transcriptFollowLeaseRegistry = params.transcriptFollowLeaseRegistry
+    ?? createSessionTranscriptFollowLeaseRegistry({ maxLeases: 16, idleTtlMs: 60_000 });
 
   return {
     execute: async (actionId, input, context) => {
@@ -12,6 +23,20 @@ export function createCliActionExecutor(
         ...(context ?? {}),
         surface: context?.surface ?? 'cli',
       };
+      const transcriptAction = await executeCliTranscriptAction({
+        actionId,
+        input,
+        context: resolvedContext,
+        defaultSessionId: params.sessionId,
+        options: {
+          ...params,
+          transcriptFollowLeaseRegistry,
+        },
+      });
+      if (transcriptAction) {
+        return transcriptAction;
+      }
+
       const pluginAction = await executePluginActionIfAvailable({
         happyHomeDir: params.happyHomeDir,
         actionId,

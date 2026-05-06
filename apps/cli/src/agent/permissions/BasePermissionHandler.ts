@@ -345,36 +345,49 @@ export abstract class BasePermissionHandler {
      * Setup RPC handler for permission responses.
      */
     protected setupRpcHandler(): void {
+        const handlePermissionResponse = async (response: PermissionResponse): Promise<void> => {
+            this.handleIncomingPermissionResponse(response);
+        };
+        this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
+            'session.permission.respond',
+            handlePermissionResponse,
+        );
+        this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
+            'session.user_action.answer',
+            handlePermissionResponse,
+        );
         this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
             'permission',
-            async (response) => {
-                const legacyPending = this.pendingRequests.get(response.id);
-                const context = this.requestCoordinator.getResponseContext(response.id)
-                    ?? (legacyPending
-                        ? {
-                            requestId: response.id,
-                            toolName: legacyPending.toolName,
-                            toolInput: legacyPending.input,
-                            createdAt: Date.now(),
-                            sourceLocalId: null,
-                            correlation: 'record' as const,
-                            status: 'live' as const,
-                        }
-                        : null);
-                if (!context) {
-                    logger.debug(
-                        `${this.getLogPrefix()} Permission response received without pending request and without agentState request; ignored`,
-                    );
-                    return;
-                }
-
-                this.handlePermissionResponseWithContext({
-                    response,
-                    context,
-                    legacyPending,
-                });
-            }
+            handlePermissionResponse,
         );
+    }
+
+    private handleIncomingPermissionResponse(response: PermissionResponse): void {
+        const legacyPending = this.pendingRequests.get(response.id);
+        const context = this.requestCoordinator.getResponseContext(response.id)
+            ?? (legacyPending
+                ? {
+                    requestId: response.id,
+                    toolName: legacyPending.toolName,
+                    toolInput: legacyPending.input,
+                    createdAt: Date.now(),
+                    sourceLocalId: null,
+                    correlation: 'record' as const,
+                    status: 'live' as const,
+                }
+                : null);
+        if (!context) {
+            logger.debug(
+                `${this.getLogPrefix()} Permission response received without pending request and without agentState request; ignored`,
+            );
+            return;
+        }
+
+        this.handlePermissionResponseWithContext({
+            response,
+            context,
+            legacyPending,
+        });
     }
 
     private handlePermissionResponseWithContext(params: Readonly<{

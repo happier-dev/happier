@@ -19,6 +19,7 @@ export function createPluginDisposableRegistry(): Readonly<{
     return {
         add(disposable) {
             if (disposed) {
+                void disposeOne(disposable);
                 return disposable;
             }
             disposables.push(disposable);

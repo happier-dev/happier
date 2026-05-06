@@ -9,8 +9,10 @@ import { describe, expect, it } from 'vitest';
 import { buildRepositoryCheckpointRefs } from '../../../checkpoints';
 import type { ScmBackendContext } from '../../../types';
 import { classifyGitCheckpointCommandFailure } from './commands';
+import { aliasGitRepositoryCheckpoint } from './alias';
 import { captureGitRepositoryCheckpoint } from './capture';
 import { pruneGitRepositoryCheckpointRefs } from './cleanup';
+import { diffGitRepositoryCheckpoints } from './diff';
 
 const execFile = promisify(execFileCallback);
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -114,6 +116,27 @@ describe('captureGitRepositoryCheckpoint', () => {
         }
     });
 
+    it('emits a finalized receipt when capturing the final turn checkpoint', async () => {
+        const repoRoot = await createCommittedRepo();
+
+        try {
+            const refs = buildRepositoryCheckpointRefs({ scopeId: 'session-1', turnId: 'turn-1' });
+            const result = await captureGitRepositoryCheckpoint({
+                context: makeContext(repoRoot),
+                checkpointRef: refs.turnFinal!,
+            });
+
+            expect(result.success).toBe(true);
+            if (!result.success) return;
+            expect(result.receipts.map((receipt) => receipt.id)).toEqual([
+                'checkpoint.captured',
+                'checkpoint.finalized',
+            ]);
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('captures a repository with no HEAD by seeding an empty temporary index', async () => {
         const repoRoot = await mkdtemp(join(tmpdir(), 'happier-checkpoint-no-head-'));
 
@@ -155,6 +178,152 @@ describe('captureGitRepositoryCheckpoint', () => {
             expect(result.reason).toBe('capture_failed');
             expect(result.error).toContain('outside the Happier checkpoint namespace');
             await expect(gitRefExists(repoRoot, 'refs/heads/owned-by-forged-checkpoint')).resolves.toBe(false);
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+});
+
+describe('aliasGitRepositoryCheckpoint', () => {
+    it('copies a message-start ref to turn-start and emits an aliased receipt', async () => {
+        const repoRoot = await createCommittedRepo();
+
+        try {
+            const refs = buildRepositoryCheckpointRefs({ scopeId: 'session-1', messageId: 'message-1', turnId: 'turn-1' });
+            const captured = await captureGitRepositoryCheckpoint({
+                context: makeContext(repoRoot),
+                checkpointRef: refs.messageStart!,
+            });
+            expect(captured.success).toBe(true);
+            if (!captured.success) return;
+
+            const alias = await aliasGitRepositoryCheckpoint({
+                context: makeContext(repoRoot),
+                sourceRef: refs.messageStart!,
+                targetRef: refs.turnStart!,
+            });
+
+            expect(alias.success).toBe(true);
+            if (!alias.success) return;
+            expect(alias.commitSha).toBe(captured.commitSha);
+            expect(alias.receipts).toEqual([{
+                id: 'checkpoint.aliased',
+                ref: refs.turnStart!.ref,
+                commitSha: captured.commitSha,
+                phase: 'turn-start',
+            }]);
+            await expect(runGit(repoRoot, ['rev-parse', refs.turnStart!.ref])).resolves.toBe(captured.commitSha);
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('returns unavailable when the message-start source is missing', async () => {
+        const repoRoot = await createCommittedRepo();
+
+        try {
+            const refs = buildRepositoryCheckpointRefs({ scopeId: 'session-1', messageId: 'message-1', turnId: 'turn-1' });
+            const alias = await aliasGitRepositoryCheckpoint({
+                context: makeContext(repoRoot),
+                sourceRef: refs.messageStart!,
+                targetRef: refs.turnStart!,
+            });
+
+            expect(alias).toMatchObject({
+                success: false,
+                kind: 'unavailable',
+                reason: 'missing_source',
+                receipts: [],
+            });
+            await expect(gitRefExists(repoRoot, refs.turnStart!.ref)).resolves.toBe(false);
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+});
+
+describe('diffGitRepositoryCheckpoints', () => {
+    it('diffs turn-start to turn-final without reporting pre-existing uncommitted work', async () => {
+        const repoRoot = await createCommittedRepo();
+
+        try {
+            await writeFile(join(repoRoot, 'preexisting.txt'), 'preexisting\n', 'utf8');
+            const refs = buildRepositoryCheckpointRefs({ scopeId: 'session-1', messageId: 'message-1', turnId: 'turn-1' });
+            await captureGitRepositoryCheckpoint({ context: makeContext(repoRoot), checkpointRef: refs.messageStart! });
+            const alias = await aliasGitRepositoryCheckpoint({
+                context: makeContext(repoRoot),
+                sourceRef: refs.messageStart!,
+                targetRef: refs.turnStart!,
+            });
+            expect(alias.success).toBe(true);
+
+            await writeFile(join(repoRoot, 'turn-file.txt'), 'turn\n', 'utf8');
+            await captureGitRepositoryCheckpoint({ context: makeContext(repoRoot), checkpointRef: refs.turnFinal! });
+
+            const diff = await diffGitRepositoryCheckpoints({
+                context: makeContext(repoRoot),
+                baseRef: refs.turnStart!,
+                finalRef: refs.turnFinal!,
+                baseRefSource: 'turn_start',
+                attributionScope: 'unknown',
+            });
+
+            expect(diff.success).toBe(true);
+            if (!diff.success) return;
+            expect(diff.files.map((file) => file.filePath)).toEqual(['turn-file.txt']);
+            expect(diff.files[0]).toMatchObject({
+                source: 'scm_checkpoint',
+                confidence: 'exact',
+                provider: 'scm:git',
+            });
+            expect(diff.receipts.map((receipt) => receipt.id)).toEqual(['checkpoint.diff_computed']);
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('maps add modify delete rename and binary checkpoint changes', async () => {
+        const repoRoot = await createCommittedRepo();
+
+        try {
+            await writeFile(join(repoRoot, 'delete-me.txt'), 'delete\n', 'utf8');
+            await writeFile(join(repoRoot, 'rename-me.txt'), 'rename\n', 'utf8');
+            await writeFile(join(repoRoot, 'binary.bin'), Buffer.from([0, 1, 2, 3]));
+            await runGit(repoRoot, ['add', '.']);
+            await runGit(repoRoot, ['commit', '-m', 'fixtures']);
+
+            const refs = buildRepositoryCheckpointRefs({ scopeId: 'session-1', messageId: 'message-1', turnId: 'turn-1' });
+            await captureGitRepositoryCheckpoint({ context: makeContext(repoRoot), checkpointRef: refs.messageStart! });
+            await aliasGitRepositoryCheckpoint({
+                context: makeContext(repoRoot),
+                sourceRef: refs.messageStart!,
+                targetRef: refs.turnStart!,
+            });
+
+            await writeFile(join(repoRoot, 'added.txt'), 'added\n', 'utf8');
+            await writeFile(join(repoRoot, 'tracked.txt'), 'modified\n', 'utf8');
+            await rm(join(repoRoot, 'delete-me.txt'));
+            await runGit(repoRoot, ['mv', 'rename-me.txt', 'renamed.txt']);
+            await writeFile(join(repoRoot, 'binary.bin'), Buffer.from([0, 1, 2, 3, 4]));
+            await captureGitRepositoryCheckpoint({ context: makeContext(repoRoot), checkpointRef: refs.turnFinal! });
+
+            const diff = await diffGitRepositoryCheckpoints({
+                context: makeContext(repoRoot),
+                baseRef: refs.turnStart!,
+                finalRef: refs.turnFinal!,
+                baseRefSource: 'turn_start',
+                attributionScope: 'exclusive_worktree',
+            });
+
+            expect(diff.success).toBe(true);
+            if (!diff.success) return;
+            expect(diff.files).toEqual(expect.arrayContaining([
+                expect.objectContaining({ filePath: 'added.txt', changeKind: 'added' }),
+                expect.objectContaining({ filePath: 'tracked.txt', changeKind: 'modified' }),
+                expect.objectContaining({ filePath: 'delete-me.txt', changeKind: 'deleted' }),
+                expect.objectContaining({ filePath: 'renamed.txt', previousFilePath: 'rename-me.txt', changeKind: 'renamed' }),
+                expect.objectContaining({ filePath: 'binary.bin', changeKind: 'modified', binary: true }),
+            ]));
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
         }

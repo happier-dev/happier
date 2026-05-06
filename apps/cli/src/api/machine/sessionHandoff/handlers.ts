@@ -13,8 +13,6 @@ import {
   type SessionHandoffResumePlan,
   type WorkspaceManifest,
 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-
 import {
   registerServerRoutedTransferResponder,
   requestServerRoutedTransferToFile,
@@ -74,6 +72,11 @@ import {
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
 
 import type { RpcHandlerManager } from '../../rpc/RpcHandlerManager';
+import {
+  createSessionLifecycleRpcActionExecutor,
+  registerSessionLifecycleRpcHandlers,
+  SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
+} from '@/rpc/handlers/sessionLifecycle';
 import type { SessionHandoffProviderBundle } from '../../../session/handoff/types';
 import {
   directPeerTransferUnavailable,
@@ -82,16 +85,16 @@ import {
   resolvePrepareWorkspaceReplicationMetadata,
   type SessionHandoffDirectPeerTransferHandle,
 } from './prepareTransport';
-import { registerSessionHandoffStartRpcHandler } from './start';
+import { createSessionHandoffStartActionHandler } from './start';
 import {
   prepareStartedState as prepareStartedStateCore,
   type PrepareStartedStateCallInput,
 } from './prepareStartedState';
-import { registerSessionHandoffPrepareTargetRpcHandler } from './prepareTarget';
-import { registerSessionHandoffCommitRpcHandler } from './commit';
-import { registerSessionHandoffAbortRpcHandler } from './abort';
-import { registerSessionHandoffStatusGetRpcHandler } from './statusGet';
-import { registerSessionHandoffPrepareTargetResultGetRpcHandler } from './prepareTargetResultGet';
+import { createSessionHandoffPrepareTargetActionHandler } from './prepareTarget';
+import { createSessionHandoffCommitActionHandler } from './commit';
+import { createSessionHandoffAbortActionHandler } from './abort';
+import { createSessionHandoffStatusGetActionHandler } from './statusGet';
+import { createSessionHandoffPrepareTargetResultGetActionHandler } from './prepareTargetResultGet';
 import {
   buildPrepareJobRecord,
   buildStartPendingStatus,
@@ -605,8 +608,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     });
   }
 
-  registerSessionHandoffStartRpcHandler({
-    rpcHandlerManager,
+  const startHandler = createSessionHandoffStartActionHandler({
     loadSessionMetadata,
     machineTransferChannelPresent: params.machineTransferChannel !== undefined,
     directPeerTransfer: params.directPeerTransfer,
@@ -625,9 +627,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   });
 
   const {
+    handle: prepareTargetHandler,
     restartPrepareTargetJobFromPersistedRequest: restartPrepareTargetJobFromPersistedRequestHandler,
-  } = registerSessionHandoffPrepareTargetRpcHandler({
-    rpcHandlerManager,
+  } = createSessionHandoffPrepareTargetActionHandler({
     prepareJobStore,
     sourceExportStore,
     activePrepareJobs,
@@ -645,8 +647,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 
   restartPrepareTargetJobFromPersistedRequest = restartPrepareTargetJobFromPersistedRequestHandler;
 
-  registerSessionHandoffCommitRpcHandler({
-    rpcHandlerManager,
+  const commitHandler = createSessionHandoffCommitActionHandler({
     prepareJobStore,
     sourceExportStore,
     workspaceReplicationAdapter,
@@ -661,8 +662,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     invalidRequest,
   });
 
-  registerSessionHandoffAbortRpcHandler({
-    rpcHandlerManager,
+  const abortHandler = createSessionHandoffAbortActionHandler({
     prepareJobStore,
     sourceExportStore,
     workspaceReplicationAdapter,
@@ -676,8 +676,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     invalidRequest,
   });
 
-  registerSessionHandoffStatusGetRpcHandler({
-    rpcHandlerManager,
+  const statusGetHandler = createSessionHandoffStatusGetActionHandler({
     prepareJobStore,
     sourceExportStore,
     workspaceReplicationAdapter,
@@ -687,12 +686,24 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     invalidRequest,
   });
 
-  registerSessionHandoffPrepareTargetResultGetRpcHandler({
-    rpcHandlerManager,
+  const prepareTargetResultGetHandler = createSessionHandoffPrepareTargetResultGetActionHandler({
     prepareJobStore,
     readPersistedPrepareJob,
     maybeRecoverPrepareTargetJobMissingRunner,
     isTerminalHandoffStatus,
     invalidRequest,
+  });
+
+  registerSessionLifecycleRpcHandlers({
+    rpcHandlerManager,
+    actionExecutor: createSessionLifecycleRpcActionExecutor({
+      'session.handoff': startHandler,
+      'session.handoff.prepare_target': prepareTargetHandler,
+      'session.handoff.prepare_target_result.get': prepareTargetResultGetHandler,
+      'session.handoff.commit': commitHandler,
+      'session.handoff.abort': abortHandler,
+      'session.handoff.status.get': statusGetHandler,
+    }),
+    scopes: SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
   });
 }

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { UsageSchema } from './usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
 import { SentFromSchema } from '@happier-dev/protocol'
-import type { ExecutionRunPublicState } from '@happier-dev/protocol'
+import type { ExecutionRunPublicState, PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol'
 import {
   DaemonPublicReleaseChannelLabelSchema,
   DaemonStartupSourceSchema,
@@ -180,6 +180,10 @@ export interface ClientToServerEvents {
     activitySummaryV1?: {
       pendingPermissionRequestCount: number,
       pendingUserActionRequestCount: number,
+    },
+    runtimeIssueSummaryV1?: {
+      latestTurnStatus: PrimaryTurnStatusV1,
+      lastRuntimeIssue?: SessionRuntimeIssueV1 | null,
     },
   }, cb: (answer: UpdateStateAckResponse) => void) => void,
   'update-read-cursor': (data: {

@@ -3,6 +3,7 @@ import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from './sessionMessageTypes';
 import type { AgentState, Metadata } from '../types';
 import type { ProviderTranscriptDispatchRequest } from './client/transcript/providerDispatch';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 export interface SessionClientPort {
   sessionId: string;
@@ -19,6 +20,10 @@ export interface SessionClientPort {
 
   updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
   updateAgentState(updater: (state: AgentState) => AgentState): void | Promise<void>;
+  updatePrimaryTurnRuntimeState?(state: {
+    latestTurnStatus: PrimaryTurnStatusV1;
+    lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
+  }): void | Promise<void>;
 
   keepAlive(thinking: boolean, mode: 'local' | 'remote'): void;
 

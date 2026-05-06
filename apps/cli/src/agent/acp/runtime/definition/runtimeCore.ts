@@ -33,6 +33,13 @@ import type {
 } from './_types';
 import { mergeDefinedStringEnv, resolveAcpRuntimeLaunch } from './launch';
 import { createProviderMessageMetaEnricher } from './messageMeta';
+import {
+  composeAcpTier2PermissionHandler,
+  isPromiseLike,
+  mapMaybePromise,
+  type MaybePromise,
+  runAcpTier2Preflight,
+} from './tier2Callbacks';
 import { createAcpTransportHandlerFromDefinition } from './transport';
 
 export {
@@ -110,7 +117,7 @@ export function createAcpBackendFromDefinition(params: Readonly<{
   permissionMode?: string;
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
-}>): AcpBackend {
+}>): MaybePromise<AcpBackend> {
   const launch = resolveAcpRuntimeLaunch({
     definition: params.definition,
     cwd: params.cwd,
@@ -120,29 +127,67 @@ export function createAcpBackendFromDefinition(params: Readonly<{
   const mcpServers = params.definition.mcp.policy === 'drop'
     ? undefined
     : params.mcpServers;
+  const createBackend = (resolvedLaunch: Awaited<typeof launch>): MaybePromise<AcpBackend> => {
+    const preflight = runAcpTier2Preflight({
+      definition: params.definition,
+      cwd: params.cwd,
+    });
+    return mapMaybePromise(preflight, () => createAcpBackend({
+      agentName: params.definition.backendId,
+      cwd: params.cwd,
+      command: resolvedLaunch.command,
+      args: [...resolvedLaunch.args],
+      env: mergeDefinedStringEnv(params.env, resolvedLaunch.env),
+      ...(mcpServers ? { mcpServers } : {}),
+      ...(typeof params.definition.fsEnabled === 'boolean' ? { fsEnabled: params.definition.fsEnabled } : {}),
+      permissionHandler: composeAcpTier2PermissionHandler({
+        definition: params.definition,
+        permissionHandler: params.permissionHandler,
+      }),
+      transportHandler: createAcpTransportHandlerFromDefinition(params.definition),
+    }));
+  };
 
-  return createAcpBackend({
-    agentName: params.definition.backendId,
-    cwd: params.cwd,
-    command: launch.command,
-    args: [...launch.args],
-    env: mergeDefinedStringEnv(params.env, launch.env),
-    ...(mcpServers ? { mcpServers } : {}),
-    ...(params.permissionHandler ? { permissionHandler: params.permissionHandler } : {}),
-    ...(typeof params.definition.fsEnabled === 'boolean' ? { fsEnabled: params.definition.fsEnabled } : {}),
-    transportHandler: createAcpTransportHandlerFromDefinition(params.definition),
-  });
+  return isPromiseLike(launch)
+    ? launch.then(createBackend)
+    : createBackend(launch);
 }
 
-function createRuntimeBackendFromDefinition(params: Readonly<{
+export function createSynchronousAcpBackendFromDefinition(params: Readonly<{
   definition: AcpRuntimeDefinitionV1;
   cwd: string;
   env?: Readonly<Record<string, string | undefined>>;
   permissionMode?: string;
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
-}>): AcpRuntimeBackend {
-  return adaptAcpBackendToRuntimeBackend(createAcpBackendFromDefinition(params));
+}>): AcpBackend {
+  if (
+    params.definition.callbacks.argvBuilder
+    || params.definition.callbacks.envBuilder
+    || params.definition.callbacks.preflight
+  ) {
+    throw new Error(
+      `ACP backend '${params.definition.backendId}' uses async Tier-2 startup callbacks and must be created through the async runtime path.`,
+    );
+  }
+  const backend = createAcpBackendFromDefinition(params);
+  if (isPromiseLike(backend)) {
+    throw new Error(
+      `ACP backend '${params.definition.backendId}' resolved asynchronously and must be created through the async runtime path.`,
+    );
+  }
+  return backend;
+}
+
+async function createRuntimeBackendFromDefinition(params: Readonly<{
+  definition: AcpRuntimeDefinitionV1;
+  cwd: string;
+  env?: Readonly<Record<string, string | undefined>>;
+  permissionMode?: string;
+  mcpServers?: Record<string, McpServerConfig>;
+  permissionHandler?: AcpPermissionHandler;
+}>): Promise<AcpRuntimeBackend> {
+  return adaptAcpBackendToRuntimeBackend(await createAcpBackendFromDefinition(params));
 }
 
 function createSessionRuntimePlan(

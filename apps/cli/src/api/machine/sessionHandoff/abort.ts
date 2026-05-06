@@ -1,6 +1,5 @@
 import { configuration } from '@/configuration';
 import { SessionHandoffAbortRequestSchema, type SessionHandoffStatus } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
   createSessionHandoffPrepareTargetJobStore,
@@ -12,7 +11,6 @@ import { buildSessionHandoffProviderBundleTransferId } from '../../../session/ha
 import { createSessionHandoffWorkspaceReplicationAdapter } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
 import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 
-import type { RpcHandlerManager } from '../../rpc/RpcHandlerManager';
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
@@ -20,7 +18,6 @@ type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSou
 type SessionHandoffWorkspaceReplicationAdapter = ReturnType<typeof createSessionHandoffWorkspaceReplicationAdapter>;
 
 export type RegisterSessionHandoffAbortRpcHandlerInput = Readonly<{
-  rpcHandlerManager: RpcHandlerManager;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
@@ -55,11 +52,10 @@ export type RegisterSessionHandoffAbortRpcHandlerInput = Readonly<{
   }>;
 }>;
 
-export function registerSessionHandoffAbortRpcHandler(
+export function createSessionHandoffAbortActionHandler(
   params: RegisterSessionHandoffAbortRpcHandlerInput,
-): void {
+): (raw: unknown) => Promise<unknown> {
   const {
-    rpcHandlerManager,
     prepareJobStore,
     sourceExportStore,
     workspaceReplicationAdapter,
@@ -73,7 +69,7 @@ export function registerSessionHandoffAbortRpcHandler(
     invalidRequest,
   } = params;
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT, async (raw: unknown) => {
+  return async (raw: unknown) => {
     const parsed = SessionHandoffAbortRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
@@ -149,5 +145,5 @@ export function registerSessionHandoffAbortRpcHandler(
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
     return { handoffId: parsed.data.handoffId, status };
-  });
+  };
 }

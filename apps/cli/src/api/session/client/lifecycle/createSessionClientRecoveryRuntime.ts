@@ -38,7 +38,7 @@ export function createSessionClientRecoveryRuntime(
         getHasMaterializedLocalId: (localId: string) => boolean;
         deleteMaterializedLocalId: (localId: string) => void;
         handleUpdate: (update: Update, opts: { source: 'session-scoped' | 'user-scoped' }) => void;
-        syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+        syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }) => Promise<void>;
     }>,
 ): SessionClientRecoveryRuntime {
     let accountIdPromise: Promise<string> | null = null;

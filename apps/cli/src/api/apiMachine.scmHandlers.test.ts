@@ -45,6 +45,10 @@ describe('ApiMachineClient SCM handlers', () => {
     expect(rpc.hasHandler(RPC_METHODS.SCM_DIFF_FILE)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.SCM_DIFF_COMMIT)).toBe(true);
     expect(rpc.hasHandler(RPC_METHODS.SCM_LOG_LIST)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.SCM_PULL_REQUEST_LIST)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.SCM_PULL_REQUEST_GET)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE)).toBe(true);
+    expect(rpc.hasHandler(RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK)).toBe(true);
   });
 
   it('applies configured restricted roots to machine-scoped SCM cwd validation', async () => {

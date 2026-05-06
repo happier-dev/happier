@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { accountSettingsParse, INSTALLABLE_KEYS, type InstallableKey } from '@happier-dev/protocol';
+import {
+  accountSettingsParse,
+  CODEX_ACP_DEP_ID,
+  INSTALLABLE_KEYS,
+  InstallableDependencyDescriptorSchema,
+  resolveInstallablesRegistry,
+  type InstallableKey,
+  type InstallablesRegistry,
+} from '@happier-dev/protocol';
 
 import { ensureRuntimeInstallablesForLaunch } from './ensureForLaunch';
 import type { RuntimeInstallableAdapter } from './registry';
@@ -8,6 +16,7 @@ import type { RuntimeInstallableAdapter } from './registry';
 function createAdapter(overrides: Partial<RuntimeInstallableAdapter> = {}): RuntimeInstallableAdapter {
   return {
     key: INSTALLABLE_KEYS.CODEX_ACP,
+    capabilityId: CODEX_ACP_DEP_ID,
     detectLaunchResolution: vi.fn(async () => ({
       availability: { ok: true as const },
       canAutoInstall: false,
@@ -122,6 +131,84 @@ describe('ensureRuntimeInstallablesForLaunch', () => {
     expect(adapter.installOrUpgrade).not.toHaveBeenCalled();
   });
 
+  it('does not auto-install consent-required installables even when policy enables auto-install', async () => {
+    const pluginKey = 'consent-required-tool' as InstallableKey;
+    const descriptor = InstallableDependencyDescriptorSchema.parse({
+      id: pluginKey,
+      key: pluginKey,
+      kind: 'dep',
+      version: '1',
+      capabilityId: 'dep.consent-required-tool',
+      display: {
+        name: 'Consent Required Tool',
+      },
+      description: 'A tool that requires explicit install consent',
+      source: {
+        kind: 'github_release_binary',
+        repo: 'acme/consent-required-tool',
+        distTag: 'latest',
+      },
+      binary: {
+        commands: ['consent-required-tool'],
+        systemFirst: true,
+        managedFallback: true,
+      },
+      defaultPolicy: {
+        autoInstallWhenNeeded: false,
+        autoUpdateMode: 'notify',
+      },
+      consent: {
+        install: 'required',
+        update: 'required',
+      },
+    });
+    const installablesRegistry = resolveInstallablesRegistry({
+      externalPlugins: [{
+        owner: {
+          provenance: 'external_plugin',
+          ownerId: 'acme.installables',
+          pluginId: 'acme.installables',
+        },
+        descriptor,
+      }],
+    });
+    const adapter = createAdapter({
+      key: pluginKey,
+      capabilityId: 'dep.consent-required-tool',
+      detectLaunchResolution: vi.fn(async () => ({
+        availability: { ok: false as const, errorMessage: 'consent-required-tool is missing' },
+        canAutoInstall: true,
+        canBackgroundAutoUpdate: false,
+      })),
+    });
+
+    await expect(
+      ensureRuntimeInstallablesForLaunch(
+        {
+          installableKeys: [pluginKey],
+          installablesRegistry,
+          settings: accountSettingsParse({
+            installablesPolicyByMachineId: {
+              'machine-1': {
+                [pluginKey]: { autoInstallWhenNeeded: true },
+              },
+            },
+          }),
+          machineId: 'machine-1',
+        } as Parameters<typeof ensureRuntimeInstallablesForLaunch>[0] & { installablesRegistry: InstallablesRegistry },
+        {
+          getRuntimeInstallableAdapter: async () => adapter,
+        },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      installableKey: pluginKey,
+      errorMessage: 'consent-required-tool is missing',
+      logPath: null,
+    });
+    expect(adapter.installOrUpgrade).not.toHaveBeenCalled();
+  });
+
   it('returns the install error when auto-install fails', async () => {
     const adapter = createAdapter({
       detectLaunchResolution: vi.fn(async () => ({
@@ -183,5 +270,75 @@ describe('ensureRuntimeInstallablesForLaunch', () => {
       adapter,
       installableKey: INSTALLABLE_KEYS.CODEX_ACP,
     });
+  });
+
+  it('uses default policy from the provided resolved installables registry', async () => {
+    const pluginKey = 'acme-runtime-tool' as InstallableKey;
+    const descriptor = InstallableDependencyDescriptorSchema.parse({
+      id: pluginKey,
+      key: pluginKey,
+      kind: 'dep',
+      version: '1',
+      capabilityId: 'dep.acme-runtime-tool',
+      display: {
+        name: 'Acme Runtime Tool',
+      },
+      description: 'Runtime tool contributed by a plugin',
+      source: {
+        kind: 'manual_only',
+        setupUrl: 'https://example.com/acme-runtime-tool',
+      },
+      binary: {
+        commands: ['acme-runtime-tool'],
+        systemFirst: true,
+      },
+      defaultPolicy: {
+        autoInstallWhenNeeded: false,
+        autoUpdateMode: 'notify',
+      },
+      consent: {
+        install: 'required',
+        update: 'required',
+      },
+    });
+    const installablesRegistry = resolveInstallablesRegistry({
+      externalPlugins: [{
+        owner: {
+          provenance: 'external_plugin',
+          ownerId: 'acme.installables',
+          pluginId: 'acme.installables',
+        },
+        descriptor,
+      }],
+    });
+    const adapter = createAdapter({
+      key: pluginKey,
+      capabilityId: 'dep.acme-runtime-tool',
+      detectLaunchResolution: vi.fn(async () => ({
+        availability: { ok: false as const, errorMessage: 'acme-runtime-tool is missing' },
+        canAutoInstall: true,
+        canBackgroundAutoUpdate: false,
+      })),
+    });
+
+    await expect(
+      ensureRuntimeInstallablesForLaunch(
+        {
+          installableKeys: [pluginKey],
+          installablesRegistry,
+          settings: accountSettingsParse({}),
+          machineId: 'machine-1',
+        } as Parameters<typeof ensureRuntimeInstallablesForLaunch>[0] & { installablesRegistry: InstallablesRegistry },
+        {
+          getRuntimeInstallableAdapter: async () => adapter,
+        },
+      ),
+    ).resolves.toEqual({
+      ok: false,
+      installableKey: pluginKey,
+      errorMessage: 'acme-runtime-tool is missing',
+      logPath: null,
+    });
+    expect(adapter.installOrUpgrade).not.toHaveBeenCalled();
   });
 });

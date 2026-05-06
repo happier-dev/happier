@@ -1,7 +1,7 @@
 import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '@/daemon/types';
 
-import { resolveConfiguredClaudeConfigDir } from '../directSessions/resolveClaudeConfigDir';
+import { resolveConfiguredClaudeConfigDir } from '../externalSessions/resolveClaudeConfigDir';
 import { resolveClaudeProjectId } from '../utils/path';
 
 function normalizeOptionalString(value: unknown): string | null {

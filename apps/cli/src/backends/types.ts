@@ -6,7 +6,7 @@ import type { CloudConnectTarget } from '@/cloud/connectTypes';
 import type { DaemonSpawnHooks } from '../daemon/spawnHooks';
 import type { DirectSessionsProviderId } from '@happier-dev/protocol';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
-import type { DirectSessionProviderOps } from '@/session/directSessions/providerOps';
+import type { DirectSessionProviderOps } from '@/session/external/providerOps';
 import type { AcpForkContinuationHandler } from '@/session/fork/acpForkContinuationHandler';
 import type { ProviderNativeForkHandler } from '@/session/fork/providerNativeForkHandler';
 import type { ReplayForkContinuationHandler } from '@/session/fork/replayForkContinuationHandler';

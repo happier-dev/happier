@@ -7,6 +7,7 @@ import { buildScmNonInteractiveEnv } from '../../shared/nonInteractiveEnv';
 import { mapGitErrorCode, normalizeScmRemoteRequest } from '../remote';
 import { evaluateRemoteMutationPreconditions } from '../../shared/remoteMutationPreconditions';
 
+import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation';
 import { readGitSnapshotForChecks } from './snapshotChecks';
 
 function resolveConfiguredPublishRemote(input: {
@@ -143,7 +144,7 @@ export async function gitRemotePublish(input: {
         env: buildScmNonInteractiveEnv(),
     });
 
-    return push.success
+    const response: ScmRemotePublishResponse = push.success
         ? { success: true, stdout: push.stdout, stderr: push.stderr }
         : {
             success: false,
@@ -152,4 +153,10 @@ export async function gitRemotePublish(input: {
             stdout: push.stdout,
             stderr: push.stderr,
         };
+    invalidatePrStatusCacheAfterSuccessfulScmMutation({
+        response,
+        context: input.context,
+        headBranch: head,
+    });
+    return response;
 }

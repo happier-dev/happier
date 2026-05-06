@@ -46,6 +46,7 @@ describe('createPluginFetchService', () => {
         const service = createPluginFetchService({
             networkAllowed: true,
             adapter,
+            allowedUrlOrigins: ['https://example.test'],
             interceptors: [
                 {
                     id: 'z-last',
@@ -113,6 +114,7 @@ describe('createPluginFetchService', () => {
         const service = createPluginFetchService({
             networkAllowed: true,
             adapter,
+            allowedUrlOrigins: ['https://example.test'],
             interceptors: [{
                 id: 'never',
                 intercept: interceptor,
@@ -127,5 +129,125 @@ describe('createPluginFetchService', () => {
         });
         expect(interceptor).not.toHaveBeenCalled();
         expect(adapter).not.toHaveBeenCalled();
+    });
+
+    it('enforces declared URL origins before adapter execution', async () => {
+        const adapter = vi.fn(async () => createResponse('unused'));
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://api.example.test'],
+        });
+
+        await expect(service({ url: 'https://blocked.example.test/status' })).rejects.toMatchObject({
+            code: 'PLUGIN_FETCH_URL_SCOPE_DENIED',
+        });
+        expect(adapter).not.toHaveBeenCalled();
+    });
+
+    it('rejects network calls when no declared URL origin scope is available', async () => {
+        const adapter = vi.fn(async () => createResponse('unused'));
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: [],
+        });
+
+        await expect(service({ url: 'https://api.example.test/status' })).rejects.toMatchObject({
+            code: 'PLUGIN_FETCH_URL_SCOPE_DENIED',
+        });
+        expect(adapter).not.toHaveBeenCalled();
+    });
+
+    it('rejects interceptor rewrites to undeclared URL origins before adapter execution', async () => {
+        const adapter = vi.fn(async () => createResponse('unused'));
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://api.example.test'],
+            interceptors: [{
+                id: 'rewrite',
+                intercept: async (request, next) => await next({
+                    ...request,
+                    url: 'https://blocked.example.test/status',
+                }),
+            }],
+        });
+
+        await expect(service({ url: 'https://api.example.test/status' })).rejects.toMatchObject({
+            code: 'PLUGIN_FETCH_URL_SCOPE_DENIED',
+        });
+        expect(adapter).not.toHaveBeenCalled();
+    });
+
+    it('aborts the host adapter when request timeout elapses', async () => {
+        const adapter = vi.fn(async (request) => {
+            await new Promise<void>((resolve, reject) => {
+                request.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), {
+                    name: 'AbortError',
+                })), { once: true });
+                setTimeout(resolve, 250);
+            });
+            return createResponse('late');
+        });
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://example.test'],
+        });
+
+        await expect(service({
+            url: 'https://example.test/slow',
+            timeoutMs: 5,
+        })).rejects.toMatchObject({
+            name: 'AbortError',
+        });
+        expect(adapter).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects on timeout even when the host adapter ignores abort signals', async () => {
+        const adapter = vi.fn(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            return createResponse('late');
+        });
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://example.test'],
+        });
+
+        await expect(service({
+            url: 'https://example.test/slow',
+            timeoutMs: 5,
+        })).rejects.toMatchObject({
+            name: 'AbortError',
+        });
+    });
+
+    it('retries transient adapter failures with attempt metadata', async () => {
+        const adapter = vi.fn(async (request) => {
+            if (adapter.mock.calls.length === 1) {
+                throw Object.assign(new Error('temporarily unavailable'), {
+                    code: 'ETIMEDOUT',
+                });
+            }
+            return createResponse(request.metadata?.attempt);
+        });
+        const service = createPluginFetchService({
+            networkAllowed: true,
+            adapter,
+            allowedUrlOrigins: ['https://example.test'],
+            retry: {
+                maxAttempts: 2,
+                baseDelayMs: 0,
+            },
+        });
+
+        await expect(service({
+            url: 'https://example.test/retry',
+        })).resolves.toMatchObject({
+            body: 2,
+        });
+        expect(adapter).toHaveBeenCalledTimes(2);
     });
 });

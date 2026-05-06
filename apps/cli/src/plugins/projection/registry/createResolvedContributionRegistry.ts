@@ -1,5 +1,9 @@
 import type { AgentCatalogEntry, CatalogAgentId } from '@/backends/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import {
+    resolveInstallablesRegistry,
+    type InstallableRegistryContribution,
+} from '@happier-dev/protocol';
 
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
 import { resolvePluginContributes } from './resolvePluginContributions';
@@ -11,7 +15,13 @@ import type {
     ResolvedContributionInputs,
     ResolvedContributionRegistry,
     ResolvedCatalogEntry,
+    ResolvedExecutionRunProfileContribution,
+    ResolvedInstallableContribution,
     ResolvedLifecycleHandlerContribution,
+    ResolvedMcpBackendClientContribution,
+    ResolvedMcpDiscoveryProviderContribution,
+    ResolvedMcpServerContribution,
+    ResolvedMcpToolContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
     ResolvedSettingsContribution,
@@ -35,9 +45,19 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const settings = Object.freeze([...(inputs.settings ?? [])].sort(compareSettingsContributes));
     const notifications = Object.freeze([...(inputs.notifications ?? [])].sort(compareNotificationCategoryContributes));
     const notificationChannels = Object.freeze([...(inputs.notificationChannels ?? [])].sort(compareNotificationChannelContributes));
+    const executionRunProfiles = Object.freeze([...(inputs.executionRunProfiles ?? [])].sort(compareExecutionRunProfileContributes));
+    const mcpServers = Object.freeze([...(inputs.mcpServers ?? [])].sort(compareMcpServerContributes));
+    const mcpBackendClients = Object.freeze([...(inputs.mcpBackendClients ?? [])].sort(compareMcpBackendClientContributes));
+    const mcpTools = Object.freeze([...(inputs.mcpTools ?? [])].sort(compareMcpToolContributes));
+    const mcpDiscoveryProviders = Object.freeze([...(inputs.mcpDiscoveryProviders ?? [])].sort(compareMcpDiscoveryProviderContributes));
+    const installablesResult = resolveInstallableContributions(
+        inputs.installables ?? [],
+        inputs.pluginDiagnosticsByPluginId ?? {},
+    );
+    const installables = installablesResult.installables;
     const scmHostingProvidersResult = resolveScmHostingProviderContributions(
         inputs.scmHostingProviders ?? [],
-        inputs.pluginDiagnosticsByPluginId ?? {},
+        installablesResult.pluginDiagnosticsByPluginId,
     );
     const scmHostingProviders = scmHostingProvidersResult.providers;
     const activationTargets = Object.freeze([...(inputs.activationTargets ?? [])].sort(compareActivationTargets));
@@ -50,6 +70,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const settingsById = new Map<string, ResolvedSettingsContribution>();
     const notificationsById = new Map<string, ResolvedNotificationCategoryContribution>();
     const notificationChannelsById = new Map<string, ResolvedNotificationChannelContribution>();
+    const executionRunProfilesById = new Map<string, ResolvedExecutionRunProfileContribution>();
+    const installablesByKey = new Map<string, ResolvedInstallableContribution>();
     const lifecycleHandlersById = new Map<string, ResolvedLifecycleHandlerContribution>();
     // Host dispatch map keyed by backend id. Runtime-adapter operation names are
     // stable plugin ABI values; the dispatch map itself remains host-local.
@@ -166,6 +188,17 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         notificationChannelsById.set(channel.definition.id, channel);
     }
 
+    for (const profile of executionRunProfiles) {
+        if (executionRunProfilesById.has(profile.definition.id)) {
+            throw new Error(`Duplicate execution-run profile contribution '${profile.definition.id}'`);
+        }
+        executionRunProfilesById.set(profile.definition.id, profile);
+    }
+
+    for (const installable of installables) {
+        installablesByKey.set(installable.definition.key, installable);
+    }
+
     for (const lifecycleHandler of lifecycleHandlers) {
         if (lifecycleHandlersById.has(lifecycleHandler.definition.id)) {
             throw new Error(`Duplicate lifecycle handler contribution '${lifecycleHandler.definition.id}'`);
@@ -186,6 +219,12 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             settings,
             notifications,
             notificationChannels,
+            executionRunProfiles,
+            mcpServers,
+            mcpBackendClients,
+            mcpTools,
+            mcpDiscoveryProviders,
+            installables,
             scmHostingProviders,
             activationTargets,
             hookRegistrations: inputs.hookRegistrations ?? [],
@@ -201,6 +240,12 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         settings,
         notifications,
         notificationChannels,
+        executionRunProfiles,
+        mcpServers,
+        mcpBackendClients,
+        mcpTools,
+        mcpDiscoveryProviders,
+        installables,
         scmHostingProviders,
         activationTargets,
         hookRegistrations: Object.freeze([...(inputs.hookRegistrations ?? [])]),
@@ -213,6 +258,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         settingsById: Object.freeze(settingsById),
         notificationsById: Object.freeze(notificationsById),
         notificationChannelsById: Object.freeze(notificationChannelsById),
+        executionRunProfilesById: Object.freeze(executionRunProfilesById),
+        installablesByKey: Object.freeze(installablesByKey),
         scmHostingProvidersById: scmHostingProvidersResult.providersById,
         lifecycleHandlersById: Object.freeze(lifecycleHandlersById),
         runtimeCoreHooksByBackendId: Object.freeze(runtimeCoreHooksByBackendId),
@@ -255,6 +302,80 @@ function freezePluginDiagnostics(
             ]),
         ),
     );
+}
+
+function toInstallableRegistryContribution(
+    candidate: ResolvedInstallableContribution,
+): InstallableRegistryContribution {
+    const isHostBuiltIn = candidate.provenance === 'first_party'
+        && !candidate.manifestPath
+        && !candidate.manifestDigest
+        && !candidate.daemonEntryPath
+        && !candidate.sourceSpec;
+    return {
+        owner: {
+            provenance: isHostBuiltIn
+                ? 'built_in'
+                : candidate.provenance === 'first_party'
+                    ? 'bundled_first_party_plugin'
+                    : 'external_plugin',
+            ownerId: candidate.pluginId ?? `${candidate.provenance}:${candidate.definition.key}`,
+            ...(candidate.pluginId ? { pluginId: candidate.pluginId } : {}),
+            ...(candidate.manifestPath ? { manifestPath: candidate.manifestPath } : {}),
+            ...(candidate.manifestDigest ? { manifestDigest: candidate.manifestDigest } : {}),
+        },
+        descriptor: candidate.definition,
+    };
+}
+
+function resolveInstallableContributions(
+    candidates: readonly ResolvedInstallableContribution[],
+    pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>,
+): Readonly<{
+    installables: readonly ResolvedInstallableContribution[];
+    pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+}> {
+    const diagnosticsByPluginId = clonePluginDiagnostics(pluginDiagnosticsByPluginId);
+    const candidateByOwnerAndKey = new Map<string, ResolvedInstallableContribution>();
+    const builtIns: InstallableRegistryContribution[] = [];
+    const bundledFirstPartyPlugins: InstallableRegistryContribution[] = [];
+    const externalPlugins: InstallableRegistryContribution[] = [];
+
+    for (const candidate of candidates) {
+        const contribution = toInstallableRegistryContribution(candidate);
+        candidateByOwnerAndKey.set(`${contribution.owner.ownerId}:${contribution.descriptor.key}`, candidate);
+        if (contribution.owner.provenance === 'built_in') {
+            builtIns.push(contribution);
+        } else if (contribution.owner.provenance === 'bundled_first_party_plugin') {
+            bundledFirstPartyPlugins.push(contribution);
+        } else {
+            externalPlugins.push(contribution);
+        }
+    }
+
+    const resolved = resolveInstallablesRegistry({
+        builtIns,
+        bundledFirstPartyPlugins,
+        externalPlugins,
+    });
+    for (const diagnostic of resolved.diagnostics) {
+        const pluginId = diagnostic.disabledPluginId ?? 'unknown';
+        diagnosticsByPluginId[pluginId] = diagnosticsByPluginId[pluginId] ?? [];
+        diagnosticsByPluginId[pluginId]!.push({
+            code: diagnostic.code,
+            message: diagnostic.message,
+        });
+    }
+
+    return {
+        installables: Object.freeze(
+            resolved.descriptors.flatMap((entry) => {
+                const candidate = candidateByOwnerAndKey.get(`${entry.owner.ownerId}:${entry.descriptor.key}`);
+                return candidate ? [candidate] : [];
+            }),
+        ),
+        pluginDiagnosticsByPluginId: freezePluginDiagnostics(diagnosticsByPluginId),
+    };
 }
 
 function compareScmHostingProviderPriority(
@@ -341,6 +462,8 @@ export async function resolveMergedContributionRegistry(
         uiDescriptors: Object.freeze([...(builtIn.uiDescriptors ?? []), ...(plugin.uiDescriptors ?? [])]),
         notifications: Object.freeze([...(builtIn.notifications ?? []), ...(plugin.notifications ?? [])]),
         notificationChannels: Object.freeze([...(builtIn.notificationChannels ?? []), ...(plugin.notificationChannels ?? [])]),
+        executionRunProfiles: Object.freeze([...(builtIn.executionRunProfiles ?? []), ...(plugin.executionRunProfiles ?? [])]),
+        installables: Object.freeze([...(builtIn.installables ?? []), ...(plugin.installables ?? [])]),
         scmHostingProviders: Object.freeze([...(builtIn.scmHostingProviders ?? []), ...(plugin.scmHostingProviders ?? [])]),
         activationTargets: Object.freeze([...(builtIn.activationTargets ?? []), ...(plugin.activationTargets ?? [])]),
         hookRegistrations: Object.freeze([...(builtIn.hookRegistrations ?? []), ...(plugin.hookRegistrations ?? [])]),
@@ -527,6 +650,12 @@ function buildRegistryGenerationId(params: Readonly<{
     settings: readonly ResolvedSettingsContribution[];
     notifications: readonly ResolvedNotificationCategoryContribution[];
     notificationChannels: readonly ResolvedNotificationChannelContribution[];
+    executionRunProfiles: readonly ResolvedExecutionRunProfileContribution[];
+    mcpServers: readonly ResolvedMcpServerContribution[];
+    mcpBackendClients: readonly ResolvedMcpBackendClientContribution[];
+    mcpTools: readonly ResolvedMcpToolContribution[];
+    mcpDiscoveryProviders: readonly ResolvedMcpDiscoveryProviderContribution[];
+    installables: readonly ResolvedInstallableContribution[];
     scmHostingProviders: readonly ResolvedScmHostingProviderContribution[];
     activationTargets: readonly ResolvedActivationTarget[];
     hookRegistrations: ResolvedContributionInputs['hookRegistrations'];
@@ -544,12 +673,56 @@ function buildRegistryGenerationId(params: Readonly<{
         ...params.settings.map((setting) => `settings:${setting.provenance}:${setting.source.kind}:${setting.definition.id}:${setting.manifestDigest ?? ''}`),
         ...params.notifications.map((notification) => `notification:${notification.provenance}:${notification.source.kind}:${notification.definition.id}:${notification.manifestDigest ?? ''}`),
         ...params.notificationChannels.map((channel) => `notificationChannel:${channel.provenance}:${channel.source.kind}:${channel.definition.id}:${channel.manifestDigest ?? ''}`),
+        ...params.executionRunProfiles.map((profile) => `executionRunProfile:${profile.provenance}:${profile.source.kind}:${profile.definition.id}:${profile.manifestDigest ?? ''}`),
+        ...params.mcpServers.map((server) => `mcpServer:${server.provenance}:${server.source.kind}:${server.definition.id}:${server.definition.name}:${server.manifestDigest ?? ''}`),
+        ...params.mcpBackendClients.map((client) => `mcpBackendClient:${client.provenance}:${client.source.kind}:${client.definition.id}:${client.definition.serverName}:${client.manifestDigest ?? ''}`),
+        ...params.mcpTools.map((tool) => `mcpTool:${tool.provenance}:${tool.source.kind}:${tool.definition.id}:${tool.definition.name}:${tool.manifestDigest ?? ''}`),
+        ...params.mcpDiscoveryProviders.map((provider) => `mcpDiscoveryProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
+        ...params.installables.map((installable) => `installable:${installable.provenance}:${installable.source.kind}:${installable.definition.key}:${installable.definition.capabilityId}:${installable.manifestDigest ?? ''}`),
         ...params.scmHostingProviders.map((provider) => `scmHostingProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
         ...params.activationTargets.map((target) => `activate:${target.provenance}:${target.source.kind}:${target.pluginId}:${target.manifestDigest}:${target.daemonEntryPath}`),
         ...(params.hookRegistrations ?? []).map((hook) => `hook:${hook.provenance}:${hook.source.kind}:${hook.definition.id}:${hook.manifestDigest}`),
         ...params.lifecycleHandlers.map((handler) => `lifecycle:${handler.provenance}:${handler.source.kind}:${handler.definition.id}:${handler.definition.event}:${handler.manifestDigest ?? ''}`),
     ].sort();
     return `registry:${parts.join('|')}`;
+}
+
+function compareMcpServerContributes(
+    left: ResolvedMcpServerContribution,
+    right: ResolvedMcpServerContribution,
+): number {
+    return left.definition.id.localeCompare(right.definition.id);
+}
+
+function compareMcpBackendClientContributes(
+    left: ResolvedMcpBackendClientContribution,
+    right: ResolvedMcpBackendClientContribution,
+): number {
+    return left.definition.id.localeCompare(right.definition.id);
+}
+
+function compareMcpToolContributes(
+    left: ResolvedMcpToolContribution,
+    right: ResolvedMcpToolContribution,
+): number {
+    return left.definition.id.localeCompare(right.definition.id);
+}
+
+function compareMcpDiscoveryProviderContributes(
+    left: ResolvedMcpDiscoveryProviderContribution,
+    right: ResolvedMcpDiscoveryProviderContribution,
+): number {
+    return left.definition.id.localeCompare(right.definition.id);
+}
+
+function compareExecutionRunProfileContributes(
+    left: ResolvedExecutionRunProfileContribution,
+    right: ResolvedExecutionRunProfileContribution,
+): number {
+    if (left.definition.intent !== right.definition.intent) {
+        return left.definition.intent.localeCompare(right.definition.intent);
+    }
+    return left.definition.id.localeCompare(right.definition.id);
 }
 
 export function getBuiltInCatalogEntries(): Record<CatalogAgentId, AgentCatalogEntry> {

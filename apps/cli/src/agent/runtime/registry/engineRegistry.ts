@@ -41,6 +41,7 @@ import {
     type PluginAuthMaterializedServiceV1,
     type PluginAuthMaterializeRequestV1,
     type PluginContextV1,
+    type PluginDisposable,
     type PluginSettingsFieldDescriptorV1,
     type PluginSessionGetParamsV1,
     type PluginSessionRefV1,
@@ -54,8 +55,6 @@ import { configuration } from '@/configuration';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { logger } from '@/ui/logger';
 import { readCredentials } from '@/persistence';
-import { resolveProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
-import type { CatalogAgentLookupId } from '@/backends/types';
 import { readBuiltInHostCatalogEntry } from '@/backends/builtInHostCatalogEntries';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import {
@@ -76,6 +75,18 @@ import { createBuiltInNotificationRegistry, createNotificationsService } from '@
 import { createNotificationRegistryFromPluginRuntime } from '@/notifications/pluginRuntimeRegistry';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createPluginAuthService } from '@/plugins/runtime/context/auth';
+import { createPluginAbortService } from '@/plugins/runtime/context/abort';
+import { createPluginEnvService } from '@/plugins/runtime/context/env';
+import { createPluginErrorsService } from '@/plugins/runtime/context/errors';
+import { createPluginExecService } from '@/plugins/runtime/context/exec';
+import { createPluginFsService } from '@/plugins/runtime/context/fs';
+import { createPluginManagedServerService } from '@/plugins/runtime/context/managedServer';
+import { createPluginMcpService } from '@/plugins/runtime/context/mcp';
+import { createPluginHostedMcpServerHandle, createPluginHostedMcpServerRegistry } from '@/mcp/createPluginHostedMcpServerHandle';
+import { createPluginProgressService } from '@/plugins/runtime/context/progress';
+import { createPluginRetryService } from '@/plugins/runtime/context/retry';
+import { createPluginTimeoutService } from '@/plugins/runtime/context/timeout';
+import { createPluginTranscriptsService } from '@/plugins/runtime/context/transcripts';
 import { canPluginSubscribeToEvent, createPluginEventsService } from '@/plugins/runtime/context/events';
 import { createPluginSecretsService } from '@/plugins/runtime/context/secrets';
 import { createPluginSettingsService } from '@/plugins/runtime/context/settings';
@@ -163,6 +174,12 @@ function projectConnectionStateV1(state: unknown): ConnectionStateV1 {
         lastErrorMessage: typeof state.lastErrorMessage === 'string' ? state.lastErrorMessage : null,
     } satisfies ConnectionStateV1;
     return Object.freeze(projected);
+}
+
+function hasRuntimeDisposableRegistrar(
+    value: unknown,
+): value is Readonly<{ addRuntimeDisposable: (pluginId: string, disposable: PluginDisposable) => PluginDisposable }> {
+    return isRecord(value) && typeof value.addRuntimeDisposable === 'function';
 }
 
 function createIdleConnectionStateSource(): PluginDaemonConnectionStateSource {
@@ -323,6 +340,9 @@ function createPluginContextActionsService(): PluginContextV1['actions'] {
                 describePublishTargets: createUnavailablePluginActionMethod('scm.hostingRepository.describePublishTargets'),
                 publish: createUnavailablePluginActionMethod('scm.hostingRepository.publish'),
             }),
+            diffSummary: Object.freeze({
+                generate: createUnavailablePluginActionMethod('scm.diffSummary.generate'),
+            }),
         }),
     });
 }
@@ -335,9 +355,8 @@ function createNoopPluginSubscription(): SubscriptionV1 {
 
 function createUnavailablePluginSubagentsService(): PluginContextV1['sessions']['subagents'] {
     const rejectWrite = async (): Promise<never> => {
-        throw new Error('ctx.sessions.subagents write operations are unavailable until the owning subagent ActionSpec packet binds a host adapter');
+        throw new Error('ctx.sessions.subagents is unavailable until the owning subagent packet binds a host adapter');
     };
-
     return Object.freeze({
         list: async () => Object.freeze([]),
         get: async () => null,
@@ -349,7 +368,7 @@ function createUnavailablePluginSubagentsService(): PluginContextV1['sessions'][
 }
 
 function createUnavailablePluginExternalSessionsService(): PluginContextV1['sessions']['external'] {
-    const unavailable = 'ctx.sessions.external is unavailable until the owning external-session ActionSpec packet binds a host adapter';
+    const unavailable = 'ctx.sessions.external is unavailable until the owning external-session packet binds a host adapter';
     return Object.freeze({
         listCandidates: async () => Object.freeze({
             candidates: Object.freeze([]),
@@ -360,18 +379,18 @@ function createUnavailablePluginExternalSessionsService(): PluginContextV1['sess
             error: unavailable,
         }),
         takeover: async () => Object.freeze({
-            ok: false as const,
-            errorCode: 'capability_unsupported' as const,
+            ok: false,
+            errorCode: 'capability_unsupported',
             error: unavailable,
         }),
         pageTranscript: async () => Object.freeze({
-            ok: false as const,
-            errorCode: 'provider_unavailable' as const,
+            ok: false,
+            errorCode: 'provider_unavailable',
             error: unavailable,
         }),
         readAfterTranscript: async () => Object.freeze({
-            ok: false as const,
-            errorCode: 'provider_unavailable' as const,
+            ok: false,
+            errorCode: 'provider_unavailable',
             error: unavailable,
         }),
         followTranscript: () => createNoopPluginSubscription(),
@@ -461,7 +480,7 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
         },
     });
 
-    const abortController = new AbortController();
+    const abortRuntime = createPluginAbortService();
 
     let currentScope: BoundContextScope | null = null;
     let initialScopeBoundResolve: (() => void) | null = null;
@@ -606,6 +625,24 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
         return settings;
     };
 
+    const backendEnginesByBackendId = params?.runtimeRegistry?.backendEnginesByBackendId;
+    const contextPluginId = backendEnginesByBackendId && typeof backendEnginesByBackendId.get === 'function'
+        ? backendEnginesByBackendId.get(backendId)?.pluginId ?? null
+        : null;
+    const pluginId = contextPluginId ?? backendId;
+    const addRuntimeDisposable = (disposable: PluginDisposable): PluginDisposable => {
+        if (!contextPluginId || !hasRuntimeDisposableRegistrar(params?.runtimeRegistry)) {
+            return disposable;
+        }
+        return params.runtimeRegistry.addRuntimeDisposable(contextPluginId, disposable);
+    };
+    addRuntimeDisposable({
+        dispose: () => {
+            if (!abortRuntime.controller.signal.aborted) {
+                abortRuntime.controller.abort(new Error('Plugin runtime disposed'));
+            }
+        },
+    });
     const subagentsService = createUnavailablePluginSubagentsService();
     const externalSessionsService = createUnavailablePluginExternalSessionsService();
 
@@ -782,10 +819,6 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
         subagents: subagentsService,
         external: externalSessionsService,
     });
-    const backendEnginesByBackendId = params?.runtimeRegistry?.backendEnginesByBackendId;
-    const contextPluginId = backendEnginesByBackendId && typeof backendEnginesByBackendId.get === 'function'
-        ? backendEnginesByBackendId.get(backendId)?.pluginId ?? null
-        : null;
     const fetchService = createPluginFetchService({
         networkAllowed: contextPluginId
             ? params?.runtimeRegistry?.networkAllowedPluginIds?.has(contextPluginId) === true
@@ -793,8 +826,10 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
         pluginId: contextPluginId ?? backendId,
         adapter: params?.fetchAdapter ?? null,
         interceptors: Object.freeze((params?.runtimeRegistry?.requestInterceptors ?? []).map((entry) => entry.registration)),
+        allowedUrlOrigins: contextPluginId
+            ? Object.freeze([...(params?.runtimeRegistry?.networkAllowedUrlOriginsByPluginId?.get(contextPluginId) ?? [])])
+            : Object.freeze([]),
     });
-    const pluginId = contextPluginId ?? backendId;
     const pluginStorePaths = resolvePluginStorePaths({ happyHomeDir: params?.happyHomeDir });
     const storage = createPluginStorageService({
         pluginId,
@@ -839,6 +874,76 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
         materialize: params?.authMaterializeAdapter,
     });
 
+    const appendTranscriptTurn = async (turn: unknown): Promise<void> => {
+        const scope = await ensureScope();
+        if (scope.kind === 'executionRun') {
+            logger.debug('[PluginContextV1] transcripts.append (execution-run no-op)', { turn });
+            return;
+        }
+        if (!isRecord(turn) || typeof turn.kind !== 'string') return;
+        const session = scope.getSession();
+        const transcript = scope.getTranscriptSession();
+        if (turn.kind === 'userText' && typeof turn.text === 'string') {
+            session.sendUserTextMessage(turn.text, isRecord(turn.opts) ? turn.opts as any : undefined);
+            return;
+        }
+        if (turn.kind === 'agentMessageCommitted' && typeof turn.provider === 'string' && turn.body && typeof turn.localId === 'string') {
+            await transcript.sendAgentMessageCommitted(turn.provider as any, turn.body as any, {
+                localId: turn.localId,
+                ...(isRecord(turn.meta) ? { meta: turn.meta as any } : {}),
+            });
+            return;
+        }
+        if (turn.kind === 'agentMessageEphemeral' && typeof turn.provider === 'string' && turn.body && typeof turn.localId === 'string') {
+            const createdAt = typeof turn.createdAt === 'number' ? turn.createdAt : Date.now();
+            const updatedAt = typeof turn.updatedAt === 'number' ? turn.updatedAt : createdAt;
+            await transcript.sendAgentMessageEphemeral?.(turn.provider as any, turn.body as any, {
+                localId: turn.localId,
+                createdAt,
+                updatedAt,
+                ...(isRecord(turn.meta) ? { meta: turn.meta as any } : {}),
+            } as any);
+        }
+    };
+    const execService = createPluginExecService({
+        allowedExecutablePaths: contextPluginId
+            ? Object.freeze([...(params?.runtimeRegistry?.processSpawnAllowedPathsByPluginId?.get(contextPluginId) ?? [])])
+            : Object.freeze([]),
+        baseEnv: Object.freeze({}),
+        signal: abortRuntime.service.signal,
+        addDisposable: addRuntimeDisposable,
+    });
+    const managedServerService = createPluginManagedServerService({
+        exec: execService,
+        signal: abortRuntime.service.signal,
+        addDisposable: addRuntimeDisposable,
+    });
+    const errorsService = createPluginErrorsService({
+        report: (classification, fields) => logger.warn('[PluginContextV1] runtime error reported', {
+            classification,
+            fields,
+        }),
+    });
+    // RN-MCP-001: per-runtime hosted server registry (no module global).
+    const pluginHostedMcpRegistry = createPluginHostedMcpServerRegistry();
+    const mcpService = createPluginMcpService({
+        pluginId,
+        exec: execService,
+        managedServer: managedServerService,
+        errors: errorsService,
+        signal: abortRuntime.service.signal,
+        addDisposable: addRuntimeDisposable,
+        startHostedServer: (spec) => createPluginHostedMcpServerHandle({ pluginId, spec, registry: pluginHostedMcpRegistry }),
+        // RN-MCP-003: scope listSpecs to the calling plugin's own registrations.
+        // Cross-plugin enumeration is not part of ctx.mcp.list contract; host-level
+        // discovery uses dedicated registry queries.
+        listSpecs: () => Object.freeze(
+            (params?.runtimeRegistry?.mcpServers ?? [])
+                .filter((entry) => pluginId !== null && entry.pluginId === pluginId)
+                .map((entry) => entry.registration),
+        ),
+    });
+
     return Object.freeze({
         logger: Object.freeze({
             debug: (message: string, fields?: Readonly<Record<string, unknown>>) => logger.debug(message, fields),
@@ -850,12 +955,25 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
             values: configValues,
         }),
         features,
-        managedTools: Object.freeze({
-            resolve: async (toolId: string) => {
-                // V1: treat the tool id as the catalog agent lookup id for provider CLI runtime resolution.
-                // The concrete shapes are stabilized by the runtime lane; callers may cast the result.
-                return resolveProviderCliLaunchSpec(toolId as CatalogAgentLookupId, { processEnv: process.env });
-            },
+        exec: execService,
+        managedServer: managedServerService,
+        mcp: mcpService,
+        errors: errorsService,
+        retry: createPluginRetryService(),
+        env: createPluginEnvService({
+            env: process.env,
+            allowedNames: contextPluginId
+                ? Object.freeze([...(params?.runtimeRegistry?.envAllowedNamesByPluginId?.get(contextPluginId) ?? [])])
+                : Object.freeze([]),
+        }),
+        fs: createPluginFsService({
+            rootDir: join(pluginStorePaths.storageDir, pluginId, 'fs'),
+            readAllowedPaths: contextPluginId
+                ? Object.freeze([...(params?.runtimeRegistry?.filesystemReadAllowedPathsByPluginId?.get(contextPluginId) ?? [])])
+                : Object.freeze([]),
+            writeAllowedPaths: contextPluginId
+                ? Object.freeze([...(params?.runtimeRegistry?.filesystemWriteAllowedPathsByPluginId?.get(contextPluginId) ?? [])])
+                : Object.freeze([]),
         }),
         actions: createPluginContextActionsService(),
         acp: Object.freeze({
@@ -886,38 +1004,9 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
             }),
         }),
         sessions,
-        transcripts: Object.freeze({
-            append: async (turn: unknown) => {
-                const scope = await ensureScope();
-                if (scope.kind === 'executionRun') {
-                    logger.debug('[PluginContextV1] transcripts.append (execution-run no-op)', { turn });
-                    return;
-                }
-                if (!isRecord(turn) || typeof turn.kind !== 'string') return;
-                const session = scope.getSession();
-                const transcript = scope.getTranscriptSession();
-                if (turn.kind === 'userText' && typeof turn.text === 'string') {
-                    session.sendUserTextMessage(turn.text, isRecord(turn.opts) ? turn.opts as any : undefined);
-                    return;
-                }
-                if (turn.kind === 'agentMessageCommitted' && typeof turn.provider === 'string' && turn.body && typeof turn.localId === 'string') {
-                    await transcript.sendAgentMessageCommitted(turn.provider as any, turn.body as any, {
-                        localId: turn.localId,
-                        ...(isRecord(turn.meta) ? { meta: turn.meta as any } : {}),
-                    });
-                    return;
-                }
-                if (turn.kind === 'agentMessageEphemeral' && typeof turn.provider === 'string' && turn.body && typeof turn.localId === 'string') {
-                    const createdAt = typeof turn.createdAt === 'number' ? turn.createdAt : Date.now();
-                    const updatedAt = typeof turn.updatedAt === 'number' ? turn.updatedAt : createdAt;
-                    await transcript.sendAgentMessageEphemeral?.(turn.provider as any, turn.body as any, {
-                        localId: turn.localId,
-                        createdAt,
-                        updatedAt,
-                        ...(isRecord(turn.meta) ? { meta: turn.meta as any } : {}),
-                    } as any);
-                }
-            },
+        transcripts: createPluginTranscriptsService({
+            append: appendTranscriptTurn,
+            addDisposable: addRuntimeDisposable,
         }),
         permissions: Object.freeze({
             requestDecision: async (request: unknown) => {
@@ -979,8 +1068,10 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
             getSettingsSecretsReadKeys: () => getActiveAccountSettingsSnapshot()?.settingsSecretsReadKeys ?? [],
         }),
         abort: Object.freeze({
-            signal: abortController.signal,
+            ...abortRuntime.service,
         }),
+        timeout: createPluginTimeoutService(),
+        progress: createPluginProgressService(),
         [PLUGIN_CONTEXT_V1_BINDER]: binder,
     });
 }

@@ -272,7 +272,7 @@ describe('configuration env url fallback', () => {
     expect(configMod.configuration.webappUrl).toBe('http://192.168.1.115:8081');
   });
 
-  it('reads execution-run and ephemeral-task budget env vars', async () => {
+  it('reads execution-run and one-shot task budget env vars', async () => {
     const homeDir = createTempDirSync('happier-cli-config-budget-');
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
@@ -288,7 +288,7 @@ describe('configuration env url fallback', () => {
     const configMod = await import('./configuration');
     configMod.reloadConfiguration();
     expect(configMod.configuration.executionRunsMaxConcurrentPerSession).toBe(7);
-    expect(configMod.configuration.ephemeralTasksMaxConcurrentPerSession).toBe(3);
+    expect(configMod.configuration.oneShotTasksMaxConcurrentPerSession).toBe(3);
     expect(configMod.configuration.executionRunsBoundedTimeoutMs).toBe(45000);
     expect(Reflect.get(configMod.configuration, 'executionRunsReviewBoundedTimeoutMs')).toBe(180000);
     expect(configMod.configuration.executionRunsMaxTurns).toBe(9);
@@ -309,7 +309,7 @@ describe('configuration env url fallback', () => {
     const configMod = await import('./configuration');
     configMod.reloadConfiguration();
     expect(configMod.configuration.executionRunsMaxConcurrentPerSession).toBeNull();
-    expect(configMod.configuration.ephemeralTasksMaxConcurrentPerSession).toBeNull();
+    expect(configMod.configuration.oneShotTasksMaxConcurrentPerSession).toBeNull();
     expect(configMod.configuration.executionRunsBoundedTimeoutMs).toBeNull();
     expect(configMod.configuration.executionRunsReviewBoundedTimeoutMs).toBeNull();
     expect(configMod.configuration.executionRunsMaxTurns).toBeNull();

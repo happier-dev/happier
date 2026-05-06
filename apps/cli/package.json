@@ -92,7 +92,11 @@
     "tweetnacl",
     "@happier-dev/plugins-claude",
     "@happier-dev/plugins-codex",
-    "@happier-dev/plugins-opencode"
+    "@happier-dev/plugins-opencode",
+    "@happier-dev/plugins-scm-azure-devops",
+    "@happier-dev/plugins-scm-bitbucket",
+    "@happier-dev/plugins-scm-github",
+    "@happier-dev/plugins-scm-gitlab"
   ],
   "scripts": {
     "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit",
@@ -150,6 +154,10 @@
     "@happier-dev/plugins-claude": "0.0.0",
     "@happier-dev/plugins-codex": "0.0.0",
     "@happier-dev/plugins-opencode": "0.0.0",
+    "@happier-dev/plugins-scm-azure-devops": "0.0.0",
+    "@happier-dev/plugins-scm-bitbucket": "0.0.0",
+    "@happier-dev/plugins-scm-github": "0.0.0",
+    "@happier-dev/plugins-scm-gitlab": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
     "@happier-dev/transfers": "0.0.0",

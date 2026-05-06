@@ -42,7 +42,7 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
         expect(isInternalOnlyRpcMethod(RPC_METHODS.STOP_SESSION)).toBe(false);
     });
 
-    it('classifies private execution-run transport methods under A.12-execution-runs', () => {
+    it('keeps public execution-run transport methods out of the internal-only allowlist', () => {
         const expected = [
             SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
             SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START,
@@ -52,7 +52,7 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
         ];
 
         for (const method of expected) {
-            expect(isInternalOnlyRpcMethod(method)).toBe(true);
+            expect(isInternalOnlyRpcMethod(method)).toBe(false);
         }
     });
 
@@ -81,5 +81,9 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
             }));
             expect(isInternalOnlyRpcMethod(method)).toBe(true);
         }
+    });
+
+    it('keeps RAU-6 SSH tunnel lifecycle out of machine RPC internal allowlist', () => {
+        expect(INTERNAL_ONLY_RPC_METHODS.filter((entry) => entry.method.startsWith('daemon.sshTunnels.'))).toEqual([]);
     });
 });

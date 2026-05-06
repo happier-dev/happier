@@ -25,6 +25,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
   resolvedPath: string;
   args: string[];
   timeoutMs?: number;
+  env?: Readonly<Record<string, string>>;
 }>): Promise<Readonly<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null }>> {
   const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 1_000;
   const isWindows = process.platform === 'win32';
@@ -40,6 +41,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
     if (Buffer.isBuffer(value)) return value.toString('utf8');
     return '';
   };
+  const execEnv = params.env ? { ...process.env, ...params.env } : process.env;
 
   try {
     if (needsJavaScriptRuntime && !runtimeExecutable) {
@@ -49,6 +51,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
     if (runtimeExecutable) {
       const { stdout, stderr } = await execFileAsync(runtimeExecutable, [params.resolvedPath, ...params.args], {
         timeout: timeoutMs,
+        env: execEnv,
         windowsHide: true,
       });
       return { ok: true, stdout: asString(stdout), stderr: asString(stderr), exitCode: 0 };
@@ -62,6 +65,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
       });
       const { stdout, stderr } = await execFileAsync(invocation.command, invocation.args, {
         timeout: timeoutMs,
+        env: execEnv,
         windowsHide: true,
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       });
@@ -70,6 +74,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
 
     const { stdout, stderr } = await execFileAsync(params.resolvedPath, params.args, {
       timeout: timeoutMs,
+      env: execEnv,
       windowsHide: true,
     });
     return { ok: true, stdout: asString(stdout), stderr: asString(stderr), exitCode: 0 };

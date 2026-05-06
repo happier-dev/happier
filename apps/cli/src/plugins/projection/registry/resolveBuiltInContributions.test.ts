@@ -35,8 +35,8 @@ describe('resolveBuiltInContributions', () => {
     expect(resolverSource).not.toMatch(/@happier-dev\/extensions-/);
   });
 
-  it('assembles built-in providers and backends into separate contribution tables', () => {
-    const contributes = resolveBuiltInContributions();
+    it('assembles built-in providers and backends into separate contribution tables', () => {
+        const contributes = resolveBuiltInContributions();
     const backendDefinitionIds = getAllBackendDefinitionContracts().map((entry) => entry.id).slice().sort();
     const providerDefinitionIds = getAllProviderDefinitionContracts().map((entry) => entry.id).slice().sort();
     const generatedProviderIds = readGeneratedArray('BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS')
@@ -85,15 +85,35 @@ describe('resolveBuiltInContributions', () => {
     if (!activationTargets) {
       throw new Error('Expected built-in activation target contributions');
     }
-    expect(activationTargets.map((target) => [target.pluginId, target.daemonEntryPath]).sort()).toEqual([
+        expect(activationTargets.map((target) => [target.pluginId, target.daemonEntryPath]).sort()).toEqual([
       ['claude', '@happier-dev/plugins-claude'],
       ['codex', '@happier-dev/plugins-codex'],
       ['opencode', '@happier-dev/plugins-opencode'],
-    ]);
-  });
+      ['scm-azure-devops', '@happier-dev/plugins-scm-azure-devops'],
+      ['scm-bitbucket', '@happier-dev/plugins-scm-bitbucket'],
+      ['scm-github', '@happier-dev/plugins-scm-github'],
+      ['scm-gitlab', '@happier-dev/plugins-scm-gitlab'],
+        ]);
+    });
 
-  it('publishes a runtime kind for every built-in backend contribution', () => {
-    const contributes = resolveBuiltInContributions();
+    it('projects bundled SCM hosting providers from generated built-in plugin metadata', () => {
+        const contributes = resolveBuiltInContributions();
+
+        expect((contributes.scmHostingProviders ?? []).map((provider) => [
+            provider.id,
+            provider.pluginId,
+            provider.definition.kind,
+            provider.definition.baseUrl,
+        ]).sort()).toEqual([
+            ['scm.azure-devops', 'scm-azure-devops', 'azure-devops', 'https://dev.azure.com'],
+            ['scm.bitbucket', 'scm-bitbucket', 'bitbucket', 'https://bitbucket.org'],
+            ['scm.github', 'scm-github', 'github', 'https://github.com'],
+            ['scm.gitlab', 'scm-gitlab', 'gitlab', 'https://gitlab.com'],
+        ]);
+    });
+
+    it('publishes a runtime kind for every built-in backend contribution', () => {
+        const contributes = resolveBuiltInContributions();
 
     expect(contributes.backends.map((backend) => [backend.id, backend.runtimeKind]).sort()).toEqual([
       ['auggie', 'native'],

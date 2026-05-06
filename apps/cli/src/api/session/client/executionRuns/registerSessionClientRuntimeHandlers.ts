@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { configuration } from '@/configuration';
-import { createExecutionRunRuntime } from '@/agent/executionRuns/runtime/createExecutionRunRuntime';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { readCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -10,7 +9,12 @@ import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
 
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
-import { registerEphemeralTaskHandlers } from '@/rpc/handlers/ephemeralTasks';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { commitSessionStoredMessage } from '@/session/transport/http/sessionsHttp';
+import { createServerBackedSessionTranscriptStore } from '@/api/session/createServerBackedSessionTranscriptStore';
+import { createSessionTranscriptFollowLeaseRegistry } from '@/api/session/transcriptQueries';
+import { SessionMessageContentSchema } from '@/api/types';
+import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscriptActionInput';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { Metadata } from '@/api/types';
 import type { ACPMessageData, ACPProvider } from '../../sessionMessageTypes';
@@ -38,7 +42,7 @@ export function resolveSessionClientParentProvider(metadata: unknown): CatalogAg
 function createExecutionBudgetRegistry(): ExecutionBudgetRegistry | undefined {
     const hasBudgetCaps =
         configuration.executionRunsMaxConcurrentPerSession !== null
-        || configuration.ephemeralTasksMaxConcurrentPerSession !== null
+        || configuration.oneShotTasksMaxConcurrentPerSession !== null
         || typeof configuration.executionBudgetMaxConcurrentTotalPerSession === 'number'
         || (configuration.executionBudgetMaxConcurrentByClass && Object.keys(configuration.executionBudgetMaxConcurrentByClass).length > 0);
     if (!hasBudgetCaps) {
@@ -47,7 +51,7 @@ function createExecutionBudgetRegistry(): ExecutionBudgetRegistry | undefined {
 
     return new ExecutionBudgetRegistry({
         maxConcurrentExecutionRuns: configuration.executionRunsMaxConcurrentPerSession,
-        maxConcurrentEphemeralTasks: configuration.ephemeralTasksMaxConcurrentPerSession,
+        maxConcurrentOneShotTasks: configuration.oneShotTasksMaxConcurrentPerSession,
         ...(typeof configuration.executionBudgetMaxConcurrentTotalPerSession === 'number'
             ? { maxConcurrentTotal: configuration.executionBudgetMaxConcurrentTotalPerSession }
             : {}),
@@ -61,6 +65,7 @@ function createExecutionBudgetRegistry(): ExecutionBudgetRegistry | undefined {
 export function registerSessionClientRuntimeHandlers(
     params: Readonly<{
         rpcHandlerManager: RpcHandlerManager;
+        token: string;
         metadataPath: string;
         metadata: unknown;
         sessionId: string;
@@ -75,6 +80,10 @@ export function registerSessionClientRuntimeHandlers(
         sendUserTextMessageCommitted: (text: string, opts: { localId: string; meta?: Record<string, unknown> }) => Promise<void>;
         sendAgentMessageCommitted: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }) => Promise<void>;
         sendAgentMessageEphemeral: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }) => void;
+        getTranscriptQueryContext: () => Readonly<{
+            encryptionKey: Uint8Array;
+            encryptionVariant: 'legacy' | 'dataKey';
+        }>;
         getAgentStateRequestStore?: ExecutionRunPermissionRequestStoreProvider;
         persistVoiceAgentRunMetadataFromPublicRun: (run: unknown, welcomedEpoch?: number) => void;
         socketEmitExecutionRunUpdated: (run: unknown) => void;
@@ -83,6 +92,41 @@ export function registerSessionClientRuntimeHandlers(
     const parentProvider = resolveSessionClientParentProvider(params.metadata);
     const workingDirectory = params.metadataPath ?? process.cwd();
     const executionBudgetRegistry = createExecutionBudgetRegistry();
+    const transcriptQueryContext = params.getTranscriptQueryContext();
+    const transcriptActionExecutor = createCliActionExecutor({
+        token: params.token,
+        sessionId: params.sessionId,
+        ctx: transcriptQueryContext,
+        transcriptSessionId: params.sessionId,
+        transcriptStore: createServerBackedSessionTranscriptStore({
+            token: params.token,
+            sessionId: params.sessionId,
+            ctx: transcriptQueryContext,
+        }),
+        // A.13 watcher bound floor: idle TTL must be ≥ 600_000 ms (10 min) per packet body §2.
+        transcriptFollowLeaseRegistry: createSessionTranscriptFollowLeaseRegistry({ maxLeases: 16, idleTtlMs: 600_000 }),
+        writeTranscriptItems: async (_sessionId: string, items: readonly SessionTranscriptActionItem[]) => {
+            let imported = 0;
+            let cursor: string | null = null;
+            for (const item of items) {
+                const parsedContent = SessionMessageContentSchema.safeParse(item.content);
+                if (!parsedContent.success) continue;
+                const committed = await commitSessionStoredMessage({
+                    token: params.token,
+                    sessionId: params.sessionId,
+                    localId: item.id,
+                    content: parsedContent.data,
+                });
+                imported += 1;
+                cursor = String(committed.seq);
+            }
+            return { imported, cursor };
+        },
+        sessionLogAccess: {
+            workingDirectory,
+            accessPolicy: { kind: 'osUser' },
+        },
+    });
 
     registerSessionHandlers(params.rpcHandlerManager, workingDirectory, {
         getSessionMetadata: () => params.getSessionMetadata(),
@@ -91,6 +135,7 @@ export function registerSessionClientRuntimeHandlers(
             localId?: string;
             meta?: Record<string, unknown>;
         }>) => params.enqueueSessionUserMessage(request),
+        transcriptActionExecutor,
     });
 
     const transcriptWriter = {
@@ -161,17 +206,5 @@ export function registerSessionClientRuntimeHandlers(
             const context = await bootstrapAccountSettingsContext({ credentials, mode: 'fast' });
             return context.settings ?? null;
         },
-    });
-
-    registerEphemeralTaskHandlers(params.rpcHandlerManager, {
-        workingDirectory,
-        createBackend: ({ backendId, permissionMode, backendTarget }) =>
-            createExecutionRunRuntime({
-                cwd: workingDirectory,
-                backendId,
-                permissionMode,
-                ...(backendTarget ? { backendTarget } : {}),
-            }),
-        budgetRegistry: executionBudgetRegistry,
     });
 }

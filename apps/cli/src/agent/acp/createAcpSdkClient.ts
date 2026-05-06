@@ -133,7 +133,12 @@ export function createAcpSdkClient(params: Readonly<{
         paramsKeys: Object.keys(request),
       }, null, 2));
 
-      const immediateDecision = params.permissionHandler?.getImmediateDecision?.(
+      const prePromptDecision = await (params.permissionHandler?.resolvePrePromptDecision?.(
+        toolCallId,
+        toolName,
+        input,
+      ) ?? Promise.resolve(null));
+      const immediateDecision = prePromptDecision ?? params.permissionHandler?.getImmediateDecision?.(
         toolCallId,
         toolName,
         input,
@@ -161,7 +166,7 @@ export function createAcpSdkClient(params: Readonly<{
 
       if (params.permissionHandler) {
         try {
-          const result = await params.permissionHandler.handleToolCall(toolCallId, toolName, input);
+          const result = prePromptDecision ?? await params.permissionHandler.handleToolCall(toolCallId, toolName, input);
           const isApproved =
             result.decision === 'approved'
             || result.decision === 'approved_for_session'

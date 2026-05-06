@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
-import { homeEntries as resolveCodexHomeEntriesForDirectSessionsSource } from '@/backends/codex/directSessions/homeEntries';
+import { homeEntries as resolveCodexHomeEntriesForDirectSessionsSource } from '@/backends/codex/externalSessions/homeEntries';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
 import type { PetDiscoveryDiagnosticV1 } from '@happier-dev/protocol';
 

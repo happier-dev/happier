@@ -11,7 +11,7 @@ import {
 import type {
   DirectSessionLinkIdentity,
   DirectSessionProviderOps,
-} from '@/session/directSessions/providerOps';
+} from '@/session/external/providerOps';
 import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 
 export type CanonicalizedDirectSessionSourceResult = Readonly<{

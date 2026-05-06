@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import { resolveClaudeConfigDir } from '../../../directSessions/resolveClaudeConfigDir';
+import { resolveClaudeConfigDir } from '../../../session/external/resolveClaudeConfigDir';
 
 export type ResolvedClaudeJsonlSessionFile = Readonly<{
     filePath: string;

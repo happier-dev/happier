@@ -89,6 +89,9 @@ class Configuration {
   public readonly installablesRuntimeAutoUpdateCheckIntervalMs: number
   // File system RPC limits (Files tab + transfers).
   public readonly filesReadMaxBytes: number
+  public readonly filesDirectoryListMaxEntries: number
+  public readonly filesDirectoryTreeMaxDepth: number
+  public readonly filesDirectoryTreeMaxNodes: number
   // Prompt transfer payload limits (prompt assets + prompt registry items).
   public readonly promptTransferJsonMaxBytes: number
   public readonly filesTransferChunkBytes: number
@@ -186,9 +189,9 @@ class Configuration {
   public readonly permissionRequestPushRetryMaxMs: number
   public readonly permissionRequestPushDedupeMaxEntries: number
 
-  // Execution runs and ephemeral tasks (session-process budgets).
+  // Execution runs and one-shot tasks (session-process budgets).
   public readonly executionRunsMaxConcurrentPerSession: number | null
-  public readonly ephemeralTasksMaxConcurrentPerSession: number | null
+  public readonly oneShotTasksMaxConcurrentPerSession: number | null
   public readonly executionRunsBoundedTimeoutMs: number | null
   public readonly executionRunsReviewBoundedTimeoutMs: number | null
   public readonly voiceAgentResponseTimeoutMs: number
@@ -315,6 +318,15 @@ class Configuration {
     // Default: 2.5MB. Defensive minimum: 1 byte.
     this.filesReadMaxBytes = resolveIntEnvWithBounds('HAPPIER_FILES_READ_MAX_BYTES', {
       min: 1, default: 2_500_000,
+    });
+    this.filesDirectoryListMaxEntries = resolveIntEnvWithBounds('HAPPIER_FILES_DIRECTORY_LIST_MAX_ENTRIES', {
+      min: 1, max: 20_000, default: 500,
+    });
+    this.filesDirectoryTreeMaxDepth = resolveIntEnvWithBounds('HAPPIER_FILES_DIRECTORY_TREE_MAX_DEPTH', {
+      min: 0, max: 25, default: 5,
+    });
+    this.filesDirectoryTreeMaxNodes = resolveIntEnvWithBounds('HAPPIER_FILES_DIRECTORY_TREE_MAX_NODES', {
+      min: 1, max: 100_000, default: 2_000,
     });
 
     // Default: 2.5MB. Defensive min: 1 byte; max: 10MB.
@@ -638,15 +650,15 @@ class Configuration {
     // inherit an arbitrary product cap unless an operator explicitly configures one.
     this.executionRunsMaxConcurrentPerSession =
       Number.isFinite(maxConcurrentRunsRaw) && maxConcurrentRunsRaw >= 1 ? maxConcurrentRunsRaw : null;
-    const maxConcurrentEphemeralTasksRaw = Number.parseInt(
+    const maxConcurrentOneShotTasksRaw = Number.parseInt(
       String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''),
       10,
     );
-    // Intentionally unlimited by default: ephemeral tasks (including reviews and automation helpers) can be long-lived,
+    // Intentionally unlimited by default: one-shot tasks can be long-lived,
     // and concurrency limits should only be applied when an operator explicitly configures them.
-    this.ephemeralTasksMaxConcurrentPerSession =
-      Number.isFinite(maxConcurrentEphemeralTasksRaw) && maxConcurrentEphemeralTasksRaw >= 1
-        ? maxConcurrentEphemeralTasksRaw
+    this.oneShotTasksMaxConcurrentPerSession =
+      Number.isFinite(maxConcurrentOneShotTasksRaw) && maxConcurrentOneShotTasksRaw >= 1
+        ? maxConcurrentOneShotTasksRaw
         : null;
     // Intentionally no wall-clock timeout by default: users should stop long-running plan/delegate/review
     // runs explicitly, while operators can still opt into caps via env overrides.

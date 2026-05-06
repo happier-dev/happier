@@ -78,7 +78,7 @@ function resolvePluginRuntimeAdapterHandlerExport(
     return moduleNamespace.default === undefined ? { status: 'missing' } : { status: 'invalid' };
 }
 
-function resolveBackendExecutionSurfacesFromHandlers(
+export function resolveBackendExecutionSurfacesFromHandlers(
     handlerByAdapterId: ReadonlyMap<string, PluginHookHandler>,
 ): BackendExecutionSurfaces {
     const terminalRuntime = resolveTerminalRuntimeOps(handlerByAdapterId);

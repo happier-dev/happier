@@ -1,5 +1,5 @@
 import { compareVersions } from '@happier-dev/cli-common/update';
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
+import { CODEX_ACP_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol';
 
 import {
   getCodexAcpDepStatus,
@@ -89,6 +89,7 @@ export async function runCodexAcpBackgroundAutoUpdateCheck(
 
 export const codexAcpRuntimeInstallable: RuntimeInstallableAdapter = {
   key: INSTALLABLE_KEYS.CODEX_ACP,
+  capabilityId: CODEX_ACP_DEP_ID,
   detectLaunchResolution: detectCodexAcpLaunchResolution,
   installOrUpgrade: installCodexAcp,
   runBackgroundAutoUpdateCheck: runCodexAcpBackgroundAutoUpdateCheck,

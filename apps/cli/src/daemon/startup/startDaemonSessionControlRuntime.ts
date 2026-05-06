@@ -23,6 +23,7 @@ import { resolveExistingSessionSpawnPreGate } from '../spawn/resolveExistingSess
 import { createSessionRunnerRespawnManager } from '../processSupervision/sessionRunnerRespawn';
 import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import type { SshTunnelSupervisor } from '../ssh/tunnels';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 
@@ -53,6 +54,7 @@ export async function startDaemonSessionControlRuntime(
         connectedServicesRestartRequestedPids: Set<number>;
         beforeShutdown: Parameters<typeof startDaemonControlServer>[0]['beforeShutdown'];
         onHappySessionWebhook: Parameters<typeof startDaemonControlServer>[0]['onHappySessionWebhook'];
+        sshTunnelSupervisor?: Pick<SshTunnelSupervisor, 'ensureTunnel' | 'listTunnels' | 'probeTunnel' | 'releaseTunnel' | 'stopTunnel'>;
         requestShutdown: (source: ShutdownSource, errorMessage?: string) => void;
         processEnv: NodeJS.ProcessEnv;
     }>,
@@ -215,6 +217,7 @@ export async function startDaemonSessionControlRuntime(
         requestShutdown: () => params.requestShutdown('happier-cli'),
         beforeShutdown: params.beforeShutdown,
         onHappySessionWebhook: params.onHappySessionWebhook,
+        ...(params.sshTunnelSupervisor ? { sshTunnels: params.sshTunnelSupervisor } : {}),
         controlToken,
     });
 

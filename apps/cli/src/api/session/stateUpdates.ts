@@ -3,6 +3,7 @@ import { backoff } from '@/utils/time';
 import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 type AckableSocket = {
     emitWithAck: (event: string, ...args: any[]) => Promise<any>;
@@ -116,6 +117,10 @@ export async function updateSessionAgentStateWithAck(opts: {
     setAgentStateVersion: (version: number) => void;
     syncSessionSnapshotFromServer: () => Promise<void>;
     handler: (agentState: AgentState) => AgentState;
+    runtimeIssueSummaryV1?: Readonly<{
+        latestTurnStatus: PrimaryTurnStatusV1;
+        lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
+    }>;
 }): Promise<void> {
     await backoff(async () => {
         if (opts.getAgentStateVersion() < 0) {
@@ -137,6 +142,7 @@ export async function updateSessionAgentStateWithAck(opts: {
             expectedVersion: opts.getAgentStateVersion(),
             agentState: agentStatePayload,
             activitySummaryV1,
+            ...(opts.runtimeIssueSummaryV1 ? { runtimeIssueSummaryV1: opts.runtimeIssueSummaryV1 } : {}),
         });
 
         if (answer.result === 'success') {

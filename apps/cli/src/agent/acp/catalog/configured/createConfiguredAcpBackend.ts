@@ -2,7 +2,7 @@ import type { AcpBackend } from '@/agent/acp/AcpBackend';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
 import type { AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import {
-  createAcpBackendFromDefinition,
+  createSynchronousAcpBackendFromDefinition,
   normalizeConfiguredAcpDefinition,
   type AcpRuntimeDefinitionV1,
 } from '@/agent/acp/runtime/definition';
@@ -33,7 +33,7 @@ export function createConfiguredAcpBackend(
     throw new Error('Configured ACP backends require either a normalized definition or backend metadata');
   }
 
-  return createAcpBackendFromDefinition({
+  return createSynchronousAcpBackendFromDefinition({
     definition,
     cwd: options.cwd,
     env: {

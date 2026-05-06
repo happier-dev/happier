@@ -8,6 +8,7 @@ const {
   resolveSessionTransportContext,
   executeExecutionRunAction,
   callSessionRpc,
+  hostSubagentStore,
 } = vi.hoisted(() => ({
   createSpawnedSession: vi.fn(),
   sendSessionMessage: vi.fn(),
@@ -16,6 +17,14 @@ const {
   resolveSessionTransportContext: vi.fn(),
   executeExecutionRunAction: vi.fn(),
   callSessionRpc: vi.fn(),
+  hostSubagentStore: {
+    list: vi.fn(),
+    get: vi.fn(),
+    watch: vi.fn(),
+    upsert: vi.fn(),
+    updateStatus: vi.fn(),
+    complete: vi.fn(),
+  },
 }));
 
 vi.mock('@/session/services/createSpawnedSession', () => ({
@@ -46,6 +55,14 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
   callSessionRpc,
 }));
 
+vi.mock('@/session/subagents/hostSubagentStore', async () => {
+  const actual = await vi.importActual<any>('@/session/subagents/hostSubagentStore');
+  return {
+    ...actual,
+    hostSubagentStore,
+  };
+});
+
 vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
   getSessionHostBridge: () => ({
     emitLifecycleHookEvent: emitSessionLifecycleHookEvent,
@@ -63,6 +80,12 @@ describe('createCliActionDeps hook dispatch', () => {
     resolveSessionTransportContext.mockReset();
     executeExecutionRunAction.mockReset();
     callSessionRpc.mockReset();
+    hostSubagentStore.list.mockReset();
+    hostSubagentStore.get.mockReset();
+    hostSubagentStore.watch.mockReset();
+    hostSubagentStore.upsert.mockReset();
+    hostSubagentStore.updateStatus.mockReset();
+    hostSubagentStore.complete.mockReset();
   });
 
   it('dispatches a session.spawn_new hook event after a successful spawn', async () => {
@@ -430,9 +453,62 @@ describe('createCliActionDeps hook dispatch', () => {
     expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
       sessionId: 'sess-1',
-      method: 'sess-1:permission',
+      method: 'sess-1:session.permission.respond',
       request: { id: 'perm-1', approved: true },
     }));
     expect(executeExecutionRunAction).not.toHaveBeenCalled();
+  });
+
+  it('registers subagent watches through the bounded host watcher and returns the initial snapshot', async () => {
+    const subagents = Object.freeze([
+      {
+        id: 'subagent-1',
+        parentSessionId: 'sess-1',
+        origin: 'plugin',
+        kind: 'custom',
+        status: 'running',
+        createdAt: 1,
+      },
+    ]);
+    const unsubscribe = vi.fn();
+    hostSubagentStore.watch.mockImplementation((_args, onEvent) => {
+      onEvent(Object.freeze({ kind: 'snapshot', subagents }));
+      return Object.freeze({ unsubscribe });
+    });
+
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        metadata: {},
+      },
+    });
+
+    await expect(deps.subagentsWatch?.({
+      parentSessionId: 'sess-1',
+      id: 'subagent-1',
+    })).resolves.toEqual({
+      kind: 'snapshot',
+      subagents,
+    });
+
+    expect(hostSubagentStore.watch).toHaveBeenCalledWith({
+      parentSessionId: 'sess-1',
+      id: 'subagent-1',
+    }, expect.any(Function));
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(hostSubagentStore.list).not.toHaveBeenCalled();
   });
 });

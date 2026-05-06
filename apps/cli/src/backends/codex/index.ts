@@ -18,7 +18,7 @@ export const agent = {
   getCliAuthSpec: async () => (await import('./cli/auth/codexCliAuthSpec')).codexCliAuthSpec,
   getCloudConnectTarget: async () => (await import('./cloud/connect')).codexCloudConnect,
   getDaemonSpawnHooks: async () => codexDaemonSpawnHooks,
-  getDirectSessionProviderOps: async () => (await import('./directSessions/providerOps')).codexDirectSessionProviderOps,
+  getDirectSessionProviderOps: async () => (await import('./externalSessions/providerOps')).codexDirectSessionProviderOps,
   getConnectedServicesMaterializer: async () =>
     (await import('./connectedServices/createCodexConnectedServicesMaterializer'))
       .createCodexConnectedServicesMaterializer(),

@@ -13,7 +13,7 @@ vi.mock('fs/promises', () => ({
   }),
 }));
 
-import { readFile, writeFile } from 'fs/promises';
+import { readFile, readdir, writeFile } from 'fs/promises';
 import { mkdir } from 'fs/promises';
 import { stat } from 'fs/promises';
 
@@ -36,6 +36,82 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
 }
 
 describe('registerFileSystemHandlers', () => {
+  it('dispatches filesystem read RPCs through ActionSpec when an executor is provided', async () => {
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      result: { success: true, content: Buffer.from('hello', 'utf8').toString('base64') },
+    }));
+    const mgr = createRpcHandlerManager();
+
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir', {
+      actionExecutor: { execute },
+    });
+
+    const read = mgr.handlers.get(RPC_METHODS.READ_FILE);
+    if (!read) {
+      throw new Error('expected readFile handler');
+    }
+
+    await expect(read({ path: '/work/dir/README.md' })).resolves.toEqual({
+      success: true,
+      content: Buffer.from('hello', 'utf8').toString('base64'),
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      'daemon.filesystem.readFile',
+      { path: '/work/dir/README.md' },
+      expect.objectContaining({ surface: 'rpc' }),
+    );
+  });
+
+    it('dispatches filesystem mutation and directory RPCs through ActionSpec when an executor is provided', async () => {
+    const execute = vi.fn(async (actionId: string) => ({
+      ok: true as const,
+      result: { success: true, actionId },
+    }));
+    const mgr = createRpcHandlerManager();
+
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir', {
+      actionExecutor: { execute },
+    });
+
+    const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
+    const listDirectory = mgr.handlers.get(RPC_METHODS.LIST_DIRECTORY);
+    const getDirectoryTree = mgr.handlers.get(RPC_METHODS.GET_DIRECTORY_TREE);
+    if (!write || !listDirectory || !getDirectoryTree) {
+      throw new Error('expected file-system ActionSpec handlers');
+    }
+
+    await expect(write({ path: '/work/dir/out.txt', content: 'eA==' })).resolves.toEqual({
+      success: true,
+      actionId: 'daemon.filesystem.writeFile',
+    });
+    await expect(listDirectory({ path: '/work/dir' })).resolves.toEqual({
+      success: true,
+      actionId: 'daemon.filesystem.listDirectory',
+    });
+    await expect(getDirectoryTree({ path: '/work/dir', maxDepth: 1 })).resolves.toEqual({
+      success: true,
+      actionId: 'daemon.filesystem.getDirectoryTree',
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      'daemon.filesystem.writeFile',
+      { path: '/work/dir/out.txt', content: 'eA==' },
+      expect.objectContaining({ surface: 'rpc' }),
+    );
+    expect(execute).toHaveBeenCalledWith(
+      'daemon.filesystem.listDirectory',
+      { path: '/work/dir' },
+      expect.objectContaining({ surface: 'rpc' }),
+    );
+    expect(execute).toHaveBeenCalledWith(
+      'daemon.filesystem.getDirectoryTree',
+      { path: '/work/dir', maxDepth: 1 },
+      expect.objectContaining({ surface: 'rpc' }),
+    );
+  });
+
   it('allows absolute writes outside the default directory by default', async () => {
     vi.clearAllMocks();
     const mgr = createRpcHandlerManager();
@@ -145,6 +221,60 @@ describe('registerFileSystemHandlers', () => {
       tree: {
         path: resolve('/tmp/allowed'),
         type: 'directory',
+      },
+    });
+  });
+
+  it('bounds directory listing and tree traversal RPC responses', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir', {
+      directoryLimits: {
+        listMaxEntries: 2,
+        treeMaxDepth: 1,
+        treeMaxNodes: 3,
+      },
+    });
+
+    const listDirectory = mgr.handlers.get(RPC_METHODS.LIST_DIRECTORY);
+    const getDirectoryTree = mgr.handlers.get(RPC_METHODS.GET_DIRECTORY_TREE);
+    if (!listDirectory || !getDirectoryTree) throw new Error('expected directory handlers');
+
+    vi.mocked(readdir).mockResolvedValueOnce([
+      { name: 'a.txt', isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false },
+      { name: 'b.txt', isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false },
+      { name: 'c.txt', isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false },
+    ] as any);
+    vi.mocked(stat).mockResolvedValue({ size: 1, mtime: new Date(), isDirectory: () => false } as any);
+
+    await expect(listDirectory({ path: '/work/dir' })).resolves.toMatchObject({
+      success: true,
+      entries: [
+        expect.objectContaining({ name: 'a.txt' }),
+        expect.objectContaining({ name: 'b.txt' }),
+      ],
+      truncated: true,
+    });
+
+    vi.clearAllMocks();
+    vi.mocked(stat)
+      .mockResolvedValueOnce({ size: 1, mtime: new Date(), isDirectory: () => true } as any)
+      .mockResolvedValue({ size: 1, mtime: new Date(), isDirectory: () => false } as any);
+    vi.mocked(readdir).mockResolvedValueOnce([
+      { name: 'a.txt', isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false },
+      { name: 'b.txt', isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false },
+      { name: 'c.txt', isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false },
+    ] as any);
+
+    await expect(getDirectoryTree({ path: '/work/dir', maxDepth: 99 })).resolves.toMatchObject({
+      success: true,
+      truncated: true,
+      tree: {
+        type: 'directory',
+        children: [
+          expect.objectContaining({ name: 'a.txt' }),
+          expect.objectContaining({ name: 'b.txt' }),
+        ],
       },
     });
   });

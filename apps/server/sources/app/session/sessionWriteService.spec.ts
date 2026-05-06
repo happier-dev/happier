@@ -679,6 +679,67 @@ describe("sessionWriteService", () => {
             });
         });
 
+        it("persists primary turn runtime state atomically with agentState", async () => {
+            currentTx.session.findUnique
+                .mockResolvedValueOnce({ accountId: "u1" })
+                .mockResolvedValueOnce({
+                    agentStateVersion: 1,
+                    agentState: "a1",
+                    seq: 2,
+                    lastViewedSessionSeq: 2,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            getSessionParticipantUserIds.mockResolvedValue(["u1"]);
+            markAccountChanged.mockResolvedValueOnce(200);
+
+            const issue = {
+                v: 1,
+                scope: "primary_session",
+                status: "failed",
+                code: "provider_status_error",
+                source: "provider_status_error",
+                occurredAt: 200,
+                provider: "acp",
+                sanitizedPreview: "Provider reported an error",
+            } as const;
+
+            const res = await updateSessionAgentState({
+                actorUserId: "u1",
+                sessionId: "s1",
+                expectedVersion: 1,
+                agentStateCiphertext: "a2",
+                runtimeIssueSummaryV1: {
+                    latestTurnStatus: "failed",
+                    lastRuntimeIssue: issue,
+                },
+            });
+
+            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
+                where: { id: "s1", agentStateVersion: 1 },
+                data: {
+                    agentState: "a2",
+                    agentStateVersion: 2,
+                    latestTurnStatus: "failed",
+                    lastRuntimeIssue: JSON.stringify(issue),
+                },
+            });
+            expect(res).toEqual({
+                ok: true,
+                version: 2,
+                agentState: "a2",
+                participantCursors: [{ accountId: "u1", cursor: 200 }],
+                badgeAttentionChanged: false,
+                latestTurnStatus: "failed",
+                lastRuntimeIssue: issue,
+            });
+        });
+
         it("re-fetches on CAS miss (count=0) and returns the fresh current value", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({ accountId: "u1" })

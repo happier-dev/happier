@@ -2,18 +2,19 @@ import { describe, expect, it } from 'vitest';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
-import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 
 import { createAcpRuntime } from '../createAcpRuntime';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 
+type CapturedMessage = Readonly<{ type?: unknown; message?: unknown }>;
+
 describe('createAcpRuntime (status error surfacing)', () => {
   it('surfaces status:error detail as an ACP message so the UI is not silent', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
 
-    const sent: ACPMessageData[] = [];
+    const sent: CapturedMessage[] = [];
     const session = createBasicSessionClientWithOverrides({
       sendAgentMessage: (_provider, body) => {
         sent.push(body);
@@ -38,14 +39,14 @@ describe('createAcpRuntime (status error surfacing)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(sent.some((msg) => msg.type === 'message' && msg.message.includes('Model not found'))).toBe(true);
-    expect(sent.some((msg) => msg.type === 'turn_aborted')).toBe(true);
+    expect(sent.some((msg) => msg.type === 'message' && typeof msg.message === 'string' && msg.message.includes('Model not found'))).toBe(true);
+    expect(sent.some((msg) => msg.type === 'turn_failed')).toBe(true);
   });
 
   it('does not surface abort-like status:error detail as a transcript message', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
 
-    const sent: ACPMessageData[] = [];
+    const sent: CapturedMessage[] = [];
     const session = createBasicSessionClientWithOverrides({
       sendAgentMessage: (_provider, body) => {
         sent.push(body);
@@ -74,8 +75,9 @@ describe('createAcpRuntime (status error surfacing)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(sent.some((msg) => msg.type === 'message' && msg.message.includes('OpenCode session aborted'))).toBe(false);
-    expect(sent.some((msg) => msg.type === 'message' && msg.message.includes('at Object.cancel'))).toBe(false);
-    expect(sent.some((msg) => msg.type === 'turn_aborted')).toBe(true);
+    expect(sent.some((msg) => msg.type === 'message' && typeof msg.message === 'string' && msg.message.includes('OpenCode session aborted'))).toBe(false);
+    expect(sent.some((msg) => msg.type === 'message' && typeof msg.message === 'string' && msg.message.includes('at Object.cancel'))).toBe(false);
+    expect(sent.some((msg) => msg.type === 'turn_cancelled')).toBe(true);
+    expect(sent.some((msg) => msg.type === 'turn_failed')).toBe(false);
   });
 });

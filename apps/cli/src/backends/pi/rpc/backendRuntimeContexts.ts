@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type readline from 'node:readline';
 
 import type { AgentMessage, SessionId } from '@/agent/core';
+import type { SurfacePrimarySessionRuntimeIssueInput } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 import type { PendingRpcRequest } from './rpcSupport';
 import type { PiRpcCommandWithoutId, PiRpcResponse, PiRpcStateData } from './types';
@@ -79,6 +80,7 @@ export function createPiRpcEventHandlerContextForBackend(params: Readonly<{
   openPromptRequestIds: Set<string>;
   resolvePendingTurn: () => void;
   rejectPendingTurn: (error: Error) => void;
+  surfacePrimarySessionRuntimeIssue?: (input: SurfacePrimarySessionRuntimeIssueInput) => void | Promise<void>;
   publishUsageStatsBestEffort: () => Promise<void>;
 }>): PiRpcEventHandlerContext {
   return createPiRpcEventHandlerContext(params);
@@ -112,6 +114,7 @@ export function createPiRpcProcessLifecycleContextForBackend(params: Readonly<{
   emitMessage: (message: AgentMessage) => void;
   rejectAllPending: (error: Error) => void;
   rejectPendingTurn: (error: Error) => void;
+  surfacePrimarySessionRuntimeIssue?: (input: SurfacePrimarySessionRuntimeIssueInput) => void | Promise<void>;
   handleStdoutLine: (line: string) => void;
   handleStderrLine: (line: string) => void;
   getState: () => Promise<PiRpcStateData>;

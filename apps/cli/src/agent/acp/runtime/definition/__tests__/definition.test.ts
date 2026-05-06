@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
+  createAcpBackendFromDefinition,
   createAcpRuntimeCoreFromDefinition,
   normalizeBuiltInAcpDefinition,
   normalizeConfiguredAcpDefinition,
@@ -8,6 +9,7 @@ import {
   normalizePluginBackendContributionAcpDefinition,
 } from '../index';
 import type { ResolvedConfiguredAcpBackend } from '../../../catalog/configured/resolveBackend';
+import type { AcpPermissionHandler } from '../../../permissions/acpPermissionHandler';
 
 describe('ACP runtime definitions', () => {
   it('normalizes built-in ACP capability hints into the runtime definition contract', () => {
@@ -27,10 +29,10 @@ describe('ACP runtime definitions', () => {
 
   it('normalizes configured ACP backends into a host-internal definition shape', () => {
     const backend = {
-      backendId: 'custom-kiro',
-      name: 'custom-kiro',
-      title: 'Custom Kiro',
-      command: 'kiro',
+      backendId: 'custom-acp',
+      name: 'custom-acp',
+      title: 'Custom ACP',
+      command: 'acme-agent',
       args: ['--acp'],
       env: {
         REGION: { t: 'literal', v: 'eu' },
@@ -76,25 +78,25 @@ describe('ACP runtime definitions', () => {
     });
 
     expect(definition).toMatchObject({
-      backendId: 'custom-kiro',
+      backendId: 'custom-acp',
       source: {
         kind: 'account_configured',
       },
       identity: {
-        backendId: 'custom-kiro',
+        backendId: 'custom-acp',
       },
       engine: {
         kind: 'acp',
       },
       ux: {
-        name: 'custom-kiro',
-        title: 'Custom Kiro',
+        name: 'custom-acp',
+        title: 'Custom ACP',
       },
       transport: {
         kind: 'stdio',
         launch: {
           kind: 'executable',
-          command: 'kiro',
+          command: 'acme-agent',
           args: ['--acp'],
         },
       },
@@ -328,10 +330,13 @@ describe('ACP runtime definitions', () => {
               support: 'manual_only',
               docsUrl: 'https://example.com/acp-auth',
             },
-          },
+        },
           fsEnabled: false,
           mcp: {
             policy: 'drop',
+          },
+          callbacks: {
+            permissionDecision: () => ({ kind: 'defer' }),
           },
         },
       },
@@ -361,6 +366,11 @@ describe('ACP runtime definitions', () => {
       customMessageKinds: ['acme.delta'],
       promptImageSupport: 'yes',
     });
+    expect(definition.callbacks.permissionDecision?.({
+      toolCallId: 'tool-1',
+      toolName: 'read',
+      input: {},
+    })).toEqual({ kind: 'defer' });
     expect(definition.timeouts).toEqual({
       initMs: 5000,
     });
@@ -452,11 +462,11 @@ describe('ACP runtime definitions', () => {
       },
     });
 
-    const launch = (resolveLaunch as (input: {
+    const launch = await (resolveLaunch as (input: {
       definition: typeof definition;
       cwd: string;
       permissionMode?: string;
-    }) => { command: string; args: readonly string[] })({
+    }) => { command: string; args: readonly string[] } | Promise<{ command: string; args: readonly string[] }>)({
       definition,
       cwd: '/workspace',
       permissionMode: 'read_only',
@@ -464,6 +474,442 @@ describe('ACP runtime definitions', () => {
 
     expect(launch.command).toBe('acme-agent');
     expect(launch.args).toEqual(['acp', '--permission-mode', 'read-only']);
+  });
+
+  it('accepts Tier-2 callback declarations after runtime execution support is present', async () => {
+    const runtimeCore = await import('../runtimeCore');
+    const assertSupported = (runtimeCore as Record<string, unknown>).assertAcpRuntimeDefinitionSupported;
+    expect(assertSupported).toEqual(expect.any(Function));
+
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.tier2',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+        },
+        ux: {
+          title: 'Acme Agent',
+        },
+        callbacks: {
+          argvBuilder: ({ baseArgs }) => [...baseArgs],
+          envBuilder: ({ env }) => env,
+          preflight: () => undefined,
+          permissionDecision: () => ({ kind: 'defer' }),
+        },
+      },
+    });
+
+    expect(() => (assertSupported as (input: typeof definition) => void)(definition)).not.toThrow();
+  });
+
+  it('lets argvBuilder replace final declarative launch argv without duplicating permission args', async () => {
+    const runtimeCore = await import('../runtimeCore');
+    const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
+    expect(resolveLaunch).toEqual(expect.any(Function));
+    const observed: unknown[] = [];
+
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.argv',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+            args: ['acp'],
+          },
+        },
+        ux: {
+          title: 'Acme Agent',
+        },
+        permissionModeArgv: {
+          flag: '--permission-mode',
+          map: {
+            read_only: 'read-only',
+          },
+        },
+        callbacks: {
+          argvBuilder: (params) => {
+            observed.push(params);
+            return [
+              'wrapped-agent',
+              ...params.baseArgs,
+              '--cwd',
+              params.cwd,
+              '--mode',
+              params.permissionMode ?? 'none',
+            ];
+          },
+        },
+      },
+    });
+
+    const launch = await (resolveLaunch as (input: {
+      definition: typeof definition;
+      cwd: string;
+      permissionMode?: string;
+    }) => { command: string; args: readonly string[] } | Promise<{ command: string; args: readonly string[] }>)({
+      definition,
+      cwd: '/workspace',
+      permissionMode: 'read_only',
+    });
+
+    expect(launch.command).toBe('acme-agent');
+    expect(launch.args).toEqual([
+      'wrapped-agent',
+      'acp',
+      '--permission-mode',
+      'read-only',
+      '--cwd',
+      '/workspace',
+      '--mode',
+      'read_only',
+    ]);
+    expect(observed).toEqual([{
+      baseArgs: ['acp', '--permission-mode', 'read-only'],
+      cwd: '/workspace',
+      permissionMode: 'read_only',
+    }]);
+  });
+
+  it('rejects empty argvBuilder output as a typed callback startup failure', async () => {
+    const runtimeCore = await import('../runtimeCore');
+    const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
+    expect(resolveLaunch).toEqual(expect.any(Function));
+
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.empty-argv',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+        },
+        callbacks: {
+          argvBuilder: () => [],
+        },
+      },
+    });
+
+    await expect((resolveLaunch as (input: {
+      definition: typeof definition;
+      cwd: string;
+    }) => unknown)({
+      definition,
+      cwd: '/workspace',
+    })).rejects.toMatchObject({
+      code: 'HAPPIER_ACP_TIER2_CALLBACK_ERROR',
+      callback: 'argvBuilder',
+      backendId: 'acme.plugin.empty-argv',
+      startupFailure: true,
+    });
+  });
+
+  it('wraps thrown argvBuilder failures as typed callback startup failures', async () => {
+    const runtimeCore = await import('../runtimeCore');
+    const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
+    expect(resolveLaunch).toEqual(expect.any(Function));
+
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.throw-argv',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+        },
+        callbacks: {
+          argvBuilder: () => {
+            throw new Error('plugin argv failed');
+          },
+        },
+      },
+    });
+
+    await expect((resolveLaunch as (input: {
+      definition: typeof definition;
+      cwd: string;
+    }) => unknown)({
+      definition,
+      cwd: '/workspace',
+    })).rejects.toMatchObject({
+      code: 'HAPPIER_ACP_TIER2_CALLBACK_ERROR',
+      callback: 'argvBuilder',
+      backendId: 'acme.plugin.throw-argv',
+      startupFailure: true,
+    });
+  });
+
+  it('supports async argvBuilder callbacks with the same launch contract', async () => {
+    const runtimeCore = await import('../runtimeCore');
+    const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
+    expect(resolveLaunch).toEqual(expect.any(Function));
+
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.async-argv',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+            args: ['acp'],
+          },
+        },
+        callbacks: {
+          argvBuilder: async ({ baseArgs }) => ['async-agent', ...baseArgs],
+        },
+      },
+    });
+
+    await expect((resolveLaunch as (input: {
+      definition: typeof definition;
+      cwd: string;
+    }) => Promise<{ args: readonly string[] }>)({
+      definition,
+      cwd: '/workspace',
+    })).resolves.toMatchObject({
+      args: ['async-agent', 'acp'],
+    });
+  });
+
+  it('overlays envBuilder output after host launch env materialization', async () => {
+    const runtimeCore = await import('../runtimeCore');
+    const resolveLaunch = (runtimeCore as Record<string, unknown>).resolveAcpRuntimeLaunch;
+    expect(resolveLaunch).toEqual(expect.any(Function));
+    const observedEnv: Array<Readonly<Record<string, string>>> = [];
+
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.env',
+        launchEnv: {
+          FROM_DEFINITION: 'definition',
+        },
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+            env: {
+              FROM_TRANSPORT: 'transport',
+              DEBUG: 'transport-debug',
+            },
+          },
+        },
+        callbacks: {
+          envBuilder: ({ env }) => {
+            observedEnv.push(env);
+            return {
+              DEBUG: 'callback-debug',
+              FROM_CALLBACK: 'callback',
+            };
+          },
+        },
+      },
+    });
+
+    const launch = await (resolveLaunch as (input: {
+      definition: typeof definition;
+      cwd: string;
+    }) => Promise<{ env: Readonly<Record<string, string>> }>)({
+      definition,
+      cwd: '/workspace',
+    });
+
+    expect(observedEnv).toEqual([expect.objectContaining({
+      FROM_DEFINITION: 'definition',
+      FROM_TRANSPORT: 'transport',
+      DEBUG: 'transport-debug',
+      NODE_ENV: 'production',
+    })]);
+    expect(launch.env).toEqual(expect.objectContaining({
+      FROM_DEFINITION: 'definition',
+      FROM_TRANSPORT: 'transport',
+      DEBUG: 'callback-debug',
+      FROM_CALLBACK: 'callback',
+    }));
+  });
+
+  it('runs preflight immediately before backend creation and blocks startup on failure', async () => {
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.preflight',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+        },
+        callbacks: {
+          preflight: async ({ cwd }) => {
+            expect(cwd).toBe('/workspace');
+            throw new Error('preflight failed');
+          },
+        },
+      },
+    });
+
+    await expect(createAcpBackendFromDefinition({
+      definition,
+      cwd: '/workspace',
+    })).rejects.toMatchObject({
+      code: 'HAPPIER_ACP_TIER2_CALLBACK_ERROR',
+      callback: 'preflight',
+      backendId: 'acme.plugin.preflight',
+      startupFailure: true,
+    });
+  });
+
+  it('composes permissionDecision allow, defer, and invalid outputs with the existing ACP permission handler', async () => {
+    const baseHandler = {
+      getImmediateDecision: vi.fn(() => null),
+      handleToolCall: vi.fn(async () => ({ decision: 'denied' as const })),
+    } satisfies AcpPermissionHandler;
+    const permissionDecision = ((request: { toolName: string }) => {
+      const { toolName } = request;
+      if (toolName === 'read') {
+        return { kind: 'allow', rationale: 'read-only' };
+      }
+      if (toolName === 'write') {
+        return { kind: 'defer' };
+      }
+      return { kind: 'invalid' };
+    }) as unknown as NonNullable<ReturnType<typeof normalizePluginAcpDefinition>['callbacks']['permissionDecision']>;
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.permissions',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+        },
+        callbacks: {
+          // Boundary regression: unchecked plugin JavaScript can still return invalid callback output.
+          permissionDecision,
+        },
+      },
+    });
+
+    const backend = await createAcpBackendFromDefinition({
+      definition,
+      cwd: '/workspace',
+      permissionHandler: baseHandler,
+    });
+    const wrappedHandler = (backend as unknown as {
+      options: {
+        permissionHandler?: AcpPermissionHandler;
+      };
+    }).options.permissionHandler;
+
+    expect(wrappedHandler?.getImmediateDecision?.('tool-1', 'read', {})).toEqual({
+      decision: 'approved',
+      rationale: 'read-only',
+    });
+    await expect(wrappedHandler?.handleToolCall('tool-1', 'read', {})).resolves.toEqual({
+      decision: 'approved',
+      rationale: 'read-only',
+    });
+    await expect(wrappedHandler?.handleToolCall('tool-2', 'write', {})).resolves.toEqual({
+      decision: 'denied',
+    });
+    await expect(wrappedHandler?.handleToolCall('tool-3', 'unknown', {})).resolves.toEqual({
+      decision: 'denied',
+    });
+    expect(baseHandler.handleToolCall).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed when permissionDecision returns invalid output without a fallback permission handler', async () => {
+    const permissionDecision = (
+      (() => ({ kind: 'invalid' }))
+    ) as unknown as NonNullable<ReturnType<typeof normalizePluginAcpDefinition>['callbacks']['permissionDecision']>;
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.invalid-permission-no-fallback',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+        },
+        callbacks: {
+          permissionDecision,
+        },
+      },
+    });
+
+    const backend = await createAcpBackendFromDefinition({
+      definition,
+      cwd: '/workspace',
+    });
+    const wrappedHandler = (backend as unknown as {
+      options: {
+        permissionHandler?: AcpPermissionHandler;
+      };
+    }).options.permissionHandler;
+
+    expect(wrappedHandler?.getImmediateDecision?.('tool-1', 'unknown', {})).toBeNull();
+    await expect(wrappedHandler?.handleToolCall('tool-1', 'unknown', {})).resolves.toEqual({
+      decision: 'denied',
+      rationale: 'permissionDecision deferred without a fallback permission handler',
+    });
+  });
+
+  it('fails closed when permissionDecision throws without a fallback permission handler', async () => {
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.throw-permission-no-fallback',
+        transport: {
+          kind: 'stdio',
+          launch: {
+            kind: 'executable',
+            command: 'acme-agent',
+          },
+        },
+        callbacks: {
+          permissionDecision: () => {
+            throw new Error('permission callback failed');
+          },
+        },
+      },
+    });
+
+    const backend = await createAcpBackendFromDefinition({
+      definition,
+      cwd: '/workspace',
+    });
+    const wrappedHandler = (backend as unknown as {
+      options: {
+        permissionHandler?: AcpPermissionHandler;
+      };
+    }).options.permissionHandler;
+
+    expect(wrappedHandler?.getImmediateDecision?.('tool-1', 'unknown', {})).toBeNull();
+    await expect(wrappedHandler?.handleToolCall('tool-1', 'unknown', {})).resolves.toEqual({
+      decision: 'denied',
+      rationale: 'permissionDecision deferred without a fallback permission handler',
+    });
   });
 
   it('fails closed when runtime definitions carry unsupported executable hooks', async () => {

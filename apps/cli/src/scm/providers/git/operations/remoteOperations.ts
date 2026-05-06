@@ -9,6 +9,7 @@ import { runScmCommand } from '../../../runtime';
 import { buildGitPullArgs, buildGitPushArgs, mapGitErrorCode, normalizeScmRemoteRequest } from '../remote';
 import { evaluateRemoteMutationPreconditions } from '../remoteGuards';
 
+import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation';
 import { readGitSnapshotForChecks } from './snapshotChecks';
 
 export async function gitRemoteFetch(input: {
@@ -34,7 +35,7 @@ export async function gitRemoteFetch(input: {
         timeoutMs: 30_000,
         env: buildScmNonInteractiveEnv(),
     });
-    return fetch.success
+    const response: ScmRemoteResponse = fetch.success
         ? { success: true, stdout: fetch.stdout, stderr: fetch.stderr }
         : {
             success: false,
@@ -42,6 +43,8 @@ export async function gitRemoteFetch(input: {
             error: fetch.stderr || 'Fetch failed',
             stderr: fetch.stderr,
         };
+    invalidatePrStatusCacheAfterSuccessfulScmMutation({ response, context });
+    return response;
 }
 
 export async function gitRemotePull(input: {
@@ -88,7 +91,7 @@ export async function gitRemotePull(input: {
         timeoutMs: 30_000,
         env: buildScmNonInteractiveEnv(),
     });
-    return pull.success
+    const response: ScmRemoteResponse = pull.success
         ? { success: true, stdout: pull.stdout, stderr: pull.stderr }
         : {
             success: false,
@@ -96,6 +99,12 @@ export async function gitRemotePull(input: {
             error: pull.stderr || 'Pull failed',
             stderr: pull.stderr,
         };
+    invalidatePrStatusCacheAfterSuccessfulScmMutation({
+        response,
+        context,
+        headBranch: snapshotResponse.snapshot.branch.head,
+    });
+    return response;
 }
 
 export async function gitRemotePush(input: {
@@ -142,7 +151,7 @@ export async function gitRemotePush(input: {
         timeoutMs: 30_000,
         env: buildScmNonInteractiveEnv(),
     });
-    return push.success
+    const response: ScmRemoteResponse = push.success
         ? { success: true, stdout: push.stdout, stderr: push.stderr }
         : {
             success: false,
@@ -150,4 +159,10 @@ export async function gitRemotePush(input: {
             error: push.stderr || 'Push failed',
             stderr: push.stderr,
         };
+    invalidatePrStatusCacheAfterSuccessfulScmMutation({
+        response,
+        context,
+        headBranch: snapshotResponse.snapshot.branch.head,
+    });
+    return response;
 }

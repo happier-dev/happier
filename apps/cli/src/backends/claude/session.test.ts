@@ -376,7 +376,8 @@ describe('Session', () => {
 
   it('emits ACP task lifecycle events when thinking toggles', () => {
     const sendAgentMessage = vi.fn();
-    const client = createSessionClientStub({ sendAgentMessage });
+    const updatePrimaryTurnRuntimeState = vi.fn();
+    const client = createSessionClientStub({ sendAgentMessage, updatePrimaryTurnRuntimeState } as any);
 
     const session = createSession(client);
 
@@ -387,6 +388,9 @@ describe('Session', () => {
       expect(provider1).toBe('claude');
       expect(payload1?.type).toBe('task_started');
       expect(typeof payload1?.id).toBe('string');
+      expect(updatePrimaryTurnRuntimeState).toHaveBeenCalledWith({
+        latestTurnStatus: 'in_progress',
+      });
 
       session.onThinkingChange(true);
       expect(sendAgentMessage).toHaveBeenCalledTimes(1);

@@ -4,7 +4,7 @@ import { getAgentAuthProbeConfig } from '@happier-dev/agents';
 import { createCatalogCliAuthSpec } from '@/capabilities/cliAuth/createCatalogCliAuthSpec';
 import { readJsonFileSafe, readStringField } from '@/capabilities/cliAuth/shared';
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/backends/types';
-import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/directSessions/resolveClaudeConfigDir';
+import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/externalSessions/resolveClaudeConfigDir';
 
 function readClaudeCredentialsStatus(): CliAuthStatusDraft {
   const configDir = resolveConfiguredClaudeConfigDir({ env: process.env });

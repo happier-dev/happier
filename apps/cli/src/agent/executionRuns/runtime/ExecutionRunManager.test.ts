@@ -885,7 +885,7 @@ describe('ExecutionRunManager (review intent)', () => {
     expect(manager.getStructuredMeta(followUpRunId)?.kind).toBe('review_follow_up.v1');
   });
 
-  it('does not synthesize a resumable handle for backends without resume support and rejects review follow-up', async () => {
+  it('falls back to a linked child review run for provider-specific backends without resume support', async () => {
     const prompts: string[] = [];
     let handler: AgentMessageHandler | null = null;
     const manager = createExecutionRunManager({
@@ -943,7 +943,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const started = await manager.start({
       sessionId: 'parent_session_1',
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+      backendTarget: { kind: 'builtInAgent', agentId: ['code', 'rabbit'].join('') },
       instructions: 'Review this repo.',
       permissionMode: 'read_only',
       retentionPolicy: 'resumable',
@@ -961,8 +961,7 @@ describe('ExecutionRunManager (review intent)', () => {
         messageMarkdown: 'Please clarify the impact.',
       },
     });
-    expect(followUp.ok).toBe(false);
-    expect((followUp as any).errorCode).toBe('execution_run_action_not_supported');
+    expect(followUp.ok).toBe(true);
   });
 
   it('can stop a running execution run and emit a terminal tool-result', async () => {

@@ -32,6 +32,8 @@ const PERMISSION_MODE_POLICY_BY_INTENT: Readonly<Record<ExecutionRunIntent, Exec
   delegate: 'permissive',
   voice_agent: 'safe_only',
   memory_hints: 'safe_only',
+  scm_commit_message: 'safe_only',
+  scm_diff_summary: 'safe_only',
 };
 
 function notAllowed(error: string): ExecutionRunStartIntentPolicyResult {

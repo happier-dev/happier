@@ -24,10 +24,15 @@ import {
 } from '@/agent/runtime/initializeBackendRunSession';
 import type { DeferredStartupBootstrapResult } from '@/agent/runtime/startup/deferredStartupTypes';
 import type { InFlightSteerController } from '@/agent/runtime/permissions/bindModeQueue';
-import type { PromptLoopBoundaryReason, PromptLoopResetReason, runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
+import type {
+  PromptLoopBoundaryReason,
+  PromptLoopCheckpointLifecycle,
+  PromptLoopResetReason,
+  runPermissionModePromptLoop,
+} from '@/agent/runtime/runPermissionModePromptLoop';
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
-import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/promptLibrary/resolveCliMemoryRecallGuidanceEnabled';
+import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
@@ -128,6 +133,12 @@ export type HostSessionRuntimeLifecycleHooks = Readonly<{
     session: ApiSessionClient;
     runtime: HostSessionRuntimeHookRuntime;
   }>) => void | Promise<void>;
+  createCheckpointLifecycle?: (params: Readonly<{
+    session: ApiSessionClient;
+    runtime: HostSessionRuntimeHookRuntime;
+    runtimeDirectory: string;
+    policyAgentId: string;
+  }>) => PromptLoopCheckpointLifecycle | null | Promise<PromptLoopCheckpointLifecycle | null>;
 }>;
 
 function createCurrentSessionClient(

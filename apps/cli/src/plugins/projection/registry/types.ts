@@ -8,8 +8,15 @@ import type {
   ActionDefinitionV1,
   BackendDefinitionV1,
   BackendRuntimeAdapterV1,
+  PluginBackendCapabilitiesV1,
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
+  PluginExecutionRunProfileContributionV2,
+  PluginMcpBackendClientContributionV1,
+  PluginMcpDiscoveryProviderContributionV1,
+  PluginMcpServerContributionV1,
+  PluginMcpToolContributionV1,
+  InstallableDependencyDescriptor,
   PluginSettingsContributionV2,
   ScmHostingProviderContribution,
   PluginSourceSpecV1,
@@ -89,7 +96,7 @@ export type ResolvedBackendContribution = Readonly<{
     definition: BackendDefinitionContractV1;
     richDefinition?: ResolvedBackendRichDefinition;
     runtimeKind?: string | null;
-    capabilities?: Readonly<Record<string, boolean>>;
+    capabilities?: PluginBackendCapabilitiesV1;
     runtimeCoreHooks?: readonly BackendRuntimeAdapterV1[];
     getRuntimeCore?: CliRuntimeCoreGetter;
     sourceSpec?: PluginSourceSpecV1;
@@ -273,7 +280,73 @@ export type ResolvedSettingsContribution = Readonly<{
     manifestDigest?: string;
     daemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
-    definition: PluginSettingsContributionV2;
+  definition: PluginSettingsContributionV2;
+}>;
+
+export type ResolvedExecutionRunProfileContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginExecutionRunProfileContributionV2;
+}>;
+
+export type ResolvedMcpServerContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginMcpServerContributionV1;
+}>;
+
+export type ResolvedMcpBackendClientContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginMcpBackendClientContributionV1;
+}>;
+
+export type ResolvedMcpToolContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginMcpToolContributionV1;
+}>;
+
+export type ResolvedMcpDiscoveryProviderContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginMcpDiscoveryProviderContributionV1;
+}>;
+
+export type ResolvedInstallableContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: InstallableDependencyDescriptor;
 }>;
 
 export type ResolvedScmHostingProviderContribution = Readonly<{
@@ -337,6 +410,12 @@ export type ResolvedContributionInputs = Readonly<{
     settings?: readonly ResolvedSettingsContribution[];
     notifications?: readonly ResolvedNotificationCategoryContribution[];
     notificationChannels?: readonly ResolvedNotificationChannelContribution[];
+    executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
+    mcpServers?: readonly ResolvedMcpServerContribution[];
+    mcpBackendClients?: readonly ResolvedMcpBackendClientContribution[];
+    mcpTools?: readonly ResolvedMcpToolContribution[];
+    mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
+    installables?: readonly ResolvedInstallableContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
     activationTargets?: readonly ResolvedActivationTarget[];
     hookRegistrations?: readonly ResolvedHookRegistration[];
@@ -356,6 +435,12 @@ export type ResolvedContributionRegistry = Readonly<{
     settings?: readonly ResolvedSettingsContribution[];
     notifications?: readonly ResolvedNotificationCategoryContribution[];
     notificationChannels?: readonly ResolvedNotificationChannelContribution[];
+    executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
+    mcpServers?: readonly ResolvedMcpServerContribution[];
+    mcpBackendClients?: readonly ResolvedMcpBackendClientContribution[];
+    mcpTools?: readonly ResolvedMcpToolContribution[];
+    mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
+    installables?: readonly ResolvedInstallableContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
     activationTargets: readonly ResolvedActivationTarget[];
     hookRegistrations: readonly ResolvedHookRegistration[];
@@ -368,6 +453,8 @@ export type ResolvedContributionRegistry = Readonly<{
     settingsById?: ReadonlyMap<string, ResolvedSettingsContribution>;
     notificationsById?: ReadonlyMap<string, ResolvedNotificationCategoryContribution>;
     notificationChannelsById?: ReadonlyMap<string, ResolvedNotificationChannelContribution>;
+    executionRunProfilesById?: ReadonlyMap<string, ResolvedExecutionRunProfileContribution>;
+    installablesByKey?: ReadonlyMap<string, ResolvedInstallableContribution>;
     scmHostingProvidersById?: ReadonlyMap<string, ResolvedScmHostingProviderContribution>;
     lifecycleHandlersById?: ReadonlyMap<string, ResolvedLifecycleHandlerContribution>;
     runtimeCoreHooksByBackendId: ReadonlyMap<string, readonly ResolvedBackendRuntimeAdapterContribution[]>;

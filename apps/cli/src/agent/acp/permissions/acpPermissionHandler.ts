@@ -6,6 +6,12 @@
  * requests through the host.
  */
 export interface AcpPermissionHandler {
+  resolvePrePromptDecision?(
+    toolCallId: string,
+    toolName: string,
+    input: unknown
+  ): Promise<{ decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort'; rationale?: string } | null>;
+
   /**
    * Best-effort synchronous preview used to suppress UI/mobile permission prompts for
    * requests the handler can auto-approve immediately.
@@ -14,7 +20,7 @@ export interface AcpPermissionHandler {
     toolCallId: string,
     toolName: string,
     input: unknown
-  ): { decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort' } | null;
+  ): { decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort'; rationale?: string } | null;
 
   /**
    * Handle a tool permission request.
@@ -27,5 +33,5 @@ export interface AcpPermissionHandler {
     toolCallId: string,
     toolName: string,
     input: unknown
-  ): Promise<{ decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort' }>;
+  ): Promise<{ decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort'; rationale?: string }>;
 }

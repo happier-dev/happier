@@ -33,9 +33,19 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     notificationChannelsById?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['notificationChannelsById'];
     scmHostingProvidersById: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['scmHostingProvidersById'];
     requestInterceptors?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['requestInterceptors'];
+    mcpServers?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpServers'];
+    mcpBackendClients?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpBackendClients'];
+    mcpTools?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpTools'];
+    mcpDiscoveryProviders?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpDiscoveryProviders'];
     networkAllowedPluginIds?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['networkAllowedPluginIds'];
+    networkAllowedUrlOriginsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['networkAllowedUrlOriginsByPluginId'];
+    processSpawnAllowedPathsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['processSpawnAllowedPathsByPluginId'];
+    envAllowedNamesByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['envAllowedNamesByPluginId'];
+    filesystemReadAllowedPathsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['filesystemReadAllowedPathsByPluginId'];
+    filesystemWriteAllowedPathsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['filesystemWriteAllowedPathsByPluginId'];
     eventSubscriptionPermissionsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['eventSubscriptionPermissionsByPluginId'];
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+    addRuntimeDisposable?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['addRuntimeDisposable'];
     readHookEventEnvelopeV1: typeof readHookEventEnvelopeV1;
     dispose: () => Promise<void>;
 }>;
@@ -78,6 +88,7 @@ function mergeActivatedContributes(
         && activated.commands.length === 0
         && activated.resources.length === 0
         && activated.uiDescriptors.length === 0
+        && activated.executionRunProfiles.length === 0
         && activated.lifecycleHandlers.length === 0
     ) {
         return base;
@@ -105,6 +116,10 @@ function mergeActivatedContributes(
         uiDescriptors: Object.freeze([
             ...base.uiDescriptors,
             ...activated.uiDescriptors,
+        ]),
+        executionRunProfiles: Object.freeze([
+            ...(base.executionRunProfiles ?? []),
+            ...activated.executionRunProfiles,
         ]),
         settings: base.settings,
         scmHostingProviders: base.scmHostingProviders,
@@ -213,7 +228,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
         notificationChannelsById: activatedRegistry.notificationChannelsById,
         scmHostingProvidersById: activatedRegistry.scmHostingProvidersById,
         requestInterceptors: activatedRegistry.requestInterceptors,
+        mcpServers: activatedRegistry.mcpServers,
+        mcpBackendClients: activatedRegistry.mcpBackendClients,
+        mcpTools: activatedRegistry.mcpTools,
+        mcpDiscoveryProviders: activatedRegistry.mcpDiscoveryProviders,
         networkAllowedPluginIds: activatedRegistry.networkAllowedPluginIds,
+        networkAllowedUrlOriginsByPluginId: activatedRegistry.networkAllowedUrlOriginsByPluginId,
+        processSpawnAllowedPathsByPluginId: activatedRegistry.processSpawnAllowedPathsByPluginId,
+        envAllowedNamesByPluginId: activatedRegistry.envAllowedNamesByPluginId,
+        filesystemReadAllowedPathsByPluginId: activatedRegistry.filesystemReadAllowedPathsByPluginId,
+        filesystemWriteAllowedPathsByPluginId: activatedRegistry.filesystemWriteAllowedPathsByPluginId,
         eventSubscriptionPermissionsByPluginId: activatedRegistry.eventSubscriptionPermissionsByPluginId,
         pluginDiagnosticsByPluginId: mergePluginDiagnostics(
             mergePluginDiagnostics(
@@ -222,6 +246,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ),
             activatedRegistry.pluginDiagnosticsByPluginId,
         ),
+        addRuntimeDisposable: activatedRegistry.addRuntimeDisposable,
         readHookEventEnvelopeV1,
         dispose: activatedRegistry.dispose,
     };

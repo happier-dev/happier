@@ -1,13 +1,21 @@
-import type { PluginPermissionCapabilityV1 } from '@happier-dev/protocol';
+import {
+    PluginExecutionRunProfileContributionV2Schema,
+    type PluginPermissionCapabilityV1,
+} from '@happier-dev/protocol';
 import type {
     PluginApiBackendEngineRegistration,
     PluginDisposable,
     PluginApi,
     PluginApiActionRegistration,
     PluginApiCommandRegistration,
+    PluginApiExecutionRunProfileRegistration,
     PluginApiHostPolicy,
     PluginApiHookRegistration,
     PluginApiLifecycleHandlerRegistration,
+    PluginApiMcpBackendClientRegistration,
+    PluginApiMcpDiscoveryProviderRegistration,
+    PluginApiMcpServerRegistration,
+    PluginApiMcpToolRegistration,
     PluginApiNotificationCategoryRegistration,
     PluginApiNotificationChannelRegistration,
     PluginApiRequestInterceptorRegistration,
@@ -20,6 +28,11 @@ import type {
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { createPluginDisposableRegistry } from '../lifecycle/disposables';
 import { isPluginApiScmHostingProviderRegistration } from './scmHostingProviders';
+import {
+    claimPluginMcpToolNamespace,
+    createPluginMcpToolNamespaceRegistry,
+    releasePluginMcpToolNamespace,
+} from '@/mcp/pluginMcpToolNamespaces';
 
 const NOOP_DISPOSABLE: PluginDisposable = () => undefined;
 
@@ -53,7 +66,13 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
     const uiDescriptors: PluginApiUiDescriptorRegistration[] = [];
     const notificationCategories: PluginApiNotificationCategoryRegistration[] = [];
     const notificationChannels: PluginApiNotificationChannelRegistration[] = [];
+    const executionRunProfiles: PluginApiExecutionRunProfileRegistration[] = [];
     const scmHostingProviders: PluginApiScmHostingProviderRegistration[] = [];
+    const mcpServers: PluginApiMcpServerRegistration[] = [];
+    const mcpBackendClients: PluginApiMcpBackendClientRegistration[] = [];
+    const mcpTools: PluginApiMcpToolRegistration[] = [];
+    const mcpDiscoveryProviders: PluginApiMcpDiscoveryProviderRegistration[] = [];
+    const mcpToolNamespaces = createPluginMcpToolNamespaceRegistry();
     const requestInterceptors: PluginApiRequestInterceptorRegistration[] = [];
     const hooks: PluginApiHookRegistration[] = [];
     const lifecycleHandlers: PluginApiLifecycleHandlerRegistration[] = [];
@@ -73,6 +92,9 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
         : null;
     const declaredNotificationChannelIds = policy?.declaredNotificationChannelIds
         ? new Set(policy.declaredNotificationChannelIds)
+        : null;
+    const declaredExecutionRunProfileIds = policy?.declaredExecutionRunProfileIds
+        ? new Set(policy.declaredExecutionRunProfileIds)
         : null;
     const declaredScmHostingProviderIds = policy?.declaredScmHostingProviderIds
         ? new Set(policy.declaredScmHostingProviderIds)
@@ -301,6 +323,45 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 }
             });
         },
+        registerExecutionRunProfile(registration) {
+            const blocked = isRegistrationAllowed({
+                family: 'executionRunProfiles',
+                methodName: 'registerExecutionRunProfile',
+            });
+            if (blocked) {
+                return blocked;
+            }
+            const parsed = PluginExecutionRunProfileContributionV2Schema.safeParse(registration);
+            if (!parsed.success) {
+                appendDiagnostic({
+                    code: 'plugin_manifest_semantic_invalid',
+                    message: `${formatPluginLabel(policy?.pluginId)} registered an invalid execution-run profile descriptor`,
+                });
+                throw new Error('Invalid execution-run profile descriptor');
+            }
+            const descriptor = parsed.data;
+            if (declaredExecutionRunProfileIds && !declaredExecutionRunProfileIds.has(descriptor.id)) {
+                appendDiagnostic({
+                    code: 'plugin_execution_run_profile_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register execution-run profile '${descriptor.id}' because it is not a manifest-declared execution-run profile id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register execution-run profile '${descriptor.id}' because it is not a manifest-declared execution-run profile id`);
+            }
+            if (executionRunProfiles.some((entry) => entry.id === descriptor.id)) {
+                appendDiagnostic({
+                    code: 'plugin_execution_run_profile_duplicate_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} registered duplicate execution-run profile '${descriptor.id}'`,
+                });
+                throw new Error(`Duplicate execution-run profile '${descriptor.id}'`);
+            }
+            executionRunProfiles.push(descriptor);
+            return addDisposable(() => {
+                const index = executionRunProfiles.indexOf(descriptor);
+                if (index >= 0) {
+                    executionRunProfiles.splice(index, 1);
+                }
+            });
+        },
         registerScmHostingProvider(registration) {
             const blocked = isRegistrationAllowed({
                 family: 'scmHostingProviders',
@@ -335,6 +396,101 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 const index = scmHostingProviders.indexOf(registration);
                 if (index >= 0) {
                     scmHostingProviders.splice(index, 1);
+                }
+            });
+        },
+        registerMcpServer(registration) {
+            const blocked = isRegistrationAllowed({
+                family: 'mcp',
+                methodName: 'registerMcpServer',
+            });
+            if (blocked) {
+                return blocked;
+            }
+            if (mcpServers.some((entry) => entry.id === registration.id || entry.name === registration.name)) {
+                appendDiagnostic({
+                    code: 'plugin_manifest_semantic_invalid',
+                    message: `${formatPluginLabel(policy?.pluginId)} registered duplicate MCP server '${registration.id}'`,
+                });
+                throw new Error(`Duplicate MCP server '${registration.id}'`);
+            }
+            mcpServers.push(registration);
+            return addDisposable(() => {
+                const index = mcpServers.indexOf(registration);
+                if (index >= 0) {
+                    mcpServers.splice(index, 1);
+                }
+            });
+        },
+        registerMcpBackendClient(registration) {
+            const blocked = isRegistrationAllowed({
+                family: 'mcp',
+                methodName: 'registerMcpBackendClient',
+            });
+            if (blocked) {
+                return blocked;
+            }
+            if (mcpBackendClients.some((entry) => entry.id === registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_manifest_semantic_invalid',
+                    message: `${formatPluginLabel(policy?.pluginId)} registered duplicate MCP backend client '${registration.id}'`,
+                });
+                throw new Error(`Duplicate MCP backend client '${registration.id}'`);
+            }
+            mcpBackendClients.push(registration);
+            return addDisposable(() => {
+                const index = mcpBackendClients.indexOf(registration);
+                if (index >= 0) {
+                    mcpBackendClients.splice(index, 1);
+                }
+            });
+        },
+        registerMcpTool(registration) {
+            const blocked = isRegistrationAllowed({
+                family: 'mcp',
+                methodName: 'registerMcpTool',
+            });
+            if (blocked) {
+                return blocked;
+            }
+            claimPluginMcpToolNamespace(mcpToolNamespaces, {
+                pluginId: policy?.pluginId ?? '',
+                toolName: registration.name,
+                registrationId: registration.id,
+            });
+            mcpTools.push(registration);
+            return addDisposable(() => {
+                const index = mcpTools.indexOf(registration);
+                if (index >= 0) {
+                    mcpTools.splice(index, 1);
+                }
+                releasePluginMcpToolNamespace(mcpToolNamespaces, {
+                    pluginId: policy?.pluginId ?? '',
+                    toolName: registration.name,
+                    registrationId: registration.id,
+                });
+            });
+        },
+        registerMcpDiscoveryProvider(registration) {
+            const blocked = isRegistrationAllowed({
+                family: 'mcp',
+                methodName: 'registerMcpDiscoveryProvider',
+            });
+            if (blocked) {
+                return blocked;
+            }
+            if (mcpDiscoveryProviders.some((entry) => entry.id === registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_manifest_semantic_invalid',
+                    message: `${formatPluginLabel(policy?.pluginId)} registered duplicate MCP discovery provider '${registration.id}'`,
+                });
+                throw new Error(`Duplicate MCP discovery provider '${registration.id}'`);
+            }
+            mcpDiscoveryProviders.push(registration);
+            return addDisposable(() => {
+                const index = mcpDiscoveryProviders.indexOf(registration);
+                if (index >= 0) {
+                    mcpDiscoveryProviders.splice(index, 1);
                 }
             });
         },
@@ -421,7 +577,12 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             uiDescriptors: Object.freeze([...uiDescriptors]),
             notificationCategories: Object.freeze([...notificationCategories]),
             notificationChannels: Object.freeze([...notificationChannels]),
+            executionRunProfiles: Object.freeze([...executionRunProfiles]),
             scmHostingProviders: Object.freeze([...scmHostingProviders]),
+            mcpServers: Object.freeze([...mcpServers]),
+            mcpBackendClients: Object.freeze([...mcpBackendClients]),
+            mcpTools: Object.freeze([...mcpTools]),
+            mcpDiscoveryProviders: Object.freeze([...mcpDiscoveryProviders]),
             requestInterceptors: Object.freeze([...requestInterceptors]),
             hooks: Object.freeze([...hooks]),
             lifecycleHandlers: Object.freeze([...lifecycleHandlers]),

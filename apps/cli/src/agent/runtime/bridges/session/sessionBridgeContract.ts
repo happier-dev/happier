@@ -19,7 +19,7 @@ import type { SessionHandoffEligibility } from '@/session/handoff/resolveSession
 import type {
   CanonicalizedDirectSessionSourceResult,
 } from './directSessionSourceCanonicalization';
-import type { DirectSessionLinkIdentity } from '@/session/directSessions/providerOps';
+import type { DirectSessionLinkIdentity } from '@/session/external/providerOps';
 import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 
 /**

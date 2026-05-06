@@ -60,6 +60,7 @@ import { startDaemonSessionControlRuntime } from './startup/startDaemonSessionCo
 import { prepareDaemonBootstrapContext } from './startup/prepareDaemonBootstrapContext';
 import { createDaemonMachineBootstrapRuntime } from './startup/createDaemonMachineBootstrapRuntime';
 import { stopManagedServersOnDaemonShutdownBestEffort } from './managedServers/stopManagedServersOnDaemonShutdown';
+import { createSshTunnelSupervisor } from './ssh/tunnels';
 
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
   const value = (raw ?? '').trim();
@@ -197,6 +198,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       getMachineId: () => machineId,
       activeServerDir: configuration.activeServerDir,
     });
+    const sshTunnelSupervisor = createSshTunnelSupervisor();
+    await sshTunnelSupervisor.adoptPersistedTunnels();
 
     setRespawnDescriptorEncryptionMaterialForRestore(credentials.encryption ?? null);
     let orphanedDeadDaemonSessions: ReadonlyArray<{ sessionId: string; pid: number }> = [];
@@ -245,6 +248,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       connectedServicesRestartRequestedPids,
       beforeShutdown,
       onHappySessionWebhook,
+      sshTunnelSupervisor,
       requestShutdown,
       processEnv: process.env,
     });
@@ -388,6 +392,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       },
       stopTailscaleTransferServeLifecycle,
       stopManagedServersOnShutdown: stopManagedServersOnDaemonShutdownBestEffort,
+      stopSshTunnelsOnShutdown: sshTunnelSupervisor.stopAllTunnels,
       stopControlServer,
       daemonLockHandle,
       releaseDaemonLock,

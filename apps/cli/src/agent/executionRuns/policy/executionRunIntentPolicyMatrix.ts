@@ -44,4 +44,16 @@ export const EXECUTION_RUN_INTENT_POLICY_MATRIX: Readonly<Record<ExecutionRunInt
     allowedIoModes: ['request_response'],
     invariant: 'Keep memory_hints constrained/internal with safe permission behavior.',
   },
+  scm_commit_message: {
+    allowedRetentionPolicies: ['ephemeral'],
+    allowedRunClasses: ['bounded'],
+    allowedIoModes: ['request_response'],
+    invariant: 'Keep SCM commit-message generation read-only and execution-run-owned.',
+  },
+  scm_diff_summary: {
+    allowedRetentionPolicies: ['ephemeral'],
+    allowedRunClasses: ['bounded'],
+    allowedIoModes: ['request_response', 'streaming'],
+    invariant: 'Keep SCM diff-summary generation read-only and execution-run-owned.',
+  },
 });

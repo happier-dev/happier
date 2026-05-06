@@ -37,7 +37,7 @@ import {
 } from './directSessionSourceCanonicalization';
 import { emitBridgeLifecycleHookEventBestEffort } from '@/agent/runtime/bridges/_shared/emitBridgeLifecycleHookEventBestEffort';
 import type { SessionHostBridgeContract } from './sessionBridgeContract';
-import type { DirectSessionLinkIdentity } from '@/session/directSessions/providerOps';
+import type { DirectSessionLinkIdentity } from '@/session/external/providerOps';
 import {
   isHostSessionRuntimePlan,
   runHostSessionRuntimePlan,

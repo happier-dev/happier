@@ -17,7 +17,7 @@ import type {
     CodexRolloutSessionStoreReadAfterParams,
     CodexRolloutSessionStoreReadAfterResult,
 } from './codexRolloutSessionStoreTypes';
-import { encodeCodexDirectForwardCursor } from '../../directSessions/codexDirectForwardCursor';
+import { encodeCodexDirectForwardCursor } from '../../session/external/codexDirectForwardCursor';
 import {
     pageCodexRolloutDirectTranscriptSnapshot,
     readAfterCodexRolloutDirectTranscriptSnapshot,

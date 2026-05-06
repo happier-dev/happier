@@ -121,6 +121,73 @@ describe('buildPluginContributionRegistry', () => {
                   defaultEnabled: true,
                 },
               ],
+              executionRunProfiles: [
+                {
+                  id: 'acme.ohmypi.review',
+                  kind: 'executionRun.profile',
+                  version: '1.0.0',
+                  intent: 'review',
+                  displayKey: 'plugins.acme.ohmypi.executionRuns.review.label',
+                  capabilityGates: [],
+                  permissionGates: [],
+                  redaction: 'none',
+                  hidden: false,
+                  actionIds: [],
+                },
+              ],
+              mcp: {
+                servers: [
+                  {
+                    id: 'acme.ohmypi.mcp',
+                    kind: 'mcp.server',
+                    version: '1.0.0',
+                    name: 'ohmypi-hosted',
+                    transport: 'hosted',
+                    capabilityGates: [],
+                    permissionGates: [],
+                    redaction: 'none',
+                    hidden: false,
+                    args: [],
+                  },
+                ],
+                backendClients: [
+                  {
+                    id: 'acme.ohmypi.mcp.client',
+                    kind: 'mcp.backendClient',
+                    version: '1.0.0',
+                    serverName: 'ohmypi-hosted',
+                    toolNamespace: 'ext.acme.ohmypi',
+                    capabilityGates: [],
+                    permissionGates: [],
+                    redaction: 'none',
+                    hidden: false,
+                  },
+                ],
+                tools: [
+                  {
+                    id: 'acme.ohmypi.mcp.tool',
+                    kind: 'mcp.tool',
+                    version: '1.0.0',
+                    name: 'ext.acme.ohmypi.search',
+                    capabilityGates: [],
+                    permissionGates: [],
+                    redaction: 'none',
+                    hidden: false,
+                  },
+                ],
+                discoveryProviders: [
+                  {
+                    id: 'acme.ohmypi.mcp.discovery',
+                    kind: 'mcp.discoveryProvider',
+                    version: '1.0.0',
+                    providerId: 'acme.ohmypi',
+                    capabilityGates: [],
+                    permissionGates: [],
+                    redaction: 'none',
+                    hidden: false,
+                  },
+                ],
+              },
               hooks: [
                 {
                   hookApiVersion: 1,
@@ -148,6 +215,11 @@ describe('buildPluginContributionRegistry', () => {
     expect(registry.uiDescriptors).toHaveLength(1);
     expect(registry.notifications).toHaveLength(1);
     expect(registry.notificationChannels).toHaveLength(1);
+    expect(registry.executionRunProfiles).toHaveLength(1);
+    expect(registry.mcpServers).toHaveLength(1);
+    expect(registry.mcpBackendClients).toHaveLength(1);
+    expect(registry.mcpTools).toHaveLength(1);
+    expect(registry.mcpDiscoveryProviders).toHaveLength(1);
     expect(registry.providers[0]).toMatchObject({
       pluginId: 'acme.ohmypi',
       definition: {
@@ -198,6 +270,28 @@ describe('buildPluginContributionRegistry', () => {
         id: 'acme.ohmypi.webhook',
         kind: 'webhook',
         title: 'Oh My Pi webhook',
+      },
+    });
+    expect(registry.executionRunProfiles[0]).toMatchObject({
+      pluginId: 'acme.ohmypi',
+      definition: {
+        id: 'acme.ohmypi.review',
+        kind: 'executionRun.profile',
+        intent: 'review',
+      },
+    });
+    expect(registry.mcpServers[0]).toMatchObject({
+      pluginId: 'acme.ohmypi',
+      definition: {
+        id: 'acme.ohmypi.mcp',
+        name: 'ohmypi-hosted',
+      },
+    });
+    expect(registry.mcpTools[0]).toMatchObject({
+      pluginId: 'acme.ohmypi',
+      definition: {
+        id: 'acme.ohmypi.mcp.tool',
+        name: 'ext.acme.ohmypi.search',
       },
     });
   });

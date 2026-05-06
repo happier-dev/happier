@@ -1,6 +1,5 @@
 import { configuration } from '@/configuration';
 import { SessionHandoffStatusGetRequestSchema, type SessionHandoffStatus } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
   createSessionHandoffPrepareTargetJobStore,
@@ -8,8 +7,6 @@ import {
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import { createSessionHandoffWorkspaceReplicationAdapter } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
-
-import type { RpcHandlerManager } from '../../rpc/RpcHandlerManager';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
@@ -139,7 +136,6 @@ function mergeWorkspaceReplicationProgressIntoHandoffStatus(params: Readonly<{
 }
 
 export type RegisterSessionHandoffStatusGetRpcHandlerInput = Readonly<{
-  rpcHandlerManager: RpcHandlerManager;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
@@ -160,11 +156,10 @@ export type RegisterSessionHandoffStatusGetRpcHandlerInput = Readonly<{
   }>;
 }>;
 
-export function registerSessionHandoffStatusGetRpcHandler(
+export function createSessionHandoffStatusGetActionHandler(
   params: RegisterSessionHandoffStatusGetRpcHandlerInput,
-): void {
+): (raw: unknown) => Promise<unknown> {
   const {
-    rpcHandlerManager,
     prepareJobStore,
     sourceExportStore,
     workspaceReplicationAdapter,
@@ -174,7 +169,7 @@ export function registerSessionHandoffStatusGetRpcHandler(
     invalidRequest,
   } = params;
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET, async (raw: unknown) => {
+  return async (raw: unknown) => {
     const parsed = SessionHandoffStatusGetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
@@ -222,5 +217,5 @@ export function registerSessionHandoffStatusGetRpcHandler(
       };
     }
     return { ok: false, errorCode: 'not_found' } as const;
-  });
+  };
 }

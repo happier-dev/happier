@@ -4,8 +4,20 @@ import { ApiClient } from '@/api/api';
 import type { CloudConnectTarget, CloudConnectTargetStatus } from '@/cloud/connectTypes';
 import { configuration } from '@/configuration';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { promptInput } from '@/terminal/prompts/promptInput';
-import { buildConnectedServiceCredentialRecord, sealConnectedServiceCredentialCiphertext, type ConnectedServiceId } from '@happier-dev/protocol';
+import {
+  buildConnectedAccountCredentialRecordFromOauthPayload,
+  buildConnectedAccountCredentialRecordFromTokenInput,
+} from '@/daemon/connectedServices/descriptors/buildConnectedAccountCredentialRecord';
+import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
+import {
+  buildConnectedServiceCredentialRecord,
+  CONNECTED_ACCOUNT_DESCRIPTORS,
+  requireConnectedAccountDescriptor,
+  sealConnectedServiceCredentialCiphertext,
+  type ConnectedAccountDescriptor,
+  type ConnectedAccountTokenKind,
+  type ConnectedServiceId,
+} from '@happier-dev/protocol';
 import { banner, bullets, cmd, dim, errorFrame, gray, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -67,10 +79,34 @@ async function loadConnectTargetsWithRegistry(
     if (!entry.getCloudConnectTarget) continue;
     targets.push(await entry.getCloudConnectTarget());
   }
+  const targetIds = new Set(targets.map((target) => target.id));
+  for (const descriptor of CONNECTED_ACCOUNT_DESCRIPTORS) {
+    for (const mode of descriptor.connectModes) {
+      if (targetIds.has(mode.targetId)) continue;
+      targets.push(createDescriptorOnlyConnectTarget(descriptor, mode.targetId));
+      targetIds.add(mode.targetId);
+    }
+  }
   targets.sort((a, b) => a.id.localeCompare(b.id));
   return {
     targets: params.includeExperimental ? targets : targets.filter((t) => t.status === 'wired'),
     registry,
+  };
+}
+
+function createDescriptorOnlyConnectTarget(
+  descriptor: ConnectedAccountDescriptor,
+  targetId: string,
+): CloudConnectTarget {
+  return {
+    id: targetId,
+    displayName: descriptor.id,
+    vendorDisplayName: descriptor.id,
+    vendorKey: 'scm',
+    status: 'wired',
+    authenticate: async () => {
+      throw new Error(`Connect target '${targetId}' does not support OAuth authentication`);
+    },
   };
 }
 
@@ -91,6 +127,7 @@ function showConnectHelp(targets: ReadonlyArray<CloudConnectTarget>, opts: Reado
       `  ${cmd('happier connect <target> --device')}            Use device-code auth when available`,
       `  ${cmd('happier connect <target> --api-key')}           Store a provider API key when supported`,
       `  ${cmd('happier connect <target> --setup-token')}       Store a provider setup-token when supported`,
+      `  ${cmd('happier connect <target> --token')}             Store a provider token when supported`,
       `  ${cmd('happier connect <target> --oauth')}             Store provider subscription OAuth when supported`,
       `  ${cmd('happier connect <target> --no-open')}           Do not attempt to open a browser`,
       `  ${cmd('happier connect <target> --timeout <seconds>')} Override OAuth timeout`,
@@ -120,8 +157,41 @@ function formatTargetLine(target: CloudConnectTarget): string {
   return `  happier connect ${target.id.padEnd(12)} ${target.vendorDisplayName}${statusSuffix}`;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+function resolveTokenPromptLabel(tokenKind: ConnectedAccountTokenKind, promptLabelKey: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    'connectedServices.tokenPrompts.claudeSetupToken': 'Paste Claude setup-token (from `claude setup-token`): ',
+    'connectedServices.tokenPrompts.openaiApiKey': 'Paste OpenAI API key: ',
+    'connectedServices.tokenPrompts.anthropicApiKey': 'Paste Anthropic API key: ',
+    'connectedServices.tokenPrompts.githubPersonalAccessToken': 'Paste GitHub fine-grained personal access token: ',
+    'connectedServices.tokenPrompts.bitbucketApiToken': 'Paste Bitbucket API token or app password: ',
+    'connectedServices.tokenPrompts.bitbucketEmailOrUsername': 'Paste Bitbucket email or username: ',
+  };
+  return labels[promptLabelKey]
+    ?? (tokenKind === 'personal-access-token'
+      ? 'Paste personal access token: '
+      : tokenKind === 'setup-token'
+        ? 'Paste setup-token: '
+        : tokenKind === 'api-token'
+          ? 'Paste API token: '
+        : 'Paste API key: ');
+}
+
+function resolveMissingTokenError(tokenKind: ConnectedAccountTokenKind, missingValueErrorKey: string): string {
+  const messages: Readonly<Record<string, string>> = {
+    'connectedServices.tokenPrompts.errors.missingSetupToken': 'Missing setup-token',
+    'connectedServices.tokenPrompts.errors.missingApiKey': 'Missing API key',
+    'connectedServices.tokenPrompts.errors.missingPersonalAccessToken': 'Missing personal access token',
+    'connectedServices.tokenPrompts.errors.missingApiToken': 'Missing API token',
+    'connectedServices.tokenPrompts.errors.missingBitbucketEmailOrUsername': 'Missing Bitbucket email or username',
+  };
+  return messages[missingValueErrorKey]
+    ?? (tokenKind === 'personal-access-token'
+      ? 'Missing personal access token'
+      : tokenKind === 'setup-token'
+        ? 'Missing setup-token'
+        : tokenKind === 'api-token'
+          ? 'Missing API token'
+        : 'Missing API key');
 }
 
 async function handleConnectVendor(target: CloudConnectTarget, options: ConnectParsedOptions): Promise<void> {
@@ -144,21 +214,27 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
     const record = await (async () => {
       const authIntent = resolveConnectAuthIntent({ targetId: target.id, options });
       const serviceId: ConnectedServiceId = authIntent.serviceId;
+      const descriptor = requireConnectedAccountDescriptor(serviceId);
       if (authIntent.kind === 'token') {
-        const promptLabel =
-          authIntent.tokenKind === 'setup-token'
-            ? 'Paste Claude setup-token (from `claude setup-token`): '
-            : serviceId === 'openai'
-              ? 'Paste OpenAI API key: '
-              : 'Paste Anthropic API key: ';
-        const token = (await promptInput(promptLabel)).trim();
-        if (!token) throw new Error(authIntent.tokenKind === 'setup-token' ? 'Missing setup-token' : 'Missing API key');
-        return buildConnectedServiceCredentialRecord({
+        if (!descriptor.tokenSetup) {
+          throw new Error(`Connected account does not support token setup: ${serviceId}`);
+        }
+        const promptLabel = resolveTokenPromptLabel(authIntent.tokenKind, descriptor.tokenSetup.promptLabelKey);
+        const identity = descriptor.tokenSetup.identity
+          ? (await promptInput(resolveTokenPromptLabel(authIntent.tokenKind, descriptor.tokenSetup.identity.promptLabelKey))).trim()
+          : null;
+        if (descriptor.tokenSetup.identity && !identity) {
+          throw new Error(resolveMissingTokenError(authIntent.tokenKind, descriptor.tokenSetup.identity.missingValueErrorKey));
+        }
+        const token = (await promptSecretInput(promptLabel)).trim();
+        if (!token) throw new Error(resolveMissingTokenError(authIntent.tokenKind, descriptor.tokenSetup.missingValueErrorKey));
+        return buildConnectedAccountCredentialRecordFromTokenInput({
           now,
           serviceId,
           profileId: options.profileId,
-          kind: 'token',
-          token: { token, providerAccountId: null, providerEmail: null },
+          token,
+          providerAccountId: identity,
+          providerEmail: identity,
         });
       }
 
@@ -170,110 +246,44 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
       });
       postConnectPayload = oauth;
 
-      if (target.id === 'codex') {
-        const t = isRecord(oauth) ? oauth : {};
-        const expiresAt = (() => {
-          const explicit = t.expires_at;
-          if (typeof explicit === 'number' && Number.isFinite(explicit) && explicit > 0) return explicit;
-          const expiresIn = t.expires_in;
-          if (typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0) {
-            return now + Math.trunc(expiresIn) * 1000;
-          }
-          return null;
-        })();
-        return buildConnectedServiceCredentialRecord({
-          now,
-          serviceId,
-          profileId: options.profileId,
-          kind: 'oauth',
-          expiresAt,
-          oauth: {
-            accessToken: String(t.access_token ?? ''),
-            refreshToken: String(t.refresh_token ?? ''),
-            idToken: typeof t.id_token === 'string' ? t.id_token : null,
-            scope: null,
-            tokenType: null,
-            providerAccountId: typeof t.account_id === 'string' ? t.account_id : null,
-            providerEmail: null,
-          },
-        });
-      }
-
-      if (target.id === 'claude') {
-        const t = isRecord(oauth) ? oauth : {};
-        const expiresAt = (() => {
-          const expiresIn = t.expires_in;
-          if (typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0) {
-            return now + Math.trunc(expiresIn) * 1000;
-          }
-          return null;
-        })();
-        const account = isRecord(t.account) ? t.account : null;
-        return buildConnectedServiceCredentialRecord({
-          now,
-          serviceId,
-          profileId: options.profileId,
-          kind: 'oauth',
-          expiresAt,
-          oauth: {
-            accessToken: String(t.access_token ?? ''),
-            refreshToken: String(t.refresh_token ?? ''),
-            idToken: null,
-            scope: typeof t.scope === 'string' ? t.scope : null,
-            tokenType: typeof t.token_type === 'string' ? t.token_type : null,
-            providerAccountId: account && typeof account.uuid === 'string' ? account.uuid : null,
-            providerEmail: account && typeof account.email_address === 'string' ? account.email_address : null,
-          },
-        });
-      }
-
-      if (target.id === 'gemini') {
-        const t = isRecord(oauth) ? oauth : {};
-        const expiresAt = typeof t.expires_in === 'number' ? now + t.expires_in * 1000 : null;
-        return buildConnectedServiceCredentialRecord({
-          now,
-          serviceId,
-          profileId: options.profileId,
-          kind: 'oauth',
-          expiresAt,
-          oauth: {
-            accessToken: String(t.access_token ?? ''),
-            refreshToken: String(t.refresh_token ?? ''),
-            idToken: typeof t.id_token === 'string' ? t.id_token : null,
-            scope: typeof t.scope === 'string' ? t.scope : null,
-            tokenType: typeof t.token_type === 'string' ? t.token_type : null,
-            providerAccountId: null,
-            providerEmail: null,
-          },
-        });
-      }
-
-      throw new Error(`Unsupported connect target: ${target.id}`);
+      return buildConnectedAccountCredentialRecordFromOauthPayload({
+        now,
+        serviceId,
+        profileId: options.profileId,
+        payload: oauth,
+      });
     })();
 
-    const sealedCiphertext = sealConnectedServiceCredentialCiphertext({
-      material:
-        credentials.encryption.type === 'legacy'
-          ? { type: 'legacy', secret: credentials.encryption.secret }
-          : { type: 'dataKey', machineKey: credentials.encryption.machineKey },
-      payload: record,
-      randomBytes: (length) => randomBytes(length),
-    });
-
     console.log(`🚀 Registering ${target.displayName} credential with server (${record.serviceId}/${options.profileId})`);
-    await api.registerConnectedServiceCredentialSealed({
-      serviceId: record.serviceId,
-      profileId: options.profileId,
-      sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
-      metadata: {
-        kind: record.kind,
-        providerEmail:
-          record.kind === 'oauth' ? record.oauth.providerEmail ?? null : record.token.providerEmail ?? null,
-        providerAccountId:
-          record.kind === 'oauth' ? record.oauth.providerAccountId ?? null : record.token.providerAccountId ?? null,
-        expiresAt: record.expiresAt,
-      },
-    });
+    if (await api.getAccountEncryptionMode() === 'plain') {
+      await api.registerConnectedServiceCredentialPlain({
+        serviceId: record.serviceId,
+        profileId: options.profileId,
+        content: { t: 'plain', v: record },
+      });
+    } else {
+      const sealedCiphertext = sealConnectedServiceCredentialCiphertext({
+        material:
+          credentials.encryption.type === 'legacy'
+            ? { type: 'legacy', secret: credentials.encryption.secret }
+            : { type: 'dataKey', machineKey: credentials.encryption.machineKey },
+        payload: record,
+        randomBytes: (length) => randomBytes(length),
+      });
+      await api.registerConnectedServiceCredentialSealed({
+        serviceId: record.serviceId,
+        profileId: options.profileId,
+        sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
+        metadata: {
+          kind: record.kind,
+          providerEmail:
+            record.kind === 'oauth' ? record.oauth.providerEmail ?? null : record.token.providerEmail ?? null,
+          providerAccountId:
+            record.kind === 'oauth' ? record.oauth.providerAccountId ?? null : record.token.providerAccountId ?? null,
+          expiresAt: record.expiresAt,
+        },
+      });
+    }
 
     console.log(`✅ ${target.displayName} credential registered with server`);
     if (postConnectPayload !== null) {

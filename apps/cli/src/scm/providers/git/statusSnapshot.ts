@@ -9,6 +9,8 @@ import {
 import { parseGitStatusPorcelainV2Z, parseNumStatZ } from './statusParser';
 import { parseGitWorktreeListPorcelain } from './worktreeListParser';
 import { parseGitRemoteVerbose } from './remoteListParser';
+import { projectPullRequestStatus } from './operations/pullRequestStatusProjection';
+import type { PullRequestStatusProjectionRegistry } from './operations/pullRequestStatusProjection';
 
 function detectEntryKind(includeStatus: string, pendingStatus: string): ScmWorkingEntry['kind'] {
     if (includeStatus === 'U' || pendingStatus === 'U') return 'conflicted';
@@ -26,7 +28,10 @@ function isMeaningfulStatus(statusChar: string): boolean {
 
 export function createGitCapabilities() {
     return createGitScmCapabilities({
+        readHostingProvider: true,
+        readPullRequestStatus: true,
         writeRepositoryInit: true,
+        writeRepositoryRemoveIndexLock: true,
     });
 }
 
@@ -43,6 +48,7 @@ export function buildGitSnapshot(input: {
     worktreesOutput?: string;
     remotesOutput?: string;
     operationState?: ScmOperationState | null;
+    hostingProviderRegistry?: PullRequestStatusProjectionRegistry;
 }): ScmWorkingSnapshot {
     const parsedStatus = parseGitStatusPorcelainV2Z(input.statusOutput);
     const includedSummary = parseNumStatZ(input.includedNumStatOutput);
@@ -136,7 +142,7 @@ export function buildGitSnapshot(input: {
         : [];
     const remotes = parseGitRemoteVerbose(input.remotesOutput ?? '');
 
-    return {
+    const snapshot: ScmWorkingSnapshot = {
         projectKey: input.projectKey,
         fetchedAt: input.fetchedAt,
         repo: {
@@ -169,4 +175,13 @@ export function buildGitSnapshot(input: {
             pendingRemoved: sortedEntries.reduce((acc, entry) => acc + entry.stats.pendingRemoved, 0),
         },
     };
+
+    if (!input.hostingProviderRegistry) {
+        return snapshot;
+    }
+
+    return projectPullRequestStatus({
+        snapshot,
+        registry: input.hostingProviderRegistry,
+    });
 }

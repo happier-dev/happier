@@ -31,6 +31,7 @@ export type CleanupAndShutdownParams = Readonly<{
     stopDirectPeerServer: () => Promise<void>;
     stopTailscaleTransferServeLifecycle: () => Promise<void>;
     stopManagedServersOnShutdown: () => Promise<void>;
+    stopSshTunnelsOnShutdown?: () => Promise<void>;
     stopControlServer: () => Promise<void>;
     stopCaffeinate: () => Promise<void>;
     daemonLockHandle: DaemonLockHandle | null;
@@ -104,6 +105,7 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
     await params.stopDirectPeerServer();
     await params.stopTailscaleTransferServeLifecycle();
     await params.stopManagedServersOnShutdown();
+    await params.stopSshTunnelsOnShutdown?.();
     await params.stopControlServer();
     await params.stopCaffeinate();
     if (params.daemonLockHandle) {

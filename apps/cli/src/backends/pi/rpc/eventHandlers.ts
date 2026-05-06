@@ -1,4 +1,5 @@
 import type { AgentMessage, AgentMessageHandler } from '@/agent/core';
+import type { SurfacePrimarySessionRuntimeIssueInput } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 import { logger } from '@/ui/logger';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 
@@ -13,6 +14,7 @@ export type PiRpcEventHandlerContext = Readonly<{
   openPromptRequestIds: Set<string>;
   resolvePendingTurn: () => void;
   rejectPendingTurn: (error: Error) => void;
+  surfacePrimarySessionRuntimeIssue?: (input: SurfacePrimarySessionRuntimeIssueInput) => void | Promise<void>;
   publishUsageStatsBestEffort: () => Promise<void>;
 }>;
 
@@ -47,6 +49,11 @@ export function handlePiRpcResponse(
       context.openPromptRequestIds.delete(id);
       const detail = asNonEmptyString(response.error) ?? 'Pi prompt failed';
       context.rejectPendingTurn(new Error(detail));
+      void context.surfacePrimarySessionRuntimeIssue?.({
+        provider: 'pi',
+        cause: 'status_error',
+        error: detail,
+      });
       emitMessage({ type: 'status', status: 'error', detail });
     }
     return;

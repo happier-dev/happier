@@ -32,7 +32,7 @@ export function initializeSessionClientConnection(
         kickUserSocketConnect: () => void;
         syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
         shouldSyncSessionSnapshotOnConnect: () => boolean;
-        syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+        syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }) => Promise<void>;
         flushQueuedSessionMessagesOnReconnect: () => Promise<void>;
         markConnected: () => 'connect' | 'reconnect';
     }>,

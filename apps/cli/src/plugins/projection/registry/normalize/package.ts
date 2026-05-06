@@ -2,8 +2,13 @@ import type {
   ActionDefinitionV1,
   PluginActionContributionV2,
   PluginCommandContributionV2,
+  PluginExecutionRunProfileContributionV2,
   PluginHookContributionV2,
   PluginLifecycleHandlerContributionV2,
+  PluginMcpBackendClientContributionV1,
+  PluginMcpDiscoveryProviderContributionV1,
+  PluginMcpServerContributionV1,
+  PluginMcpToolContributionV1,
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
   PluginResourceContributionV2,
@@ -13,6 +18,7 @@ import type {
   PluginToolContributionV2,
   PluginUiDescriptorContributionV2,
   HookRegistrationV1,
+  InstallableDependencyDescriptor,
   ProviderDefinitionV1,
 } from '@happier-dev/protocol';
 
@@ -49,7 +55,13 @@ export type PluginContributionRegistry = Readonly<{
   settings: readonly PluginOwnedContribution<PluginSettingsContributionV2>[];
   notifications: readonly PluginOwnedContribution<PluginNotificationCategoryContributionV2>[];
   notificationChannels: readonly PluginOwnedContribution<PluginNotificationChannelContributionV2>[];
+  executionRunProfiles: readonly PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[];
+  mcpServers: readonly PluginOwnedContribution<PluginMcpServerContributionV1>[];
+  mcpBackendClients: readonly PluginOwnedContribution<PluginMcpBackendClientContributionV1>[];
+  mcpTools: readonly PluginOwnedContribution<PluginMcpToolContributionV1>[];
+  mcpDiscoveryProviders: readonly PluginOwnedContribution<PluginMcpDiscoveryProviderContributionV1>[];
   scmHostingProviders: readonly PluginOwnedContribution<ScmHostingProviderContribution>[];
+  installables: readonly PluginOwnedContribution<InstallableDependencyDescriptor>[];
   lifecycleHandlers: readonly PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[];
 }>;
 
@@ -220,7 +232,13 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const settings: PluginOwnedContribution<PluginSettingsContributionV2>[] = [];
   const notifications: PluginOwnedContribution<PluginNotificationCategoryContributionV2>[] = [];
   const notificationChannels: PluginOwnedContribution<PluginNotificationChannelContributionV2>[] = [];
+  const executionRunProfiles: PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[] = [];
+  const mcpServers: PluginOwnedContribution<PluginMcpServerContributionV1>[] = [];
+  const mcpBackendClients: PluginOwnedContribution<PluginMcpBackendClientContributionV1>[] = [];
+  const mcpTools: PluginOwnedContribution<PluginMcpToolContributionV1>[] = [];
+  const mcpDiscoveryProviders: PluginOwnedContribution<PluginMcpDiscoveryProviderContributionV1>[] = [];
   const scmHostingProviders: PluginOwnedContribution<ScmHostingProviderContribution>[] = [];
+  const installables: PluginOwnedContribution<InstallableDependencyDescriptor>[] = [];
   const lifecycleHandlers: PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[] = [];
 
   for (const plugin of params.loadedPlugins) {
@@ -381,8 +399,81 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
+    for (const definition of readContributionArray<PluginExecutionRunProfileContributionV2>(plugin.manifest.contributes, 'executionRunProfiles')) {
+      executionRunProfiles.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    const mcp = isRecord(plugin.manifest.contributes.mcp) ? plugin.manifest.contributes.mcp : {};
+    for (const definition of readContributionArray<PluginMcpServerContributionV1>(mcp, 'servers')) {
+      mcpServers.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginMcpBackendClientContributionV1>(mcp, 'backendClients')) {
+      mcpBackendClients.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginMcpToolContributionV1>(mcp, 'tools')) {
+      mcpTools.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginMcpDiscoveryProviderContributionV1>(mcp, 'discoveryProviders')) {
+      mcpDiscoveryProviders.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
     for (const definition of readContributionArray<ScmHostingProviderContribution>(plugin.manifest.contributes, 'scmHostingProviders')) {
       scmHostingProviders.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<InstallableDependencyDescriptor>(plugin.manifest.contributes, 'installables')) {
+      installables.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
@@ -421,7 +512,13 @@ export function buildPluginContributionRegistry(params: Readonly<{
     settings: Object.freeze(settings),
     notifications: Object.freeze(notifications),
     notificationChannels: Object.freeze(notificationChannels),
+    executionRunProfiles: Object.freeze(executionRunProfiles),
+    mcpServers: Object.freeze(mcpServers),
+    mcpBackendClients: Object.freeze(mcpBackendClients),
+    mcpTools: Object.freeze(mcpTools),
+    mcpDiscoveryProviders: Object.freeze(mcpDiscoveryProviders),
     scmHostingProviders: Object.freeze(scmHostingProviders),
+    installables: Object.freeze(installables),
     lifecycleHandlers: Object.freeze(lifecycleHandlers),
   });
 }

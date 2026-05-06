@@ -8,11 +8,11 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
-import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/promptLibrary/resolveCliMemoryRecallGuidanceEnabled';
+import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import {
   resolveCliPromptStackSystemAppendBlocks,
   type PromptArtifactRecord,
-} from '@/agent/promptLibrary/resolveCliPromptStackSystemAppendBlocks';
+} from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { resolveCodingProviderBehaviorBlocks } from './providerPromptBehaviorRegistry';
 import { resolveCodingToolDeliveryBlocks } from './toolDeliveryPromptRegistry';
 

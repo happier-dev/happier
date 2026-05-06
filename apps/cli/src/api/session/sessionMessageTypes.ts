@@ -10,6 +10,8 @@ export type ACPMessageData = AcpSidechainMeta & (
   | { type: 'terminal-output'; data: string; callId: string }
   | { type: 'task_started'; id: string }
   | { type: 'task_complete'; id: string }
+  | { type: 'turn_failed'; id: string }
+  | { type: 'turn_cancelled'; id: string }
   | { type: 'turn_aborted'; id: string }
   | { type: 'permission-request'; permissionId: string; toolName: string; description: string; options?: unknown }
   | { type: 'permission-response'; permissionId: string; approved: boolean; decision?: string; toolName?: string }

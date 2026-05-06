@@ -10,6 +10,16 @@ import { isAuthenticationError } from '../client/httpStatusError';
 import { decodeBase64, decrypt } from '../encryption';
 import { SessionMessageContentSchema, type PermissionMode } from '../types';
 
+export { pageSessionTranscript } from './pageSessionTranscript';
+export { readSessionTranscriptAfter } from './readSessionTranscriptAfter';
+export { searchSessionTranscript } from './searchSessionTranscript';
+export { importSessionTranscript } from './importSessionTranscript';
+export {
+  createSessionTranscriptFollowLeaseRegistry,
+  followSessionTranscript,
+  type SessionTranscriptFollowLeaseRegistry,
+} from './followSessionTranscript';
+
 type EncryptionVariant = 'legacy' | 'dataKey';
 
 type SessionTranscriptQueryParams = {

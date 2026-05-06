@@ -12,7 +12,11 @@ import {
   resolveDefaultAgentRuntimeKind,
   resolveCodexSpawnExtrasForRuntime,
 } from '@happier-dev/agents';
-import { listExecutionRunSupportedIntents } from '../../agent/executionRuns/profiles/intentRegistry';
+import {
+  buildExecutionRunProfileCatalog,
+  listExecutionRunProfileContributionDescriptors,
+  listExecutionRunSupportedIntents,
+} from '../../agent/executionRuns/profiles/intentRegistry';
 import { resolveCliEngineRegistry } from '../../agent/runtime/registry/engineRegistry';
 import type { ResolvedBackendContribution } from '../../plugins/projection/registry/types';
 
@@ -121,11 +125,14 @@ export const executionRunsCapability: Capability = {
     const coderabbitOnPath = coderabbitOverride
       ? true
       : Boolean(await resolveCommandOnPath('coderabbit', mergedPath || null));
+    const cliEngineRegistry = await resolveCliEngineRegistry();
+    const executionRunProfileCatalog = buildExecutionRunProfileCatalog(
+      (cliEngineRegistry.contributions.executionRunProfiles ?? []).map((profile) => profile.definition),
+    );
+    const executionRunProfiles = listExecutionRunProfileContributionDescriptors(executionRunProfileCatalog);
     const intents = voiceEnabled
       ? listExecutionRunSupportedIntents()
       : listExecutionRunSupportedIntents().filter((intent) => intent !== 'voice_agent');
-
-    const cliEngineRegistry = await resolveCliEngineRegistry();
     const contributedBackendIds = Array.from(cliEngineRegistry.contributions.backendDefinitionsById.keys());
     const catalogBackendIds = Object.keys(cliEngineRegistry.contributions.catalogEntriesById);
     const knownBuiltInAgentIds = CANONICAL_AGENT_IDS;
@@ -189,6 +196,7 @@ export const executionRunsCapability: Capability = {
     return {
       available: true,
       intents,
+      executionRunProfiles,
       // Backend catalog is best-effort and intended for UI affordances (pickers, warnings).
       // Runtime enforcement still happens at execution-run start/send time.
       backends,

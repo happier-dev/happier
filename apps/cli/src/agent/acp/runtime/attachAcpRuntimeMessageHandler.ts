@@ -18,6 +18,7 @@ import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscript
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import type { AcpRuntimeBackend } from './acpRuntimeBackendContract';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
+import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 type AcpRuntimeMessageState = {
   sessionId: string | null;
@@ -86,7 +87,12 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
           session: params.session,
         });
         params.state.turnAborted = true;
-        params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: randomUUID() });
+        void surfacePrimarySessionRuntimeIssue({
+          provider: params.provider,
+          cause: isAbortLikeError(typeof msg.detail === 'string' ? msg.detail : '') ? 'cancelled' : 'status_error',
+          error: msg.detail,
+          session: params.session,
+        });
       }
       return;
     }
@@ -164,7 +170,12 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
             });
           }
           void params.streamedTranscriptWriter.flushAll({ reason: 'abort', interruptedReason: 'status-error' }).finally(() => {
-            params.session.sendAgentMessage(params.provider, { type: 'turn_aborted', id: randomUUID() });
+            void surfacePrimarySessionRuntimeIssue({
+              provider: params.provider,
+              cause: isAbortLikeError(typeof msg.detail === 'string' ? msg.detail : '') ? 'cancelled' : 'status_error',
+              error: msg.detail,
+              session: params.session,
+            });
           });
           params.state.turnAborted = true;
           params.clearToolCallCache();

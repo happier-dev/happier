@@ -45,6 +45,15 @@ class TestPermissionHandler extends BasePermissionHandler {
 }
 
 describe('BasePermissionHandler allowlist', () => {
+  it('registers canonical permission response handlers while preserving the legacy alias', () => {
+    const session = new FakeSession();
+    new TestPermissionHandler(session as any);
+
+    expect(session.rpcHandlerManager.handlers.get('session.permission.respond')).toBeTypeOf('function');
+    expect(session.rpcHandlerManager.handlers.get('session.user_action.answer')).toBeTypeOf('function');
+    expect(session.rpcHandlerManager.handlers.get('permission')).toBeTypeOf('function');
+  });
+
   it('binds the canonical request store to each active session client', () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);
@@ -91,7 +100,7 @@ describe('BasePermissionHandler allowlist', () => {
 
     const handler = new TestPermissionHandler(session as any);
 
-    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond');
     expect(rpc).toBeDefined();
 
     await rpc!({ id: 'perm-1', approved: false, decision: 'denied' });
@@ -117,7 +126,7 @@ describe('BasePermissionHandler allowlist', () => {
     };
 
     const handler = new TestPermissionHandler(session as any);
-    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond');
     expect(rpc).toBeDefined();
 
     await rpc!({ id: 'perm-1', approved: true, decision: 'approved_for_session' });
@@ -140,7 +149,7 @@ describe('BasePermissionHandler allowlist', () => {
     const input = { command: ['bash', '-lc', 'echo hello'] };
     const promise = handler.request('perm-1', 'bash', input);
 
-    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond');
     expect(rpc).toBeDefined();
     await rpc!({ id: 'perm-1', approved: true, decision: 'approved_for_session' });
 
@@ -159,7 +168,7 @@ describe('BasePermissionHandler allowlist', () => {
     const input = { command: ['bash', '-lc', 'find . -maxdepth 2 -type f | head -n 5'] };
     const promise = handler.request('perm-1', 'Bash', input);
 
-    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond');
     expect(rpc).toBeDefined();
     await rpc!({
       id: 'perm-1',
@@ -196,7 +205,7 @@ describe('BasePermissionHandler allowlist', () => {
     const p1 = handler.request('perm-1', 'Bash', input1);
     const p2 = handler.request('perm-2', 'Bash', input2);
 
-    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond');
     expect(rpc).toBeDefined();
 
     await rpc!({
@@ -236,7 +245,7 @@ describe('BasePermissionHandler allowlist', () => {
     const pendingInput = { command: ['bash', '-lc', 'find . -maxdepth 1 -type f | head -n 5'] };
     const pendingPromise = handler.request('perm-2', 'Bash', pendingInput);
 
-    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    const rpc = session.rpcHandlerManager.handlers.get('session.permission.respond');
     expect(rpc).toBeDefined();
 
     // Response id does not exist in pendingRequests AND does not exist in agentState.requests.
@@ -272,7 +281,7 @@ describe('BasePermissionHandler allowlist', () => {
     const input = { questions: [{ question: 'q1', choices: ['a', 'b'] }] };
     const promise = handler.request('perm-ask', 'AskUserQuestion', input);
 
-    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    const rpc = session.rpcHandlerManager.handlers.get('session.user_action.answer');
     expect(rpc).toBeDefined();
     await rpc!({ id: 'perm-ask', approved: true, answers: { q1: 'a' } });
 

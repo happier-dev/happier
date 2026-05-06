@@ -14,6 +14,57 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { createCliCapabilitiesService } from './capabilities';
 
+describe('createCliCapabilitiesService dep.gh', () => {
+    it('describes gh as a generic installable dependency capability', async () => {
+        const home = await createTempDir('happier-cli-capabilities-gh-');
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+        reloadConfiguration();
+
+        try {
+            const service = await createCliCapabilitiesService();
+            const described = service.describe() as CapabilitiesDescribeResponse;
+
+            expect(described.capabilities.find((capability) => capability.id === 'dep.gh')).toMatchObject({
+                id: 'dep.gh',
+                kind: 'dep',
+                methods: expect.objectContaining({
+                    install: expect.any(Object),
+                    upgrade: expect.any(Object),
+                }),
+            });
+        } finally {
+            await removeTempDir(home);
+            envScope.restore();
+            reloadConfiguration();
+        }
+    });
+});
+
+describe('createCliCapabilitiesService dep.az', () => {
+    it('describes Azure CLI as a detect-only generic installable dependency capability', async () => {
+        const home = await createTempDir('happier-cli-capabilities-az-');
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+        reloadConfiguration();
+
+        try {
+            const service = await createCliCapabilitiesService();
+            const described = service.describe() as CapabilitiesDescribeResponse;
+
+            expect(described.capabilities.find((capability) => capability.id === 'dep.az')).toMatchObject({
+                id: 'dep.az',
+                kind: 'dep',
+                methods: undefined,
+            });
+        } finally {
+            await removeTempDir(home);
+            envScope.restore();
+            reloadConfiguration();
+        }
+    });
+});
+
 describe('createCliCapabilitiesService tool.plugins', () => {
     it('describes and invokes reload through the canonical plugin capability', async () => {
         const home = await createTempDir('happier-cli-capabilities-plugins-reload-');

@@ -5,7 +5,6 @@ import {
   type SessionHandoffPrepareTargetResultGetResponse,
   type SessionHandoffStatus,
 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
   createSessionHandoffPrepareTargetJobStore,
@@ -18,7 +17,6 @@ import { createSessionHandoffWorkspaceReplicationAdapter } from '../../../sessio
 import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 import { readWorkspaceReplicationManifestFromFile } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
 
-import type { RpcHandlerManager } from '../../rpc/RpcHandlerManager';
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
@@ -26,7 +24,6 @@ type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSou
 type SessionHandoffWorkspaceReplicationAdapter = ReturnType<typeof createSessionHandoffWorkspaceReplicationAdapter>;
 
 export type RegisterSessionHandoffCommitRpcHandlerInput = Readonly<{
-  rpcHandlerManager: RpcHandlerManager;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
@@ -74,11 +71,10 @@ function normalizeReverseRootPath(raw: unknown): string | null {
   return `/${segments.join('/')}`;
 }
 
-export function registerSessionHandoffCommitRpcHandler(
+export function createSessionHandoffCommitActionHandler(
   params: RegisterSessionHandoffCommitRpcHandlerInput,
-): void {
+): (raw: unknown) => Promise<unknown> {
   const {
-    rpcHandlerManager,
     prepareJobStore,
     sourceExportStore,
     workspaceReplicationAdapter,
@@ -93,7 +89,7 @@ export function registerSessionHandoffCommitRpcHandler(
     invalidRequest,
   } = params;
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT, async (raw: unknown) => {
+  return async (raw: unknown) => {
     const parsed = SessionHandoffCommitRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
@@ -230,5 +226,5 @@ export function registerSessionHandoffCommitRpcHandler(
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
     return { handoffId: parsed.data.handoffId, status };
-  });
+  };
 }

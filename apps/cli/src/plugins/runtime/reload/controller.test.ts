@@ -38,9 +38,12 @@ function createRuntimeRegistry(
         runtimeCoreHandlersByBackendId: new Map(),
         backendEnginesByBackendId: new Map(),
         scmHostingProvidersById: new Map(),
+        networkAllowedUrlOriginsByPluginId: new Map(),
+        processSpawnAllowedPathsByPluginId: new Map(),
         pluginDiagnosticsByPluginId: Object.freeze({
             [label]: Object.freeze([...(params?.diagnostics ?? [])]),
         }),
+        addRuntimeDisposable: (_pluginId, disposable) => disposable,
         readHookEventEnvelopeV1,
         dispose: async () => {
             await params?.dispose?.();

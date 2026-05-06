@@ -1,4 +1,5 @@
 import type { SessionId } from '@/agent/core';
+import type { SurfacePrimarySessionRuntimeIssueInput } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 import type { PendingRpcRequest } from './rpcSupport';
 import type { PiRpcCommandWithoutId, PiRpcResponse, PiRpcStateData } from './types';
@@ -49,6 +50,7 @@ export function createPiRpcEventHandlerContext(params: Readonly<{
   openPromptRequestIds: Set<string>;
   resolvePendingTurn: () => void;
   rejectPendingTurn: (error: Error) => void;
+  surfacePrimarySessionRuntimeIssue?: (input: SurfacePrimarySessionRuntimeIssueInput) => void | Promise<void>;
   publishUsageStatsBestEffort: () => Promise<void>;
 }>): PiRpcEventHandlerContext {
   return {
@@ -58,6 +60,7 @@ export function createPiRpcEventHandlerContext(params: Readonly<{
     openPromptRequestIds: params.openPromptRequestIds,
     resolvePendingTurn: params.resolvePendingTurn,
     rejectPendingTurn: params.rejectPendingTurn,
+    surfacePrimarySessionRuntimeIssue: params.surfacePrimarySessionRuntimeIssue,
     publishUsageStatsBestEffort: params.publishUsageStatsBestEffort,
   };
 }
@@ -90,6 +93,7 @@ export function createPiRpcProcessLifecycleContext(params: Readonly<{
   emitMessage: (message: import('@/agent/core').AgentMessage) => void;
   rejectAllPending: (error: Error) => void;
   rejectPendingTurn: (error: Error) => void;
+  surfacePrimarySessionRuntimeIssue?: (input: SurfacePrimarySessionRuntimeIssueInput) => void | Promise<void>;
   handleStdoutLine: (line: string) => void;
   handleStderrLine: (line: string) => void;
   getState: () => Promise<PiRpcStateData>;
@@ -118,6 +122,7 @@ export function createPiRpcProcessLifecycleContext(params: Readonly<{
     emitMessage: params.emitMessage,
     rejectAllPending: params.rejectAllPending,
     rejectPendingTurn: params.rejectPendingTurn,
+    surfacePrimarySessionRuntimeIssue: params.surfacePrimarySessionRuntimeIssue,
     handleStdoutLine: params.handleStdoutLine,
     handleStderrLine: params.handleStderrLine,
     getState: params.getState,

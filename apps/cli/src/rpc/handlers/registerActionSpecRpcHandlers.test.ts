@@ -1,0 +1,298 @@
+import { describe, expect, it } from 'vitest';
+
+import type { RpcActionExecutor } from './_actionDispatchAdapter';
+import { SUBAGENT_RPC_SCOPES } from './actionSpecRpcRegistration';
+
+function createRpcHarness() {
+    const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
+    return {
+        handlers,
+        rpcHandlerManager: {
+            hasHandler(method: string) {
+                return handlers.has(method);
+            },
+            registerHandler(method: string, handler: (input: unknown) => Promise<unknown>) {
+                handlers.set(method, handler);
+            },
+        },
+    };
+}
+
+describe('ActionSpec-derived RPC registrar', () => {
+    it('registers scoped ActionSpec RPC rows through the shared dispatch adapter', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+
+        const calls: unknown[] = [];
+        const actionExecutor: RpcActionExecutor = {
+            execute: async (actionId, input, context) => {
+                calls.push({ actionId, input, context });
+                return { ok: true, result: { actionId, input } };
+            },
+        };
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            actionSpecs: [
+                {
+                    id: 'sessions.subagents.list',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'sessions.subagents.list' },
+                },
+                {
+                    id: 'approval.request.decide',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'approval.request.decide' },
+                },
+                {
+                    id: 'session.permission.respond',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'session.permission.respond' },
+                },
+            ],
+            actionIds: ['sessions.subagents.list', 'approval.request.decide'],
+        });
+
+        expect([...handlers.keys()]).toEqual([
+            'sessions.subagents.list',
+            'approval.request.decide',
+        ]);
+
+        await expect(handlers.get('sessions.subagents.list')?.({
+            parentSessionId: 'parent-session',
+            sessionId: 'child-session',
+        })).resolves.toEqual({
+            actionId: 'sessions.subagents.list',
+            input: {
+                parentSessionId: 'parent-session',
+                sessionId: 'child-session',
+            },
+        });
+        await expect(handlers.get('approval.request.decide')?.({
+            serverId: 'server-1',
+        })).resolves.toEqual({
+            actionId: 'approval.request.decide',
+            input: { serverId: 'server-1' },
+        });
+
+        expect(calls).toEqual([
+            {
+                actionId: 'sessions.subagents.list',
+                input: {
+                    parentSessionId: 'parent-session',
+                    sessionId: 'child-session',
+                },
+                context: {
+                    defaultSessionId: 'parent-session',
+                    surface: 'rpc',
+                },
+            },
+            {
+                actionId: 'approval.request.decide',
+                input: { serverId: 'server-1' },
+                context: {
+                    serverId: 'server-1',
+                    surface: 'rpc',
+                },
+            },
+        ]);
+    });
+
+    it('registers new ActionSpec rows matched by RPC method scope without action-id catalog updates', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+
+        const actionExecutor: RpcActionExecutor = {
+            execute: async (actionId, input) => ({ ok: true, result: { actionId, input } }),
+        };
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            scopes: SUBAGENT_RPC_SCOPES,
+            actionSpecs: [
+                {
+                    id: 'sessions.subagents.inspect',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'sessions.subagents.inspect' },
+                },
+                {
+                    id: 'approval.request.inspect',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'approval.request.inspect' },
+                },
+            ],
+        });
+
+        expect([...handlers.keys()]).toEqual(['sessions.subagents.inspect']);
+        await expect(handlers.get('sessions.subagents.inspect')?.({
+            sessionId: 'session-1',
+        })).resolves.toEqual({
+            actionId: 'sessions.subagents.inspect',
+            input: { sessionId: 'session-1' },
+        });
+    });
+
+    it('honors scope exclusions for typed ABI exceptions', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+
+        const actionExecutor: RpcActionExecutor = {
+            execute: async () => ({ ok: true, result: null }),
+        };
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            scopes: [
+                {
+                    id: 'fixture.directSessions',
+                    methodPrefixes: ['daemon.directSessions.'],
+                    excludedMethods: ['daemon.directSessions.takeover'],
+                },
+            ],
+            exceptions: [],
+            actionSpecs: [
+                {
+                    id: 'sessions.external.candidates.list',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'daemon.directSessions.candidates.list' },
+                },
+                {
+                    id: 'sessions.external.takeover',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'daemon.directSessions.takeover' },
+                },
+            ],
+        });
+
+        expect([...handlers.keys()]).toEqual(['daemon.directSessions.candidates.list']);
+    });
+
+    it('registers ActionSpec RPC aliases through the same action handler', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+
+        const calls: unknown[] = [];
+        const actionExecutor: RpcActionExecutor = {
+            execute: async (actionId, input) => {
+                calls.push({ actionId, input });
+                return { ok: true, result: { actionId, input } };
+            },
+        };
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            scopes: [
+                {
+                    id: 'fixture.externalSessions',
+                    methodPrefixes: ['daemon.externalSessions.'],
+                },
+            ],
+            exceptions: [],
+            actionSpecs: [
+                {
+                    id: 'sessions.external.candidates.list',
+                    surfaces: { rpc: true },
+                    bindings: {
+                        rpcMethod: 'daemon.externalSessions.candidates.list',
+                        rpcMethodAliases: ['daemon.directSessions.candidates.list'],
+                    },
+                },
+            ],
+        });
+
+        expect([...handlers.keys()]).toEqual([
+            'daemon.externalSessions.candidates.list',
+            'daemon.directSessions.candidates.list',
+        ]);
+
+        await expect(handlers.get('daemon.directSessions.candidates.list')?.({
+            machineId: 'machine-1',
+        })).resolves.toEqual({
+            actionId: 'sessions.external.candidates.list',
+            input: { machineId: 'machine-1' },
+        });
+        expect(calls).toEqual([
+            {
+                actionId: 'sessions.external.candidates.list',
+                input: { machineId: 'machine-1' },
+            },
+        ]);
+    });
+
+    it('skips canonical typed exceptions and rejects duplicate ActionSpec RPC bindings', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        const actionExecutor: RpcActionExecutor = {
+            execute: async () => ({ ok: true, result: null }),
+        };
+
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            actionSpecs: [
+                {
+                    id: 'sessions.external.takeover',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'daemon.directSessions.takeover' },
+                },
+            ],
+        });
+
+        expect([...handlers.keys()]).toEqual([]);
+
+        expect(() => module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            actionSpecs: [
+                {
+                    id: 'sessions.subagents.list',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'sessions.subagents.list' },
+                },
+                {
+                    id: 'sessions.subagents.get',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'sessions.subagents.list' },
+                },
+            ],
+        })).toThrow(/duplicate_action_spec_rpc_method/);
+    });
+
+    it('rejects duplicate registrations across scoped registrar calls', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+
+        const { rpcHandlerManager } = createRpcHarness();
+        const actionExecutor: RpcActionExecutor = {
+            execute: async () => ({ ok: true, result: null }),
+        };
+
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            actionSpecs: [
+                {
+                    id: 'sessions.subagents.list',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'sessions.subagents.list' },
+                },
+            ],
+        });
+
+        expect(() => module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            actionSpecs: [
+                {
+                    id: 'sessions.subagents.get',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'sessions.subagents.list' },
+                },
+            ],
+        })).toThrow(/duplicate_action_spec_rpc_method/);
+    });
+});

@@ -57,9 +57,20 @@ import {
 } from '@/session/backendTargets/compat/customAcp';
 import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInventoryDeps';
 import { readSessionMetadata } from './cliActionDeps/sessionStateReaders';
+import {
+  HostSubagentStoreError,
+  hostSubagentStore,
+} from '@/session/subagents/hostSubagentStore';
 
 function notSupported(): never {
   throw new Error('action_not_supported_in_cli');
+}
+
+function serializeHostSubagentStoreError(error: unknown): Readonly<{ ok: false; errorCode: string; error: string }> {
+  if (error instanceof HostSubagentStoreError) {
+    return { ok: false, errorCode: error.code, error: error.code };
+  }
+  throw error;
 }
 
 
@@ -608,7 +619,14 @@ export function createCliActionDeps(params: Readonly<{
 	      });
 	    },
 
-    sessionPermissionRespond: async ({ sessionId, decision, requestId }) => {
+    sessionPermissionRespond: async ({
+      sessionId,
+      decision,
+      requestId,
+      allowedTools,
+      updatedPermissions,
+      execPolicyAmendment,
+    }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
       }
@@ -629,14 +647,27 @@ export function createCliActionDeps(params: Readonly<{
       }
 
       const approved = decision === 'allow';
+      const legacyDecision =
+        !approved
+          ? 'denied'
+          : execPolicyAmendment && typeof execPolicyAmendment === 'object'
+            ? 'approved_execpolicy_amendment'
+            : undefined;
       try {
         return await callSessionRpc({
           token: params.credentials.token,
           sessionId: transport.sessionId,
           ctx: transport.ctx,
           mode: transport.mode,
-          method: `${transport.sessionId}:permission`,
-          request: { id: reqId, approved },
+          method: `${transport.sessionId}:session.permission.respond`,
+          request: {
+            id: reqId,
+            approved,
+            ...(legacyDecision ? { decision: legacyDecision } : {}),
+            ...(Array.isArray(allowedTools) ? { allowedTools } : {}),
+            ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
+            ...(typeof execPolicyAmendment !== 'undefined' ? { execPolicyAmendment } : {}),
+          },
         });
       } catch (error) {
         return {
@@ -647,7 +678,16 @@ export function createCliActionDeps(params: Readonly<{
         };
       }
     },
-    sessionUserActionAnswer: async ({ sessionId, requestId, answers, decision, reason, updatedPermissions }) => {
+    sessionUserActionAnswer: async ({
+      sessionId,
+      requestId,
+      answers,
+      decision,
+      reason,
+      updatedPermissions,
+      allowedTools,
+      execPolicyAmendment,
+    }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
       }
@@ -681,19 +721,29 @@ export function createCliActionDeps(params: Readonly<{
       }
 
       const approved = decision ? decision === 'approve' : true;
+      const legacyDecision =
+        decision === 'reject'
+          ? 'denied'
+          : decision === 'request_changes'
+            ? 'abort'
+            : 'approved';
       try {
         return await callSessionRpc({
           token: params.credentials.token,
           sessionId: transport.sessionId,
           ctx: transport.ctx,
           mode: transport.mode,
-          method: `${transport.sessionId}:permission`,
+          method: `${transport.sessionId}:session.user_action.answer`,
           request: {
             id: reqId,
             approved,
+            decision: legacyDecision,
+            ...(decision ? { actionDecision: decision } : {}),
             ...(Object.keys(normalizedAnswers).length > 0 ? { answers: normalizedAnswers } : {}),
             ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
             ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
+            ...(Array.isArray(allowedTools) ? { allowedTools } : {}),
+            ...(typeof execPolicyAmendment !== 'undefined' ? { execPolicyAmendment } : {}),
           },
         });
       } catch (error) {
@@ -791,6 +841,77 @@ export function createCliActionDeps(params: Readonly<{
         ...(typeof includeAssistant === 'boolean' ? { includeAssistant } : {}),
         ...(Object.prototype.hasOwnProperty.call({ maxCharsPerMessage }, 'maxCharsPerMessage') ? { maxCharsPerMessage: maxCharsPerMessage ?? null } : {}),
       });
+    },
+
+    subagentsList: async (args) => {
+      return await hostSubagentStore.list(args);
+    },
+
+    subagentsGet: async (args) => {
+      return await hostSubagentStore.get(args);
+    },
+
+    subagentsWatch: async (args) => {
+      try {
+        return await new Promise((resolve, reject) => {
+          try {
+            let subscription: Readonly<{ unsubscribe(): void }> | null = null;
+            let unsubscribeAfterRegister = false;
+            subscription = hostSubagentStore.watch(args, (event) => {
+              if (event.kind !== 'snapshot') return;
+              resolve({
+                kind: 'snapshot',
+                subagents: event.subagents ?? [],
+              });
+              if (subscription) {
+                subscription.unsubscribe();
+              } else {
+                unsubscribeAfterRegister = true;
+              }
+            });
+            if (unsubscribeAfterRegister) {
+              subscription.unsubscribe();
+            }
+          } catch (error) {
+            reject(error);
+          }
+        });
+      } catch (error) {
+        return serializeHostSubagentStoreError(error);
+      }
+    },
+
+    subagentsUpsert: async (input) => {
+      try {
+        return await hostSubagentStore.upsert({
+          actor: { kind: 'externalRpc' },
+          input,
+        });
+      } catch (error) {
+        return serializeHostSubagentStoreError(error);
+      }
+    },
+
+    subagentsUpdateStatus: async (args) => {
+      try {
+        return await hostSubagentStore.updateStatus({
+          actor: { kind: 'externalRpc' },
+          ...args,
+        });
+      } catch (error) {
+        return serializeHostSubagentStoreError(error);
+      }
+    },
+
+    subagentsComplete: async (args) => {
+      try {
+        return await hostSubagentStore.complete({
+          actor: { kind: 'externalRpc' },
+          ...args,
+        });
+      } catch (error) {
+        return serializeHostSubagentStoreError(error);
+      }
     },
 
     resetGlobalVoiceAgent: () => {},

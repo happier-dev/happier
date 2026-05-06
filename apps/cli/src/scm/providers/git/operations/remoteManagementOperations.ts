@@ -15,6 +15,7 @@ import { runScmCommand } from '../../../runtime';
 import type { ScmBackendContext } from '../../../types';
 import { buildScmNonInteractiveEnv } from '../../shared/nonInteractiveEnv';
 import { mapGitErrorCode } from '../remote';
+import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation';
 import { parseGitRemoteVerbose } from '../remoteListParser';
 
 const GIT_REMOTE_MANAGEMENT_TIMEOUT_MS = 30_000;
@@ -252,11 +253,13 @@ export async function gitRemoteAdd(input: {
         }
     }
 
-    return successWithRemotes({
+    const response = await successWithRemotes({
         context: input.context,
         stdout: add.stdout,
         stderr: add.stderr,
     });
+    invalidatePrStatusCacheAfterSuccessfulScmMutation({ response, context: input.context });
+    return response;
 }
 
 export async function gitRemoteSetUrl(input: {
@@ -367,11 +370,13 @@ export async function gitRemoteSetUrl(input: {
         stderr += setPush.stderr;
     }
 
-    return successWithRemotes({
+    const response = await successWithRemotes({
         context: input.context,
         stdout,
         stderr,
     });
+    invalidatePrStatusCacheAfterSuccessfulScmMutation({ response, context: input.context });
+    return response;
 }
 
 export async function gitRemoteRemove(input: {
@@ -398,9 +403,11 @@ export async function gitRemoteRemove(input: {
     });
     if (!remove.ok) return remove.response;
 
-    return successWithRemotes({
+    const response = await successWithRemotes({
         context: input.context,
         stdout: remove.stdout,
         stderr: remove.stderr,
     });
+    invalidatePrStatusCacheAfterSuccessfulScmMutation({ response, context: input.context });
+    return response;
 }

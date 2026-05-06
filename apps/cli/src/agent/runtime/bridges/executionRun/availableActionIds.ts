@@ -1,4 +1,8 @@
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
+import {
+  resolveExecutionRunIntentProfile,
+  resolveExecutionRunIntentProfileFromCatalog,
+  type ExecutionRunProfileContributionCatalog,
+} from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import { buildExecutionRunProfileStartParams } from './profileStart';
 import type { ExecutionRunState } from './executionRunTypes';
@@ -6,8 +10,11 @@ import type { ExecutionRunState } from './executionRunTypes';
 export function getExecutionRunAvailableActionIds(
   run: ExecutionRunState,
   controller: ExecutionRunController | null,
+  catalog?: ExecutionRunProfileContributionCatalog,
 ): readonly string[] {
-  const profile = resolveExecutionRunIntentProfile(run.intent);
+  const profile = catalog
+    ? resolveExecutionRunIntentProfileFromCatalog(catalog, run.intent, run.profileId)
+    : resolveExecutionRunIntentProfile(run.intent);
   if (!profile.listAvailableActionIds) return [];
 
   return profile.listAvailableActionIds({

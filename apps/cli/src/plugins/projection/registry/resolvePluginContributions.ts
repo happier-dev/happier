@@ -1,6 +1,7 @@
 import type {
     ActionDefinitionV1,
     BackendDefinitionV1,
+    PluginBackendCapabilitiesV1,
     BackendRuntimeAdapterV1,
     ProviderDefinitionV1,
 } from '@happier-dev/protocol';
@@ -27,8 +28,14 @@ import type {
     ResolvedCatalogEntry,
     ResolvedCommandContribution,
     ResolvedContributionInputs,
+    ResolvedExecutionRunProfileContribution,
     ResolvedHookRegistration,
+    ResolvedInstallableContribution,
     ResolvedLifecycleHandlerContribution,
+    ResolvedMcpBackendClientContribution,
+    ResolvedMcpDiscoveryProviderContribution,
+    ResolvedMcpServerContribution,
+    ResolvedMcpToolContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
     ResolvedSettingsContribution,
@@ -120,6 +127,54 @@ type PluginResolvedNotificationChannelContribution = ResolvedNotificationChannel
 }>;
 
 type PluginResolvedSettingsContribution = ResolvedSettingsContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedExecutionRunProfileContribution = ResolvedExecutionRunProfileContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedMcpServerContribution = ResolvedMcpServerContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedMcpBackendClientContribution = ResolvedMcpBackendClientContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedMcpToolContribution = ResolvedMcpToolContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedMcpDiscoveryProviderContribution = ResolvedMcpDiscoveryProviderContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedInstallableContribution = ResolvedInstallableContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
     manifestPath: string;
@@ -248,10 +303,19 @@ const LEGACY_BACKEND_RUNTIME_HOOKS_FIELD = 'runtime' + 'Adapters';
 function clonePluginBackendDefinition(definition: CanonicalPluginBackendDefinition): BackendDefinitionV1 {
     return {
         ...definition,
-        capabilities: { ...(definition.capabilities ?? {}) },
+        capabilities: clonePluginBackendCapabilities(definition.capabilities),
         [LEGACY_BACKEND_RUNTIME_HOOKS_FIELD]: [],
         runtimeCoreHooks: [...readRuntimeCoreHooks(definition)],
     } as unknown as BackendDefinitionV1;
+}
+
+function clonePluginBackendCapabilities(capabilities: PluginBackendCapabilitiesV1): PluginBackendCapabilitiesV1 {
+    return Object.freeze({
+        ...capabilities,
+        executionRun: Object.freeze({
+            ...capabilities.executionRun,
+        }),
+    });
 }
 
 function readRuntimeCoreHooks(definition: Readonly<Record<string, unknown>>): readonly BackendRuntimeAdapterV1[] {
@@ -432,7 +496,13 @@ export async function resolvePluginContributes(
     const settingsCandidates: PluginResolvedSettingsContribution[] = [];
     const notificationCandidates: PluginResolvedNotificationCategoryContribution[] = [];
     const notificationChannelCandidates: PluginResolvedNotificationChannelContribution[] = [];
+    const executionRunProfileCandidates: PluginResolvedExecutionRunProfileContribution[] = [];
+    const mcpServerCandidates: PluginResolvedMcpServerContribution[] = [];
+    const mcpBackendClientCandidates: PluginResolvedMcpBackendClientContribution[] = [];
+    const mcpToolCandidates: PluginResolvedMcpToolContribution[] = [];
+    const mcpDiscoveryProviderCandidates: PluginResolvedMcpDiscoveryProviderContribution[] = [];
     const scmHostingProviderCandidates: PluginResolvedScmHostingProviderContribution[] = [];
+    const installableCandidates: PluginResolvedInstallableContribution[] = [];
     const lifecycleHandlerCandidates: PluginResolvedLifecycleHandlerContribution[] = [];
     const activationTargets: ResolvedActivationTarget[] = [];
     const hookRegistrations: ResolvedHookRegistration[] = [];
@@ -559,7 +629,7 @@ export async function resolvePluginContributes(
                 definition: richDefinition,
             },
             runtimeKind: readOptionalString(contribution.definition.runtimeKind),
-            capabilities: Object.freeze({ ...(contribution.definition.capabilities ?? {}) }),
+            capabilities: clonePluginBackendCapabilities(contribution.definition.capabilities),
             runtimeCoreHooks: Object.freeze([...readRuntimeCoreHooks(contribution.definition)]),
             sourceSpec: contribution.sourceSpec,
             pluginId: contribution.pluginId,
@@ -693,9 +763,87 @@ export async function resolvePluginContributes(
         });
     }
 
+    for (const contribution of pluginRegistry.executionRunProfiles) {
+        executionRunProfileCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.mcpServers) {
+        mcpServerCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.mcpBackendClients) {
+        mcpBackendClientCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.mcpTools) {
+        mcpToolCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.mcpDiscoveryProviders) {
+        mcpDiscoveryProviderCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
     for (const contribution of pluginRegistry.scmHostingProviders) {
         scmHostingProviderCandidates.push({
             id: contribution.definition.id,
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.installables) {
+        installableCandidates.push({
             provenance: 'external',
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
@@ -852,7 +1000,13 @@ export async function resolvePluginContributes(
         settings: Object.freeze(settingsCandidates),
         notifications: Object.freeze(notificationCandidates),
         notificationChannels: Object.freeze(notificationChannelCandidates),
+        executionRunProfiles: Object.freeze(executionRunProfileCandidates),
+        mcpServers: Object.freeze(mcpServerCandidates),
+        mcpBackendClients: Object.freeze(mcpBackendClientCandidates),
+        mcpTools: Object.freeze(mcpToolCandidates),
+        mcpDiscoveryProviders: Object.freeze(mcpDiscoveryProviderCandidates),
         scmHostingProviders: Object.freeze(scmHostingProviderCandidates),
+        installables: Object.freeze(installableCandidates),
         activationTargets: Object.freeze(activationTargets),
         hookRegistrations: Object.freeze(hookRegistrations),
         lifecycleHandlers: Object.freeze(lifecycleHandlerCandidates),

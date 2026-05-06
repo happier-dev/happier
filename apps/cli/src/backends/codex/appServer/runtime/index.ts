@@ -24,6 +24,7 @@ import { createCodexAppServerStreamEventBridge } from '../streamEventBridge';
 import {
     type CompletedTurnSeqRange,
 } from '../rollbackMetadata';
+import { recordPrimaryTurnInProgress } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 type RuntimeSession = ApiSessionClient;
 
@@ -99,6 +100,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const completedTurnSeqRanges: CompletedTurnSeqRange[] = [];
     let pendingTurnFinalizationTimer: ReturnType<typeof setTimeout> | null = null;
     let scheduledPendingTurnFlushReason: 'turn-end' | 'abort' | null = null;
+    const setPrimaryTurnInFlight = (value: boolean): void => {
+        if (value && !turnInFlight) {
+            void recordPrimaryTurnInProgress({ session: params.session });
+        }
+        turnInFlight = value;
+    };
     const streamEventBridge = createCodexAppServerStreamEventBridge();
     const streamLifecycle = createCodexAppServerStreamLifecycle({
         session: params.session,
@@ -126,9 +133,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         turnDiffProjector: streamLifecycle.turnDiffProjector,
         runBridgeWork: streamLifecycle.runBridgeWork,
         setThinking: runtimeControlState.setThinking,
-        setTurnInFlight: (value) => {
-            turnInFlight = value;
-        },
+        setTurnInFlight: setPrimaryTurnInFlight,
         readLastObservedMessageSeq: () => readLastObservedMessageSeq(params.session),
         readLastObservedUserMessageSeq: () => readLastObservedUserMessageSeq(params.session),
         getPendingTurn: () => pendingTurn,
@@ -182,9 +187,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             currentServiceTier = serviceTier;
         },
         hasServiceTierOverride: () => hasServiceTierOverride,
-        setTurnInFlight: (value) => {
-            turnInFlight = value;
-        },
+        setTurnInFlight: setPrimaryTurnInFlight,
         setThinking: runtimeControlState.setThinking,
         lastPublishedThreadId,
         runBridgeWork: streamLifecycle.runBridgeWork,
@@ -243,9 +246,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         setPendingTurnStartSeqInclusive: (value) => {
             pendingTurnStartSeqInclusive = value;
         },
-        setTurnInFlight: (value) => {
-            turnInFlight = value;
-        },
+        setTurnInFlight: setPrimaryTurnInFlight,
         setThinking: runtimeControlState.setThinking,
         publishSessionControls: async () => {
             const client = await clientLifecycle.ensureClient();

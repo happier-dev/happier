@@ -2,7 +2,6 @@ import {
   type RuntimeDescriptorV1,
   type SessionHandoffResumePlan,
 } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { MachineTransferChannel } from '../../../machines/transfer/serverRoutedTransport';
 import { createMachineTransferRouteCache } from '../../../machines/transfer/transferRouteCache';
@@ -15,7 +14,6 @@ import {
   createSessionHandoffWorkspaceReplicationAdapter,
 } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
 
-import type { RpcHandlerManager } from '../../rpc/RpcHandlerManager';
 import {
   type SessionHandoffDirectPeerTransferHandle,
 } from './prepareTransport';
@@ -31,7 +29,6 @@ type SessionHandoffWorkspaceReplicationTransfers = ReturnType<SessionHandoffWork
 type SessionHandoffTransportRouteCache = ReturnType<typeof createMachineTransferRouteCache>;
 
 export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
-  rpcHandlerManager: RpcHandlerManager;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   activePrepareJobs: Map<string, Promise<void>>;
@@ -64,14 +61,14 @@ export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
 }>;
 
 export type RegisterSessionHandoffPrepareTargetRpcHandlerResult = Readonly<{
+  handle: SessionHandoffPrepareTargetWorkflow['handlePrepareTargetRaw'];
   restartPrepareTargetJobFromPersistedRequest: SessionHandoffPrepareTargetWorkflow['handlePrepareTargetRaw'];
 }>;
 
-export function registerSessionHandoffPrepareTargetRpcHandler(
+export function createSessionHandoffPrepareTargetActionHandler(
   params: RegisterSessionHandoffPrepareTargetRpcHandlerInput,
 ): RegisterSessionHandoffPrepareTargetRpcHandlerResult {
   const {
-    rpcHandlerManager,
     prepareJobStore,
     sourceExportStore,
     activePrepareJobs,
@@ -103,12 +100,8 @@ export function registerSessionHandoffPrepareTargetRpcHandler(
     invalidateDirectPeerRouteCacheForHandoffMachines,
   });
 
-  rpcHandlerManager.registerHandler(
-    RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET,
-    workflow.handlePrepareTargetRaw,
-  );
-
   return {
+    handle: workflow.handlePrepareTargetRaw,
     restartPrepareTargetJobFromPersistedRequest: workflow.handlePrepareTargetRaw,
   };
 }

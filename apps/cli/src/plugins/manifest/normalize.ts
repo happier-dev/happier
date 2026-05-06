@@ -3,12 +3,15 @@ import {
   readHookRegistrationV1,
   type AgentDefinitionV1,
   type BackendRuntimeAdapterV1,
+  type InstallableDependencyDescriptor,
   type PluginActionContributionV2,
   type PluginBackendContributionV2,
   type PluginCommandContributionV2,
+  type PluginExecutionRunProfileContributionV2,
   type PluginHookContributionV2,
   type PluginLifecycleHandlerContributionV2,
   type PluginManifestV2,
+  type PluginMcpContributesV1,
   type PluginNotificationCategoryContributionV2,
   type PluginNotificationChannelContributionV2,
   type PluginResourceContributionV2,
@@ -108,7 +111,10 @@ function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalP
     uiDescriptors?: readonly PluginUiDescriptorContributionV2[];
     notifications?: readonly PluginNotificationCategoryContributionV2[];
     notificationChannels?: readonly PluginNotificationChannelContributionV2[];
+    executionRunProfiles?: readonly PluginExecutionRunProfileContributionV2[];
+    mcp?: PluginMcpContributesV1;
     scmHostingProviders?: readonly ScmHostingProviderContribution[];
+    installables?: readonly InstallableDependencyDescriptor[];
     hooks?: readonly PluginHookContributionV2[];
     lifecycleHandlers?: readonly PluginLifecycleHandlerContributionV2[];
   }>;
@@ -146,7 +152,15 @@ function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalP
       uiDescriptors: Object.freeze([...(contributes.uiDescriptors ?? [])]),
       notifications: Object.freeze([...(contributes.notifications ?? [])]),
       notificationChannels: Object.freeze([...(contributes.notificationChannels ?? [])]),
+      executionRunProfiles: Object.freeze([...(contributes.executionRunProfiles ?? [])]),
+      mcp: Object.freeze({
+        servers: Object.freeze([...(contributes.mcp?.servers ?? [])]),
+        backendClients: Object.freeze([...(contributes.mcp?.backendClients ?? [])]),
+        tools: Object.freeze([...(contributes.mcp?.tools ?? [])]),
+        discoveryProviders: Object.freeze([...(contributes.mcp?.discoveryProviders ?? [])]),
+      }),
       scmHostingProviders: Object.freeze([...(contributes.scmHostingProviders ?? [])]),
+      installables: Object.freeze([...(contributes.installables ?? [])]),
       hooks: Object.freeze([...(contributes.hooks ?? [])]),
       lifecycleHandlers: Object.freeze([...(contributes.lifecycleHandlers ?? [])]),
     }),

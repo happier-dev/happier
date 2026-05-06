@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
+import {
+  resolveExecutionRunIntentProfile,
+  resolveExecutionRunIntentProfileFromCatalog,
+  type ExecutionRunProfileContributionCatalog,
+} from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import { readBackendResumableChildSessionId } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from './executionRunTypes';
@@ -19,10 +23,11 @@ type FinishRunNext = Omit<
   | 'runId'
   | 'callId'
   | 'sidechainId'
-  | 'sessionId'
-  | 'depth'
-  | 'intent'
-  | 'backendTarget'
+    | 'sessionId'
+    | 'depth'
+    | 'intent'
+    | 'profileId'
+    | 'backendTarget'
   | 'backendId'
   | 'instructions'
   | 'permissionMode'
@@ -48,6 +53,7 @@ export function finishExecutionRun(args: Readonly<{
   sendAcp: SendAcp;
   enqueueMarkerWrite: EnqueueMarkerWrite;
   terminalMarkerWritePromises: Map<string, Promise<void>>;
+  profileCatalog?: ExecutionRunProfileContributionCatalog;
 }>): void {
   const existing = args.runs.get(args.runId);
   if (!existing) return;
@@ -135,7 +141,9 @@ export function finishExecutionRun(args: Readonly<{
     return base;
   })();
 
-  const profile = resolveExecutionRunIntentProfile(existing.intent);
+  const profile = args.profileCatalog
+    ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, existing.intent, existing.profileId)
+    : resolveExecutionRunIntentProfile(existing.intent);
   const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
   if (shouldMaterializeInTranscript) {
     args.sendAcp(

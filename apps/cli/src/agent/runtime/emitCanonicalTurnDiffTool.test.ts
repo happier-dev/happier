@@ -17,14 +17,26 @@ describe('emitCanonicalTurnDiffTool', () => {
             provider: 'codex',
             derivedAt: 1_700_000_000_000,
             files: [{
-                filePath: 'src/app.ts',
-                changeKind: 'modified',
+                filePath: 'src/app-renamed.ts',
+                previousFilePath: 'src/app.ts',
+                changeKind: 'renamed',
                 oldText: 'a\n',
                 newText: 'b\n',
-                source: 'provider_native',
+                binary: true,
+                source: 'scm_checkpoint',
                 confidence: 'exact',
-                provider: 'codex',
+                provider: 'scm:git',
             }],
+            repositoryCheckpoint: {
+                version: 1,
+                scopeId: 'session_1:/repo',
+                startRef: 'refs/happier/checkpoints/scope/turn-start/turn_1',
+                finalRef: 'refs/happier/checkpoints/scope/turn-final/turn_1',
+                baseRefSource: 'turn_start',
+                contentConfidence: 'exact',
+                attributionScope: 'shared_worktree',
+                receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/scope/turn-final/turn_1' }],
+            },
         };
 
         emitCanonicalTurnDiffTool({
@@ -46,7 +58,13 @@ describe('emitCanonicalTurnDiffTool', () => {
                 input: expect.objectContaining({
                     files: [
                         expect.objectContaining({
-                            file_path: 'src/app.ts',
+                            file_path: 'src/app-renamed.ts',
+                            previous_file_path: 'src/app.ts',
+                            change_kind: 'renamed',
+                            binary: true,
+                            source: 'scm_checkpoint',
+                            confidence: 'exact',
+                            provider: 'scm:git',
                             oldText: 'a\n',
                             newText: 'b\n',
                         }),
@@ -60,7 +78,12 @@ describe('emitCanonicalTurnDiffTool', () => {
                         turnId: 'turn_1',
                         sessionId: 'session_1',
                         confidence: 'exact',
-                        source: 'provider_native',
+                        source: 'scm_checkpoint',
+                        repositoryCheckpoint: expect.objectContaining({
+                            contentConfidence: 'exact',
+                            attributionScope: 'shared_worktree',
+                            receipts: [expect.objectContaining({ id: 'checkpoint.diff_computed' })],
+                        }),
                     }),
                 }),
                 callId: expect.any(String),

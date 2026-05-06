@@ -23,6 +23,15 @@ import {
   startLiveRelayRuntime,
   stopLiveRelayRuntime,
 } from './relayRuntime/liveRelayRuntime';
+import {
+  createDiscoverConfiguredSshHostsSystemTaskKind,
+  DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND,
+} from './ssh/discoverConfiguredSshHosts/discoverConfiguredSshHostsSystemTask';
+import {
+  createDaemonSshTunnelEnsureTaskKind,
+  createDaemonSshTunnelListTaskKind,
+  createDaemonSshTunnelStopTaskKind,
+} from './ssh/daemonSshTunnelSystemTasks';
 import { createLiveRemoteSshBootstrapTaskKind } from './ssh/liveRemoteSshBootstrap';
 import { createSystemTasksRunner } from './systemTasksRunner';
 import { readDaemonStatusSnapshot } from '@/daemon/statusSnapshot';
@@ -231,6 +240,7 @@ export function getLiveSystemTasksRunnerAdapter(): SystemTasksRunnerAdapter {
           };
         },
       },
+      [DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND]: createDiscoverConfiguredSshHostsSystemTaskKind(),
       'remote.ssh.bootstrapMachine.v1': createLiveRemoteSshBootstrapTaskKind(),
       'daemon.service.status.v1': createDaemonServiceStatusTaskKind({
         readStatus: readLiveDaemonServiceStatusSnapshot,
@@ -256,6 +266,9 @@ export function getLiveSystemTasksRunnerAdapter(): SystemTasksRunnerAdapter {
         stopService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'stop'),
         restartService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'restart'),
       }),
+      'daemon.sshTunnel.ensure.v1': createDaemonSshTunnelEnsureTaskKind(),
+      'daemon.sshTunnel.list.v1': createDaemonSshTunnelListTaskKind(),
+      'daemon.sshTunnel.stop.v1': createDaemonSshTunnelStopTaskKind(),
       'relay.runtime.installOrUpdate.v1': createRelayRuntimeInstallOrUpdateTaskKind({
         installOrUpdate: async (params) => {
           const localParams = requireLocalRelayRuntimeParams(params);

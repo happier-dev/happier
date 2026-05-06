@@ -6,6 +6,13 @@ import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/req
 import type { AcpRuntimeDefinitionV1 } from './_types';
 import { withAcpLaunchEnvDefaults } from './env';
 import { assertAcpRuntimeDefinitionSupported } from './support';
+import {
+  isPromiseLike,
+  mapMaybePromise,
+  type MaybePromise,
+  resolveAcpTier2Argv,
+  resolveAcpTier2Env,
+} from './tier2Callbacks';
 
 export type AcpExecutableLaunch = Readonly<{
   command: string;
@@ -91,14 +98,36 @@ export function resolveAcpRuntimeLaunch(params: Readonly<{
   permissionMode?: string;
   env?: Readonly<Record<string, string | undefined>>;
   processEnv?: NodeJS.ProcessEnv;
-}>): AcpExecutableLaunch {
+}>): MaybePromise<AcpExecutableLaunch> {
   assertAcpRuntimeDefinitionSupported(params.definition);
   const launch = requireStdioLaunch(
     params.definition,
     params.processEnv ?? mergeDefinedStringEnv(process.env, params.env),
   );
-  return {
+  const baseArgs = appendPermissionModeArgs(launch.args, params.definition, params.permissionMode);
+  const buildLaunch = (resolvedArgs: readonly string[], resolvedEnv: Readonly<Record<string, string>>): AcpExecutableLaunch => ({
     ...launch,
-    args: appendPermissionModeArgs(launch.args, params.definition, params.permissionMode),
+    args: resolvedArgs,
+    env: resolvedEnv,
+  });
+  const resolveCallbacks = (): MaybePromise<AcpExecutableLaunch> => {
+    const args = resolveAcpTier2Argv({
+      definition: params.definition,
+      baseArgs,
+      cwd: params.cwd,
+      ...(params.permissionMode ? { permissionMode: params.permissionMode } : {}),
+    });
+    const env = mapMaybePromise(args, () => resolveAcpTier2Env({
+      definition: params.definition,
+      cwd: params.cwd,
+      env: launch.env,
+    }));
+    if (isPromiseLike(args) || isPromiseLike(env)) {
+      return Promise.all([args, env]).then(([resolvedArgs, resolvedEnv]) => buildLaunch(resolvedArgs, resolvedEnv));
+    }
+    return buildLaunch(args, env);
   };
+  return params.definition.callbacks.argvBuilder || params.definition.callbacks.envBuilder
+    ? Promise.resolve().then(resolveCallbacks)
+    : resolveCallbacks();
 }

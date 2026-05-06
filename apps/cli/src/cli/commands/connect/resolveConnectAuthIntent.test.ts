@@ -15,6 +15,7 @@ describe('resolveConnectAuthIntent', () => {
         setupToken: false,
         oauth: false,
         apiKey: false,
+        token: false,
       },
     });
     expect(res).toEqual({ kind: 'token', serviceId: 'claude-subscription', tokenKind: 'setup-token' });
@@ -32,6 +33,7 @@ describe('resolveConnectAuthIntent', () => {
         setupToken: false,
         oauth: true,
         apiKey: false,
+        token: false,
       },
     });
     expect(res).toEqual({ kind: 'oauth', serviceId: 'claude-subscription' });
@@ -49,6 +51,7 @@ describe('resolveConnectAuthIntent', () => {
         setupToken: true,
         oauth: false,
         apiKey: false,
+        token: false,
       },
     });
     expect(res).toEqual({ kind: 'token', serviceId: 'claude-subscription', tokenKind: 'setup-token' });
@@ -66,6 +69,7 @@ describe('resolveConnectAuthIntent', () => {
         setupToken: false,
         oauth: false,
         apiKey: true,
+        token: false,
       },
     });
     expect(res).toEqual({ kind: 'token', serviceId: 'anthropic', tokenKind: 'api-key' });
@@ -83,6 +87,7 @@ describe('resolveConnectAuthIntent', () => {
         setupToken: false,
         oauth: false,
         apiKey: false,
+        token: false,
       },
     })).toThrow(/device/i);
   });
@@ -99,8 +104,135 @@ describe('resolveConnectAuthIntent', () => {
         setupToken: false,
         oauth: false,
         apiKey: true,
+        token: false,
       },
     });
     expect(res).toEqual({ kind: 'token', serviceId: 'openai', tokenKind: 'api-key' });
+  });
+
+  it('resolves Gemini OAuth from descriptor aliases without accepting token flags', () => {
+    const res = resolveConnectAuthIntent({
+      targetId: 'gemini',
+      options: {
+        profileId: 'default',
+        paste: false,
+        device: false,
+        noOpen: false,
+        timeoutSeconds: null,
+        setupToken: false,
+        oauth: false,
+        apiKey: false,
+        token: false,
+      },
+    });
+    expect(res).toEqual({ kind: 'oauth', serviceId: 'gemini' });
+
+    expect(() => resolveConnectAuthIntent({
+      targetId: 'gemini',
+      options: {
+        profileId: 'default',
+        paste: false,
+        device: false,
+        noOpen: false,
+        timeoutSeconds: null,
+        setupToken: false,
+        oauth: false,
+        apiKey: true,
+        token: false,
+      },
+    })).toThrow(/not supported/i);
+  });
+
+  it('rejects unknown descriptor-backed connect targets', () => {
+    expect(() => resolveConnectAuthIntent({
+      targetId: 'unknown-target',
+      options: {
+        profileId: 'default',
+        paste: false,
+        device: false,
+        noOpen: false,
+        timeoutSeconds: null,
+        setupToken: false,
+        oauth: false,
+        apiKey: false,
+        token: false,
+      },
+    })).toThrow(/Unsupported connect target: unknown-target/);
+  });
+
+  it('defaults GitHub to PAT token input', () => {
+    const res = resolveConnectAuthIntent({
+      targetId: 'github',
+      options: {
+        profileId: 'default',
+        paste: false,
+        device: false,
+        noOpen: false,
+        timeoutSeconds: null,
+        setupToken: false,
+        oauth: false,
+        apiKey: false,
+        token: false,
+      },
+    });
+
+    expect(res).toEqual({ kind: 'token', serviceId: 'github', tokenKind: 'personal-access-token' });
+  });
+
+  it('accepts explicit GitHub token flag', () => {
+    const res = resolveConnectAuthIntent({
+      targetId: 'github',
+      options: {
+        profileId: 'default',
+        paste: false,
+        device: false,
+        noOpen: false,
+        timeoutSeconds: null,
+        setupToken: false,
+        oauth: false,
+        apiKey: false,
+        token: true,
+      },
+    });
+
+    expect(res).toEqual({ kind: 'token', serviceId: 'github', tokenKind: 'personal-access-token' });
+  });
+
+  it('defaults Bitbucket to API token input', () => {
+    const res = resolveConnectAuthIntent({
+      targetId: 'bitbucket',
+      options: {
+        profileId: 'default',
+        paste: false,
+        device: false,
+        noOpen: false,
+        timeoutSeconds: null,
+        setupToken: false,
+        oauth: false,
+        apiKey: false,
+        token: false,
+      },
+    });
+
+    expect(res).toEqual({ kind: 'token', serviceId: 'bitbucket', tokenKind: 'api-token' });
+  });
+
+  it('accepts explicit Bitbucket token flag', () => {
+    const res = resolveConnectAuthIntent({
+      targetId: 'bitbucket',
+      options: {
+        profileId: 'default',
+        paste: false,
+        device: false,
+        noOpen: false,
+        timeoutSeconds: null,
+        setupToken: false,
+        oauth: false,
+        apiKey: false,
+        token: true,
+      },
+    });
+
+    expect(res).toEqual({ kind: 'token', serviceId: 'bitbucket', tokenKind: 'api-token' });
   });
 });

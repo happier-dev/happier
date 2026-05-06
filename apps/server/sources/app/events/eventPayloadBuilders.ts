@@ -1,6 +1,7 @@
 import { AccountProfile } from "@/types";
 import { getPublicUrl } from "@/storage/blob/files";
 import { type UpdatePayload, type EphemeralPayload } from "./eventPayloadTypes";
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from "@happier-dev/protocol";
 
 type UpdateMessagePayloadInput = Readonly<{
     id: string;
@@ -100,6 +101,8 @@ export function buildUpdateSessionUpdate(
         lastViewedSessionSeq?: number;
         pendingPermissionRequestCount?: number;
         pendingUserActionRequestCount?: number;
+        latestTurnStatus?: PrimaryTurnStatusV1 | null;
+        lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
         archivedAt?: number | null;
     },
 ): UpdatePayload {
@@ -120,6 +123,8 @@ export function buildUpdateSessionUpdate(
             ...(typeof projection?.pendingUserActionRequestCount === 'number'
                 ? { pendingUserActionRequestCount: projection.pendingUserActionRequestCount }
                 : {}),
+            ...(projection && 'latestTurnStatus' in projection ? { latestTurnStatus: projection.latestTurnStatus ?? null } : {}),
+            ...(projection && 'lastRuntimeIssue' in projection ? { lastRuntimeIssue: projection.lastRuntimeIssue ?? null } : {}),
             ...(typeof projection?.archivedAt === 'number' || projection?.archivedAt === null
                 ? { archivedAt: projection.archivedAt }
                 : {}),

@@ -20,6 +20,7 @@ export {
 export {
   createAcpRuntimeDefinition,
   createAcpBackendFromDefinition,
+  createSynchronousAcpBackendFromDefinition,
   createAcpRuntimeCoreFromDefinition,
 } from './runtimeCore';
 export {

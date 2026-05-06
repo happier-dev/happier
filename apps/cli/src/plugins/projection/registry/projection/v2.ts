@@ -22,6 +22,8 @@ import {
     buildPluginProjectionFamiliesByIdV2,
     type PluginProjectionFamilyDescriptorV2,
 } from '@/plugins/projection/families';
+import { installablesProjectionFamily } from '../installables';
+import { mcpProjectionFamily } from '../mcp';
 import { scmHostingProviderProjectionFamily } from '../scmHostingProviders';
 
 function readOptionalString(value: unknown): string | undefined {
@@ -272,6 +274,29 @@ function collectPluginContributionMetadata(
             displayName: provider.definition.displayName,
         });
     }
+    for (const installable of registry.installables ?? []) {
+        upsert({
+            provenance: installable.provenance,
+            source: installable.source,
+            pluginId: installable.pluginId,
+            manifestPath: installable.manifestPath,
+            manifestDigest: installable.manifestDigest,
+            sourceSpec: installable.sourceSpec,
+            displayName: installable.definition.display.name,
+        });
+    }
+    for (const server of registry.mcpServers ?? []) {
+        upsert(server);
+    }
+    for (const client of registry.mcpBackendClients ?? []) {
+        upsert(client);
+    }
+    for (const tool of registry.mcpTools ?? []) {
+        upsert(tool);
+    }
+    for (const provider of registry.mcpDiscoveryProviders ?? []) {
+        upsert(provider);
+    }
 
     return metadata;
 }
@@ -424,9 +449,22 @@ function buildBackendsById(
             subtitle: readOptionalString(richDefinition?.subtitle),
             providerAgentId: readOptionalString(richDefinition?.providerAgentId),
             iconAgentId: readOptionalString(richDefinition?.iconAgentId),
+            capabilities: cloneProjectedBackendCapabilities(backend.capabilities),
         };
     }
     return backendsById;
+}
+
+function cloneProjectedBackendCapabilities(
+    capabilities: ResolvedBackendContribution['capabilities'],
+): NonNullable<PluginProjectionV2['backendsById'][string]>['capabilities'] {
+    return {
+        ...(capabilities ?? {}),
+        executionRun: {
+            ...(capabilities?.executionRun ?? {}),
+            supported: capabilities?.executionRun?.supported !== false,
+        },
+    };
 }
 
 function buildHooksById(
@@ -603,6 +641,8 @@ export function buildPluginProjectionV2(params: Readonly<{
     const pluginDiagnosticsByPluginId = params.pluginDiagnosticsByPluginId ?? params.registry.pluginDiagnosticsByPluginId;
     const familyDescriptors = [
         scmHostingProviderProjectionFamily,
+        installablesProjectionFamily,
+        mcpProjectionFamily,
         ...(params.familyDescriptors ?? []),
     ];
 

@@ -1034,6 +1034,52 @@ describe('createCliActionExecutor', () => {
     }));
   });
 
+  it('preserves legacy permission response semantics for canonical RPC permission denies and metadata', async () => {
+    const executor = createPlainExecutor();
+    fetchSessionsPage.mockResolvedValue({
+      sessions: [{ id: 'sess-1', metadata: {} }],
+      hasNext: false,
+      nextCursor: null,
+    });
+    fetchSessionById.mockResolvedValue({
+      id: 'sess-1',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      pendingCount: 0,
+      metadataVersion: 1,
+      metadata: {},
+    });
+    callSessionRpc.mockResolvedValue({ ok: true });
+
+    const result = await executor.execute(
+      'session.permission.respond',
+      {
+        sessionId: 'sess-1',
+        decision: 'deny',
+        requestId: 'perm-1',
+        allowedTools: ['Bash(ls:*)'],
+        updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls:*' }] }],
+        execPolicyAmendment: { command: ['ls'] },
+      },
+      { surface: 'rpc', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toEqual({ ok: true, result: { ok: true } });
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'sess-1:permission',
+      request: {
+        id: 'perm-1',
+        approved: false,
+        decision: 'denied',
+        allowedTools: ['Bash(ls:*)'],
+        updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls:*' }] }],
+        execPolicyAmendment: { command: ['ls'] },
+      },
+    }));
+  });
+
   it('answers user-action requests via session RPC', async () => {
     const executor = createPlainExecutor();
     fetchSessionsPage.mockResolvedValue({
@@ -1073,8 +1119,71 @@ describe('createCliActionExecutor', () => {
       request: expect.objectContaining({
         id: 'ua-1',
         approved: true,
+        decision: 'approved',
         reason: 'ok',
         answers: { 'Continue?': 'Yes' },
+      }),
+    }));
+  });
+
+  it('preserves reject and request-changes semantics for canonical user-action answers', async () => {
+    const executor = createPlainExecutor();
+    fetchSessionsPage.mockResolvedValue({
+      sessions: [{ id: 'sess-1', metadata: {} }],
+      hasNext: false,
+      nextCursor: null,
+    });
+    fetchSessionById.mockResolvedValue({
+      id: 'sess-1',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      pendingCount: 0,
+      metadataVersion: 1,
+      metadata: {},
+    });
+    callSessionRpc.mockResolvedValue({ ok: true });
+
+    await executor.execute(
+      'session.user_action.answer',
+      {
+        sessionId: 'sess-1',
+        requestId: 'ua-reject',
+        decision: 'reject',
+        reason: 'not acceptable',
+      },
+      { surface: 'rpc', defaultSessionId: 'sess-1' },
+    );
+    await executor.execute(
+      'session.user_action.answer',
+      {
+        sessionId: 'sess-1',
+        requestId: 'ua-request-changes',
+        decision: 'request_changes',
+        reason: 'revise first',
+      },
+      { surface: 'rpc', defaultSessionId: 'sess-1' },
+    );
+
+    expect(callSessionRpc).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      method: 'sess-1:permission',
+      request: expect.objectContaining({
+        id: 'ua-reject',
+        approved: false,
+        decision: 'denied',
+        actionDecision: 'reject',
+        reason: 'not acceptable',
+      }),
+    }));
+    expect(callSessionRpc).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      method: 'sess-1:permission',
+      request: expect.objectContaining({
+        id: 'ua-request-changes',
+        approved: false,
+        decision: 'abort',
+        actionDecision: 'request_changes',
+        reason: 'revise first',
       }),
     }));
   });

@@ -203,6 +203,9 @@ describe('readPluginManifest', () => {
     ]);
     expect(result.manifest.contributes.providers.map((definition) => definition.id)).toEqual(['acme.provider']);
     expect(result.manifest.contributes.backends.map((definition) => definition.id)).toEqual(['acme.backend']);
+    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual({
+      executionRun: { supported: true },
+    });
     expect(result.manifest.contributes.actions.map((definition) => definition.id)).toEqual(['acme.action']);
     expect(result.manifest.contributes.tools.map((definition) => definition.id)).toEqual(['acme.tool']);
         expect(result.manifest.contributes.commands.map((definition) => definition.id)).toEqual(['acme.command']);
@@ -212,6 +215,106 @@ describe('readPluginManifest', () => {
             'backend.terminalRuntime.bindTranscript',
         ]);
     });
+
+  it('normalizes legacy flat backend execution-run opt-out input to nested capabilities', async () => {
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
+    const manifestPath = await writeManifestFile(
+      pluginRoot,
+      JSON.stringify(createBaseManifestV2({
+        id: 'acme.execution-run-opt-out',
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['backends'],
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributes: [
+          {
+            kind: 'provider',
+            kindVersion: 1,
+            id: 'acme.provider',
+            display: {
+              name: 'Acme Provider',
+            },
+            ownedBackendIds: ['acme.backend'],
+          },
+          {
+            kind: 'backend',
+            kindVersion: 1,
+            id: 'acme.backend',
+            providerId: 'acme.provider',
+            engine: {
+              kind: 'custom',
+            },
+            capabilities: {
+              executionRun: false,
+            },
+          },
+        ],
+      })),
+    );
+
+    const result = await readPluginManifest({ manifestPath });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual({
+      executionRun: { supported: false },
+    });
+  });
+
+  it('returns a semantic diagnostic when default execution-run backend support lacks runtimeCore launch proof', async () => {
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
+    const manifestPath = await writeManifestFile(
+      pluginRoot,
+      JSON.stringify(createBaseManifestV2({
+        id: 'acme.missing-execution-run-runtime-core',
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['backends'],
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributes: [
+          {
+            kind: 'provider',
+            kindVersion: 1,
+            id: 'acme.provider',
+            display: {
+              name: 'Acme Provider',
+            },
+            ownedBackendIds: ['acme.backend'],
+          },
+          {
+            kind: 'backend',
+            kindVersion: 1,
+            id: 'acme.backend',
+            providerId: 'acme.provider',
+            engine: {
+              kind: 'custom',
+            },
+          },
+        ],
+      })),
+    );
+
+    const result = await readPluginManifest({ manifestPath });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'plugin_manifest_semantic_invalid',
+        message: expect.stringMatching(/execution-run.*runtimeCore/i),
+      }),
+    ]));
+  });
 
   it('reads notification contributes into the canonical grouped CLI manifest shape', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));

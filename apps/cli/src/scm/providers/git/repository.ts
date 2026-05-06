@@ -9,6 +9,7 @@ import { inspectGitCheckoutIdentity } from './checkoutIdentity';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { readGitBranchOperationState } from './operations/branchOperationState';
+import { resolveDefaultPullRequestStatusProjectionRegistry } from './operations/pullRequestStatusProjection';
 
 const UNTRACKED_STATS_MAX_FILES = 512;
 const UNTRACKED_STATS_MAX_BYTES = 5_000_000;
@@ -147,6 +148,7 @@ export async function getGitSnapshot(input: {
     });
     const checkoutIdentity = await inspectGitCheckoutIdentity({ cwd: context.cwd });
     const operationState = await readGitBranchOperationState(context);
+    const hostingProviderRegistry = await resolveDefaultPullRequestStatusProjectionRegistry();
 
     const statusRaw = statusResult.stdout ?? '';
     const hasUntrackedHint = /(?:^|\0)\?\s/.test(statusRaw);
@@ -167,6 +169,7 @@ export async function getGitSnapshot(input: {
             worktreesOutput: worktreesResult.success ? (worktreesResult.stdout ?? '') : '',
             remotesOutput: remotesResult.success ? (remotesResult.stdout ?? '') : '',
             operationState,
+            hostingProviderRegistry,
         }),
     };
 }

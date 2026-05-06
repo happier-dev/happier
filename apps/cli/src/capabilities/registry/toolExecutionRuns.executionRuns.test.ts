@@ -30,12 +30,14 @@ function makeCliEngineRegistryMock(
       actions: Object.freeze([]),
       resources: Object.freeze([]),
       uiDescriptors: Object.freeze([]),
+      executionRunProfiles: Object.freeze([]),
       activationTargets: Object.freeze([]),
       hookRegistrations: Object.freeze([]),
       runtimeCoreHooksByBackendId: new Map(),
       catalogEntriesById: {},
       providerDefinitionsById: new Map(),
       backendDefinitionsById: new Map(),
+      executionRunProfilesById: new Map(),
       pluginDiagnosticsByPluginId: {},
       ...contributions,
     },
@@ -208,6 +210,67 @@ describe('executionRunsCapability', () => {
     for (const intent of res.backends.coderabbit?.intents ?? []) {
       expect(ExecutionRunIntentSchema.safeParse(intent).success).toBe(true);
     }
+  });
+
+  it('projects contributed execution-run profile descriptors from the contribution registry', async () => {
+    const profile = {
+      provenance: 'external' as const,
+      source: { kind: 'path' as const },
+      pluginId: 'acme.execution-runs',
+      definition: {
+        id: 'acme.review.profile',
+        kind: 'executionRun.profile' as const,
+        version: '1.0.0',
+        intent: 'review' as const,
+        displayKey: 'plugins.acme.executionRuns.review.label',
+        capabilityGates: [],
+        permissionGates: [],
+        redaction: 'none' as const,
+        hidden: false,
+        actionIds: [],
+      },
+    };
+    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
+      executionRunProfiles: [profile],
+      executionRunProfilesById: new Map([
+        ['acme.review.profile', profile],
+      ]),
+    }));
+
+    const res = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: makeCliSnapshot({ claude: { available: true } }),
+      },
+      request: { id: 'tool.executionRuns' },
+    }) as {
+      executionRunProfiles: readonly {
+        id: string;
+        kind: string;
+        version: string;
+        intent: string;
+        displayKey: string;
+        capabilityGates: readonly unknown[];
+        permissionGates: readonly unknown[];
+        actionIds: readonly string[];
+        hidden: boolean;
+        redaction: string;
+      }[];
+    };
+
+    expect(res.executionRunProfiles).toEqual([
+      {
+        id: 'acme.review.profile',
+        kind: 'executionRun.profile',
+        version: '1.0.0',
+        intent: 'review',
+        displayKey: 'plugins.acme.executionRuns.review.label',
+        capabilityGates: [],
+        permissionGates: [],
+        redaction: 'none',
+        hidden: false,
+        actionIds: [],
+      },
+    ]);
   });
 
   it('marks plugin backends with backend-owned runtimeCore available', async () => {

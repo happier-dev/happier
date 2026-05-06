@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import type { TurnChangeSet } from '@happier-dev/protocol';
+
+import { buildTurnChangeSetDiffInput } from './buildTurnChangeSetDiffInput';
 import { NormalizedToolTurnChangeTracker } from './normalizedToolTurnChangeTracker';
 
 describe('NormalizedToolTurnChangeTracker', () => {
@@ -92,6 +95,85 @@ describe('NormalizedToolTurnChangeTracker', () => {
                 confidence: 'exact',
             }),
         ]);
+    });
+
+    it('derives checkpoint metadata and exact file semantics from persisted canonical Diff messages', () => {
+        const sourceTurn: TurnChangeSet = {
+            sessionId: 'sess_local_1',
+            turnId: 'checkpoint-turn-1',
+            seqRange: { startSeqInclusive: 4, endSeqInclusive: 4 },
+            status: 'completed',
+            files: [{
+                filePath: 'src/new-name.ts',
+                previousFilePath: 'src/old-name.ts',
+                changeKind: 'renamed',
+                unifiedDiff: 'diff --git a/src/old-name.ts b/src/new-name.ts',
+                binary: true,
+                source: 'scm_checkpoint',
+                confidence: 'exact',
+                provider: 'scm:git',
+            }],
+            provider: 'scm:git',
+            derivedAt: 1,
+            repositoryCheckpoint: {
+                version: 1,
+                scopeId: 'sess_local_1:/repo',
+                startRef: 'refs/happier/checkpoints/scope/turn-start/checkpoint-turn-1',
+                finalRef: 'refs/happier/checkpoints/scope/turn-final/checkpoint-turn-1',
+                baseRefSource: 'turn_start',
+                contentConfidence: 'exact',
+                attributionScope: 'shared_worktree',
+                receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/scope/turn-final/checkpoint-turn-1' }],
+            },
+        };
+        const tracker = new NormalizedToolTurnChangeTracker({
+            provider: 'claude',
+            turnIdPrefix: 'claude-turn',
+        });
+
+        tracker.observeToolCall({
+            callId: 'tool_diff_checkpoint',
+            toolName: 'Diff',
+            args: buildTurnChangeSetDiffInput({
+                turnChangeSet: sourceTurn,
+                protocol: 'claude',
+                rawToolName: 'RepositoryCheckpointDiff',
+            }),
+            parentToolUseId: null,
+        });
+
+        tracker.observeToolResult({
+            callId: 'tool_diff_checkpoint',
+            isError: false,
+        });
+
+        const turnChangeSet = tracker.completeTurn({
+            sessionId: 'sess_local_1',
+            status: 'completed',
+        });
+
+        expect(turnChangeSet).toEqual(expect.objectContaining({
+            sessionId: 'sess_local_1',
+            turnId: 'checkpoint-turn-1',
+            seqRange: { startSeqInclusive: 4, endSeqInclusive: 4 },
+            status: 'completed',
+            repositoryCheckpoint: expect.objectContaining({
+                contentConfidence: 'exact',
+                attributionScope: 'shared_worktree',
+                receipts: [expect.objectContaining({ id: 'checkpoint.diff_computed' })],
+            }),
+            files: [
+                expect.objectContaining({
+                    filePath: 'src/new-name.ts',
+                    previousFilePath: 'src/old-name.ts',
+                    changeKind: 'renamed',
+                    binary: true,
+                    source: 'scm_checkpoint',
+                    confidence: 'exact',
+                    provider: 'scm:git',
+                }),
+            ],
+        }));
     });
 
     it('advances turn ids when turns are observed without an explicit beginTurn call', () => {

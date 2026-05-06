@@ -1,4 +1,4 @@
-import { splitUnifiedDiffByFile, type ChangeConfidence, type ChangeEvidenceSource, type FileChangeEvidence, type TurnChangeSet } from '@happier-dev/protocol';
+import { splitUnifiedDiffByFile, type ChangeConfidence, type ChangeEvidenceSource, type FileChangeEvidence, type FileChangeKind, type RepositoryCheckpointTurnMetadata, type TurnChangeSet } from '@happier-dev/protocol';
 import { deriveCanonicalPatchFileDiffs } from '@happier-dev/protocol/tools/v2';
 
 import { TurnDiffEmitter } from './turnDiffEmitter';
@@ -6,7 +6,22 @@ import { TurnDiffEmitter } from './turnDiffEmitter';
 type FileMetadata = Readonly<{
     source: ChangeEvidenceSource;
     confidence: ChangeConfidence;
+    previousFilePath?: string | null;
+    changeKind?: FileChangeKind;
+    binary?: boolean;
+    provider?: string;
+    providerTurnId?: string | null;
+    providerMessageId?: string | null;
     description?: string | null;
+}>;
+
+type TurnMetadata = Readonly<{
+    sessionId?: string;
+    turnId?: string;
+    seqRange?: TurnChangeSet['seqRange'];
+    status?: TurnChangeSet['status'];
+    provider?: string;
+    repositoryCheckpoint?: RepositoryCheckpointTurnMetadata;
 }>;
 
 function stripDiffPrefix(path: string): string {
@@ -58,6 +73,7 @@ export class TurnChangeSetCollector {
     private readonly emitter: TurnDiffEmitter;
     private readonly metadataByFilePath = new Map<string, FileMetadata>();
     private snapshotMetadata: FileMetadata | null = null;
+    private turnMetadata: TurnMetadata | null = null;
 
     constructor(params: Readonly<{ provider: string; snapshotUnifiedDiff?: boolean }>) {
         this.provider = params.provider;
@@ -67,7 +83,64 @@ export class TurnChangeSetCollector {
     beginTurn(): void {
         this.metadataByFilePath.clear();
         this.snapshotMetadata = null;
+        this.turnMetadata = null;
         this.emitter.beginTurn();
+    }
+
+    observeCanonicalDiff(params: Readonly<{
+        files: ReadonlyArray<Readonly<{
+            filePath: string;
+            previousFilePath?: string | null;
+            changeKind?: FileChangeKind;
+            unifiedDiff?: string;
+            oldText?: string;
+            newText?: string;
+            binary?: boolean;
+            source?: ChangeEvidenceSource;
+            confidence?: ChangeConfidence;
+            provider?: string;
+            providerTurnId?: string | null;
+            providerMessageId?: string | null;
+            description?: string;
+        }>>;
+        turnMetadata?: TurnMetadata;
+    }>): void {
+        this.turnMetadata = params.turnMetadata ?? null;
+        for (const file of params.files) {
+            this.metadataByFilePath.set(file.filePath, {
+                source: file.source ?? 'provider_tool',
+                confidence: file.confidence ?? 'exact',
+                previousFilePath: file.previousFilePath ?? null,
+                changeKind: file.changeKind,
+                binary: file.binary,
+                provider: file.provider,
+                providerTurnId: file.providerTurnId ?? null,
+                providerMessageId: file.providerMessageId ?? null,
+                description: file.description ?? null,
+            });
+            if (typeof file.oldText === 'string' && typeof file.newText === 'string') {
+                this.emitter.observeTextDiff({
+                    filePath: file.filePath,
+                    oldText: file.oldText,
+                    newText: file.newText,
+                    ...(file.description ? { description: file.description } : {}),
+                });
+                continue;
+            }
+            if (typeof file.unifiedDiff === 'string' && file.unifiedDiff.trim().length > 0) {
+                this.emitter.observeUnifiedDiff({
+                    filePath: file.filePath,
+                    unifiedDiff: file.unifiedDiff,
+                    ...(file.description ? { description: file.description } : {}),
+                });
+                continue;
+            }
+            this.emitter.observeUnifiedDiff({
+                filePath: file.filePath,
+                unifiedDiff: `diff --git a/${file.filePath} b/${file.filePath}`,
+                ...(file.description ? { description: file.description } : {}),
+            });
+        }
     }
 
     observeTextDiff(params: Readonly<{
@@ -187,13 +260,17 @@ export class TurnChangeSetCollector {
                 const metadata = this.metadataByFilePath.get(filePath);
                 files.push({
                     filePath,
-                    changeKind: 'modified',
+                    previousFilePath: metadata?.previousFilePath ?? null,
+                    changeKind: metadata?.changeKind ?? 'modified',
                     unifiedDiff: typeof file.unified_diff === 'string' ? file.unified_diff : undefined,
                     oldText: typeof file.oldText === 'string' ? file.oldText : undefined,
                     newText: typeof file.newText === 'string' ? file.newText : undefined,
+                    binary: metadata?.binary,
                     source: metadata?.source ?? 'provider_tool',
                     confidence: metadata?.confidence ?? 'strong',
-                    provider: this.provider,
+                    provider: metadata?.provider ?? this.provider,
+                    providerTurnId: metadata?.providerTurnId ?? null,
+                    providerMessageId: metadata?.providerMessageId ?? null,
                     description: metadata?.description ?? null,
                 });
             }
@@ -208,17 +285,20 @@ export class TurnChangeSetCollector {
 
         this.metadataByFilePath.clear();
         this.snapshotMetadata = null;
+        const turnMetadata = this.turnMetadata;
+        this.turnMetadata = null;
 
-        if (files.length === 0) return null;
+        if (files.length === 0 && !turnMetadata?.repositoryCheckpoint) return null;
 
         return {
-            sessionId: params.sessionId,
-            turnId: params.turnId,
-            seqRange: params.seqRange,
-            status: params.status,
+            sessionId: turnMetadata?.sessionId ?? params.sessionId,
+            turnId: turnMetadata?.turnId ?? params.turnId,
+            seqRange: turnMetadata?.seqRange ?? params.seqRange,
+            status: turnMetadata?.status ?? params.status,
             files,
-            provider: this.provider,
+            provider: turnMetadata?.provider ?? this.provider,
             derivedAt: Date.now(),
+            ...(turnMetadata?.repositoryCheckpoint ? { repositoryCheckpoint: turnMetadata.repositoryCheckpoint } : {}),
         };
     }
 }

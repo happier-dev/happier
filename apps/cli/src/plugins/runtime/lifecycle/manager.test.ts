@@ -2,13 +2,19 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedBackendContribution, ResolvedContributionRegistry, ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { PluginApi } from '@/plugins/runtime/api/types';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 import { activatePluginRuntimeRegistry } from './manager';
+import { createPluginDisposableRegistry } from './disposables';
+
+type TestPermissionDeclaration = string | Readonly<{
+    capability: string;
+    scope?: string;
+}>;
 
 async function writeActivationModule(): Promise<Readonly<{
     manifestPath: string;
@@ -186,12 +192,44 @@ async function writeActivationModuleWithAutoAcpBackend(params: Readonly<{
     return { manifestPath, daemonEntryPath };
 }
 
+async function writeActivationModuleWithMcpTool(params: Readonly<{
+    pluginId: string;
+    toolId: string;
+    toolName: string;
+}>): Promise<Readonly<{
+    manifestPath: string;
+    daemonEntryPath: string;
+}>> {
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-mcp-tool-'));
+    const manifestPath = await writeManifest(root, {
+        id: params.pluginId,
+        runtimeCapabilities: ['mcp'],
+        permissions: [],
+    });
+    const daemonEntryPath = join(root, 'daemon.mjs');
+    await writeFile(
+        daemonEntryPath,
+        [
+            'export async function activate(api) {',
+            '  api.registerMcpTool({',
+            `    id: ${JSON.stringify(params.toolId)},`,
+            `    name: ${JSON.stringify(params.toolName)},`,
+            '    handler: async () => null,',
+            '  });',
+            '}',
+            '',
+        ].join('\n'),
+        'utf8',
+    );
+    return { manifestPath, daemonEntryPath };
+}
+
 async function writeManifest(
     root: string,
     params: Readonly<{
         id: string;
         runtimeCapabilities: readonly string[];
-        permissions: readonly string[];
+        permissions: readonly TestPermissionDeclaration[];
         backendIds?: readonly string[];
         notificationCategoryIds?: readonly string[];
         notificationChannelIds?: readonly string[];
@@ -214,7 +252,12 @@ async function writeManifest(
                 apiVersion: 1,
                 capabilities: params.runtimeCapabilities,
             },
-            permissions: params.permissions.map((capability) => ({ capability })),
+            permissions: params.permissions.map((permission) => {
+                if (typeof permission === 'string') {
+                    return { capability: permission };
+                }
+                return { ...permission };
+            }),
             targets: {
                 daemon: {
                     entry: './daemon.mjs',
@@ -303,6 +346,23 @@ function createContributes(params: Readonly<{
         catalogEntriesById: Object.freeze({}),
         providerDefinitionsById: new Map([[provider.id, provider]]),
         backendDefinitionsById: new Map([[backend.id, backend]]),
+        pluginDiagnosticsByPluginId: Object.freeze({}),
+    };
+}
+
+function mergeContributes(...registries: readonly ResolvedContributionRegistry[]): ResolvedContributionRegistry {
+    return {
+        providers: registries.flatMap((registry) => registry.providers),
+        backends: registries.flatMap((registry) => registry.backends),
+        actions: registries.flatMap((registry) => registry.actions),
+        resources: registries.flatMap((registry) => registry.resources),
+        uiDescriptors: registries.flatMap((registry) => registry.uiDescriptors),
+        activationTargets: registries.flatMap((registry) => registry.activationTargets),
+        hookRegistrations: registries.flatMap((registry) => registry.hookRegistrations),
+        runtimeCoreHooksByBackendId: new Map(),
+        catalogEntriesById: Object.freeze({}),
+        providerDefinitionsById: new Map(registries.flatMap((registry) => [...registry.providerDefinitionsById.entries()])),
+        backendDefinitionsById: new Map(registries.flatMap((registry) => [...registry.backendDefinitionsById.entries()])),
         pluginDiagnosticsByPluginId: Object.freeze({}),
     };
 }
@@ -402,6 +462,89 @@ describe('activatePluginRuntimeRegistry', () => {
         await expect(readFile(lifecycleMarkerPath, 'utf8')).resolves.toBe('activated\ndeactivating\n');
     });
 
+    it('preserves manifest permission scopes for network and process runtime services', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scoped-policy-'));
+        const manifestPath = await writeManifest(root, {
+            id: 'acme.scoped',
+            runtimeCapabilities: [],
+            permissions: [
+                { capability: 'network', scope: 'https://api.example.test/v1' },
+                { capability: 'process.spawn', scope: '/usr/bin/git' },
+            ],
+        });
+        const daemonEntryPath = join(root, 'daemon.mjs');
+        await writeFile(
+            daemonEntryPath,
+            [
+                'export async function activate() {',
+                '}',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const activated = await activatePluginRuntimeRegistry({
+            contributes: createContributes({
+                pluginId: 'acme.scoped',
+                manifestPath,
+                daemonEntryPath,
+            }),
+            generation: 11,
+        });
+
+        expect(activated.networkAllowedPluginIds.has('acme.scoped')).toBe(true);
+        expect(activated.networkAllowedUrlOriginsByPluginId.get('acme.scoped')).toEqual(
+            new Set(['https://api.example.test']),
+        );
+        expect(activated.processSpawnAllowedPathsByPluginId.get('acme.scoped')).toEqual(
+            new Set(['/usr/bin/git']),
+        );
+    });
+
+    it('drops path-only process.spawn scopes and preserves explicit env scopes', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-env-policy-'));
+        const manifestPath = await writeManifest(root, {
+            id: 'acme.env',
+            runtimeCapabilities: [],
+            permissions: [
+                { capability: 'process.spawn', scope: 'git' },
+                { capability: 'env', scope: 'HAPPIER_DECLARED_ENV' },
+                { capability: 'filesystem.read', scope: 'transcripts' },
+                { capability: 'filesystem.write', scope: 'artifacts' },
+            ],
+        });
+        const daemonEntryPath = join(root, 'daemon.mjs');
+        await writeFile(
+            daemonEntryPath,
+            [
+                'export async function activate() {',
+                '}',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const activated = await activatePluginRuntimeRegistry({
+            contributes: createContributes({
+                pluginId: 'acme.env',
+                manifestPath,
+                daemonEntryPath,
+            }),
+            generation: 12,
+        });
+
+        expect(activated.processSpawnAllowedPathsByPluginId.get('acme.env')).toBeUndefined();
+        expect(activated.envAllowedNamesByPluginId.get('acme.env')).toEqual(
+            new Set(['HAPPIER_DECLARED_ENV']),
+        );
+        expect(activated.filesystemReadAllowedPathsByPluginId.get('acme.env')).toEqual(
+            new Set(['transcripts']),
+        );
+        expect(activated.filesystemWriteAllowedPathsByPluginId.get('acme.env')).toEqual(
+            new Set(['artifacts']),
+        );
+    });
+
     it('records trust diagnostics instead of collapsing prompt-trust activation failures into generic load errors', async () => {
         const { manifestPath, daemonEntryPath } = await writeActivationModule();
 
@@ -490,6 +633,50 @@ describe('activatePluginRuntimeRegistry', () => {
             expect.objectContaining({
                 code: 'plugin_permission_missing',
                 message: expect.stringContaining('ui.descriptors'),
+            }),
+        ]);
+    });
+
+    it('rejects MCP tool namespace collisions across activated plugins', async () => {
+        const first = await writeActivationModuleWithMcpTool({
+            pluginId: 'acme.alpha',
+            toolId: 'acme.alpha.search',
+            toolName: 'codex.github.search',
+        });
+        const second = await writeActivationModuleWithMcpTool({
+            pluginId: 'acme.beta',
+            toolId: 'acme.beta.create',
+            toolName: 'codex.github.create',
+        });
+
+        const activated = await activatePluginRuntimeRegistry({
+            contributes: mergeContributes(
+                createContributes({
+                    pluginId: 'acme.alpha',
+                    manifestPath: first.manifestPath,
+                    daemonEntryPath: first.daemonEntryPath,
+                }),
+                createContributes({
+                    pluginId: 'acme.beta',
+                    manifestPath: second.manifestPath,
+                    daemonEntryPath: second.daemonEntryPath,
+                }),
+            ),
+            generation: 13,
+        });
+
+        expect(activated.mcpTools).toEqual([
+            expect.objectContaining({
+                pluginId: 'acme.alpha',
+                registration: expect.objectContaining({
+                    name: 'codex.github.search',
+                }),
+            }),
+        ]);
+        expect(activated.pluginDiagnosticsByPluginId['acme.beta']).toEqual([
+            expect.objectContaining({
+                code: 'plugin_manifest_semantic_invalid',
+                message: expect.stringContaining('MCP tool namespace collision'),
             }),
         ]);
     });
@@ -674,5 +861,23 @@ describe('activatePluginRuntimeRegistry', () => {
                 create: expect.any(Function),
             }),
         }));
+    });
+});
+
+describe('createPluginDisposableRegistry', () => {
+    it('disposes late registrations immediately after plugin deactivation cleanup has run', async () => {
+        const first = vi.fn();
+        const late = vi.fn();
+        const registry = createPluginDisposableRegistry();
+
+        registry.add(first);
+        await registry.dispose();
+        registry.add(late);
+
+        expect(first).toHaveBeenCalledTimes(1);
+        expect(late).toHaveBeenCalledTimes(1);
+        await registry.dispose();
+        expect(first).toHaveBeenCalledTimes(1);
+        expect(late).toHaveBeenCalledTimes(1);
     });
 });

@@ -197,7 +197,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
   });
 
   it('creates a linked direct session row and returns created=true on first call', async () => {
-    const { registerMachineDirectSessionsRpcHandlers } = await import('./rpcHandlers.directSessions');
+    const { registerMachineExternalSessionsRpcHandlers } = await import('./rpcHandlers.externalSessions');
 
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -206,7 +206,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+    registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE);
     expect(handler).toBeDefined();
@@ -250,7 +250,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
   });
 
   it('persists codex backend affinity when linking a codex direct session', async () => {
-    const { registerMachineDirectSessionsRpcHandlers } = await import('./rpcHandlers.directSessions');
+    const { registerMachineExternalSessionsRpcHandlers } = await import('./rpcHandlers.externalSessions');
 
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -259,7 +259,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+    registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE);
     expect(handler).toBeDefined();
@@ -295,7 +295,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
   });
 
   it('returns created=false and the same sessionId on repeat calls', async () => {
-    const { registerMachineDirectSessionsRpcHandlers } = await import('./rpcHandlers.directSessions');
+    const { registerMachineExternalSessionsRpcHandlers } = await import('./rpcHandlers.externalSessions');
 
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -304,7 +304,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+    registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE);
     expect(handler).toBeDefined();
@@ -334,7 +334,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
   });
 
   it('refreshes stale missing metadata on repeat link.ensure without creating a new session', async () => {
-    const { registerMachineDirectSessionsRpcHandlers } = await import('./rpcHandlers.directSessions');
+    const { registerMachineExternalSessionsRpcHandlers } = await import('./rpcHandlers.externalSessions');
 
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -343,7 +343,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+    registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE);
     expect(handler).toBeDefined();
@@ -385,7 +385,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
   });
 
   it('does not overwrite an existing meaningful title on repeat link.ensure', async () => {
-    const { registerMachineDirectSessionsRpcHandlers } = await import('./rpcHandlers.directSessions');
+    const { registerMachineExternalSessionsRpcHandlers } = await import('./rpcHandlers.externalSessions');
 
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -394,7 +394,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+    registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE);
     expect(handler).toBeDefined();
@@ -436,7 +436,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
   });
 
   it('replaces an existing fallback remote-session title on repeat link.ensure', async () => {
-    const { registerMachineDirectSessionsRpcHandlers } = await import('./rpcHandlers.directSessions');
+    const { registerMachineExternalSessionsRpcHandlers } = await import('./rpcHandlers.externalSessions');
 
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -445,7 +445,7 @@ describe('daemon.directSessions.link.ensure (integration)', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+    registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE);
     expect(handler).toBeDefined();

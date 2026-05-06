@@ -1,4 +1,4 @@
-import { buildFirstTurnPromptText } from '@/agent/promptLibrary/buildFirstTurnPromptText';
+import { buildFirstTurnPromptText } from '@/agent/prompts/library/buildFirstTurnPromptText';
 
 export function buildCodexAcpPromptForFreshSession(args: Readonly<{
   prompt: string;

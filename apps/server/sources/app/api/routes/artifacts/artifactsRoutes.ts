@@ -8,6 +8,8 @@ import * as privacyKit from "privacy-kit";
 import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
+const DEFAULT_ARTIFACT_LIST_LIMIT = 500;
+
 export function artifactsRoutes(app: Fastify) {
     // GET /v1/artifacts - List all artifacts for the account
     app.get('/v1/artifacts', {
@@ -16,6 +18,9 @@ export function artifactsRoutes(app: Fastify) {
             rateLimit: resolveApiHotEndpointRateLimit(process.env, "artifacts"),
         },
         schema: {
+            querystring: z.object({
+                limit: z.coerce.number().int().min(1).max(500).optional(),
+            }),
             response: {
                 200: z.array(z.object({
                     id: z.string(),
@@ -33,11 +38,14 @@ export function artifactsRoutes(app: Fastify) {
         }
     }, async (request, reply) => {
         const userId = request.userId;
+        const query = request.query as { limit?: number };
+        const listLimit = typeof query.limit === "number" ? query.limit : DEFAULT_ARTIFACT_LIST_LIMIT;
 
         try {
             const artifacts = await db.artifact.findMany({
                 where: { accountId: userId },
                 orderBy: { updatedAt: 'desc' },
+                take: listLimit,
                 select: {
                     id: true,
                     header: true,

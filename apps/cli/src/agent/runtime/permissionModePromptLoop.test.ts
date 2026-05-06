@@ -172,6 +172,132 @@ describe('runPermissionModePromptLoop', () => {
     expect(onAfterLoopBoundary).toHaveBeenCalledWith({ reason: 'turn_completed' });
   });
 
+  it('runs checkpoint lifecycle hooks without blocking prompt dispatch or turn completion', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    let runtimeMessageHandler: ((message: unknown) => void) | null = null;
+    runtime.subscribeRuntimeMessages = vi.fn((handler: (message: unknown) => void) => {
+      runtimeMessageHandler = handler;
+      return () => {
+        runtimeMessageHandler = null;
+      };
+    });
+    runtime.sendTurnPrompt = vi.fn(async () => {
+      runtimeMessageHandler?.({ type: 'task_started', id: 'turn-checkpoint-1' });
+      runtimeMessageHandler?.({ type: 'task_complete', id: 'turn-checkpoint-1' });
+    });
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    const calls: string[] = [];
+
+    queue.push({ text: 'hello', localId: 'local-checkpoint-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      checkpointLifecycle: {
+        onBeforePromptDispatch: async ({ messageId }) => {
+          calls.push(`message-start:${messageId}`);
+          throw new Error('checkpoint unavailable');
+        },
+        onTurnStarted: async ({ messageId, turnId }) => {
+          calls.push(`turn-start:${messageId}:${turnId}`);
+        },
+        onTurnFinal: async ({ messageId, turnId, status }) => {
+          calls.push(`turn-final:${messageId}:${turnId}:${status}`);
+        },
+      },
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello');
+    expect(calls).toEqual([
+      'message-start:local-checkpoint-1',
+      'turn-start:local-checkpoint-1:turn-checkpoint-1',
+      'turn-final:local-checkpoint-1:turn-checkpoint-1:completed',
+    ]);
+  });
+
+  it('finalizes checkpoint lifecycle with the prompt message id when runtime emits no turn events', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    const calls: string[] = [];
+
+    queue.push({ text: 'hello', localId: 'local-checkpoint-fallback' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      checkpointLifecycle: {
+        onBeforePromptDispatch: async ({ messageId }) => {
+          calls.push(`message-start:${messageId}`);
+        },
+        onTurnStarted: async ({ messageId, turnId }) => {
+          calls.push(`turn-start:${messageId}:${turnId}`);
+        },
+        onTurnFinal: async ({ messageId, turnId, status }) => {
+          calls.push(`turn-final:${messageId}:${turnId}:${status}`);
+        },
+        onTurnAbortedBeforeStart: ({ messageId }) => {
+          calls.push(`aborted:${messageId}`);
+        },
+      },
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(calls).toEqual([
+      'message-start:local-checkpoint-fallback',
+      'turn-start:local-checkpoint-fallback:local-checkpoint-fallback',
+      'turn-final:local-checkpoint-fallback:local-checkpoint-fallback:unknown',
+    ]);
+  });
+
   it('passes pending materialization through the lifecycle handoff gate', async () => {
     const session = createPromptLoopSession();
     const queue = createModeQueue();

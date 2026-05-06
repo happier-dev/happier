@@ -1,4 +1,4 @@
-import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { ExecutionRunListRequest, ExecutionRunPublicState } from '@happier-dev/protocol';
 
 import type {
   ExecutionRunActionParams,
@@ -21,6 +21,7 @@ export interface ExecutionRunHostBridgeContract {
   waitForTerminal(runId: string): Promise<void>;
   getPublic(runId: string): ExecutionRunPublicState | null;
   listPublic(): readonly ExecutionRunPublicState[];
+  listPublicForRequest(request: ExecutionRunListRequest): readonly ExecutionRunPublicState[];
   getDepthByRunId(runId: string): number | null;
   getDepthByCallId(callId: string): number | null;
   start(params: ExecutionRunManagerStartParams): Promise<ExecutionRunStartResult>;

@@ -20,10 +20,19 @@ import {
     dropGitStashRef,
     listGitManagedStashes,
 } from './stashOperations';
+import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation';
 
 const LOCAL_CHANGES_OVERWRITTEN_ERROR_REGEX =
     /local changes.*would be overwritten|untracked working tree files.*would be overwritten|please commit your changes or stash them/i;
 const GIT_BRANCH_SWITCH_TIMEOUT_MS = 60_000;
+
+function invalidateAfterBranchMutation(input: Readonly<{
+    response: ScmBranchCreateResponse | ScmBranchCheckoutResponse;
+    context: ScmBackendContext;
+    headBranch?: string | null;
+}>): void {
+    invalidatePrStatusCacheAfterSuccessfulScmMutation(input);
+}
 
 function isLocalChangesOverwrittenError(stderr: string): boolean {
     return LOCAL_CHANGES_OVERWRITTEN_ERROR_REGEX.test(stderr.toLowerCase());
@@ -253,7 +262,7 @@ export async function gitBranchCreate(input: {
             startPoint: input.request.startPoint,
         });
 
-        return switched.success
+        const response: ScmBranchCreateResponse = switched.success
             ? { success: true, stdout: switched.stdout, stderr: switched.stderr }
             : {
                 success: false,
@@ -262,6 +271,12 @@ export async function gitBranchCreate(input: {
                 stdout: switched.stdout,
                 stderr: switched.stderr,
             };
+        invalidateAfterBranchMutation({
+            response,
+            context: input.context,
+            headBranch: input.request.name,
+        });
+        return response;
     }
 
     const args = ['branch', '--', input.request.name, ...(input.request.startPoint ? [input.request.startPoint] : [])];
@@ -274,7 +289,7 @@ export async function gitBranchCreate(input: {
         env: buildScmNonInteractiveEnv(),
     });
 
-    return result.success
+    const response: ScmBranchCreateResponse = result.success
         ? { success: true, stdout: result.stdout, stderr: result.stderr }
         : {
             success: false,
@@ -283,6 +298,8 @@ export async function gitBranchCreate(input: {
             stdout: result.stdout,
             stderr: result.stderr,
         };
+    invalidateAfterBranchMutation({ response, context: input.context });
+    return response;
 }
 
 export async function gitBranchCheckout(input: {
@@ -367,7 +384,7 @@ export async function gitBranchCheckout(input: {
             };
         }
 
-        return {
+        const response: ScmBranchCheckoutResponse = {
             success: true,
             stdout: `${created.stdout}\n${switched.stdout}`.trim() || undefined,
             stderr: `${created.stderr}\n${switched.stderr}`.trim() || undefined,
@@ -375,11 +392,17 @@ export async function gitBranchCheckout(input: {
             didPopStash: false,
             stashRef: created.stashRef,
         };
+        invalidateAfterBranchMutation({
+            response,
+            context: input.context,
+            headBranch: input.request.name,
+        });
+        return response;
     }
 
     const switched = await runGitSwitch({ cwd: input.context.cwd, name: input.request.name });
     if (switched.success) {
-        return {
+        const response: ScmBranchCheckoutResponse = {
             success: true,
             stdout: switched.stdout,
             stderr: switched.stderr,
@@ -387,6 +410,12 @@ export async function gitBranchCheckout(input: {
             didPopStash: false,
             stashRef: null,
         };
+        invalidateAfterBranchMutation({
+            response,
+            context: input.context,
+            headBranch: input.request.name,
+        });
+        return response;
     }
 
     if (!isLocalChangesOverwrittenError(switched.stderr)) {
@@ -430,7 +459,7 @@ export async function gitBranchCheckout(input: {
 
     // If the stash command reported "no local changes", do not attempt to pop an unrelated stash.
     if (!created.stashCreated) {
-        return {
+        const response: ScmBranchCheckoutResponse = {
             success: true,
             stdout: `${created.stdout}\n${switchedAfterStash.stdout}`.trim() || undefined,
             stderr: `${created.stderr}\n${switchedAfterStash.stderr}`.trim() || undefined,
@@ -438,6 +467,12 @@ export async function gitBranchCheckout(input: {
             didPopStash: false,
             stashRef: null,
         };
+        invalidateAfterBranchMutation({
+            response,
+            context: input.context,
+            headBranch: input.request.name,
+        });
+        return response;
     }
 
     if (!created.stashRef) {
@@ -474,7 +509,7 @@ export async function gitBranchCheckout(input: {
         };
     }
 
-    return {
+    const response: ScmBranchCheckoutResponse = {
         success: true,
         stdout: `${created.stdout}\n${switchedAfterStash.stdout}\n${pop.stdout}`.trim() || undefined,
         stderr: `${created.stderr}\n${switchedAfterStash.stderr}\n${pop.stderr}`.trim() || undefined,
@@ -482,4 +517,10 @@ export async function gitBranchCheckout(input: {
         didPopStash: true,
         stashRef: created.stashRef,
     };
+    invalidateAfterBranchMutation({
+        response,
+        context: input.context,
+        headBranch: input.request.name,
+    });
+    return response;
 }

@@ -7,7 +7,11 @@ import { failureSignal } from '@/agent/executionRuns/controllers/failureSignal';
 import { areExecutionRunBackendTargetsEqual } from './backendTargets';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { createExecutionRunControllerMessageHandler } from './messages/sessionStateEmission';
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
+import {
+  resolveExecutionRunIntentProfile,
+  resolveExecutionRunIntentProfileFromCatalog,
+  type ExecutionRunProfileContributionCatalog,
+} from '@/agent/executionRuns/profiles/intentRegistry';
 import { createExecutionRunSidechainStreamText } from './sidechainStreamText';
 import { createStreamedTranscriptWriter, type StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
@@ -29,6 +33,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   onPublicStateUpdated?: (runId: string) => void;
   onModelOutput?: () => void;
   requireReplayCapture?: boolean;
+  profileCatalog?: ExecutionRunProfileContributionCatalog;
 }>): Promise<
   | { ok: true }
   | { ok: false; errorCode: string; error: string }
@@ -82,7 +87,9 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     sidechainStreamBuffer: '',
     sidechainStreamKey: '',
     streamWriter: (() => {
-      const profile = resolveExecutionRunIntentProfile(args.run.intent);
+      const profile = args.profileCatalog
+        ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, args.run.intent, args.run.profileId)
+        : resolveExecutionRunIntentProfile(args.run.intent);
       const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
       return shouldMaterializeInTranscript && args.streamedTranscriptSession && args.run.ioMode === 'streaming'
         ? createStreamedTranscriptWriter({
@@ -108,7 +115,9 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     resolveTerminal,
   };
 
-  const profile = resolveExecutionRunIntentProfile(args.run.intent);
+  const profile = args.profileCatalog
+    ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, args.run.intent, args.run.profileId)
+    : resolveExecutionRunIntentProfile(args.run.intent);
   const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
   const sendAcp = shouldMaterializeInTranscript ? args.sendAcp : (() => {});
   const computeSidechainStreamText = createExecutionRunSidechainStreamText(profile);

@@ -11,6 +11,7 @@ export type FinishExecutionRun = (
     | 'sessionId'
     | 'depth'
     | 'intent'
+    | 'profileId'
     | 'backendTarget'
     | 'backendId'
     | 'instructions'

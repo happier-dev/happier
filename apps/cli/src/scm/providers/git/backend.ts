@@ -27,9 +27,15 @@ import { gitChangeExclude, gitChangeInclude } from './operations/changeApply';
 import { gitChangeDiscard } from './operations/changeDiscard';
 import { gitCommitBackout, gitCommitCreate } from './operations/commitOperations';
 import { gitRemotePublish } from './operations/publishOperations';
+import {
+    gitPullRequestGet,
+    gitPullRequestList,
+    gitPullRequestOpenCompose,
+} from './operations/pullRequestReadOperations';
 import { gitDiffCommit, gitDiffFile, gitLogList } from './operations/readOperations';
 import { gitRemoteAdd, gitRemoteRemove, gitRemoteSetUrl } from './operations/remoteManagementOperations';
 import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './operations/remoteOperations';
+import { gitRemoveIndexLock } from './operations/removeIndexLockOperation';
 import { gitRepositoryInit } from './operations/repositoryInitOperations';
 import { gitStashApply, gitStashDrop, gitStashList, gitStashPop, gitStashShow } from './operations/stashOperations';
 import { gitWorktreeCreate, gitWorktreePrune, gitWorktreeRemove } from './operations/worktreeOperations';
@@ -56,6 +62,7 @@ function createUnsupportedGitModeCapabilities() {
         writeRemotePush: false,
         writeRemotePublish: false,
         writeRepositoryInit: false,
+        writeRepositoryRemoveIndexLock: false,
         worktreeCreate: false,
         readBranches: false,
         writeBranchCreate: false,
@@ -64,6 +71,8 @@ function createUnsupportedGitModeCapabilities() {
         writeBranchRebase: false,
         writeBranchOperationControl: false,
         readStash: false,
+        readHostingProvider: false,
+        readPullRequestStatus: false,
         writeStash: false,
     };
 }
@@ -134,7 +143,11 @@ export function createGitBackend(): ScmBackend {
         remotePull: gitRemotePull,
         remotePush: gitRemotePush,
         remotePublish: gitRemotePublish,
+        pullRequestList: gitPullRequestList,
+        pullRequestGet: gitPullRequestGet,
+        pullRequestOpenCompose: gitPullRequestOpenCompose,
         repositoryInit: gitRepositoryInit,
+        removeIndexLock: gitRemoveIndexLock,
         stashList: gitStashList,
         stashDrop: gitStashDrop,
         stashPop: gitStashPop,

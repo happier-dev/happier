@@ -102,6 +102,7 @@ async function writeActivationManifest(
         id: string;
         runtimeCapabilities: readonly string[];
         permissions: readonly string[];
+        contributes?: Record<string, unknown>;
     }>,
 ): Promise<string> {
     const manifestDir = join(rootDir, '.happier-plugin');
@@ -130,7 +131,7 @@ async function writeActivationManifest(
                     entry: './daemon.mjs',
                 },
             },
-            contributes: {},
+            contributes: params.contributes ?? {},
         }),
         'utf8',
     );
@@ -149,14 +150,30 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
         expect(engine?.registration.backendId).toBe('opencode');
     });
 
-    it('merges activation-time executable actions, resources, and UI descriptors into the authoritative contribution snapshot', async () => {
+    it('merges activation-time executable actions, resources, UI descriptors, and execution-run profiles into the authoritative contribution snapshot', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-activated-root-'));
         const daemonEntryPath = join(pluginRoot, 'daemon.mjs');
         const manifestPath = await writeActivationManifest(pluginRoot, {
             id: 'acme.activated',
-            runtimeCapabilities: ['actions', 'resources', 'uiDescriptors', 'hooks'],
+            runtimeCapabilities: ['actions', 'resources', 'uiDescriptors', 'executionRunProfiles', 'hooks'],
             permissions: ['actions.register', 'resources.register', 'ui.descriptors', 'hooks.register'],
+            contributes: {
+                executionRunProfiles: [
+                    {
+                        id: 'acme.activated.review-profile',
+                        kind: 'executionRun.profile',
+                        version: '1.0.0',
+                        intent: 'review',
+                        displayKey: 'acme.activated.reviewProfile',
+                        capabilityGates: [],
+                        permissionGates: [],
+                        redaction: 'none',
+                        hidden: false,
+                        actionIds: ['acme.activated.action'],
+                    },
+                ],
+            },
         });
 
         await writeFile(
@@ -192,6 +209,18 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
                 '        title: "Enabled",',
                 '      },',
                 '    ],',
+                '  });',
+                '  api.registerExecutionRunProfile({',
+                '    id: "acme.activated.review-profile",',
+                '    kind: "executionRun.profile",',
+                '    version: "1.0.0",',
+                '    intent: "review",',
+                '    displayKey: "acme.activated.reviewProfile",',
+                '    capabilityGates: [],',
+                '    permissionGates: [],',
+                '    redaction: "none",',
+                '    hidden: false,',
+                '    actionIds: ["acme.activated.action"],',
                 '  });',
                 '  api.registerHook({',
                 '    hookId: "session.started",',
@@ -262,6 +291,15 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             definition: {
                 id: 'acme.activated.settings',
                 surface: 'settings',
+            },
+        });
+        expect(runtimeRegistry.contributes.executionRunProfilesById?.get('acme.activated.review-profile')).toMatchObject({
+            pluginId: 'acme.activated',
+            definition: {
+                id: 'acme.activated.review-profile',
+                kind: 'executionRun.profile',
+                intent: 'review',
+                actionIds: ['acme.activated.action'],
             },
         });
         await expect(runtimeRegistry.hookHandlersByHookId.get('session.started')?.[0]?.handler()).resolves.toBe('activated-hook');

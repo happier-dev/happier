@@ -20,7 +20,12 @@ import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
 import { registerSessionUserMessageSendHandler } from './sessionUserMessageSend';
 import { registerDaemonContributionRegistryProjectionHandler } from './daemonContributionRegistryProjection';
+import type { RpcActionExecutor } from './_actionDispatchAdapter';
+import { SESSION_TRANSCRIPT_RPC_SCOPES } from './actionSpecRpcRegistration';
+import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
+import { readCredentials } from '@/persistence';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 export {
     readCanonicalSpawnRuntimeSelection,
     readSpawnRuntimeDescriptorV1,
@@ -164,6 +169,46 @@ export type SpawnSessionResult =
     | { type: 'requestToApproveDirectoryCreation'; directory: string }
     | { type: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string };
 
+type RpcRegistrar = Readonly<{
+    registerHandler(method: string, handler: (input: unknown) => Promise<unknown>): void;
+}>;
+
+export function registerSessionTranscriptRpcHandlers(params: Readonly<{
+    rpcHandlerManager: RpcRegistrar;
+    actionExecutor?: RpcActionExecutor;
+    resolveActionExecutor?: () => RpcActionExecutor | Promise<RpcActionExecutor>;
+}>): void {
+    registerActionSpecRpcHandlers({
+        rpcHandlerManager: params.rpcHandlerManager,
+        actionExecutor: params.actionExecutor,
+        resolveActionExecutor: params.resolveActionExecutor,
+        scopes: SESSION_TRANSCRIPT_RPC_SCOPES,
+    });
+}
+
+async function resolveProductionTranscriptActionExecutor(params: Readonly<{
+    workingDirectory: string;
+    accessPolicy: FilesystemAccessPolicy;
+}>): Promise<RpcActionExecutor> {
+    const credentials = await readCredentials().catch(() => null);
+    if (!credentials) {
+        return {
+            execute: async () => ({
+                ok: false,
+                errorCode: 'not_authenticated',
+                error: 'not_authenticated',
+            }),
+        };
+    }
+    return createCliActionExecutorFromCredentials({
+        credentials,
+        sessionLogAccess: {
+            workingDirectory: params.workingDirectory,
+            accessPolicy: params.accessPolicy,
+        },
+    });
+}
+
 /**
  * Register all session RPC handlers with the daemon
  */
@@ -178,6 +223,7 @@ export function registerSessionHandlers(
             meta: Record<string, unknown>;
         }) => Promise<void> | void) | null;
         accessPolicy?: FilesystemAccessPolicy;
+        transcriptActionExecutor?: RpcActionExecutor | null;
     }>,
 ) {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
@@ -191,5 +237,10 @@ export function registerSessionHandlers(
     registerDifftasticHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
     registerSessionUserMessageSendHandler(rpcHandlerManager, {
         enqueueSessionUserMessage: opts?.enqueueSessionUserMessage ?? null,
+    });
+    registerSessionTranscriptRpcHandlers({
+        rpcHandlerManager,
+        ...(opts?.transcriptActionExecutor ? { actionExecutor: opts.transcriptActionExecutor } : {}),
+        resolveActionExecutor: () => resolveProductionTranscriptActionExecutor({ workingDirectory, accessPolicy }),
     });
 }

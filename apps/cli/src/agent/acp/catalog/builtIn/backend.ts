@@ -3,7 +3,7 @@ import { type AgentId, getBuiltInAcpConfig } from '@happier-dev/agents';
 import type { AcpBackend } from '@/agent/acp/AcpBackend';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
 import type { AgentFactoryOptions, McpServerConfig } from '@/agent/core';
-import { createAcpBackendFromDefinition, normalizeBuiltInAcpDefinition } from '@/agent/acp/runtime/definition';
+import { createSynchronousAcpBackendFromDefinition, normalizeBuiltInAcpDefinition } from '@/agent/acp/runtime/definition';
 
 export type BuiltInAcpBackendOptions = AgentFactoryOptions & Readonly<{
   mcpServers?: Record<string, McpServerConfig>;
@@ -18,7 +18,7 @@ export function createBuiltInBackend(
   if (!getBuiltInAcpConfig(agentId)) {
     throw new Error(`Agent '${agentId}' is not a built-in generic ACP agent`);
   }
-  return createAcpBackendFromDefinition({
+  return createSynchronousAcpBackendFromDefinition({
     definition: normalizeBuiltInAcpDefinition(agentId),
     cwd: options.cwd,
     env: options.env,

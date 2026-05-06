@@ -49,7 +49,9 @@ describe('runAgentSdk subagent turn completion', () => {
         const holdOpen = createHoldOpen();
         const callOrder: string[] = [];
         const onReady = vi.fn(() => callOrder.push('ready'));
-        const onSubagentFlush = vi.fn(() => callOrder.push('subagentFlush'));
+        const onSubagentFlush = vi.fn(() => {
+            callOrder[callOrder.length] = 'subagentFlush';
+        });
         const thinkingEvents: boolean[] = [];
 
         const createQuery = createQueryFromEvents([
@@ -89,7 +91,9 @@ describe('runAgentSdk subagent turn completion', () => {
     it('flushes subagents before emitting ready for the parent result', async () => {
         const callOrder: string[] = [];
         const onReady = vi.fn(() => callOrder.push('ready'));
-        const onSubagentFlush = vi.fn(() => callOrder.push('subagentFlush'));
+        const onSubagentFlush = vi.fn(() => {
+            callOrder[callOrder.length] = 'subagentFlush';
+        });
 
         await runClaudeRemoteAgentSdk({
             sessionId: null,
@@ -140,6 +144,54 @@ describe('runAgentSdk subagent turn completion', () => {
 
         expect(onReady).toHaveBeenCalledTimes(1);
         expect(onSubagentFlush).not.toHaveBeenCalled();
+    });
+
+    it('rejects Agent SDK error result subtypes instead of completing the turn normally', async () => {
+        const onReady = vi.fn();
+
+        await expect(runClaudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: createNextMessage(),
+            onReady,
+            onSubagentFlush: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery: createQueryFromEvents([
+                { type: 'result', subtype: 'error_max_turns', result: 'maximum turns reached' },
+            ]),
+        } as any)).rejects.toThrow(/error_max_turns/);
+
+        expect(onReady).not.toHaveBeenCalled();
+    });
+
+    it('rejects Agent SDK execution errors instead of completing the turn normally', async () => {
+        const onReady = vi.fn();
+
+        await expect(runClaudeRemoteAgentSdk({
+            sessionId: null,
+            transcriptPath: null,
+            path: '/tmp',
+            claudeArgs: [],
+            claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+            isAborted: () => false,
+            nextMessage: createNextMessage(),
+            onReady,
+            onSubagentFlush: () => {},
+            onSessionFound: () => {},
+            onMessage: () => {},
+            createQuery: createQueryFromEvents([
+                { type: 'result', subtype: 'error_during_execution', result: 'tool runner failed' },
+            ]),
+        } as any)).rejects.toThrow(/error_during_execution/);
+
+        expect(onReady).not.toHaveBeenCalled();
     });
 
     it('keeps the latest active subagent interrupt target when an earlier subagent completes', async () => {

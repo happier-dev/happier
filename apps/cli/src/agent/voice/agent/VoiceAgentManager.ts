@@ -17,7 +17,7 @@ import {
   buildVoiceAgentUserTurnPrompt,
 } from './voiceAgentPrompts';
 import { ingestVoiceAgentStreamingDelta } from './voiceAgentStreamingDeltas';
-import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/promptLibrary/resolveCliMemoryRecallGuidanceEnabled';
+import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import type {
   BackendFactory,
   ResolveVoiceSystemAppendBlocksArgs,

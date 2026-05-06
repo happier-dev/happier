@@ -1,4 +1,10 @@
-export type SessionTurnLifecycleEvent = 'task_started' | 'task_complete' | 'turn_aborted' | 'ready';
+export type SessionTurnLifecycleEvent =
+    | 'task_started'
+    | 'task_complete'
+    | 'turn_aborted'
+    | 'turn_failed'
+    | 'turn_cancelled'
+    | 'ready';
 
 export function detectSessionTurnLifecycleEvent(value: unknown): SessionTurnLifecycleEvent | null {
     const obj = value && typeof value === 'object' && !Array.isArray(value)
@@ -18,7 +24,13 @@ export function detectSessionTurnLifecycleEvent(value: unknown): SessionTurnLife
             ? (data as Record<string, unknown>)
             : null;
         const dataType = typeof dataObj?.type === 'string' ? dataObj.type : null;
-        if (dataType === 'task_started' || dataType === 'task_complete' || dataType === 'turn_aborted') {
+        if (
+            dataType === 'task_started'
+            || dataType === 'task_complete'
+            || dataType === 'turn_aborted'
+            || dataType === 'turn_failed'
+            || dataType === 'turn_cancelled'
+        ) {
             return dataType;
         }
         return null;

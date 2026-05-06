@@ -8,7 +8,7 @@ export const agent = {
   getCliDetect: async () => (await import('@/agent/acp/catalog/builtIn/detect')).createBuiltInCliDetect('opencode'),
   getCliAuthSpec: async () => (await import('@/agent/acp/catalog/builtIn/auth')).createBuiltInCliAuthSpec('opencode'),
   getDirectSessionProviderOps: async () =>
-    (await import('@/session/directSessions/providers/opencode/providerOps'))
+    (await import('@/session/external/providers/opencode/providerOps'))
       .openCodeDirectSessionProviderOps,
   getConnectedServicesMaterializer: async () =>
     (await import('@/daemon/connectedServices/materialize/providers/opencode/createOpenCodeConnectedServicesMaterializer'))

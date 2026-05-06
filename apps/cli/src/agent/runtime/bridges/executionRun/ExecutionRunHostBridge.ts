@@ -8,15 +8,18 @@ import type { StreamedTranscriptWriterSession } from '../../../../api/session/st
 import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget/ExecutionBudgetRegistry';
 import {
   buildBackendTargetKey,
+  buildBackendTargetKeyV2,
   type BackendTargetRefV1,
   type ExecutionRunBridgeLifecycleHookEventIdV1,
+  type ExecutionRunListRequest,
   ExecutionRunPublicStateSchema,
   type ExecutionRunPublicState,
   type ExecutionRunStartRequest,
+  readBackendTargetRefV2,
 } from '@happier-dev/protocol';
 
 import { VoiceAgentError, VoiceAgentManager } from '../../../voice/agent/VoiceAgentManager';
-import { resolveCliVoicePromptStackBlocks } from '../../../promptLibrary/resolveCliVoicePromptStackBlocks';
+import { resolveCliVoicePromptStackBlocks } from '../../../prompts/library/resolveCliVoicePromptStackBlocks';
 import { configuration } from '../../../../configuration';
 import {
   type ExecutionRunActionParams,
@@ -28,7 +31,11 @@ import {
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
+import {
+  buildExecutionRunProfileCatalog,
+  resolveExecutionRunIntentProfileFromCatalog,
+  type ExecutionRunProfileContributionCatalog,
+} from '@/agent/executionRuns/profiles/intentRegistry';
 import { createExecutionRunBridgeRuntime } from './createExecutionRunBridgeRuntime';
 import { cancelVoiceAgentTurnStream, readVoiceAgentTurnStream, startVoiceAgentTurnStream } from './voiceAgentTurnStreams';
 import { sendBackendLongLivedRun } from './send/backendLongLivedPrompt';
@@ -41,6 +48,7 @@ import { finishExecutionRun } from './finishExecutionRun';
 import { startExecutionRun } from './startExecutionRun';
 import { enqueueExecutionRunMarkerWrite, writeExecutionRunActivityMarker } from './activityMarkers';
 import type { ExecutionRunHostBridgeContract } from './executionRunBridgeContract';
+import { matchesExecutionRunLegacyBackendId } from './backendTargets';
 import {
   readExecutionRunPermissionResponseApprovedFromDispatch,
   readExecutionRunPermissionResponseTargetFromDispatch,
@@ -59,11 +67,23 @@ function readBoundedExternalSendAckTimeoutMs(): number {
   return Math.min(parsed, 120_000);
 }
 
+function compareExecutionRunStatesForList(left: ExecutionRunState, right: ExecutionRunState): number {
+  if (left.startedAtMs !== right.startedAtMs) {
+    return left.startedAtMs - right.startedAtMs;
+  }
+  return left.runId.localeCompare(right.runId);
+}
+
+function normalizeExecutionRunListLimit(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
+}
+
 async function prepareExecutionRunManagerStartParams(
   params: ExecutionRunManagerStartParams,
   cwd: string,
+  profileCatalog: ExecutionRunProfileContributionCatalog,
 ): Promise<ExecutionRunManagerStartParams> {
-  const profile = resolveExecutionRunIntentProfile(params.intent);
+  const profile = resolveExecutionRunIntentProfileFromCatalog(profileCatalog, params.intent, params.profileId);
   const startProfilePatch = await profile.prepareStartParams?.({
     request: params as unknown as ExecutionRunStartRequest,
     cwd,
@@ -103,6 +123,8 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
     sessionId?: string | null;
     workingDirectory?: string | null;
   }>) => Promise<readonly string[]>;
+  executionRunProfileCatalog?: ExecutionRunProfileContributionCatalog;
+  resolveExecutionRunProfileCatalog?: () => Promise<ExecutionRunProfileContributionCatalog> | ExecutionRunProfileContributionCatalog;
   happyHomeDir?: string;
 }>;
 
@@ -135,6 +157,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly markerWriteChains = new Map<string, Promise<void>>();
   private readonly terminalMarkerWritePromises = new Map<string, Promise<void>>();
   private readonly voiceAgentManager: VoiceAgentManager;
+  private executionRunProfileCatalog: ExecutionRunProfileContributionCatalog;
+  private readonly resolveExecutionRunProfileCatalogOption:
+    | (() => Promise<ExecutionRunProfileContributionCatalog> | ExecutionRunProfileContributionCatalog)
+    | null;
+  private executionRunProfileCatalogLoad: Promise<ExecutionRunProfileContributionCatalog> | null = null;
   private readonly onPublicStateUpdated: ((run: ExecutionRunPublicState) => void) | null;
   private readonly onVoiceAgentWelcomed: ((run: ExecutionRunPublicState, welcomedEpoch: number) => void | Promise<void>) | null;
   private permissionResponseTargetStore: ExecutionRunPermissionRequestStore | null = null;
@@ -173,6 +200,20 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     });
   }
 
+  private async resolveExecutionRunProfileCatalog(): Promise<ExecutionRunProfileContributionCatalog> {
+    const resolver = this.resolveExecutionRunProfileCatalogOption;
+    if (!resolver) {
+      return this.executionRunProfileCatalog;
+    }
+    if (!this.executionRunProfileCatalogLoad) {
+      this.executionRunProfileCatalogLoad = Promise.resolve(resolver()).then((catalog) => {
+        this.executionRunProfileCatalog = catalog;
+        return catalog;
+      });
+    }
+    return await this.executionRunProfileCatalogLoad;
+  }
+
   constructor(opts: ExecutionRunHostBridgeOptions) {
     this.parentProvider = opts.parentProvider;
     this.cwd = opts.cwd;
@@ -197,6 +238,10 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       : configuration.happyHomeDir;
     this.onPublicStateUpdated = typeof opts.onPublicStateUpdated === 'function' ? opts.onPublicStateUpdated : null;
     this.onVoiceAgentWelcomed = typeof opts.onVoiceAgentWelcomed === 'function' ? opts.onVoiceAgentWelcomed : null;
+    this.executionRunProfileCatalog = opts.executionRunProfileCatalog ?? buildExecutionRunProfileCatalog();
+    this.resolveExecutionRunProfileCatalogOption = typeof opts.resolveExecutionRunProfileCatalog === 'function'
+      ? opts.resolveExecutionRunProfileCatalog
+      : null;
     const resolveAccountSettings = opts.resolveAccountSettings ?? (async () => null);
     const resolveVoicePromptStackBlocks = opts.resolveVoicePromptStackBlocks
       ?? (async ({
@@ -335,11 +380,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     return;
   }
 
-  getPublic(runId: string): ExecutionRunPublicState | null {
-    const run = this.runs.get(runId);
-    if (!run) return null;
-    const ctrl = this.controllers.get(runId) ?? null;
-    const availableActionIds = getExecutionRunAvailableActionIds(run, ctrl);
+  private buildPublicState(run: ExecutionRunState): ExecutionRunPublicState {
+    const ctrl = this.controllers.get(run.runId) ?? null;
+    const availableActionIds = getExecutionRunAvailableActionIds(run, ctrl, this.executionRunProfileCatalog);
     return ExecutionRunPublicStateSchema.parse({
       runId: run.runId,
       callId: run.callId,
@@ -362,34 +405,45 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     });
   }
 
+  getPublic(runId: string): ExecutionRunPublicState | null {
+    const run = this.runs.get(runId);
+    return run ? this.buildPublicState(run) : null;
+  }
+
   listPublic(): readonly ExecutionRunPublicState[] {
     const out: ExecutionRunPublicState[] = [];
     for (const run of this.runs.values()) {
-      const ctrl = this.controllers.get(run.runId) ?? null;
-      const availableActionIds = getExecutionRunAvailableActionIds(run, ctrl);
-      const parsed = ExecutionRunPublicStateSchema.parse({
-        runId: run.runId,
-        callId: run.callId,
-        sidechainId: run.sidechainId,
-        intent: run.intent,
-        backendTarget: run.backendTarget,
-        ...(run.display ? { display: run.display } : {}),
-        permissionMode: run.permissionMode,
-        retentionPolicy: run.retentionPolicy,
-        runClass: run.runClass,
-        ioMode: run.ioMode,
-        status: run.status,
-        ...(ctrl?.kind === 'backend' ? { turnInFlight: ctrl.turnInFlight } : {}),
-        ...(availableActionIds.length > 0 ? { availableActionIds } : {}),
-        ...(run.voiceAgentConfig?.transcript ? { transcript: run.voiceAgentConfig.transcript } : {}),
-        startedAtMs: run.startedAtMs,
-        ...(run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}),
-        ...(typeof run.finishedAtMs === 'number' ? { finishedAtMs: run.finishedAtMs } : {}),
-        ...(run.error ? { error: run.error } : {}),
-      });
-      out.push(parsed);
+      out.push(this.buildPublicState(run));
     }
     return out;
+  }
+
+  listPublicForRequest(request: ExecutionRunListRequest): readonly ExecutionRunPublicState[] {
+    const requestedBackendId =
+      typeof request.backendId === 'string' && request.backendId.trim().length > 0 ? request.backendId.trim() : null;
+    const requestedBackendTargetKey =
+      request.backendTarget ? buildBackendTargetKeyV2(readBackendTargetRefV2(request.backendTarget)) : null;
+    const requestedStatus =
+      typeof request.status === 'string' && request.status.trim().length > 0 ? request.status.trim() : null;
+    const requestedLimit = normalizeExecutionRunListLimit(request.limit);
+
+    const selected: ExecutionRunState[] = [];
+    for (const run of this.runs.values()) {
+      if (requestedBackendTargetKey && buildBackendTargetKeyV2(readBackendTargetRefV2(run.backendTarget)) !== requestedBackendTargetKey) {
+        continue;
+      }
+      if (!requestedBackendTargetKey && requestedBackendId && !matchesExecutionRunLegacyBackendId(run.backendTarget, requestedBackendId)) {
+        continue;
+      }
+      if (requestedStatus && run.status !== requestedStatus) {
+        continue;
+      }
+      selected.push(run);
+    }
+
+    const sorted = selected.sort(compareExecutionRunStatesForList);
+    const bounded = requestedLimit === null ? sorted : sorted.slice(0, requestedLimit);
+    return bounded.map((run) => this.buildPublicState(run));
   }
 
   getDepthByRunId(runId: string): number | null {
@@ -442,6 +496,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       sendAcp: this.sendAcp,
       enqueueMarkerWrite: this.enqueueMarkerWrite.bind(this),
       terminalMarkerWritePromises: this.terminalMarkerWritePromises,
+      profileCatalog: this.executionRunProfileCatalog,
     });
     this.emitPublicStateUpdated(runId);
     void this.emitLifecycleHookEvent({
@@ -481,9 +536,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
 
   async start(params: ExecutionRunManagerStartParams): Promise<ExecutionRunStartResult> {
     this.ensurePermissionResponseTargetHandlerRegistered();
-    const preparedParams = await prepareExecutionRunManagerStartParams(params, this.cwd);
+    const profileCatalog = await this.resolveExecutionRunProfileCatalog();
+    const preparedParams = await prepareExecutionRunManagerStartParams(params, this.cwd, profileCatalog);
     const started = await startExecutionRun({
       params: preparedParams,
+      profileCatalog,
       parentProvider: this.parentProvider,
       sendAcp: this.sendAcp,
       streamedTranscriptSession: this.streamedTranscriptSession,
@@ -534,6 +591,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }): Promise<void> {
     return executeBoundedBackendRun({
       ...args,
+      profileCatalog: this.executionRunProfileCatalog,
       controllers: this.controllers,
       sendAcp: this.sendAcp,
       parentProvider: this.parentProvider,
@@ -571,6 +629,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         getPermissionRequestStore: this.resolvePermissionRequestStore.bind(this),
         writeActivityMarker: this.writeActivityMarker.bind(this),
         onPublicStateUpdated: (runId2) => this.emitPublicStateUpdated(runId2),
+        profileCatalog: this.executionRunProfileCatalog,
       });
       if (result.ok) {
         await this.emitLifecycleHookEvent({
@@ -670,6 +729,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       getPermissionRequestStore: this.resolvePermissionRequestStore.bind(this),
       writeActivityMarker: this.writeActivityMarker.bind(this),
       onPublicStateUpdated: (runId2) => this.emitPublicStateUpdated(runId2),
+      profileCatalog: this.executionRunProfileCatalog,
     });
     if (result.ok) {
       await this.emitLifecycleHookEvent({
@@ -703,6 +763,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       writeActivityMarker: this.writeActivityMarker.bind(this),
       voiceAgentManager: this.voiceAgentManager,
       onPublicStateUpdated: (runId2) => this.emitPublicStateUpdated(runId2),
+      profileCatalog: this.executionRunProfileCatalog,
     });
   }
 
@@ -886,6 +947,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       sendAcp: this.sendAcp,
       sendCommittedAcp: this.streamedTranscriptSession?.sendAgentMessageCommitted,
       parentProvider: this.parentProvider,
+      profileCatalog: await this.resolveExecutionRunProfileCatalog(),
       onVoiceAgentWelcomed: async (welcomedRunId, welcomedEpoch) => {
         const callback = this.onVoiceAgentWelcomed;
         if (!callback) return;

@@ -143,6 +143,206 @@ describe('createCliApprovalsArtifactStore', () => {
     expect(read).toEqual(request);
   });
 
+  it('lists approval queue items from encrypted artifact headers without reading artifact bodies', async () => {
+    const credentials = createCredentials();
+    const store = createCliApprovalsArtifactStore({ credentials });
+
+    const request = ApprovalRequestV1Schema.parse({
+      v: 1,
+      actionId: 'session.message.send',
+      status: 'open',
+      summary: 'Approve sending a message',
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      createdBy: { surface: 'cli', sessionId: 's1' },
+      actionArgs: { sessionId: 's1', message: 'hello' },
+    });
+
+    let createdPayload: any = null;
+    mockPost.mockImplementationOnce(async (_url: string, body: any) => {
+      createdPayload = body;
+      return { status: 200, data: { id: body.id } };
+    });
+    const created = await store.approvalsCreate({ request, serverId: 'server-1' });
+
+    mockGet.mockImplementationOnce(async (url: string) => {
+      expect(url).toContain('/v1/artifacts');
+      expect(url).toContain('limit=50');
+      return {
+        status: 200,
+        data: [
+          {
+            id: created.artifactId,
+            header: createdPayload.header,
+            headerVersion: 1,
+            dataEncryptionKey: createdPayload.dataEncryptionKey,
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        ],
+      };
+    });
+
+    const listed = await store.approvalsList({ status: 'open', limit: 10, serverId: 'server-1' });
+
+    expect(listed).toEqual({
+      items: [
+        {
+          artifactId: created.artifactId,
+          status: 'open',
+          actionId: 'session.message.send',
+          summary: 'Approve sending a message',
+          sessionId: 's1',
+          serverId: 'server-1',
+          updatedAtMs: 2,
+        },
+      ],
+      queryPlan: {
+        kind: 'bounded_approval_artifact_header_scan',
+        backingStore: 'ArtifactStore',
+        boundedBy: 'GET /v1/artifacts?limit=50',
+        serverLimit: 50,
+        hydratedTranscripts: false,
+      },
+    });
+  });
+
+  it('excludes unscoped approval artifacts from server-scoped list queries', async () => {
+    const credentials = createCredentials();
+    const store = createCliApprovalsArtifactStore({ credentials });
+
+    const request = ApprovalRequestV1Schema.parse({
+      v: 1,
+      actionId: 'session.message.send',
+      status: 'open',
+      summary: 'Approve sending a message',
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      createdBy: { surface: 'cli', sessionId: 's1' },
+      actionArgs: { sessionId: 's1', message: 'hello' },
+    });
+
+    let createdPayload: any = null;
+    mockPost.mockImplementationOnce(async (_url: string, body: any) => {
+      createdPayload = body;
+      return { status: 200, data: { id: body.id } };
+    });
+    const created = await store.approvalsCreate({ request, serverId: null });
+
+    mockGet.mockImplementationOnce(async () => ({
+      status: 200,
+      data: [
+        {
+          id: created.artifactId,
+          header: createdPayload.header,
+          headerVersion: 1,
+          dataEncryptionKey: createdPayload.dataEncryptionKey,
+          seq: 1,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    }));
+
+    const listed = await store.approvalsList({ status: 'open', limit: 10, serverId: 'server-1' });
+
+    expect(listed.items).toEqual([]);
+  });
+
+  it('does not return approval artifacts from another server scope', async () => {
+    const credentials = createCredentials();
+    const store = createCliApprovalsArtifactStore({ credentials });
+
+    const request = ApprovalRequestV1Schema.parse({
+      v: 1,
+      actionId: 'session.message.send',
+      status: 'open',
+      summary: 'Approve sending a message',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      createdBy: { surface: 'cli', sessionId: 's1' },
+      actionArgs: { sessionId: 's1', message: 'hello' },
+    });
+
+    let createdPayload: any = null;
+    mockPost.mockImplementationOnce(async (_url: string, body: any) => {
+      createdPayload = body;
+      return { status: 200, data: { id: body.id } };
+    });
+    const created = await store.approvalsCreate({ request, serverId: 'server-2' });
+
+    mockGet.mockImplementationOnce(async () => ({
+      status: 200,
+      data: {
+        id: created.artifactId,
+        header: createdPayload.header,
+        headerVersion: 1,
+        body: createdPayload.body,
+        bodyVersion: 1,
+        dataEncryptionKey: createdPayload.dataEncryptionKey,
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }));
+
+    const read = await store.approvalsGet({ artifactId: created.artifactId, serverId: 'server-1' });
+
+    expect(read).toBeNull();
+  });
+
+  it('lists canceled approval queue items from encrypted artifact headers', async () => {
+    const credentials = createCredentials();
+    const store = createCliApprovalsArtifactStore({ credentials });
+
+    const request = ApprovalRequestV1Schema.parse({
+      v: 1,
+      actionId: 'session.message.send',
+      status: 'canceled',
+      summary: 'Canceled send request',
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      createdBy: { surface: 'cli', sessionId: 's1' },
+      actionArgs: { sessionId: 's1', message: 'hello' },
+    });
+
+    let createdPayload: any = null;
+    mockPost.mockImplementationOnce(async (_url: string, body: any) => {
+      createdPayload = body;
+      return { status: 200, data: { id: body.id } };
+    });
+    const created = await store.approvalsCreate({ request, serverId: 'server-1' });
+
+    mockGet.mockImplementationOnce(async () => ({
+      status: 200,
+      data: [
+        {
+          id: created.artifactId,
+          header: createdPayload.header,
+          headerVersion: 1,
+          dataEncryptionKey: createdPayload.dataEncryptionKey,
+          seq: 1,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+    }));
+
+    const listed = await store.approvalsList({ status: 'canceled', limit: 10, serverId: 'server-1' });
+
+    expect(listed.items).toEqual([
+      expect.objectContaining({
+        artifactId: created.artifactId,
+        status: 'canceled',
+        actionId: 'session.message.send',
+        summary: 'Canceled send request',
+        sessionId: 's1',
+        serverId: 'server-1',
+      }),
+    ]);
+  });
+
   it('updates approval artifacts using optimistic versions', async () => {
     const credentials = createCredentials();
     const store = createCliApprovalsArtifactStore({ credentials });
@@ -217,5 +417,56 @@ describe('createCliApprovalsArtifactStore', () => {
 
     const decryptedBody = decryptWithDataKey(decodeBase64(capturedUpdateBody.body), dataKey!);
     expect(decryptedBody).toEqual({ body: JSON.stringify(request) });
+  });
+
+  it('rejects updates to approval artifacts from another server scope', async () => {
+    const credentials = createCredentials();
+    const store = createCliApprovalsArtifactStore({ credentials });
+
+    const request = ApprovalRequestV1Schema.parse({
+      v: 1,
+      actionId: 'session.message.send',
+      status: 'approved',
+      summary: 'Approve sending a message',
+      createdAtMs: 1,
+      updatedAtMs: 2,
+      createdBy: { surface: 'cli', sessionId: 's1' },
+      actionArgs: { sessionId: 's1', message: 'hello' },
+      decision: { kind: 'approve', decidedAtMs: 2 },
+    });
+
+    let createPayload: any = null;
+    mockPost.mockImplementationOnce(async (_url: string, body: any) => {
+      createPayload = body;
+      return { status: 200, data: { id: body.id } };
+    });
+    const created = await store.approvalsCreate({
+      request: ApprovalRequestV1Schema.parse({ ...request, status: 'open', updatedAtMs: 1, decision: undefined }),
+      serverId: 'server-2',
+    });
+
+    mockGet.mockImplementationOnce(async () => ({
+      status: 200,
+      data: {
+        id: created.artifactId,
+        header: createPayload.header,
+        headerVersion: 3,
+        body: createPayload.body,
+        bodyVersion: 4,
+        dataEncryptionKey: createPayload.dataEncryptionKey,
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }));
+    mockPost.mockImplementationOnce(async () => ({
+      status: 200,
+      data: { success: true, headerVersion: 4, bodyVersion: 5 },
+    }));
+
+    const res = await store.approvalsUpdate({ artifactId: created.artifactId, request, serverId: 'server-1' });
+
+    expect(res).toEqual({ ok: false, errorCode: 'not_found', error: 'artifact_not_found' });
+    expect(mockPost).toHaveBeenCalledTimes(1);
   });
 });

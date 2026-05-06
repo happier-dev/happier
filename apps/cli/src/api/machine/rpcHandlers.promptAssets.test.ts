@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { PromptAssetDiscoverResponseV1Schema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -10,6 +10,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 
 import { registerMachineRpcHandlers } from './rpcHandlers';
+import { registerMachinePromptAssetsRpcHandlers } from './rpcHandlers.promptAssets';
 
 type Handler = (data: unknown) => Promise<any>;
 
@@ -24,6 +25,36 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
 }
 
 describe('rpcHandlers (prompt assets)', () => {
+  it('dispatches prompt asset mutation RPCs through ActionSpec when an executor is provided', async () => {
+    const mgr = createRpcHandlerManager();
+    const execute = vi.fn(async () => ({
+      ok: true,
+      result: { ok: true, items: [{ assetTypeId: 'agents.skill', scope: 'user' }] },
+    }));
+
+    registerMachinePromptAssetsRpcHandlers({
+      rpcHandlerManager: mgr as any,
+      adapterRegistry: new Map(),
+      actionExecutor: { execute },
+    } as any);
+
+    const discover = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_ASSETS_DISCOVER);
+    if (!discover) {
+      throw new Error('expected prompt asset discover handler');
+    }
+
+    await expect(discover({
+      assetTypeId: 'agents.skill',
+      scope: 'user',
+    })).resolves.toEqual({ ok: true, items: [{ assetTypeId: 'agents.skill', scope: 'user' }] });
+
+    expect(execute).toHaveBeenCalledWith(
+      'daemon.promptAssets.discover',
+      { assetTypeId: 'agents.skill', scope: 'user' },
+      expect.objectContaining({ surface: 'rpc' }),
+    );
+  });
+
   it('registers the surviving prompt asset handlers and omits legacy inline read/write handlers', () => {
     const mgr = createRpcHandlerManager();
 

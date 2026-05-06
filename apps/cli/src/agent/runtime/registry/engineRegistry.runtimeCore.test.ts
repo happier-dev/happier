@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PluginSubagentsServiceV1 } from '@happier-dev/plugin-sdk';
 
 import { configuration } from '@/configuration';
 import { createPluginApiHost } from '@/plugins/runtime/api/host';
@@ -137,6 +138,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             onChange?: unknown;
             services?: Readonly<{
                 materialize?: unknown;
+            }>;
+        }>;
+        mcp?: Readonly<{
+            resolveForSession?: unknown;
+        }>;
+        actions?: Readonly<{
+            scm?: Readonly<{
+                diffSummary?: Readonly<{
+                    generate?: unknown;
+                }>;
             }>;
         }>;
     }>;
@@ -882,13 +893,41 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             updateStatus: expect.any(Function),
             complete: expect.any(Function),
         }));
+        const subagents = context.sessions?.subagents as PluginSubagentsServiceV1;
+        await expect(subagents.upsert({
+            id: 'plugin-subagent-1',
+            parentSessionId: 'session-1',
+            origin: 'provider',
+            kind: 'native',
+            providerRef: { providerId: 'acme.sample' },
+        })).rejects.toThrow(/unavailable/);
+        await expect(subagents.list({ parentSessionId: 'session-1' }))
+            .resolves
+            .toEqual([]);
+        await expect(subagents.complete({
+            id: 'plugin-subagent-1',
+            parentSessionId: 'session-1',
+            status: 'completed',
+        })).rejects.toThrow(/unavailable/);
         expect(context.sessions?.external).toEqual(expect.objectContaining({
             listCandidates: expect.any(Function),
+            attach: expect.any(Function),
             takeover: expect.any(Function),
             pageTranscript: expect.any(Function),
             readAfterTranscript: expect.any(Function),
             followTranscript: expect.any(Function),
         }));
+        const externalSessions = context.sessions?.external as Readonly<{
+            attach: (input: unknown) => Promise<unknown>;
+            takeover: (input: unknown) => Promise<unknown>;
+            followTranscript: (input: unknown, onEvent: (event: unknown) => void) => { unsubscribe: () => void };
+        }>;
+        await expect(externalSessions.attach({})).resolves.toMatchObject({ ok: false });
+        await expect(externalSessions.takeover({})).resolves.toMatchObject({
+            ok: false,
+            errorCode: 'capability_unsupported',
+        });
+        expect(() => externalSessions.followTranscript({}, vi.fn()).unsubscribe()).not.toThrow();
         expect(context.notifications?.send).toEqual(expect.any(Function));
         expect(context.notifications?.listCategories).toEqual(expect.any(Function));
         expect(context.notifications?.listChannels).toEqual(expect.any(Function));
@@ -914,6 +953,97 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
         expect(createExecutionRunBackend).toHaveBeenCalledTimes(1);
         expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps plugin subagent access typed-unavailable in A.13 host session scope', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                directSessions: null,
+                attach: null,
+                sessionHandoff: null,
+            },
+            diagnostics: [],
+        });
+
+        let observedContext: unknown = null;
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            backendEnginesByBackendId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async (ctx: unknown) => {
+                            observedContext = ctx;
+                            return {
+                                runtimeCore: {
+                                    createSessionRuntime: async () => ({
+                                        kind: 'hostSessionRuntimePlan',
+                                        config: {
+                                            createSessionRuntime: async () => ({ ok: true }),
+                                        },
+                                    }),
+                                    createExecutionRunBackend: vi.fn(),
+                                },
+                            };
+                        },
+                    },
+                }],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            dispose: vi.fn(async () => undefined),
+        });
+
+        const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as Readonly<{
+            config: Readonly<{
+                createSessionRuntime: (params: unknown) => Promise<unknown>;
+            }>;
+        }>;
+        await plan.config.createSessionRuntime({
+            directory: '/tmp/plugin',
+            metadata: {},
+            machineId: 'machine-1',
+            session: { sessionId: 'session-1' },
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        });
+
+        const context = observedContext as ObservedPluginRuntimeContext;
+        const subagents = context.sessions?.subagents as PluginSubagentsServiceV1;
+        await expect(subagents.upsert({
+            id: 'plugin-subagent-1',
+            parentSessionId: 'session-1',
+            origin: 'provider',
+            kind: 'native',
+            providerRef: { providerId: 'acme.sample' },
+        })).rejects.toThrow(/unavailable/);
+
+        await expect(subagents.list({ parentSessionId: 'session-2' })).resolves.toEqual([]);
+        await expect(subagents.upsert({
+            id: 'plugin-subagent-2',
+            parentSessionId: 'session-2',
+            origin: 'provider',
+            kind: 'native',
+            providerRef: { providerId: 'acme.sample' },
+        })).rejects.toThrow(/unavailable/);
+        expect(() => subagents.watch({ parentSessionId: 'session-2' }, vi.fn()).unsubscribe()).not.toThrow();
+        await expect(subagents.complete({
+            id: 'plugin-subagent-2',
+            parentSessionId: 'session-2',
+            status: 'completed',
+        })).rejects.toThrow(/unavailable/);
     });
 
     it('hydrates plugin notification contributions into the plugin runtime context', async () => {
@@ -1569,6 +1699,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     },
                 }],
             ]),
+            mcpServers: [
+                {
+                    pluginId: 'acme.other',
+                    registration: {
+                        id: 'acme.other.mcp',
+                        name: 'other-mcp',
+                        transport: { kind: 'hosted' },
+                    },
+                },
+            ],
             eventSubscriptionPermissionsByPluginId: new Map([
                 ['acme.sample', new Set(['session.subscribe'])],
             ]),
@@ -1618,6 +1758,13 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     materialize: expect.any(Function),
                 },
             },
+            actions: {
+                scm: {
+                    diffSummary: {
+                        generate: expect.any(Function),
+                    },
+                },
+            },
         });
         const context = observedContext as unknown as ObservedPluginRuntimeContext;
         expect('getConnectedServices' in (context.auth ?? {})).toBe(false);
@@ -1637,6 +1784,14 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             serviceId: 'openai-codex',
             profileId: 'default',
         });
+
+        const resolveMcpForSession = context.mcp?.resolveForSession as
+            | ((input: Readonly<{ sessionId: string; directory: string }>) => Promise<readonly unknown[]>)
+            | undefined;
+        await expect(resolveMcpForSession?.({
+            sessionId: 'session-1',
+            directory: '/tmp/project',
+        })).resolves.toEqual([]);
     });
 
     it('proves built-in parity: SessionHostBridge and createExecutionRunBackend both route through EngineRegistry runtimeCore for codex', async () => {

@@ -1,7 +1,6 @@
 import type { BackendTargetRefV1, ExecutionRunRetentionPolicy } from '@happier-dev/protocol';
 
 import type { ExecutionRunProfileBoundedCompleteResult } from '../../executionRuns/profiles/ExecutionRunIntentProfile';
-import { normalizeCodeRabbitPlainReviewOutput } from '../engines/coderabbit/normalizeCodeRabbitPlainReviewOutput';
 
 export type ReviewOutputNormalizer = (params: Readonly<{
   runId: string;
@@ -16,9 +15,7 @@ export type ReviewOutputNormalizer = (params: Readonly<{
   retentionPolicy?: ExecutionRunRetentionPolicy;
 }>) => ExecutionRunProfileBoundedCompleteResult;
 
-const REVIEW_OUTPUT_NORMALIZERS: Record<string, ReviewOutputNormalizer> = {
-  coderabbit: normalizeCodeRabbitPlainReviewOutput,
-};
+const REVIEW_OUTPUT_NORMALIZERS: Record<string, ReviewOutputNormalizer> = {};
 
 export function resolveReviewOutputNormalizer(backendId: string): ReviewOutputNormalizer | null {
   const key = String(backendId ?? '').trim();

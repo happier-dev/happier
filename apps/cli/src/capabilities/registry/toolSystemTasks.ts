@@ -3,9 +3,14 @@ import {
 } from '@happier-dev/protocol';
 
 import { type Capability } from '../service';
+import { DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND } from '../systemTasks/ssh/discoverConfiguredSshHosts/discoverConfiguredSshHostsSystemTask';
 import { getLiveSystemTasksRunnerAdapter } from '../systemTasks/liveSystemTasksRunner';
 
 export const SYSTEM_TASK_KIND_IDS = [
+  DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND,
+  'daemon.sshTunnel.ensure.v1',
+  'daemon.sshTunnel.list.v1',
+  'daemon.sshTunnel.stop.v1',
   'remote.ssh.bootstrapMachine.v1',
   'relay.runtime.installOrUpdate.v1',
   'relay.runtime.start.v1',

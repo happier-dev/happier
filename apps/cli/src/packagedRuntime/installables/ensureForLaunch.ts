@@ -1,4 +1,9 @@
-import { INSTALLABLES_CATALOG, type AccountSettings, type InstallableKey } from '@happier-dev/protocol';
+import {
+  BUILT_IN_INSTALLABLES_REGISTRY,
+  type AccountSettings,
+  type InstallableKey,
+  type InstallablesRegistry,
+} from '@happier-dev/protocol';
 import { resolveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
 
 import {
@@ -8,7 +13,10 @@ import {
 import { startBackgroundRuntimeInstallableUpdate } from './startBackgroundUpdate';
 
 type Deps = Readonly<{
-  getRuntimeInstallableAdapter: (installableKey: InstallableKey) => Promise<RuntimeInstallableAdapter>;
+  getRuntimeInstallableAdapter: (
+    installableKey: InstallableKey,
+    opts?: Readonly<{ installablesRegistry?: InstallablesRegistry }>,
+  ) => Promise<RuntimeInstallableAdapter>;
   startBackgroundRuntimeInstallableUpdate: typeof startBackgroundRuntimeInstallableUpdate;
 }>;
 
@@ -22,6 +30,7 @@ export async function ensureRuntimeInstallablesForLaunch(
     settings: AccountSettings | null | undefined;
     machineId: string;
     env?: NodeJS.ProcessEnv;
+    installablesRegistry?: InstallablesRegistry;
   }>,
   depsOverrides: Partial<Deps> = {},
 ): Promise<EnsureRuntimeInstallablesForLaunchResult> {
@@ -32,25 +41,29 @@ export async function ensureRuntimeInstallablesForLaunch(
   };
 
   const installedKeys: InstallableKey[] = [];
-  const defaultsByInstallableKey = new Map(INSTALLABLES_CATALOG.map((entry) => [entry.key, entry.defaultPolicy]));
-
+  const installablesRegistry = params.installablesRegistry ?? BUILT_IN_INSTALLABLES_REGISTRY;
   for (const installableKey of Array.from(new Set(params.installableKeys))) {
-    const adapter = await deps.getRuntimeInstallableAdapter(installableKey);
-    const defaults = defaultsByInstallableKey.get(installableKey);
-    if (!defaults) {
+    const descriptor = installablesRegistry.descriptorsByKey[installableKey]?.descriptor;
+    if (!descriptor) {
       throw new Error(`No installable catalog entry exists for "${installableKey}"`);
     }
+    const adapter = await deps.getRuntimeInstallableAdapter(installableKey, { installablesRegistry });
     const policy = resolveInstallablePolicy({
       settings: params.settings ?? {},
       machineId: params.machineId,
       installableKey,
-      defaults,
+      defaults: descriptor.defaultPolicy,
     });
 
     let resolution = await adapter.detectLaunchResolution({ env: params.env });
     let installedThisLaunch = false;
 
-    if (!resolution.availability.ok && resolution.canAutoInstall && policy.autoInstallWhenNeeded) {
+    if (
+      !resolution.availability.ok &&
+      resolution.canAutoInstall &&
+      policy.autoInstallWhenNeeded &&
+      descriptor.consent.install !== 'required'
+    ) {
       const installResult = await adapter.installOrUpgrade();
       if (!installResult.ok) {
         return {

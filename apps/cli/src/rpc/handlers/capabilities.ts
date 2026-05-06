@@ -7,6 +7,8 @@ import { tmuxCapability } from '@/capabilities/registry/toolTmux';
 import { windowsTerminalCapability } from '@/capabilities/registry/toolWindowsTerminal';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { systemTasksCapability } from '@/capabilities/registry/toolSystemTasks';
+import { ghDepCapability } from '@/capabilities/registry/depGh';
+import { azDepCapability } from '@/capabilities/registry/depAz';
 import { createCapabilitiesService } from '@/capabilities/service';
 import type { Capability } from '@/capabilities/service';
 import type {
@@ -506,6 +508,8 @@ export async function createCliCapabilitiesService(): Promise<ReturnType<typeof 
             tmuxCapability,
             windowsTerminalCapability,
             createPluginMarketplaceCapability(),
+            ghDepCapability,
+            azDepCapability,
             executionRunsCapability,
             systemTasksCapability,
         ],

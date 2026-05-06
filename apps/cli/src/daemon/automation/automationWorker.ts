@@ -261,9 +261,9 @@ export function startAutomationWorker(params: {
     }
 
     const budgetRegistry = params.budgetRegistry;
-    // Automation runs should respect the shared daemon ephemeral-task budget so we don't
+    // Automation runs should respect the shared daemon one-shot budget so we don't
     // starve other daemon work (and vice-versa).
-    if (budgetRegistry && !budgetRegistry.tryAcquireEphemeralTask(budgetTokenId, 'ephemeral_task')) {
+    if (budgetRegistry && !budgetRegistry.tryAcquireOneShotTask(budgetTokenId, 'automation')) {
       // Try again on the next schedule tick.
       rescheduleClaim('budget-blocked');
       return;
@@ -340,7 +340,7 @@ export function startAutomationWorker(params: {
     } finally {
       claimInFlight = false;
       if (budgetRegistry) {
-        budgetRegistry.releaseEphemeralTask(budgetTokenId);
+        budgetRegistry.releaseOneShotTask(budgetTokenId);
       }
 
       if (pendingQueuedWake && assignments.getAll().length > 0) {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { access, constants, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,7 +8,13 @@ import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createPluginAuthService } from './auth';
+import { createPluginEnvService } from './env';
 import { createPluginEventsService, publishHostPluginEvent } from './events';
+import { createPluginExecService } from './exec';
+import { createPluginFsService } from './fs';
+import { createPluginManagedServerService } from './managedServer';
+import { createPluginProgressService } from './progress';
+import { createPluginRetryService } from './retry';
 import { createPluginSecretsService } from './secrets';
 import { createPluginSettingsService } from './settings';
 import {
@@ -17,9 +23,23 @@ import {
     createPluginStoragePublicShareSnapshot,
     createPluginStorageService,
 } from './storage';
+import { createPluginTranscriptsService } from './transcripts';
+import { createPluginDisposableRegistry } from '../lifecycle/disposables';
 
 async function makeHappyHome(): Promise<string> {
     return await mkdtemp(join(tmpdir(), 'happier-a11-'));
+}
+
+async function firstExecutablePath(candidates: readonly string[]): Promise<string> {
+    for (const candidate of candidates) {
+        try {
+            await access(candidate, constants.X_OK);
+            return candidate;
+        } catch {
+            // Try the next platform-specific candidate.
+        }
+    }
+    throw new Error(`No executable candidate found: ${candidates.join(', ')}`);
 }
 
 describe('A.11 plugin context services', () => {
@@ -303,6 +323,327 @@ describe('A.11 plugin context services', () => {
         expect('disconnect' in auth).toBe(false);
 
         subscription.unsubscribe();
+    });
+
+    it('provides A.13 env and fs services through plugin-scoped access only', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const env = createPluginEnvService({
+            env: {
+                HAPPIER_ALLOWED: 'yes',
+                SECRET_TOKEN: 'no',
+            },
+            allowedNames: ['HAPPIER_ALLOWED'],
+        });
+        const fs = createPluginFsService({
+            rootDir: join(paths.storageDir, 'acme.plugin', 'fs'),
+        });
+
+        expect(env.get('HAPPIER_ALLOWED')).toBe('yes');
+        expect(env.get('SECRET_TOKEN')).toBeNull();
+        await fs.writeText({ path: 'notes/run.txt', contents: 'ok' });
+
+        await expect(fs.readText({ path: 'notes/run.txt' })).resolves.toBe('ok');
+        await expect(fs.writeText({ path: '../escape.txt', contents: 'no' })).rejects.toThrow(/escapes/);
+    });
+
+    it('rejects plugin filesystem symlink escapes from the scoped root', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const rootDir = join(paths.storageDir, 'acme.plugin', 'fs');
+        const outsideDir = await mkdtemp(join(tmpdir(), 'happier-a13-fs-outside-'));
+        await mkdir(rootDir, { recursive: true });
+        await writeFile(join(outsideDir, 'secret.txt'), 'secret', 'utf8');
+        await symlink(outsideDir, join(rootDir, 'outside'), 'dir');
+        const fs = createPluginFsService({
+            rootDir,
+        });
+
+        await expect(fs.readText({ path: 'outside/secret.txt' })).rejects.toThrow(/escapes/);
+        await expect(fs.writeText({ path: 'outside/new.txt', contents: 'no' })).rejects.toThrow(/escapes/);
+        await expect(fs.list({ path: 'outside' })).rejects.toThrow(/escapes/);
+        await expect(fs.stat({ path: 'outside/secret.txt' })).rejects.toThrow(/escapes/);
+    });
+
+    it('enforces declared plugin filesystem read and write permissions', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const rootDir = join(paths.storageDir, 'acme.plugin', 'fs');
+        const fs = createPluginFsService({
+            rootDir,
+            readAllowedPaths: [],
+            writeAllowedPaths: ['allowed'],
+        });
+
+        await expect(fs.writeText({ path: 'allowed/run.txt', contents: 'ok' })).resolves.toBeUndefined();
+        await expect(fs.writeText({ path: 'denied/run.txt', contents: 'no' })).rejects.toThrow(/permission/);
+        await expect(fs.readText({ path: 'allowed/run.txt' })).rejects.toThrow(/permission/);
+    });
+
+    it('does not expose Happier environment variables without explicit manifest scopes', () => {
+        const env = createPluginEnvService({
+            env: {
+                HAPPIER_A13_SECRET: 'hidden',
+                HAPPIER_VISIBLE_ONLY_IF_DECLARED: 'hidden',
+            },
+        });
+
+        expect(env.get('HAPPIER_A13_SECRET')).toBeNull();
+        expect(env.list()).toEqual({});
+        expect(() => env.require('HAPPIER_A13_SECRET')).toThrow(/unavailable/);
+    });
+
+    it('exposes only explicitly declared environment variable scopes', () => {
+        const env = createPluginEnvService({
+            env: {
+                HAPPIER_DECLARED_ENV: 'visible',
+                HAPPIER_A13_SECRET: 'hidden',
+            },
+            allowedNames: ['HAPPIER_DECLARED_ENV'],
+        });
+
+        expect(env.get('HAPPIER_DECLARED_ENV')).toBe('visible');
+        expect(env.get('HAPPIER_A13_SECRET')).toBeNull();
+        expect(env.list()).toEqual({ HAPPIER_DECLARED_ENV: 'visible' });
+    });
+
+    it('provides retry, progress, and transcript source handles with bounded cleanup semantics', async () => {
+        const retry = createPluginRetryService();
+        let attempts = 0;
+        await expect(retry.wrap(async ({ attempt }) => {
+            attempts = attempt;
+            if (attempt === 1) {
+                throw Object.assign(new Error('retry'), { code: 'ETIMEDOUT' });
+            }
+            return 'ok';
+        }, {
+            maxAttempts: 2,
+            baseDelayMs: 0,
+        })).resolves.toBe('ok');
+        expect(attempts).toBe(2);
+
+        const progress = createPluginProgressService();
+        const handle = progress.start({ id: 'sync', label: 'Sync', total: 2 });
+        progress.report('sync', { current: 1 });
+        expect(handle.snapshot()).toMatchObject({ current: 1, total: 2, state: 'active' });
+        progress.finish('sync', 'done');
+        expect(handle.snapshot()).toMatchObject({ state: 'finished', message: 'done' });
+
+        const release = vi.fn(async () => undefined);
+        const registry = createPluginDisposableRegistry();
+        const transcripts = createPluginTranscriptsService({
+            append: async () => undefined,
+            maxSources: 1,
+            addDisposable: registry.add,
+        });
+        const source = await transcripts.defineSource({
+            id: 'runtime',
+            page: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+            readAfter: async () => ({ items: [], nextCursor: null, truncated: false }),
+            acquireFollowLease: async () => ({ release }),
+        });
+        await expect(transcripts.defineSource({
+            id: 'overflow',
+            page: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+            readAfter: async () => ({ items: [], nextCursor: null, truncated: false }),
+        })).rejects.toThrow(/more than 1/);
+        await source.dispose();
+        await source.dispose();
+        expect(release).toHaveBeenCalledTimes(1);
+
+        const retainedRelease = vi.fn(async () => undefined);
+        await transcripts.defineSource({
+            id: 'retained',
+            page: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+            readAfter: async () => ({ items: [], nextCursor: null, truncated: false }),
+            acquireFollowLease: async () => ({ release: retainedRelease }),
+        });
+        await registry.dispose();
+        expect(retainedRelease).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects undeclared executable launches before spawning a process', async () => {
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const exec = createPluginExecService({
+            allowedExecutablePaths: [],
+        });
+
+        await expect(exec.run({
+            kind: 'resolvedExecutable',
+            executablePath: shellPath,
+            args: ['-c', 'exit 0'],
+        })).rejects.toMatchObject({
+            code: 'PLUGIN_EXEC_PERMISSION_DENIED',
+        });
+    });
+
+    it('rejects path-only executable launches before spawn even when policy contains a matching path-only scope', async () => {
+        const exec = createPluginExecService({
+            allowedExecutablePaths: ['git'],
+        });
+
+        await expect(exec.spawn({
+            kind: 'resolvedExecutable',
+            executablePath: 'git',
+            args: ['--version'],
+        })).rejects.toMatchObject({
+            code: 'PLUGIN_EXEC_UNRESOLVED_LAUNCH',
+        });
+    });
+
+    it('does not leak host environment variables into allowed exec launches', async () => {
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const previous = process.env.HAPPIER_A13_SECRET;
+        process.env.HAPPIER_A13_SECRET = 'leaked';
+        try {
+            const exec = createPluginExecService({
+                allowedExecutablePaths: [shellPath],
+                baseEnv: {},
+            });
+
+            await expect(exec.run({
+                kind: 'resolvedExecutable',
+                executablePath: shellPath,
+                args: ['-c', 'printf "%s" "${HAPPIER_A13_SECRET:-}"'],
+            })).resolves.toMatchObject({
+                stdout: '',
+            });
+        } finally {
+            if (previous === undefined) {
+                delete process.env.HAPPIER_A13_SECRET;
+            } else {
+                process.env.HAPPIER_A13_SECRET = previous;
+            }
+        }
+    });
+
+    it('disposes spawned exec handles through the plugin lifecycle registry', async () => {
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const registry = createPluginDisposableRegistry();
+        const exec = createPluginExecService({
+            allowedExecutablePaths: [shellPath],
+            addDisposable: registry.add,
+        });
+
+        const handle = await exec.spawn({
+            kind: 'resolvedExecutable',
+            executablePath: shellPath,
+            args: ['-c', 'sleep 30'],
+        });
+        await registry.dispose();
+
+        await expect(handle.exit).resolves.toMatchObject({
+            exitCode: null,
+        });
+        await expect(handle.dispose()).resolves.toBeUndefined();
+    });
+
+    it('does not report managed servers healthy when no health check evidence is available', async () => {
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const server = createPluginManagedServerService({
+            exec: createPluginExecService({
+                allowedExecutablePaths: [shellPath],
+            }),
+        });
+        const handle = await server.supervise({
+            id: 'without-health',
+            launch: {
+                kind: 'resolvedExecutable',
+                executablePath: shellPath,
+                args: ['-c', 'sleep 30'],
+            },
+            startupTimeoutMs: 25,
+        });
+
+        await expect(handle.waitUntilHealthy({ timeoutMs: 25 })).rejects.toMatchObject({
+            code: 'PLUGIN_MANAGED_SERVER_HEALTH_UNSUPPORTED',
+        });
+        expect(handle.snapshot()).toMatchObject({
+            state: 'unhealthy',
+        });
+        await handle.dispose();
+    });
+
+    it('composes caller abort signals into managed server HTTP health probes', async () => {
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const fetchSignals: AbortSignal[] = [];
+        vi.stubGlobal('fetch', vi.fn(async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+            if (init?.signal instanceof AbortSignal) {
+                fetchSignals.push(init.signal);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            return new Response(null, { status: 503 });
+        }));
+        const server = createPluginManagedServerService({
+            exec: createPluginExecService({
+                allowedExecutablePaths: [shellPath],
+            }),
+        });
+        const handle = await server.supervise({
+            id: 'http-health-abort',
+            launch: {
+                kind: 'resolvedExecutable',
+                executablePath: shellPath,
+                args: ['-c', 'sleep 30'],
+            },
+            healthCheck: {
+                kind: 'http',
+                url: 'http://127.0.0.1/health',
+                timeoutMs: 1_000,
+            },
+        });
+        const controller = new AbortController();
+        const wait = handle.waitUntilHealthy({
+            timeoutMs: 1_000,
+            signal: controller.signal,
+        });
+        try {
+            await vi.waitFor(() => {
+                expect(fetchSignals).toHaveLength(1);
+            });
+            controller.abort();
+            expect(fetchSignals[0]?.aborted).toBe(true);
+            await expect(wait).rejects.toMatchObject({
+                name: 'AbortError',
+            });
+        } finally {
+            await wait.catch(() => undefined);
+            await handle.dispose();
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('rejects managed-server HTTP health probes for non-loopback origins', async () => {
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+        vi.stubGlobal('fetch', fetchMock);
+        const server = createPluginManagedServerService({
+            exec: createPluginExecService({
+                allowedExecutablePaths: [shellPath],
+            }),
+        });
+        const handle = await server.supervise({
+            id: 'http-health-non-loopback',
+            launch: {
+                kind: 'resolvedExecutable',
+                executablePath: shellPath,
+                args: ['-c', 'sleep 30'],
+            },
+            healthCheck: {
+                kind: 'http',
+                url: 'https://metadata.google.internal/health',
+                timeoutMs: 10,
+            },
+            startupTimeoutMs: 10,
+        });
+
+        try {
+            await expect(handle.waitUntilHealthy({ timeoutMs: 10 })).rejects.toThrow(/loopback/);
+            expect(fetchMock).not.toHaveBeenCalled();
+        } finally {
+            await handle.dispose();
+            vi.unstubAllGlobals();
+        }
     });
 });
 

@@ -19,7 +19,7 @@ import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import { registerMachineVoiceInferenceRpcHandlers } from './rpcHandlers.voiceInference';
 import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
-import { registerMachineDirectSessionsRpcHandlers } from './rpcHandlers.directSessions';
+import { registerMachineExternalSessionsRpcHandlers } from './rpcHandlers.externalSessions';
 import {
   registerMachineSessionHandoffRpcHandlers,
   type SessionHandoffDirectPeerTransferHandle,
@@ -37,6 +37,12 @@ import {
 } from './rpcHandlers.directTransferExports';
 import { registerMachineDiagnosticsRpcHandlers } from './rpcHandlers.diagnostics';
 import { registerMachineSessionRpcHandlers } from './rpcHandlers.sessions';
+import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
+import { registerSessionPermissionRpcHandlers } from '@/rpc/handlers/sessionPermissions';
+import { registerSessionLifecycleRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
+import { MACHINE_SESSION_STOP_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
+import { registerSubagentRpcHandlers } from '@/rpc/handlers/subagents';
+import { createMachineSessionStopLifecycleActionExecutor } from '@/session/actions/sessionLifecycleActions';
 import { registerTransferRelayV2DownloadSessionResponder } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
@@ -159,6 +165,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
     handlers,
     deps: params.deps,
   });
+  registerApprovalRpcHandlers({ rpcHandlerManager });
+  registerSessionPermissionRpcHandlers({ rpcHandlerManager });
+  registerSubagentRpcHandlers({ rpcHandlerManager });
 
   if (memoryWorker) {
     registerMachineMemoryRpcHandlers({
@@ -249,7 +258,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       },
     }));
   }
-  registerMachineDirectSessionsRpcHandlers({
+  registerMachineExternalSessionsRpcHandlers({
     rpcHandlerManager,
     spawnSession,
     stopSession,
@@ -312,21 +321,12 @@ export function registerMachineRpcHandlers(params: Readonly<{
     return { runs };
   });
 
-  // Register stop session handler
-  rpcHandlerManager.registerHandler(RPC_METHODS.STOP_SESSION, async (params: any) => {
-    const { sessionId } = params || {};
-
-    if (!sessionId) {
-      throw new Error('Session ID is required');
-    }
-
-    const success = await stopSession(sessionId);
-    if (!success) {
-      throw new Error('Session not found or failed to stop');
-    }
-
-    logger.debug(`[API MACHINE] Stopped session ${sessionId}`);
-    return { message: 'Session stopped' };
+  registerSessionLifecycleRpcHandlers({
+    rpcHandlerManager,
+    actionExecutor: createMachineSessionStopLifecycleActionExecutor({
+      stopSession,
+    }),
+    scopes: MACHINE_SESSION_STOP_RPC_SCOPES,
   });
 
   // Register stop daemon handler

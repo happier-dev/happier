@@ -9,10 +9,14 @@ describe('systemTasksCapability', () => {
       context: { cliSnapshot: null },
     })).resolves.toEqual({
       available: true,
-      kinds: [
-        'remote.ssh.bootstrapMachine.v1',
-        'relay.runtime.installOrUpdate.v1',
-        'relay.runtime.start.v1',
+        kinds: [
+          'local.ssh.discoverConfiguredHosts.v1',
+          'daemon.sshTunnel.ensure.v1',
+          'daemon.sshTunnel.list.v1',
+          'daemon.sshTunnel.stop.v1',
+          'remote.ssh.bootstrapMachine.v1',
+          'relay.runtime.installOrUpdate.v1',
+          'relay.runtime.start.v1',
         'relay.runtime.status.v1',
         'relay.runtime.stop.v1',
       ],

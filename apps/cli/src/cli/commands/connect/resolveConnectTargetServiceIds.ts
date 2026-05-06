@@ -1,5 +1,9 @@
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol';
+import {
+  ConnectedServiceIdSchema,
+  getConnectedAccountDescriptorsForTarget,
+  type ConnectedServiceId,
+} from '@happier-dev/protocol';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,12 +40,14 @@ export function resolveConnectTargetServiceIdsFromRegistry(
   const normalized = String(targetId ?? '').trim().toLowerCase();
   if (!normalized) return [];
 
+  const descriptorServiceIds = getConnectedAccountDescriptorsForTarget(normalized).map((descriptor) => descriptor.id);
   const catalogEntry = registry.catalogEntriesById[normalized];
-  if (!catalogEntry?.getCloudConnectTarget) return [];
+  if (!catalogEntry?.getCloudConnectTarget) return descriptorServiceIds;
 
   const providerContribution = registry.providerDefinitionsById.get(normalized);
-  if (!providerContribution) return [];
+  if (!providerContribution) return descriptorServiceIds;
 
   const supported = readSupportedServiceIdsFromProviderDefinition(providerContribution.definition);
-  return supported.map((serviceId) => ConnectedServiceIdSchema.parse(serviceId));
+  const providerServiceIds = supported.map((serviceId) => ConnectedServiceIdSchema.parse(serviceId));
+  return Array.from(new Set([...descriptorServiceIds, ...providerServiceIds]));
 }

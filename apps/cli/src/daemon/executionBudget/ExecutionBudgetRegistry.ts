@@ -1,6 +1,6 @@
 export class ExecutionBudgetRegistry {
   private readonly maxConcurrentExecutionRuns: number | null;
-  private readonly maxConcurrentEphemeralTasks: number | null;
+  private readonly maxConcurrentOneShotTasks: number | null;
   private readonly maxConcurrentTotal: number | null;
   private readonly maxConcurrentByClass: Readonly<Record<string, number>>;
   private readonly inFlightByTokenId = new Map<string, string>();
@@ -8,7 +8,7 @@ export class ExecutionBudgetRegistry {
 
   constructor(params: Readonly<{
     maxConcurrentExecutionRuns: number | null;
-    maxConcurrentEphemeralTasks: number | null;
+    maxConcurrentOneShotTasks: number | null;
     maxConcurrentTotal?: number;
     maxConcurrentByClass?: Readonly<Record<string, number>>;
   }>) {
@@ -19,13 +19,13 @@ export class ExecutionBudgetRegistry {
       throw new Error(`Invalid maxConcurrentExecutionRuns: ${params.maxConcurrentExecutionRuns}`);
     }
     if (
-      params.maxConcurrentEphemeralTasks !== null
-      && (!Number.isInteger(params.maxConcurrentEphemeralTasks) || params.maxConcurrentEphemeralTasks < 1)
+      params.maxConcurrentOneShotTasks !== null
+      && (!Number.isInteger(params.maxConcurrentOneShotTasks) || params.maxConcurrentOneShotTasks < 1)
     ) {
-      throw new Error(`Invalid maxConcurrentEphemeralTasks: ${params.maxConcurrentEphemeralTasks}`);
+      throw new Error(`Invalid maxConcurrentOneShotTasks: ${params.maxConcurrentOneShotTasks}`);
     }
     this.maxConcurrentExecutionRuns = params.maxConcurrentExecutionRuns;
-    this.maxConcurrentEphemeralTasks = params.maxConcurrentEphemeralTasks;
+    this.maxConcurrentOneShotTasks = params.maxConcurrentOneShotTasks;
     this.maxConcurrentTotal =
       typeof params.maxConcurrentTotal === 'number'
         && Number.isInteger(params.maxConcurrentTotal)
@@ -95,40 +95,40 @@ export class ExecutionBudgetRegistry {
     this.releaseToken(runId);
   }
 
-  tryAcquireEphemeralTask(taskId: string, kind?: 'automation' | 'ephemeral_task'): boolean {
-    const cls = kind === 'automation' ? 'automation' : 'ephemeral_task';
+  tryAcquireOneShotTask(taskId: string, kind?: 'automation' | 'scm_commit_message'): boolean {
+    const cls = kind === 'automation' ? 'automation' : 'scm_commit_message';
     if (!taskId || typeof taskId !== 'string') return false;
     if (this.inFlightByTokenId.has(taskId)) return true;
 
-    // Null means "no default cap". Explicit per-class or total caps may still constrain an ephemeral task
+    // Null means "no default cap". Explicit per-class or total caps may still constrain a one-shot task
     // when an operator opts into them.
-    if (this.maxConcurrentEphemeralTasks === null) {
+    if (this.maxConcurrentOneShotTasks === null) {
       return this.tryAcquireToken(taskId, cls, null);
     }
 
-    const inFlightEphemeral =
+    const inFlightOneShot =
       this.countInFlightForClass('automation')
-      + this.countInFlightForClass('ephemeral_task');
-    if (inFlightEphemeral >= this.maxConcurrentEphemeralTasks) return false;
+      + this.countInFlightForClass('scm_commit_message');
+    if (inFlightOneShot >= this.maxConcurrentOneShotTasks) return false;
 
-    return this.tryAcquireToken(taskId, cls, this.maxConcurrentEphemeralTasks);
+    return this.tryAcquireToken(taskId, cls, this.maxConcurrentOneShotTasks);
   }
 
-  releaseEphemeralTask(taskId: string): void {
+  releaseOneShotTask(taskId: string): void {
     this.releaseToken(taskId);
   }
 
   getInFlightSnapshot(): Readonly<{
     executionRuns: number;
-    ephemeralTasks: number;
+    oneShotTasks: number;
   }> {
     const executionRunCount = Array.from(this.inFlightByTokenId.values())
-      .filter((cls) => cls !== 'automation' && cls !== 'ephemeral_task')
+      .filter((cls) => cls !== 'automation' && cls !== 'scm_commit_message')
       .length;
-    const ephemeralTaskCount = this.countInFlightForClass('automation') + this.countInFlightForClass('ephemeral_task');
+    const oneShotTaskCount = this.countInFlightForClass('automation') + this.countInFlightForClass('scm_commit_message');
     return {
       executionRuns: executionRunCount,
-      ephemeralTasks: ephemeralTaskCount,
+      oneShotTasks: oneShotTaskCount,
     };
   }
 }

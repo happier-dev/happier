@@ -36,6 +36,7 @@ import { logger } from '@/ui/logger';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { resolveTerminationArchiveDecision } from '@/agent/runtime/lifecycle/terminationArchivePolicy';
+import { createRepositoryCheckpointPromptLifecycle } from '@/agent/runtime/checkpoints/repositoryCheckpointPromptLifecycle';
 import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseSession';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
@@ -162,6 +163,18 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const hookRuntime = params.hookRuntime ?? null;
   const hookRuntimeForCallbacks: HostSessionRuntimeHookRuntime = hookRuntime ?? params.runtime;
   const runtimeForPromptLoop: PermissionModePromptLoopTurnOperations = hookRuntimeForCallbacks;
+  const configuredCheckpointLifecycle = await params.config.lifecycleHooks?.createCheckpointLifecycle?.({
+    session: params.session,
+    runtime: hookRuntimeForCallbacks,
+    runtimeDirectory: params.runtimeDirectory,
+    policyAgentId: params.policyAgentId,
+  }) ?? null;
+  const checkpointLifecycle = configuredCheckpointLifecycle ?? createRepositoryCheckpointPromptLifecycle({
+    session: params.session,
+    runtimeDirectory: params.runtimeDirectory,
+    provider: params.config.agentMessageType,
+    protocol: params.policyAgentId === 'codex' ? 'codex' : params.policyAgentId === 'claude' ? 'claude' : 'acp',
+  });
   const terminalRemoteModeLoop = resolveHostSessionTerminalRemoteModeLoop(hookRuntimeForCallbacks);
   const resolvedStartingMode = resolveStartingMode({
     terminalCapable: terminalRemoteModeLoop !== null,
@@ -615,6 +628,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
               await params.config.lifecycleHooks?.onAfterLoopBoundary?.({ ...loopParams, session: params.session, runtime: hookRuntimeForCallbacks });
             }
           : undefined,
+      checkpointLifecycle,
       beforePendingMaterialize,
       formatPromptErrorMessage: params.config.formatPromptErrorMessage,
     });

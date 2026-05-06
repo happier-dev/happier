@@ -2,12 +2,13 @@ import type { ChangeConfidence, ChangeEvidenceSource, TurnChangeSet } from '@hap
 import type { ToolHappierMetaV2, ToolNormalizationProtocol } from '@happier-dev/protocol';
 
 const SOURCE_PRECEDENCE: Record<ChangeEvidenceSource, number> = {
-    provider_native: 0,
-    provider_tool: 1,
-    canonical_diff_tool: 2,
-    canonical_patch_tool: 3,
-    scm_reconciled: 4,
-    inferred: 5,
+    scm_checkpoint: 0,
+    scm_reconciled: 1,
+    canonical_patch_tool: 2,
+    canonical_diff_tool: 3,
+    provider_tool: 4,
+    provider_native: 5,
+    inferred: 6,
 };
 
 const CONFIDENCE_PRECEDENCE: Record<ChangeConfidence, number> = {
@@ -20,10 +21,16 @@ function summarizeTurnSources(turnChangeSet: TurnChangeSet): Readonly<{
     source: ChangeEvidenceSource;
     confidence: ChangeConfidence;
 }> {
+    if (turnChangeSet.files.length === 0 && turnChangeSet.repositoryCheckpoint) {
+        return {
+            source: 'scm_checkpoint',
+            confidence: turnChangeSet.repositoryCheckpoint.contentConfidence === 'exact' ? 'exact' : 'best_effort',
+        };
+    }
     let source: ChangeEvidenceSource = 'provider_native';
     let confidence: ChangeConfidence = 'exact';
     for (const file of turnChangeSet.files) {
-        if (SOURCE_PRECEDENCE[file.source] > SOURCE_PRECEDENCE[source]) {
+        if (SOURCE_PRECEDENCE[file.source] < SOURCE_PRECEDENCE[source]) {
             source = file.source;
         }
         if (CONFIDENCE_PRECEDENCE[file.confidence] > CONFIDENCE_PRECEDENCE[confidence]) {
@@ -46,6 +53,7 @@ export function buildSessionChangeToolMetadata(params: Readonly<{
     source: ChangeEvidenceSource;
     turnStatus: TurnChangeSet['status'];
     seqRange: TurnChangeSet['seqRange'];
+    repositoryCheckpoint?: TurnChangeSet['repositoryCheckpoint'];
 } {
     const summary = summarizeTurnSources(params.turnChangeSet);
     return {
@@ -62,5 +70,6 @@ export function buildSessionChangeToolMetadata(params: Readonly<{
         source: summary.source,
         turnStatus: params.turnChangeSet.status,
         seqRange: params.turnChangeSet.seqRange,
+        ...(params.turnChangeSet.repositoryCheckpoint ? { repositoryCheckpoint: params.turnChangeSet.repositoryCheckpoint } : {}),
     };
 }

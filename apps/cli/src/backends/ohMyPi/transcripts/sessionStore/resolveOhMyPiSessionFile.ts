@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import { resolveOhMyPiAgentDir } from '@/backends/ohMyPi/directSessions/resolveOhMyPiAgentDir';
+import { resolveOhMyPiAgentDir } from '@/backends/ohMyPi/externalSessions/resolveOhMyPiAgentDir';
 
 export async function resolveOhMyPiSessionFile(params: Readonly<{
   source: DirectSessionsSource;

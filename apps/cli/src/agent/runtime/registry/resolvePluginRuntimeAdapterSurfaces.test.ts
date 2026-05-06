@@ -66,7 +66,10 @@ function createRuntimeRegistry(backend: ResolvedBackendContribution): ResolvedEx
     runtimeCoreHandlersByBackendId: new Map(),
     backendEnginesByBackendId: new Map(),
     scmHostingProvidersById: new Map(),
+    networkAllowedUrlOriginsByPluginId: new Map(),
+    processSpawnAllowedPathsByPluginId: new Map(),
     pluginDiagnosticsByPluginId: Object.freeze({}),
+    addRuntimeDisposable: (_pluginId, disposable) => disposable,
     readHookEventEnvelopeV1,
     dispose: async () => undefined,
   };

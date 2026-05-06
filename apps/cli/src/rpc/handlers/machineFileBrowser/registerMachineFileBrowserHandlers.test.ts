@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -40,6 +40,33 @@ afterEach(() => {
 });
 
 describe('registerMachineFileBrowserHandlers', () => {
+  it('dispatches machine file-browser RPCs through ActionSpec when an executor is provided', async () => {
+    const execute = vi.fn(async () => ({
+      ok: true,
+      result: { ok: true, roots: [] },
+    }));
+    const { handlers, registrar } = createRegistrar();
+
+    registerMachineFileBrowserHandlers({
+      rpcHandlerManager: registrar,
+      workingDirectory: '/tmp',
+      actionExecutor: { execute },
+    } as any);
+
+    const listRoots = handlers.get(RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS);
+    if (!listRoots) {
+      throw new Error('expected machine file-browser root handler');
+    }
+
+    await expect(listRoots({})).resolves.toEqual({ ok: true, roots: [] });
+
+    expect(execute).toHaveBeenCalledWith(
+      'daemon.filesystem.listRoots',
+      {},
+      expect.objectContaining({ surface: 'rpc' }),
+    );
+  });
+
   it('registers machine-root browse handlers and lists directories lazily', async () => {
     const root = createTempDirectory();
     mkdirSync(join(root, 'folder'));

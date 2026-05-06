@@ -52,6 +52,32 @@ export type PromptLoopBoundaryReason =
   | 'mode_change_reset'
   | 'clear_reset';
 
+export type PromptLoopCheckpointLifecycle = Readonly<{
+  onBeforePromptDispatch?: (params: Readonly<{
+    messageId: string;
+    prompt: string;
+  }>) => void | Promise<void>;
+  onTurnStarted?: (params: Readonly<{
+    messageId: string;
+    turnId: string;
+  }>) => void | Promise<void>;
+  onTurnFinal?: (params: Readonly<{
+    messageId: string;
+    turnId: string;
+    status: 'completed' | 'aborted' | 'interrupted' | 'unknown';
+  }>) => void | Promise<void>;
+  onTurnAbortedBeforeStart?: (params: Readonly<{
+    messageId: string;
+  }>) => void | Promise<void>;
+  onSessionEnd?: () => void | Promise<void>;
+}>;
+
+type CheckpointRuntimeMessage = Readonly<{
+  type?: unknown;
+  id?: unknown;
+  reason?: unknown;
+}>;
+
 class StrictInitialResumeError extends Error {
   public readonly cause: unknown;
   constructor(message: string, cause: unknown) {
@@ -65,6 +91,33 @@ function isPermissionModePromptLoopExitResult(value: unknown): value is Permissi
   if (!value || typeof value !== 'object') return false;
   const record = value as Readonly<Record<string, unknown>>;
   return record.type === 'exit';
+}
+
+function readCheckpointRuntimeMessage(message: unknown): CheckpointRuntimeMessage | null {
+  return message && typeof message === 'object' ? message as CheckpointRuntimeMessage : null;
+}
+
+function readCheckpointTurnId(message: CheckpointRuntimeMessage): string | null {
+  return typeof message.id === 'string' && message.id.trim().length > 0 ? message.id : null;
+}
+
+function mapCheckpointFinalStatus(message: CheckpointRuntimeMessage): 'completed' | 'aborted' | 'interrupted' | 'unknown' {
+  if (message.type === 'task_complete') return 'completed';
+  if (message.type === 'turn_aborted') {
+    return typeof message.reason === 'string' && /\b(interrupted|interrupt|user)\b/i.test(message.reason)
+      ? 'interrupted'
+      : 'aborted';
+  }
+  return 'unknown';
+}
+
+async function runCheckpointHook(fn: (() => void | Promise<void>) | undefined): Promise<void> {
+  if (!fn) return;
+  try {
+    await fn();
+  } catch {
+    // Checkpoint evidence is best-effort and must not block turn lifecycle.
+  }
 }
 
 export async function runPermissionModePromptLoop(opts: {
@@ -92,6 +145,7 @@ export async function runPermissionModePromptLoop(opts: {
   onBeforeReset?: ((params: { reason: PromptLoopResetReason }) => void | Promise<void>) | null;
   onAfterReset?: ((params: { reason: PromptLoopResetReason }) => void | Promise<void>) | null;
   onAfterLoopBoundary?: ((params: { reason: PromptLoopBoundaryReason }) => void | Promise<void>) | null;
+  checkpointLifecycle?: PromptLoopCheckpointLifecycle | null;
   beforePendingMaterialize?: (() => boolean | Promise<boolean>) | null;
   resolveFreshSessionSystemPrompt?: (args: {
     baseOverride?: string | null;
@@ -105,6 +159,33 @@ export async function runPermissionModePromptLoop(opts: {
   let didReplaySeedBootstrap = false;
   let turnInFlight = false;
   let pendingFreshSessionSystemPrompt = false;
+  let activeCheckpointMessageId: string | null = null;
+  let activeCheckpointTurnId: string | null = null;
+  let activeCheckpointFinalStatus: 'completed' | 'aborted' | 'interrupted' | 'unknown' = 'unknown';
+
+  const unsubscribeCheckpointRuntimeMessages = (() => {
+    if (!opts.checkpointLifecycle) return () => undefined;
+    try {
+      return opts.runtime.subscribeRuntimeMessages((rawMessage) => {
+        const message = readCheckpointRuntimeMessage(rawMessage);
+        if (!message || typeof message.type !== 'string') return;
+        const messageId = activeCheckpointMessageId;
+        if (!messageId) return;
+        const turnId = readCheckpointTurnId(message);
+        if (message.type === 'task_started' && turnId) {
+          activeCheckpointTurnId = turnId;
+          void runCheckpointHook(() => opts.checkpointLifecycle?.onTurnStarted?.({ messageId, turnId }));
+          return;
+        }
+        if ((message.type === 'task_complete' || message.type === 'turn_aborted') && turnId) {
+          activeCheckpointTurnId = activeCheckpointTurnId ?? turnId;
+          activeCheckpointFinalStatus = mapCheckpointFinalStatus(message);
+        }
+      });
+    } catch {
+      return () => undefined;
+    }
+  })();
 
   const normalizedResumeId = typeof opts.initialResumeId === 'string' ? opts.initialResumeId.trim() : '';
   if (normalizedResumeId) {
@@ -215,6 +296,7 @@ export async function runPermissionModePromptLoop(opts: {
     return { startedFreshSessionForTurn, exitRequested: false };
   };
 
+  try {
   if ((opts.startRuntimeBeforeFirstPrompt === true || normalizedResumeId.length > 0) && !wasStarted) {
     await refreshSessionSnapshotBeforeTurnBestEffort();
     overrideSync.syncFromMetadata();
@@ -309,6 +391,7 @@ export async function runPermissionModePromptLoop(opts: {
     let shouldSendReady = true;
     let suppressFlushTurnFailure = false;
     let beganTurn = false;
+    let currentCheckpointMessageId: string | null = null;
     try {
       turnInFlight = true;
       let shouldApplyFreshSessionSystemPrompt = pendingFreshSessionSystemPrompt;
@@ -326,6 +409,10 @@ export async function runPermissionModePromptLoop(opts: {
       beganTurn = true;
 
       const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
+      currentCheckpointMessageId = localId ?? message.hash;
+      activeCheckpointMessageId = currentCheckpointMessageId;
+      activeCheckpointTurnId = null;
+      activeCheckpointFinalStatus = 'unknown';
       const special = parseSpecialCommand(message.message.text);
       const nowMs = Date.now();
       const seedResolution = await resolveProviderPromptWithReplaySeed({
@@ -353,6 +440,11 @@ export async function runPermissionModePromptLoop(opts: {
           ? `${effectiveAppendSystemPrompt.trim()}\n\n${seedResolution.providerPrompt}`
           : seedResolution.providerPrompt;
 
+      await runCheckpointHook(() => opts.checkpointLifecycle?.onBeforePromptDispatch?.({
+        messageId: currentCheckpointMessageId!,
+        prompt: providerPrompt,
+      }));
+
       if (typeof opts.runtime.sendPromptWithMeta === 'function') {
         await opts.runtime.sendPromptWithMeta({ text: providerPrompt, localId });
       } else {
@@ -377,6 +469,29 @@ export async function runPermissionModePromptLoop(opts: {
         } else {
           await opts.runtime.waitForTurnCompletion();
         }
+        if (currentCheckpointMessageId && !activeCheckpointTurnId) {
+          activeCheckpointTurnId = currentCheckpointMessageId;
+          await runCheckpointHook(() => opts.checkpointLifecycle?.onTurnStarted?.({
+            messageId: currentCheckpointMessageId!,
+            turnId: activeCheckpointTurnId!,
+          }));
+        }
+        if (currentCheckpointMessageId && activeCheckpointTurnId) {
+          const checkpointMessageId = currentCheckpointMessageId;
+          const checkpointTurnId = activeCheckpointTurnId;
+          await runCheckpointHook(() => opts.checkpointLifecycle?.onTurnFinal?.({
+            messageId: checkpointMessageId,
+            turnId: checkpointTurnId,
+            status: activeCheckpointFinalStatus,
+          }));
+        } else if (currentCheckpointMessageId) {
+          await runCheckpointHook(() => opts.checkpointLifecycle?.onTurnAbortedBeforeStart?.({
+            messageId: currentCheckpointMessageId!,
+          }));
+        }
+        activeCheckpointMessageId = null;
+        activeCheckpointTurnId = null;
+        activeCheckpointFinalStatus = 'unknown';
         // Metadata updates can arrive while we're mid-turn.
         overrideSync.syncFromMetadata();
         opts.setThinking(false);
@@ -387,5 +502,10 @@ export async function runPermissionModePromptLoop(opts: {
         }
       }
     }
+  }
+
+  } finally {
+    unsubscribeCheckpointRuntimeMessages();
+    await runCheckpointHook(() => opts.checkpointLifecycle?.onSessionEnd?.());
   }
 }

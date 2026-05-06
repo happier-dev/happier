@@ -5,7 +5,6 @@ import type {
     ExecutionRunHostRuntimeMessageHandler,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
-import { listNativeReviewEngines } from '@happier-dev/protocol';
 
 const getExecutionRunBackendDescriptorMock = vi.fn();
 
@@ -91,8 +90,7 @@ describe('createCliRuntimeCore execution-run descriptor fallback governance', ()
     });
 
     it('fails closed for review-engine execution runs when no bound runtimeCore exist in the shared registry layer', async () => {
-        const reviewId = listNativeReviewEngines()[0]?.id;
-        expect(typeof reviewId).toBe('string');
+        const reviewId = 'review-runtime';
 
         const descriptorFactory = vi.fn(() => createStubRuntime());
         getExecutionRunBackendDescriptorMock.mockReturnValue({ factory: descriptorFactory });
@@ -101,12 +99,12 @@ describe('createCliRuntimeCore execution-run descriptor fallback governance', ()
 
         const { createMissingCliEngineAdapter } = await import('./createCliRuntimeCore');
         const runtimeCore = createMissingCliEngineAdapter({
-            backend: createBuiltInBackendContribution(reviewId as string),
+            backend: createBuiltInBackendContribution(reviewId),
         }).runtimeCore;
 
         expect(() => runtimeCore.createExecutionRunBackend({
             cwd: '/tmp',
-            backendId: reviewId as string,
+            backendId: reviewId,
             permissionMode: 'read_only',
         })).toThrow(/bound host runtimeCore/i);
         expect(descriptorFactory).not.toHaveBeenCalled();

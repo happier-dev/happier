@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@/machines/transfer/transferChunkEncryption';
 
 import { registerMachineRpcHandlers } from './rpcHandlers';
+import { registerMachinePromptRegistriesRpcHandlers } from './rpcHandlers.promptRegistries';
 
 type Handler = (data: unknown) => Promise<any>;
 
@@ -40,6 +41,35 @@ function git(cwd: string, args: readonly string[]): string {
 }
 
 describe('rpcHandlers (prompt registries)', () => {
+  it('dispatches prompt registry mutation RPCs through ActionSpec when an executor is provided', async () => {
+    const execute = vi.fn(async () => ({
+      ok: true,
+      result: { ok: true, items: [] },
+    }));
+    const mgr = createRpcHandlerManager();
+
+    registerMachinePromptRegistriesRpcHandlers({
+      rpcHandlerManager: mgr as any,
+      actionExecutor: { execute },
+    } as any);
+
+    const scanSource = mgr.handlers.get(RPC_METHODS.DAEMON_PROMPT_REGISTRY_SCAN_SOURCE);
+    if (!scanSource) {
+      throw new Error('expected prompt registry scan handler');
+    }
+
+    await expect(scanSource({
+      sourceId: 'local',
+      configuredSources: [],
+    })).resolves.toEqual({ ok: true, items: [] });
+
+    expect(execute).toHaveBeenCalledWith(
+      'daemon.promptRegistry.scanSource',
+      { sourceId: 'local', configuredSources: [] },
+      expect.objectContaining({ surface: 'rpc' }),
+    );
+  });
+
   it('lists configured git sources, scans them, and fetches skill bundles from a local git repo', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'happier-prompt-registry-repo-'));
     const workspace = mkdtempSync(join(tmpdir(), 'happier-prompt-registry-workspace-'));

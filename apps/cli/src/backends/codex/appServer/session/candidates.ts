@@ -3,7 +3,7 @@ import {
     type DirectSessionCandidateV1,
 } from '@happier-dev/protocol';
 
-import { deriveDirectSessionActivityFromTimestamp } from '../../../../api/directSessions/activity/deriveDirectSessionActivityFromTimestamp';
+import { deriveDirectSessionActivityFromTimestamp } from '../../../../api/session/external/activity/deriveDirectSessionActivityFromTimestamp';
 import type { CodexAppServerClient } from '../client/createCodexAppServerClient';
 import { withCodexAppServerClient } from '../client/withCodexAppServerClient';
 

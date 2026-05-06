@@ -1,15 +1,19 @@
 import type {
   BackendDefinitionV1,
   BackendRuntimeAdapterV1,
+  PluginBackendCapabilitiesV1,
   PluginActionContributionV2,
   PluginCommandContributionV2,
+  PluginExecutionRunProfileContributionV2,
   PluginHookContributionV2,
   PluginLifecycleHandlerContributionV2,
   PluginManifestMarketplaceMetadataV1,
+  PluginMcpContributesV1,
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
   PluginPermissionDeclarationV1,
   PluginRuntimeApiV1,
+  InstallableDependencyDescriptor,
   ScmHostingProviderContribution,
   PluginSourceSpecV1,
   PluginToolContributionV2,
@@ -20,7 +24,8 @@ import type {
 
 type LegacyRuntimeHookFieldName = `${'runtime'}Adapters`;
 
-export type CanonicalPluginBackendDefinition = Omit<BackendDefinitionV1, LegacyRuntimeHookFieldName> & Readonly<{
+export type CanonicalPluginBackendDefinition = Omit<BackendDefinitionV1, LegacyRuntimeHookFieldName | 'capabilities'> & Readonly<{
+  capabilities: PluginBackendCapabilitiesV1;
   runtimeCoreHooks: readonly BackendRuntimeAdapterV1[];
 }>;
 
@@ -34,7 +39,15 @@ export type CanonicalPluginManifestContributes = Readonly<{
   uiDescriptors: readonly PluginUiDescriptorContributionV2[];
   notifications?: readonly PluginNotificationCategoryContributionV2[];
   notificationChannels?: readonly PluginNotificationChannelContributionV2[];
+  executionRunProfiles?: readonly PluginExecutionRunProfileContributionV2[];
+  mcp?: Readonly<{
+    servers: ReadonlyArray<PluginMcpContributesV1['servers'][number]>;
+    backendClients: ReadonlyArray<PluginMcpContributesV1['backendClients'][number]>;
+    tools: ReadonlyArray<PluginMcpContributesV1['tools'][number]>;
+    discoveryProviders: ReadonlyArray<PluginMcpContributesV1['discoveryProviders'][number]>;
+  }>;
   scmHostingProviders?: readonly ScmHostingProviderContribution[];
+  installables?: readonly InstallableDependencyDescriptor[];
   hooks: readonly PluginHookContributionV2[];
   lifecycleHandlers: readonly PluginLifecycleHandlerContributionV2[];
 }>;

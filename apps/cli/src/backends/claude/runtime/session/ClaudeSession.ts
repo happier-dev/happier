@@ -9,13 +9,17 @@ import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/mod
 import { configuration } from '@/configuration';
 import { ClaudePermissionRpcRouter } from '../../utils/permissionRpcRouter';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import {
+    recordPrimaryTurnCompleted,
+    recordPrimaryTurnInProgress,
+} from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 import type { Metadata } from '@/api/types';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import type { PushNotificationClient } from '@/api/pushNotifications';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import type { McpServerConfig } from '@/agent';
 import type { AccountSettings } from '@happier-dev/protocol';
-import { resolveConfiguredClaudeConfigDir } from '../../directSessions/resolveClaudeConfigDir';
+import { resolveConfiguredClaudeConfigDir } from '../../externalSessions/resolveClaudeConfigDir';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 
 export type SessionFoundInfo = {
@@ -359,6 +363,9 @@ export class Session {
             const id = randomUUID();
             this.currentTaskId = id;
             this.client.sendAgentMessage('claude', { type: 'task_started', id });
+            void recordPrimaryTurnInProgress({ session: this.client }).catch((error) => {
+                logger.debug('[claude] Failed to record primary turn in-progress (non-fatal)', error);
+            });
             return;
         }
 
@@ -369,6 +376,9 @@ export class Session {
         const id = this.currentTaskId;
         this.currentTaskId = null;
         this.client.sendAgentMessage('claude', { type: 'task_complete', id });
+        void recordPrimaryTurnCompleted({ session: this.client }).catch((error) => {
+            logger.debug('[claude] Failed to record primary turn completion (non-fatal)', error);
+        });
     }
 
     onModeChange = (mode: 'local' | 'remote') => {

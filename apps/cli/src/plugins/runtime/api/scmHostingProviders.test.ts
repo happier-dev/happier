@@ -21,8 +21,13 @@ const scmHostingProviderDefinition: ScmHostingProviderContribution = {
     kind: 'github',
     displayName: 'Acme GitHub',
     baseUrl: 'https://github.example.com',
+    remoteHostMatchers: {
+        exactHosts: ['github.example.com'],
+    },
     urlSafety: {
         allowedSchemes: ['https:'],
+        allowedBaseUrls: ['https://github.example.com'],
+        allowedOrigins: ['https://github.example.com'],
     },
 };
 

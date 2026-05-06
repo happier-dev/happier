@@ -10,14 +10,61 @@ import {
 import type { PromptAssetAdapter } from '@/prompts/assets/types';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
+import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
+import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import { PROMPT_ASSET_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 
 function invalidRequest(error: string): Exclude<PromptAssetMutationResponseV1, { ok: true }> {
   return { ok: false, errorCode: 'invalid_request', error };
 }
 
+function createPromptAssetRpcActionExecutor(
+  registry: ReadonlyMap<string, PromptAssetAdapter>,
+): RpcActionExecutor {
+  return {
+    execute: async (actionId, input) => {
+      if (actionId === 'daemon.promptAssets.discover') {
+        const parsed = PromptAssetDiscoverRequestSchema.safeParse(input);
+        if (!parsed.success) return { ok: true, result: invalidRequest('invalid_request') };
+
+        const adapter = registry.get(parsed.data.assetTypeId);
+        if (!adapter) return { ok: true, result: invalidRequest('unsupported asset type') };
+
+        return {
+          ok: true,
+          result: {
+            ok: true,
+            items: await adapter.discover(parsed.data),
+          } satisfies PromptAssetDiscoverResponseV1,
+        };
+      }
+
+      if (actionId === 'daemon.promptAssets.delete') {
+        const parsed = PromptAssetDeleteRequestSchema.safeParse(input);
+        if (!parsed.success) return { ok: true, result: invalidRequest('invalid_request') };
+
+        const adapter = registry.get(parsed.data.assetTypeId);
+        if (!adapter) return { ok: true, result: invalidRequest('unsupported asset type') };
+
+        return {
+          ok: true,
+          result: await adapter.delete(parsed.data),
+        };
+      }
+
+      return {
+        ok: false,
+        errorCode: 'unsupported_action',
+        error: `unsupported_action:${actionId}`,
+      };
+    },
+  };
+}
+
 export function registerMachinePromptAssetsRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   adapterRegistry?: ReadonlyMap<string, PromptAssetAdapter>;
+  actionExecutor?: RpcActionExecutor;
   deps?: Readonly<{
     homedir?: () => string;
     happierHomeDir?: () => string;
@@ -35,26 +82,9 @@ export function registerMachinePromptAssetsRpcHandlers(params: Readonly<{
     };
   });
 
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_PROMPT_ASSETS_DISCOVER, async (raw: unknown): Promise<PromptAssetDiscoverResponseV1 | ReturnType<typeof invalidRequest>> => {
-    const parsed = PromptAssetDiscoverRequestSchema.safeParse(raw);
-    if (!parsed.success) return invalidRequest('invalid_request');
-
-    const adapter = registry.get(parsed.data.assetTypeId);
-    if (!adapter) return invalidRequest('unsupported asset type');
-
-    return {
-      ok: true,
-      items: await adapter.discover(parsed.data),
-    };
-  });
-
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_PROMPT_ASSETS_DELETE, async (raw: unknown): Promise<PromptAssetMutationResponseV1> => {
-    const parsed = PromptAssetDeleteRequestSchema.safeParse(raw);
-    if (!parsed.success) return invalidRequest('invalid_request');
-
-    const adapter = registry.get(parsed.data.assetTypeId);
-    if (!adapter) return invalidRequest('unsupported asset type');
-
-    return await adapter.delete(parsed.data);
+  registerActionSpecRpcHandlers({
+    rpcHandlerManager: params.rpcHandlerManager,
+    actionExecutor: params.actionExecutor ?? createPromptAssetRpcActionExecutor(registry),
+    scopes: PROMPT_ASSET_RPC_SCOPES,
   });
 }

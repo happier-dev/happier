@@ -313,6 +313,8 @@ model Session {
     lastViewedSessionSeq            Int?
     pendingPermissionRequestCount   Int                 @default(0)
     pendingUserActionRequestCount   Int                 @default(0)
+    latestTurnStatus                String?
+    lastRuntimeIssue                String?
     active            Boolean             @default(true)
     archivedAt        DateTime?
     lastActiveAt      DateTime            @default(now())

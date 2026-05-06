@@ -1,8 +1,9 @@
-import { dirname } from 'node:path';
+import { dirname, isAbsolute } from 'node:path';
 
 import { autoRegisterAcpBackend } from '@happier-dev/plugin-sdk/acp';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
 import type {
+    PluginPermissionDeclarationV1,
     PluginPermissionCapabilityV1,
     PluginManifestV2,
     PluginRuntimeCapabilityFamilyV1,
@@ -16,6 +17,7 @@ import type {
     ResolvedCommandContribution,
     ResolvedLifecycleHandlerContribution,
     ResolvedActionContribution,
+    ResolvedExecutionRunProfileContribution,
     ResolvedResourceContribution,
     ResolvedToolContribution,
     ResolvedUiDescriptorContribution,
@@ -26,10 +28,15 @@ import type {
     PluginApiActionRegistration,
     PluginApiBackendEngineRegistration,
     PluginApiCommandRegistration,
+    PluginApiExecutionRunProfileRegistration,
     PluginDisposable,
     PluginApi,
     PluginApiHookRegistration,
     PluginApiLifecycleHandlerRegistration,
+    PluginApiMcpBackendClientRegistration,
+    PluginApiMcpDiscoveryProviderRegistration,
+    PluginApiMcpServerRegistration,
+    PluginApiMcpToolRegistration,
     PluginApiNotificationCategoryRegistration,
     PluginApiNotificationChannelRegistration,
     PluginApiRequestInterceptorRegistration,
@@ -41,12 +48,17 @@ import type {
 import { createActivatedHandlerRegistry, type ActivatedHandlerRegistry } from '../handlers/registry';
 import type { PluginActivationSource } from '../activationSources';
 import { loadPluginModule } from '../loadPluginModule';
+import { createPluginDisposableRegistry } from './disposables';
 import type {
     PluginDaemonModuleNamespace,
     PluginHookHandler,
     PluginLifecycleHandlerRequest,
     ResolvedPluginLifecycleHandler,
 } from '../types';
+import {
+    claimPluginMcpToolNamespace,
+    createPluginMcpToolNamespaceRegistry,
+} from '@/mcp/pluginMcpToolNamespaces';
 
 type ActivationTarget = Readonly<{
     pluginId: string;
@@ -60,10 +72,12 @@ type ActivationExport = (api: PluginApi) => void | PluginDisposable | Promise<vo
 
 type ActivationPolicy = Readonly<{
     permissions: readonly PluginPermissionCapabilityV1[];
+    permissionDeclarations: readonly PluginPermissionDeclarationV1[];
     runtimeCapabilities: readonly PluginRuntimeCapabilityFamilyV1[];
     declaredBackendIds: readonly string[];
     declaredNotificationCategoryIds: readonly string[];
     declaredNotificationChannelIds: readonly string[];
+    declaredExecutionRunProfileIds: readonly string[];
     declaredScmHostingProviderIds: readonly string[];
 }>;
 
@@ -101,10 +115,12 @@ function readBundledActivationPolicy(params: Readonly<{
 
     return Object.freeze({
         permissions: Object.freeze(manifest.capabilities.permissions.map((permission) => permission.capability)),
+        permissionDeclarations: Object.freeze([...manifest.capabilities.permissions]),
         runtimeCapabilities: Object.freeze([...manifest.runtime.capabilities]),
         declaredBackendIds: readDeclaredBackendIds(manifest.contributes),
         declaredNotificationCategoryIds: readDeclaredContributionIds(manifest.contributes, 'notifications'),
         declaredNotificationChannelIds: readDeclaredContributionIds(manifest.contributes, 'notificationChannels'),
+        declaredExecutionRunProfileIds: readDeclaredContributionIds(manifest.contributes, 'executionRunProfiles'),
         declaredScmHostingProviderIds: readDeclaredContributionIds(manifest.contributes, 'scmHostingProviders'),
     });
 }
@@ -131,7 +147,28 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
         pluginId: string;
         registration: PluginApiRequestInterceptorRegistration;
     }>[];
+    mcpServers: readonly Readonly<{
+        pluginId: string;
+        registration: PluginApiMcpServerRegistration;
+    }>[];
+    mcpBackendClients: readonly Readonly<{
+        pluginId: string;
+        registration: PluginApiMcpBackendClientRegistration;
+    }>[];
+    mcpTools: readonly Readonly<{
+        pluginId: string;
+        registration: PluginApiMcpToolRegistration;
+    }>[];
+    mcpDiscoveryProviders: readonly Readonly<{
+        pluginId: string;
+        registration: PluginApiMcpDiscoveryProviderRegistration;
+    }>[];
     networkAllowedPluginIds: ReadonlySet<string>;
+    networkAllowedUrlOriginsByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
+    processSpawnAllowedPathsByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
+    envAllowedNamesByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
+    filesystemReadAllowedPathsByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
+    filesystemWriteAllowedPathsByPluginId: ReadonlyMap<string, ReadonlySet<string>>;
     eventSubscriptionPermissionsByPluginId: ReadonlyMap<string, ReadonlySet<PluginPermissionCapabilityV1>>;
     runtimeCoreHandlersByBackendId: ReadonlyMap<string, ReadonlyMap<string, PluginHookHandler>>;
     actions: readonly ResolvedActionContribution[];
@@ -139,8 +176,10 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
     commands: readonly ResolvedCommandContribution[];
     resources: readonly ResolvedResourceContribution[];
     uiDescriptors: readonly ResolvedUiDescriptorContribution[];
+    executionRunProfiles: readonly ResolvedExecutionRunProfileContribution[];
     lifecycleHandlers: readonly ResolvedLifecycleHandlerContribution[];
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+    addRuntimeDisposable: (pluginId: string, disposable: PluginDisposable) => PluginDisposable;
     dispose: () => Promise<void>;
 }>;
 
@@ -280,6 +319,90 @@ function freezeDiagnostics(
     );
 }
 
+function normalizeNetworkPermissionOrigin(scope: string | undefined): string | null {
+    if (!scope || scope.trim().length === 0) {
+        return null;
+    }
+    if (scope.trim() === '*') {
+        return '*';
+    }
+    try {
+        return new URL(scope.trim()).origin;
+    } catch {
+        return null;
+    }
+}
+
+function normalizeProcessSpawnPermissionPath(scope: string | undefined): string | null {
+    if (!scope || scope.trim().length === 0) {
+        return null;
+    }
+    const normalized = scope.trim();
+    return isAbsolute(normalized) ? normalized : null;
+}
+
+function normalizeEnvPermissionName(scope: string | undefined): string | null {
+    const normalized = scope?.trim() ?? '';
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized)) {
+        return null;
+    }
+    return normalized;
+}
+
+function normalizeFilesystemPermissionPath(scope: string | undefined): string | null {
+    const normalized = scope?.trim() ?? '';
+    if (normalized.length === 0 || normalized === '*') {
+        return '';
+    }
+    return isAbsolute(normalized) ? null : normalized;
+}
+
+function collectOptionalScopedPermissionMap(
+    entries: readonly Readonly<{
+        pluginId: string;
+        permissionDeclarations: readonly PluginPermissionDeclarationV1[];
+    }>[],
+    capability: PluginPermissionCapabilityV1,
+    normalizeScope: (scope: string | undefined) => string | null,
+): ReadonlyMap<string, ReadonlySet<string>> {
+    const byPluginId = new Map<string, ReadonlySet<string>>();
+    for (const entry of entries) {
+        const scopes = entry.permissionDeclarations
+            .filter((permission) => permission.capability === capability)
+            .flatMap((permission) => {
+                const normalized = normalizeScope(permission.scope);
+                return normalized === null ? [] : [normalized];
+            });
+        if (scopes.length > 0) {
+            byPluginId.set(entry.pluginId, new Set(scopes));
+        }
+    }
+    return byPluginId;
+}
+
+function collectScopedPermissionMap(
+    entries: readonly Readonly<{
+        pluginId: string;
+        permissionDeclarations: readonly PluginPermissionDeclarationV1[];
+    }>[],
+    capability: PluginPermissionCapabilityV1,
+    normalizeScope: (scope: string | undefined) => string | null,
+): ReadonlyMap<string, ReadonlySet<string>> {
+    const byPluginId = new Map<string, ReadonlySet<string>>();
+    for (const entry of entries) {
+        const scopes = entry.permissionDeclarations
+            .filter((permission) => permission.capability === capability)
+            .flatMap((permission) => {
+                const normalized = normalizeScope(permission.scope);
+                return normalized ? [normalized] : [];
+            });
+        if (scopes.length > 0) {
+            byPluginId.set(entry.pluginId, new Set(scopes));
+        }
+    }
+    return byPluginId;
+}
+
 function resolveContributionMetadata(target: ActivationTarget): Readonly<{
     provenance: 'external';
     source: Readonly<{ kind: 'path' | 'archive' | 'marketplace' | 'package' }>;
@@ -367,10 +490,12 @@ async function resolveActivationPolicy(
 
     const policy: ActivationPolicy = Object.freeze({
         permissions: Object.freeze(manifestResult.manifest.permissions.map((permission) => permission.capability)),
+        permissionDeclarations: Object.freeze([...manifestResult.manifest.permissions]),
         runtimeCapabilities: Object.freeze([...manifestResult.manifest.runtime.capabilities]),
         declaredBackendIds: readDeclaredBackendIds(manifestResult.manifest.contributes),
         declaredNotificationCategoryIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'notifications'),
         declaredNotificationChannelIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'notificationChannels'),
+        declaredExecutionRunProfileIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'executionRunProfiles'),
         declaredScmHostingProviderIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'scmHostingProviders'),
     });
     cache.set(target.manifestPath, policy);
@@ -608,6 +733,16 @@ function toResolvedUiDescriptorContribution(
     };
 }
 
+function toResolvedExecutionRunProfileContribution(
+    target: ActivationTarget,
+    definition: PluginApiExecutionRunProfileRegistration,
+): ResolvedExecutionRunProfileContribution {
+    return {
+        ...resolveContributionMetadata(target),
+        definition,
+    };
+}
+
 function toResolvedLifecycleHandlerContribution(
     target: ActivationTarget,
     definition: PluginApiLifecycleHandlerRegistration,
@@ -674,13 +809,20 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         notificationChannels: readonly PluginApiNotificationChannelRegistration[];
         scmHostingProviders: readonly PluginApiScmHostingProviderRegistration[];
         requestInterceptors: readonly PluginApiRequestInterceptorRegistration[];
+        mcpServers: readonly PluginApiMcpServerRegistration[];
+        mcpBackendClients: readonly PluginApiMcpBackendClientRegistration[];
+        mcpTools: readonly PluginApiMcpToolRegistration[];
+        mcpDiscoveryProviders: readonly PluginApiMcpDiscoveryProviderRegistration[];
         permissions: readonly PluginPermissionCapabilityV1[];
+        permissionDeclarations: readonly PluginPermissionDeclarationV1[];
         hooks: readonly PluginApiHookRegistration[];
         lifecycleHandlers: readonly PluginApiLifecycleHandlerRegistration[];
         resources: readonly PluginApiResourceRegistration[];
         uiDescriptors: readonly PluginApiUiDescriptorRegistration[];
+        executionRunProfiles: readonly PluginApiExecutionRunProfileRegistration[];
     }> = [];
     const disposers: Array<() => Promise<void>> = [];
+    const runtimeDisposableRegistriesByPluginId = new Map<string, ReturnType<typeof createPluginDisposableRegistry>>();
 
     for (const target of collectActivationTargets(params.contributes)) {
         diagnosticsByPluginId[target.pluginId] = diagnosticsByPluginId[target.pluginId] ?? [];
@@ -745,6 +887,9 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             declaredNotificationChannelIds: activationSource.kind === 'bundled'
                 ? bundledPolicy!.declaredNotificationChannelIds
                 : activationPolicy!.policy.declaredNotificationChannelIds,
+            declaredExecutionRunProfileIds: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredExecutionRunProfileIds
+                : activationPolicy!.policy.declaredExecutionRunProfileIds,
             declaredScmHostingProviderIds: activationSource.kind === 'bundled'
                 ? bundledPolicy!.declaredScmHostingProviderIds
                 : activationPolicy!.policy.declaredScmHostingProviderIds,
@@ -785,13 +930,21 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             notificationChannels: registrations.notificationChannels,
             scmHostingProviders: registrations.scmHostingProviders,
             requestInterceptors: registrations.requestInterceptors,
+            mcpServers: registrations.mcpServers,
+            mcpBackendClients: registrations.mcpBackendClients,
+            mcpTools: registrations.mcpTools,
+            mcpDiscoveryProviders: registrations.mcpDiscoveryProviders,
             permissions: activationSource.kind === 'bundled'
                 ? bundledPolicy!.permissions
                 : activationPolicy!.policy.permissions,
+            permissionDeclarations: activationSource.kind === 'bundled'
+                ? bundledPolicy!.permissionDeclarations
+                : activationPolicy!.policy.permissionDeclarations,
             hooks: registrations.hooks,
             lifecycleHandlers: registrations.lifecycleHandlers,
             resources: registrations.resources,
             uiDescriptors: registrations.uiDescriptors,
+            executionRunProfiles: registrations.executionRunProfiles,
         });
     }
 
@@ -887,6 +1040,56 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             scmHostingProvidersById.set(registration.id, Object.freeze({ pluginId: entry.pluginId, registration }));
         }
     }
+    const globalMcpToolNamespaces = createPluginMcpToolNamespaceRegistry();
+    const mcpTools = Object.freeze(activatedEntries.flatMap((entry) => entry.mcpTools.flatMap((registration) => {
+        try {
+            claimPluginMcpToolNamespace(globalMcpToolNamespaces, {
+                pluginId: entry.pluginId,
+                toolName: registration.name,
+                registrationId: registration.id,
+            });
+            return [Object.freeze({
+                pluginId: entry.pluginId,
+                registration,
+            })];
+        } catch (error) {
+            appendDiagnostic(diagnosticsByPluginId, entry.pluginId, {
+                code: 'plugin_manifest_semantic_invalid',
+                message: error instanceof Error ? error.message : `Plugin '${entry.pluginId}' registered an invalid MCP tool namespace`,
+            });
+            return [];
+        }
+    })));
+    const networkAllowedUrlOriginsByPluginId = collectScopedPermissionMap(
+        activatedEntries,
+        'network',
+        normalizeNetworkPermissionOrigin,
+    );
+    const processSpawnAllowedPathsByPluginId = collectScopedPermissionMap(
+        activatedEntries,
+        'process.spawn',
+        normalizeProcessSpawnPermissionPath,
+    );
+    const envAllowedNamesByPluginId = collectScopedPermissionMap(
+        activatedEntries,
+        'env',
+        normalizeEnvPermissionName,
+    );
+    const filesystemReadAllowedPathsByPluginId = collectOptionalScopedPermissionMap(
+        activatedEntries,
+        'filesystem.read',
+        normalizeFilesystemPermissionPath,
+    );
+    const filesystemWriteAllowedPathsByPluginId = collectOptionalScopedPermissionMap(
+        activatedEntries,
+        'filesystem.write',
+        normalizeFilesystemPermissionPath,
+    );
+    const addRuntimeDisposable = (pluginId: string, disposable: PluginDisposable): PluginDisposable => {
+        const registry = runtimeDisposableRegistriesByPluginId.get(pluginId) ?? createPluginDisposableRegistry();
+        runtimeDisposableRegistriesByPluginId.set(pluginId, registry);
+        return registry.add(disposable);
+    };
 
     return {
         generation: params.generation,
@@ -898,9 +1101,27 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             pluginId: entry.pluginId,
             registration,
         })))),
+        mcpServers: Object.freeze(activatedEntries.flatMap((entry) => entry.mcpServers.map((registration) => Object.freeze({
+            pluginId: entry.pluginId,
+            registration,
+        })))),
+        mcpBackendClients: Object.freeze(activatedEntries.flatMap((entry) => entry.mcpBackendClients.map((registration) => Object.freeze({
+            pluginId: entry.pluginId,
+            registration,
+        })))),
+        mcpTools,
+        mcpDiscoveryProviders: Object.freeze(activatedEntries.flatMap((entry) => entry.mcpDiscoveryProviders.map((registration) => Object.freeze({
+            pluginId: entry.pluginId,
+            registration,
+        })))),
         networkAllowedPluginIds: new Set(activatedEntries.flatMap((entry) => (
             entry.permissions.includes('network') ? [entry.pluginId] : []
         ))),
+        networkAllowedUrlOriginsByPluginId,
+        processSpawnAllowedPathsByPluginId,
+        envAllowedNamesByPluginId,
+        filesystemReadAllowedPathsByPluginId,
+        filesystemWriteAllowedPathsByPluginId,
         eventSubscriptionPermissionsByPluginId: new Map(activatedEntries.map((entry) => [
             entry.pluginId,
             new Set(entry.permissions),
@@ -925,6 +1146,11 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         uiDescriptors: Object.freeze(
             activatedEntries.flatMap((entry) => entry.uiDescriptors.map((definition) => toResolvedUiDescriptorContribution(entry, definition))),
         ),
+        executionRunProfiles: Object.freeze(
+            activatedEntries.flatMap((entry) => (
+                entry.executionRunProfiles.map((definition) => toResolvedExecutionRunProfileContribution(entry, definition))
+            )),
+        ),
         lifecycleHandlers: Object.freeze(
             activatedEntries.flatMap((entry) => entry.lifecycleHandlers.map(
                 (definition, index) => toResolvedLifecycleHandlerContribution(entry, definition, index),
@@ -934,11 +1160,15 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         hookHandlersByHookId: handlerRegistry.hookHandlersByHookId,
         lifecycleHandlersByEvent: handlerRegistry.lifecycleHandlersByEvent,
         pluginDiagnosticsByPluginId: freezeDiagnostics(diagnosticsByPluginId),
+        addRuntimeDisposable,
         async dispose() {
             if (disposed) {
                 return;
             }
             disposed = true;
+            for (const registry of [...runtimeDisposableRegistriesByPluginId.values()].reverse()) {
+                await registry.dispose();
+            }
             await dispatchLifecycleHandlers({
                 diagnosticsByPluginId,
                 event: 'deactivating',

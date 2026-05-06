@@ -268,6 +268,8 @@ describe('daemon contribution registry projection rpc handler', () => {
             runtimeCoreHandlersByBackendId: new Map(),
             backendEnginesByBackendId: new Map(),
             scmHostingProvidersById: new Map(),
+            networkAllowedUrlOriginsByPluginId: new Map(),
+            processSpawnAllowedPathsByPluginId: new Map(),
             pluginDiagnosticsByPluginId: Object.freeze({
                 'runtime.plugin': Object.freeze([
                     {
@@ -276,6 +278,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                     },
                 ]),
             }),
+            addRuntimeDisposable: (_pluginId, disposable) => disposable,
             readHookEventEnvelopeV1,
             dispose: async () => {},
         };

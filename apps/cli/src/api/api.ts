@@ -661,6 +661,44 @@ export class ApiClient {
     }
   }
 
+  async registerConnectedServiceCredentialPlain(params: {
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    content: { t: 'plain'; v: ConnectedServiceCredentialRecordV1 };
+  }): Promise<void> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const serviceId = encodeURIComponent(params.serviceId);
+    const profileId = encodeURIComponent(params.profileId);
+
+    try {
+      const response = await axios.post(
+        `${serverUrl}/v3/connect/${serviceId}/profiles/${profileId}/credential`,
+        {
+          content: params.content,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.credential.token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 5000,
+        },
+      );
+
+      if (response.status !== 200 && response.status !== 201) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      logger.debug(`[API] Connected service credential registered (v3)`, {
+        serviceId: params.serviceId,
+        profileId: params.profileId,
+      });
+    } catch (error) {
+      logger.debug(`[API] [ERROR] Failed to register connected service credential (v3):`, serializeAxiosErrorForLog(error));
+      throw new Error(`Failed to register connected service credential: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   /**
    * Register a sealed connected service quota snapshot (v2).
    *

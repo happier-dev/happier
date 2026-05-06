@@ -73,6 +73,17 @@ describe("eventRouter payloads (protocol container)", () => {
                 pendingPermissionRequestCount: 2,
                 pendingUserActionRequestCount: 1,
                 archivedAt: 1234,
+                latestTurnStatus: "failed",
+                lastRuntimeIssue: {
+                    v: 1,
+                    scope: "primary_session",
+                    status: "failed",
+                    code: "provider_process_exit",
+                    source: "provider_process_exit",
+                    occurredAt: 10,
+                    provider: "pi",
+                    sanitizedPreview: "Provider process exited",
+                },
             },
         );
 
@@ -83,6 +94,11 @@ describe("eventRouter payloads (protocol container)", () => {
         expect((payload.body as any).pendingPermissionRequestCount).toBe(2);
         expect((payload.body as any).pendingUserActionRequestCount).toBe(1);
         expect((payload.body as any).archivedAt).toBe(1234);
+        expect((payload.body as any).latestTurnStatus).toBe("failed");
+        expect((payload.body as any).lastRuntimeIssue).toMatchObject({
+            source: "provider_process_exit",
+            provider: "pi",
+        });
     });
 
     it("buildDeleteSessionUpdate emits a full container", () => {

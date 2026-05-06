@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { buildCodexAppServerTokenCountSessionMessage } from '../usage/buildCodexAppServerTokenCountSessionMessage';
+import { surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 import type { DisposableCodexAppServerClient } from './client/createCodexAppServerClient';
 import {
@@ -157,6 +158,16 @@ export function registerCodexAppServerClientHandlers(params: Readonly<{
                         }
                         await params.abortPendingTurnWithFailure(failure);
                         return;
+                    }
+                    if (method !== 'turn/completed') {
+                        await surfacePrimarySessionRuntimeIssue({
+                            provider: 'codex',
+                            cause: 'cancelled',
+                            providerTurnId: readTurnId(notificationParams),
+                            session: {
+                                sendAgentMessage: (_provider, body) => params.sendCodexMessage(body),
+                            },
+                        });
                     }
                     params.schedulePendingTurnFinalization(
                         method === 'turn/completed' ? 'turn-end' : 'abort',

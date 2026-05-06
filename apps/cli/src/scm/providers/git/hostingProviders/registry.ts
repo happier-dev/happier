@@ -3,13 +3,51 @@ import {
     createMissingScmHostingProviderDescriptorDiagnostic,
     createScmHostingProviderPluginMismatchDiagnostic,
 } from './diagnostics';
-import { readScmHostingProviderAllowedSchemes } from './urlSafety';
+import { readScmHostingProviderUrlSafety } from './urlSafety';
 import type {
     ResolvedScmHostingProvider,
     ResolvedScmHostingProviderRegistry,
     ScmHostingProviderDescriptor,
+    ScmHostingProviderResolvedRemote,
+    ScmHostingProviderRoutingAdapter,
     ScmHostingProviderRuntimeBinding,
+    UnresolvedScmHostingProvider,
 } from './types';
+
+function isScmHostingProviderRoutingAdapter(
+    adapter: unknown,
+): adapter is ScmHostingProviderRoutingAdapter {
+    const candidate = adapter as Partial<Record<'detectRemote' | 'buildCompareUrl', unknown>>;
+    return Boolean(adapter)
+        && typeof candidate.detectRemote === 'function'
+        && typeof candidate.buildCompareUrl === 'function';
+}
+
+function createUnknownProvider(remoteName: string | null): UnresolvedScmHostingProvider {
+    return Object.freeze({
+        id: 'unknown',
+        kind: 'unknown',
+        displayName: 'Unknown SCM hosting provider',
+        ...(remoteName ? { remoteName } : {}),
+        unsupportedReason: 'no_registered_provider_detected',
+    });
+}
+
+function isUnresolvedScmHostingProvider(provider: Readonly<{ id: string; kind: string }>): provider is UnresolvedScmHostingProvider {
+    return provider.id === 'unknown' && provider.kind === 'unknown';
+}
+
+function normalizeDetectedProvider(provider: ScmHostingProviderResolvedRemote): ScmHostingProviderResolvedRemote {
+    return Object.freeze({
+        id: provider.id,
+        kind: provider.kind,
+        displayName: provider.displayName,
+        baseUrl: provider.baseUrl,
+        ...(provider.nameWithOwner ? { nameWithOwner: provider.nameWithOwner } : {}),
+        ...(provider.remoteName !== undefined ? { remoteName: provider.remoteName } : {}),
+        ...(provider.urlSafety ? { urlSafety: provider.urlSafety } : {}),
+    });
+}
 
 export function createScmHostingProviderRegistry(params: Readonly<{
     providers: readonly ScmHostingProviderDescriptor[];
@@ -51,18 +89,14 @@ export function createScmHostingProviderRegistry(params: Readonly<{
             }));
             providersById.set(provider.id, Object.freeze({
                 ...provider,
-                urlSafety: {
-                    allowedSchemes: readScmHostingProviderAllowedSchemes(provider),
-                },
+                urlSafety: readScmHostingProviderUrlSafety(provider),
             }));
             continue;
         }
 
         providersById.set(provider.id, Object.freeze({
             ...provider,
-            urlSafety: {
-                allowedSchemes: readScmHostingProviderAllowedSchemes(provider),
-            },
+            urlSafety: readScmHostingProviderUrlSafety(provider),
             ...(runtime ? { runtime } : {}),
         }));
     }
@@ -87,6 +121,61 @@ export function createScmHostingProviderRegistry(params: Readonly<{
         },
         getAdapter(id) {
             return providersById.get(id)?.runtime?.registration.adapter;
+        },
+        detectRemote(input) {
+            for (const provider of providers) {
+                const adapter = provider.runtime?.registration.adapter;
+                if (!isScmHostingProviderRoutingAdapter(adapter)) {
+                    continue;
+                }
+                const detected = adapter.detectRemote(input) as ScmHostingProviderResolvedRemote | null;
+                if (!detected) {
+                    continue;
+                }
+                return Object.freeze({
+                    kind: 'resolved' as const,
+                    providerId: provider.id,
+                    provider: normalizeDetectedProvider(detected),
+                });
+            }
+            return Object.freeze({
+                kind: 'unknown' as const,
+                provider: createUnknownProvider(input.remoteName),
+            });
+        },
+        buildCompareUrl(input) {
+            const provider = input.provider;
+            if (isUnresolvedScmHostingProvider(provider)) {
+                return Object.freeze({
+                    kind: 'unsupported' as const,
+                    reason: 'unknown_provider' as const,
+                    provider,
+                });
+            }
+            const adapter = providersById.get(provider.id)?.runtime?.registration.adapter;
+            if (!isScmHostingProviderRoutingAdapter(adapter)) {
+                return Object.freeze({
+                    kind: 'unsupported' as const,
+                    reason: 'adapter_unavailable' as const,
+                    provider,
+                });
+            }
+            const url = adapter.buildCompareUrl({
+                provider,
+                base: input.base,
+                head: input.head,
+            });
+            if (!url) {
+                return Object.freeze({
+                    kind: 'unsupported' as const,
+                    reason: 'unsupported_by_provider' as const,
+                    provider,
+                });
+            }
+            return Object.freeze({
+                kind: 'resolved' as const,
+                url,
+            });
         },
     });
 }

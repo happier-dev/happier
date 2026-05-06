@@ -1,0 +1,212 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+import { describe, expect, it, vi } from 'vitest';
+
+import { encodeBase64, encrypt } from '@/api/encryption';
+import type { FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
+import {
+  createSessionTranscriptFollowLeaseRegistry,
+  type SessionTranscriptFollowLeaseRegistry,
+} from '@/api/session/transcriptQueries';
+import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+
+import { createCliActionExecutor } from './createCliActionExecutor';
+
+type TranscriptItem = Readonly<{
+  id: string;
+  text?: string;
+  content?: unknown;
+}>;
+
+type TranscriptExecutorTestParams = Parameters<typeof createCliActionExecutor>[0] & Readonly<{
+  transcriptStore: FileBackedTranscriptSessionStore<TranscriptItem>;
+  transcriptFollowLeaseRegistry?: SessionTranscriptFollowLeaseRegistry;
+  writeTranscriptItems?: (
+    sessionId: string,
+    items: readonly TranscriptItem[],
+  ) => Promise<Readonly<{ imported: number; cursor: string | null }>>;
+  sessionLogAccess?: Readonly<{
+    workingDirectory: string;
+    accessPolicy: FilesystemAccessPolicy;
+  }>;
+}>;
+
+function createTranscriptStore(
+  overrides: Partial<FileBackedTranscriptSessionStore<TranscriptItem>>,
+): FileBackedTranscriptSessionStore<TranscriptItem> {
+  return {
+    warm: async () => undefined,
+    dispose: async () => undefined,
+    setLifecycleState: async () => undefined,
+    pageOlder: async () => ({ items: [], nextCursor: null, hasMore: false, tailCursor: null, truncated: false }),
+    readAfter: async () => ({ items: [], nextCursor: null, truncated: false }),
+    getTailCursor: () => 'tail',
+    subscribe: () => () => undefined,
+    getTitle: async () => null,
+    getWorkingDirectory: async () => null,
+    getActivity: async () => null,
+    getPreview: async () => null,
+    ...overrides,
+  };
+}
+
+function createTranscriptExecutor(params: Partial<TranscriptExecutorTestParams>) {
+  const encryptionKey = new Uint8Array(32).fill(7);
+  return createCliActionExecutor({
+    token: 'token-1',
+    sessionId: 'session-1',
+    ctx: { encryptionKey, encryptionVariant: 'dataKey' },
+    transcriptStore: createTranscriptStore({}),
+    ...params,
+  } as TranscriptExecutorTestParams);
+}
+
+describe('createCliActionExecutor transcript actions', () => {
+  it('executes transcript page/readAfter/search/follow through bounded transcript stores', async () => {
+    const pageOlder = vi.fn(async () => ({
+      items: [{ id: 'older', text: 'older row' }],
+      nextCursor: 'before-1',
+      hasMore: true,
+      tailCursor: 'tail-1',
+      truncated: false,
+    }));
+    const readAfter = vi.fn(async () => ({
+      items: [{ id: 'newer', text: 'needle row' }],
+      nextCursor: 'after-1',
+      truncated: false,
+    }));
+    const store = createTranscriptStore({ pageOlder, readAfter });
+    const executor = createTranscriptExecutor({
+      transcriptStore: store,
+      transcriptFollowLeaseRegistry: createSessionTranscriptFollowLeaseRegistry({ maxLeases: 2, idleTtlMs: 1000 }),
+    });
+
+    await expect(executor.execute('transcript.page', {
+      sessionId: 'session-1',
+      cursor: 'before-0',
+      maxBytes: 4096,
+      maxItems: 25,
+    }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+      result: { ok: true, items: [{ id: 'older', text: 'older row' }], nextCursor: 'before-1' },
+    });
+    await expect(executor.execute('transcript.readAfter', {
+      sessionId: 'session-1',
+      cursor: 'tail',
+      maxBytes: 2048,
+      maxItems: 10,
+    }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+      result: { ok: true, items: [{ id: 'newer', text: 'needle row' }], nextCursor: 'after-1' },
+    });
+    await expect(executor.execute('transcript.search', {
+      sessionId: 'session-1',
+      query: 'needle',
+      cursor: 'tail',
+      maxItems: 5,
+      maxReads: 1,
+    }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+      result: { ok: true, items: [{ id: 'newer', text: 'needle row' }], nextCursor: 'after-1' },
+    });
+    await expect(executor.execute('transcript.follow', {
+      sessionId: 'session-1',
+      cursor: 'tail',
+      leaseId: 'lease-1',
+    }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+      result: { ok: true, leaseId: 'lease-1' },
+    });
+
+    expect(pageOlder).toHaveBeenCalledWith({ cursor: 'before-0', maxBytes: 4096, maxItems: 25 });
+    expect(readAfter).toHaveBeenCalledWith({ cursor: 'tail', maxBytes: 2048, maxItems: 10 });
+  });
+
+  it('preserves plain and encrypted transcript envelopes through page and import actions', async () => {
+    const encryptionKey = new Uint8Array(32).fill(9);
+    const plainContent = { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'plain row' } } };
+    const encryptedContent = {
+      t: 'encrypted',
+      c: encodeBase64(encrypt(encryptionKey, 'dataKey', {
+        role: 'agent',
+        content: { type: 'text', text: 'encrypted row' },
+      })),
+    };
+    const store = createTranscriptStore({
+      pageOlder: async () => ({
+        items: [
+          { id: 'plain', content: plainContent },
+          { id: 'encrypted', content: encryptedContent },
+        ],
+        nextCursor: null,
+        hasMore: false,
+        tailCursor: 'tail',
+        truncated: false,
+      }),
+    });
+    const writeTranscriptItems = vi.fn(async (
+      _sessionId: string,
+      _items: readonly TranscriptItem[],
+    ) => ({ imported: 2, cursor: 'tail-import' }));
+    const executor = createCliActionExecutor({
+      token: 'token-1',
+      sessionId: 'session-1',
+      ctx: { encryptionKey, encryptionVariant: 'dataKey' },
+      transcriptStore: store,
+      writeTranscriptItems,
+    } as TranscriptExecutorTestParams);
+
+    const page = await executor.execute('transcript.page', {}, { surface: 'rpc', defaultSessionId: 'session-1' });
+    expect(page).toMatchObject({ ok: true });
+    expect((page as { result: { items: readonly TranscriptItem[] } }).result.items.map((item) => item.content)).toEqual([
+      plainContent,
+      encryptedContent,
+    ]);
+
+    await expect(executor.execute('transcript.import', {
+      items: [
+        { id: 'plain', content: plainContent },
+        { id: 'encrypted', content: encryptedContent },
+      ],
+    }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+      result: { ok: true, imported: 2, cursor: 'tail-import' },
+    });
+    expect(writeTranscriptItems).toHaveBeenCalledTimes(1);
+    expect(writeTranscriptItems.mock.calls[0]?.[0]).toBe('session-1');
+    expect(writeTranscriptItems.mock.calls[0]?.[1].map((item) => item.content)).toEqual([
+      plainContent,
+      encryptedContent,
+    ]);
+  });
+
+  it('tails session logs with offset and maxBytes bounds', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-session-log-tail-'));
+    const logPath = join(dir, 'session.log');
+    await writeFile(logPath, '0123456789abcdef', 'utf8');
+    const executor = createTranscriptExecutor({
+      sessionLogAccess: {
+        workingDirectory: dir,
+        accessPolicy: { kind: 'restrictedRoots', roots: [dir] },
+      },
+    });
+
+    await expect(executor.execute('session.log.tail', {
+      path: logPath,
+      offset: 4,
+      maxBytes: 6,
+    }, { surface: 'rpc' })).resolves.toMatchObject({
+      ok: true,
+      result: {
+        ok: true,
+        path: logPath,
+        tail: '456789',
+        offset: 4,
+        nextOffset: 10,
+        truncated: true,
+      },
+    });
+  });
+});

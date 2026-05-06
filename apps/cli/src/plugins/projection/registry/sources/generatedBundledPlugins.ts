@@ -23,6 +23,7 @@ import type {
   ResolvedBackendContribution,
   ResolvedCatalogEntry,
   ResolvedProviderContribution,
+  ResolvedScmHostingProviderContribution,
 } from '../types';
 
 export type BundledFirstPartyPluginMetadata = Readonly<{
@@ -44,6 +45,10 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Objec
   "@happier-dev/plugins-claude",
   "@happier-dev/plugins-codex",
   "@happier-dev/plugins-opencode",
+  "@happier-dev/plugins-scm-azure-devops",
+  "@happier-dev/plugins-scm-bitbucket",
+  "@happier-dev/plugins-scm-github",
+  "@happier-dev/plugins-scm-gitlab",
 ]);
 
 export const BUNDLED_FIRST_PARTY_PLUGIN_METADATA: readonly BundledFirstPartyPluginMetadata[] = Object.freeze(
@@ -74,6 +79,38 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_METADATA: readonly BundledFirstPartyPlug
     "packageVersion": "0.0.0",
     "pluginId": "opencode",
     "pluginPackageId": "opencode"
+  },
+  {
+    "manifestDigest": "bundled:@happier-dev/plugins-scm-azure-devops@0.0.0",
+    "manifestPath": "bundled:scm-azure-devops",
+    "packageName": "@happier-dev/plugins-scm-azure-devops",
+    "packageVersion": "0.0.0",
+    "pluginId": "scm-azure-devops",
+    "pluginPackageId": "scm-azure-devops"
+  },
+  {
+    "manifestDigest": "bundled:@happier-dev/plugins-scm-bitbucket@0.0.0",
+    "manifestPath": "bundled:scm-bitbucket",
+    "packageName": "@happier-dev/plugins-scm-bitbucket",
+    "packageVersion": "0.0.0",
+    "pluginId": "scm-bitbucket",
+    "pluginPackageId": "scm-bitbucket"
+  },
+  {
+    "manifestDigest": "bundled:@happier-dev/plugins-scm-github@0.0.0",
+    "manifestPath": "bundled:scm-github",
+    "packageName": "@happier-dev/plugins-scm-github",
+    "packageVersion": "0.0.0",
+    "pluginId": "scm-github",
+    "pluginPackageId": "scm-github"
+  },
+  {
+    "manifestDigest": "bundled:@happier-dev/plugins-scm-gitlab@0.0.0",
+    "manifestPath": "bundled:scm-gitlab",
+    "packageName": "@happier-dev/plugins-scm-gitlab",
+    "packageVersion": "0.0.0",
+    "pluginId": "scm-gitlab",
+    "pluginPackageId": "scm-gitlab"
   }
 ]);
 
@@ -158,6 +195,268 @@ export const BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS: readonly ResolvedProvid
     } satisfies ResolvedProviderContribution);
   }),
 );
+
+export const BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS: readonly ResolvedScmHostingProviderContribution[] = Object.freeze([
+  Object.freeze({
+    id: "scm.azure-devops",
+    provenance: 'first_party',
+    source: { kind: 'bundled' },
+    pluginId: "scm-azure-devops",
+    manifestPath: "bundled:scm-azure-devops",
+    manifestDigest: "bundled:@happier-dev/plugins-scm-azure-devops@0.0.0",
+    daemonEntryPath: "@happier-dev/plugins-scm-azure-devops",
+    sourceSpec: {
+  "installPolicy": "link",
+  "kind": "package",
+  "locator": "@happier-dev/plugins-scm-azure-devops",
+  "resolvedDigest": "bundled:@happier-dev/plugins-scm-azure-devops@0.0.0",
+  "resolvedVersion": "0.0.0",
+  "trustPolicy": "local_trusted"
+},
+    definition: Object.freeze({
+  "baseUrl": "https://dev.azure.com",
+  "capabilities": {
+    "compareUrl": true,
+    "openUrl": true,
+    "pullRequests": {
+      "checkout": false,
+      "create": false,
+      "get": false,
+      "list": false,
+      "prepareWorktree": false,
+      "runStacked": false
+    },
+    "repositoryProvisioning": {
+      "createRepository": false,
+      "describeTargets": false,
+      "publish": false
+    },
+    "reviewThreads": {
+      "read": false,
+      "write": false
+    }
+  },
+  "displayName": "Azure DevOps",
+  "id": "scm.azure-devops",
+  "kind": "azure-devops",
+  "remoteHostMatchers": {
+    "exactHosts": [
+      "dev.azure.com",
+      "ssh.dev.azure.com"
+    ],
+    "suffixHosts": [
+      ".visualstudio.com"
+    ]
+  },
+  "urlSafety": {
+    "allowedBaseUrls": [
+      "https://dev.azure.com"
+    ],
+    "allowedOrigins": [
+      "https://dev.azure.com"
+    ],
+    "allowedSchemes": [
+      "https:"
+    ]
+  }
+}),
+  } satisfies ResolvedScmHostingProviderContribution),
+  Object.freeze({
+    id: "scm.bitbucket",
+    provenance: 'first_party',
+    source: { kind: 'bundled' },
+    pluginId: "scm-bitbucket",
+    manifestPath: "bundled:scm-bitbucket",
+    manifestDigest: "bundled:@happier-dev/plugins-scm-bitbucket@0.0.0",
+    daemonEntryPath: "@happier-dev/plugins-scm-bitbucket",
+    sourceSpec: {
+  "installPolicy": "link",
+  "kind": "package",
+  "locator": "@happier-dev/plugins-scm-bitbucket",
+  "resolvedDigest": "bundled:@happier-dev/plugins-scm-bitbucket@0.0.0",
+  "resolvedVersion": "0.0.0",
+  "trustPolicy": "local_trusted"
+},
+    definition: Object.freeze({
+  "baseUrl": "https://bitbucket.org",
+  "capabilities": {
+    "compareUrl": true,
+    "openUrl": true,
+    "pullRequests": {
+      "checkout": false,
+      "create": false,
+      "get": false,
+      "list": false,
+      "prepareWorktree": false,
+      "runStacked": false
+    },
+    "repositoryProvisioning": {
+      "createRepository": false,
+      "describeTargets": false,
+      "publish": false
+    },
+    "reviewThreads": {
+      "read": false,
+      "write": false
+    }
+  },
+  "displayName": "Bitbucket",
+  "id": "scm.bitbucket",
+  "kind": "bitbucket",
+  "remoteHostMatchers": {
+    "exactHosts": [
+      "bitbucket.org"
+    ],
+    "suffixHosts": []
+  },
+  "urlSafety": {
+    "allowedBaseUrls": [
+      "https://bitbucket.org"
+    ],
+    "allowedOrigins": [
+      "https://bitbucket.org"
+    ],
+    "allowedSchemes": [
+      "https:"
+    ]
+  }
+}),
+  } satisfies ResolvedScmHostingProviderContribution),
+  Object.freeze({
+    id: "scm.github",
+    provenance: 'first_party',
+    source: { kind: 'bundled' },
+    pluginId: "scm-github",
+    manifestPath: "bundled:scm-github",
+    manifestDigest: "bundled:@happier-dev/plugins-scm-github@0.0.0",
+    daemonEntryPath: "@happier-dev/plugins-scm-github",
+    sourceSpec: {
+  "installPolicy": "link",
+  "kind": "package",
+  "locator": "@happier-dev/plugins-scm-github",
+  "resolvedDigest": "bundled:@happier-dev/plugins-scm-github@0.0.0",
+  "resolvedVersion": "0.0.0",
+  "trustPolicy": "local_trusted"
+},
+    definition: Object.freeze({
+  "baseUrl": "https://github.com",
+  "capabilities": {
+    "compareUrl": true,
+    "openUrl": true,
+    "pullRequests": {
+      "checkout": false,
+      "create": true,
+      "get": true,
+      "list": true,
+      "prepareWorktree": false,
+      "runStacked": false
+    },
+    "repositoryProvisioning": {
+      "createRepository": true,
+      "describeTargets": true,
+      "publish": false
+    },
+    "reviewThreads": {
+      "read": false,
+      "write": false
+    }
+  },
+  "displayName": "GitHub",
+  "id": "scm.github",
+  "kind": "github",
+  "remoteHostMatchers": {
+    "exactHosts": [
+      "github.com",
+      "github.company.com",
+      "ghe.internal.test"
+    ],
+    "suffixHosts": []
+  },
+  "urlSafety": {
+    "allowedBaseUrls": [
+      "https://github.com",
+      "https://github.company.com",
+      "https://ghe.internal.test"
+    ],
+    "allowedOrigins": [
+      "https://github.com",
+      "https://github.company.com",
+      "https://ghe.internal.test"
+    ],
+    "allowedSchemes": [
+      "https:"
+    ]
+  }
+}),
+  } satisfies ResolvedScmHostingProviderContribution),
+  Object.freeze({
+    id: "scm.gitlab",
+    provenance: 'first_party',
+    source: { kind: 'bundled' },
+    pluginId: "scm-gitlab",
+    manifestPath: "bundled:scm-gitlab",
+    manifestDigest: "bundled:@happier-dev/plugins-scm-gitlab@0.0.0",
+    daemonEntryPath: "@happier-dev/plugins-scm-gitlab",
+    sourceSpec: {
+  "installPolicy": "link",
+  "kind": "package",
+  "locator": "@happier-dev/plugins-scm-gitlab",
+  "resolvedDigest": "bundled:@happier-dev/plugins-scm-gitlab@0.0.0",
+  "resolvedVersion": "0.0.0",
+  "trustPolicy": "local_trusted"
+},
+    definition: Object.freeze({
+  "baseUrl": "https://gitlab.com",
+  "capabilities": {
+    "compareUrl": true,
+    "openUrl": true,
+    "pullRequests": {
+      "checkout": false,
+      "create": false,
+      "get": false,
+      "list": false,
+      "prepareWorktree": false,
+      "runStacked": false
+    },
+    "repositoryProvisioning": {
+      "createRepository": false,
+      "describeTargets": false,
+      "publish": false
+    },
+    "reviewThreads": {
+      "read": false,
+      "write": false
+    }
+  },
+  "displayName": "GitLab",
+  "id": "scm.gitlab",
+  "kind": "gitlab",
+  "remoteHostMatchers": {
+    "exactHosts": [
+      "gitlab.com",
+      "gitlab.company.com",
+      "code.internal.test"
+    ],
+    "suffixHosts": []
+  },
+  "urlSafety": {
+    "allowedBaseUrls": [
+      "https://gitlab.com",
+      "https://gitlab.company.com",
+      "https://code.internal.test"
+    ],
+    "allowedOrigins": [
+      "https://gitlab.com",
+      "https://gitlab.company.com",
+      "https://code.internal.test"
+    ],
+    "allowedSchemes": [
+      "https:"
+    ]
+  }
+}),
+  } satisfies ResolvedScmHostingProviderContribution),
+]);
 
 const backendCatalogDefinitionsById = new Map<AgentId, BuiltInBackendCatalogDefinition>(
   getAllBackendDefinitions().map((definition) => [definition.id, definition] as const),

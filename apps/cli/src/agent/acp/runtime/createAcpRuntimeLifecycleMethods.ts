@@ -13,6 +13,11 @@ import { createAcpPendingQueuePump } from './createAcpPendingQueuePump';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import type { AcpRuntimeBackend } from './acpRuntimeBackendContract';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
+import {
+  recordPrimaryTurnCompleted,
+  recordPrimaryTurnInProgress,
+  surfacePrimarySessionRuntimeIssue,
+} from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 type AcpRuntimeLifecycleState = {
   backend: AcpRuntimeBackend | null;
@@ -74,6 +79,9 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
       resetTurnState(params.state);
       params.pendingQueuePump.start();
       params.onThinkingChange(true);
+      void recordPrimaryTurnInProgress({ session: params.session }).catch((e) => {
+        logger.debug(`[${params.provider}] Failed to record primary turn in-progress (non-fatal)`, e);
+      });
       params.session.keepAlive(true, 'remote');
       try {
         params.hooks?.onBeginTurn?.();
@@ -89,6 +97,11 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
       try {
         await backend.cancel(params.state.sessionId);
       } finally {
+        await surfacePrimarySessionRuntimeIssue({
+          provider: params.provider,
+          cause: 'cancelled',
+          session: params.session,
+        });
         params.state.turnInFlight = false;
         params.onThinkingChange(false);
         params.session.keepAlive(false, 'remote');
@@ -283,6 +296,9 @@ export function createAcpRuntimeLifecycleMethods(params: Readonly<{
 
       if (!params.state.turnAborted) {
         params.session.sendAgentMessage(params.provider, { type: 'task_complete', id: randomUUID() });
+        void recordPrimaryTurnCompleted({ session: params.session }).catch((e) => {
+          logger.debug(`[${params.provider}] Failed to record primary turn completion (non-fatal)`, e);
+        });
       }
 
       resetTurnState(params.state);

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
+import { CODEX_ACP_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 
 import { startBackgroundRuntimeInstallableUpdate } from './startBackgroundUpdate';
@@ -9,6 +9,7 @@ import type { RuntimeInstallableAdapter } from './registry';
 function createAdapter(): RuntimeInstallableAdapter {
   return {
     key: INSTALLABLE_KEYS.CODEX_ACP,
+    capabilityId: CODEX_ACP_DEP_ID,
     detectLaunchResolution: vi.fn(async () => ({
       availability: { ok: true as const },
       canAutoInstall: false,

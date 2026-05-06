@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginApiHost } from './host';
+import type { PluginDisposable } from './types';
+
+async function disposePluginDisposable(disposable: PluginDisposable): Promise<void> {
+    if (typeof disposable === 'function') {
+        await disposable();
+        return;
+    }
+    await disposable.dispose();
+}
 
 describe('createPluginApiHost', () => {
     it('does not expose legacy static contribution registration methods', () => {
@@ -255,5 +264,95 @@ describe('createPluginApiHost', () => {
                 code: 'plugin_scm_hosting_provider_undeclared_id',
             }),
         ]);
+    });
+
+    it('rejects invalid execution-run profile registrations before storing them', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.execution-runs',
+            runtimeCapabilities: ['executionRunProfiles'],
+            declaredExecutionRunProfileIds: ['acme.review.profile'],
+        });
+        const api = host.api as typeof host.api & Readonly<{
+            registerExecutionRunProfile: (registration: unknown) => unknown;
+        }>;
+
+        expect(() => api.registerExecutionRunProfile({
+            id: 'acme.review.profile',
+            intent: 'review',
+            displayKey: 'plugins.acme.executionRuns.review.label',
+        })).toThrow(/Invalid execution-run profile/);
+
+        expect(host.registrations().executionRunProfiles).toEqual([]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_manifest_semantic_invalid',
+            }),
+        ]);
+    });
+
+    it('records MCP registrations and removes them through disposable handles', async () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+        });
+
+        const serverDisposable = host.api.registerMcpServer({
+            id: 'acme.hosted',
+            name: 'acme-hosted',
+            transport: { kind: 'hosted' },
+        });
+        const backendClientDisposable = host.api.registerMcpBackendClient({
+            id: 'acme.backendClient',
+            serverName: 'acme-hosted',
+            toolNamespace: 'ext.acme',
+        });
+        const toolDisposable = host.api.registerMcpTool({
+            id: 'acme.tool',
+            name: 'ext.acme.search',
+            inputSchema: { type: 'object' },
+            handler: async () => ({ ok: true }),
+        });
+        const discoveryDisposable = host.api.registerMcpDiscoveryProvider({
+            id: 'acme.discovery',
+            discover: async () => [],
+        });
+
+        expect(host.registrations().mcpServers.map((entry) => entry.id)).toEqual(['acme.hosted']);
+        expect(host.registrations().mcpBackendClients.map((entry) => entry.id)).toEqual(['acme.backendClient']);
+        expect(host.registrations().mcpTools.map((entry) => entry.name)).toEqual(['ext.acme.search']);
+        expect(host.registrations().mcpDiscoveryProviders.map((entry) => entry.id)).toEqual(['acme.discovery']);
+
+        await disposePluginDisposable(serverDisposable);
+        await disposePluginDisposable(backendClientDisposable);
+        await disposePluginDisposable(toolDisposable);
+        await disposePluginDisposable(discoveryDisposable);
+
+        expect(host.registrations().mcpServers).toEqual([]);
+        expect(host.registrations().mcpBackendClients).toEqual([]);
+        expect(host.registrations().mcpTools).toEqual([]);
+        expect(host.registrations().mcpDiscoveryProviders).toEqual([]);
+    });
+
+    it('rejects unprefixed MCP tools and same-namespace collisions', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+        });
+
+        expect(() => host.api.registerMcpTool({
+            id: 'acme.bad',
+            name: 'search',
+            handler: async () => null,
+        })).toThrow(/canonical MCP tool prefix/);
+
+        host.api.registerMcpTool({
+            id: 'acme.search',
+            name: 'ext.acme.search',
+            handler: async () => null,
+        });
+
+        expect(() => host.api.registerMcpTool({
+            id: 'acme.create',
+            name: 'ext.acme.create',
+            handler: async () => null,
+        })).toThrow(/MCP tool namespace collision/);
     });
 });

@@ -1,3 +1,5 @@
+import type { FileChangeEvidence, TurnChangeSet } from '@happier-dev/protocol';
+
 import type { ScmBackendContext } from '../types';
 
 export type RepositoryCheckpointCapturePhase = 'message-start' | 'turn-start' | 'turn-final';
@@ -25,6 +27,17 @@ export type RepositoryCheckpointAvailabilityReason =
     | 'command_failed'
     | 'permission_denied'
     | 'missing_git';
+
+export type RepositoryCheckpointTurnProjectionUnavailableReason =
+    | RepositoryCheckpointAvailabilityReason
+    | 'missing_source'
+    | 'missing_base'
+    | 'missing_final'
+    | 'invalid_ref'
+    | 'diff_failed'
+    | 'capture_failed';
+
+export type RepositoryCheckpointTurnProjectionStatus = 'available' | 'unavailable';
 
 export type RepositoryCheckpointAvailability =
     | Readonly<{
@@ -76,6 +89,74 @@ export type RepositoryCheckpointCaptureResult =
         error: string;
         receipts: readonly RepositoryCheckpointReceipt[];
     }>;
+
+export type RepositoryCheckpointAliasRequest = Readonly<{
+    context: ScmBackendContext;
+    sourceRef: RepositoryCheckpointRef;
+    targetRef: RepositoryCheckpointRef;
+}>;
+
+export type RepositoryCheckpointAliasResult =
+    | Readonly<{
+        success: true;
+        sourceRef: RepositoryCheckpointRef;
+        targetRef: RepositoryCheckpointRef;
+        commitSha: string;
+        receipts: readonly RepositoryCheckpointReceipt[];
+    }>
+    | Readonly<{
+        success: false;
+        kind: 'unavailable' | 'failed';
+        reason: RepositoryCheckpointTurnProjectionUnavailableReason;
+        error: string;
+        receipts: readonly RepositoryCheckpointReceipt[];
+    }>;
+
+export type RepositoryCheckpointDiffBaseRefSource =
+    | 'turn_start'
+    | 'message_start'
+    | 'previous_final'
+    | 'unavailable';
+
+export type RepositoryCheckpointAttributionScope =
+    | 'exclusive_worktree'
+    | 'shared_worktree'
+    | 'unknown';
+
+export type RepositoryCheckpointDiffRequest = Readonly<{
+    context: ScmBackendContext;
+    baseRef: RepositoryCheckpointRef;
+    finalRef: RepositoryCheckpointRef;
+    baseRefSource: Exclude<RepositoryCheckpointDiffBaseRefSource, 'unavailable'>;
+    attributionScope: RepositoryCheckpointAttributionScope;
+}>;
+
+export type RepositoryCheckpointDiffResult =
+    | Readonly<{
+        success: true;
+        baseRef: RepositoryCheckpointRef;
+        finalRef: RepositoryCheckpointRef;
+        baseRefSource: Exclude<RepositoryCheckpointDiffBaseRefSource, 'unavailable'>;
+        contentConfidence: 'exact';
+        attributionScope: RepositoryCheckpointAttributionScope;
+        files: readonly FileChangeEvidence[];
+        receipts: readonly RepositoryCheckpointReceipt[];
+    }>
+    | Readonly<{
+        success: false;
+        kind: 'unavailable' | 'failed';
+        reason: RepositoryCheckpointTurnProjectionUnavailableReason;
+        error: string;
+        baseRefSource: RepositoryCheckpointDiffBaseRefSource;
+        contentConfidence: 'unavailable';
+        attributionScope: RepositoryCheckpointAttributionScope;
+        receipts: readonly RepositoryCheckpointReceipt[];
+    }>;
+
+export type RepositoryCheckpointTurnProjection = Readonly<{
+    status: RepositoryCheckpointTurnProjectionStatus;
+    turnChangeSet: TurnChangeSet;
+}>;
 
 export type RepositoryCheckpointListedRef = Readonly<{
     ref: string;

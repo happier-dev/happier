@@ -10,6 +10,13 @@ import { projectPath } from '@/projectPath';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { configuration } from '@/configuration';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
+import type {
+  SshTunnelEnsureRequest,
+  SshTunnelEnsureResponse,
+  SshTunnelListResponse,
+  SshTunnelMutationResponse,
+  SshTunnelProbeResponse,
+} from '@happier-dev/protocol';
 import { resolveComparableCliVersion } from './resolveComparableCliVersion';
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from './spawn/sessionWebhookTimeoutPolicy';
 
@@ -273,6 +280,34 @@ export async function spawnDaemonSession(request: SpawnDaemonSessionRequest): Pr
 export async function spawnDaemonSession(request: SpawnDaemonSessionRequest): Promise<any> {
   const result = await daemonPost('/spawn-session', request);
   return result;
+}
+
+export async function ensureDaemonSshTunnel(
+  request: SshTunnelEnsureRequest,
+): Promise<SshTunnelEnsureResponse | { error: string; errorCode?: string }> {
+  return await daemonPost('/ssh-tunnels/ensure', request);
+}
+
+export async function listDaemonSshTunnels(): Promise<SshTunnelListResponse | { error: string; errorCode?: string }> {
+  return await daemonPost('/ssh-tunnels/list');
+}
+
+export async function probeDaemonSshTunnel(
+  tunnelKey: string,
+): Promise<SshTunnelProbeResponse | { error: string; errorCode?: string }> {
+  return await daemonPost('/ssh-tunnels/probe', { tunnelKey });
+}
+
+export async function releaseDaemonSshTunnel(
+  leaseId: string,
+): Promise<SshTunnelMutationResponse | { error: string; errorCode?: string }> {
+  return await daemonPost('/ssh-tunnels/release', { leaseId });
+}
+
+export async function stopDaemonSshTunnel(
+  tunnelKey: string,
+): Promise<SshTunnelMutationResponse | { error: string; errorCode?: string }> {
+  return await daemonPost('/ssh-tunnels/stop', { tunnelKey });
 }
 
 export async function stopDaemonHttp(params: { stopSessions?: boolean } = {}): Promise<void> {

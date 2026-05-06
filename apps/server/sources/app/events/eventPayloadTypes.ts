@@ -3,6 +3,8 @@ import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 import type {
     DirectSessionTranscriptDeltaEphemeral,
     ExecutionRunPublicState,
+    PrimaryTurnStatusV1,
+    SessionRuntimeIssueV1,
     SessionStoredMessageContent,
 } from "@happier-dev/protocol";
 
@@ -96,6 +98,8 @@ export type UpdateEvent = {
     lastViewedSessionSeq?: number | undefined;
     pendingPermissionRequestCount?: number | undefined;
     pendingUserActionRequestCount?: number | undefined;
+    latestTurnStatus?: PrimaryTurnStatusV1 | null | undefined;
+    lastRuntimeIssue?: SessionRuntimeIssueV1 | null | undefined;
     archivedAt?: number | null | undefined;
 } | {
     type: 'pending-changed';

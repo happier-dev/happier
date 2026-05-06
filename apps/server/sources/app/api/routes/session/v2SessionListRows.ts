@@ -1,8 +1,23 @@
 import type { Prisma } from "@prisma/client";
-import type { V2SessionRecord } from "@happier-dev/protocol";
+import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema, type V2SessionRecord } from "@happier-dev/protocol";
 
 function encodeSessionDataEncryptionKey(value: Uint8Array | null): string | null {
     return value ? Buffer.from(value).toString("base64") : null;
+}
+
+export function parseStoredSessionRuntimeIssue(value: string | null | undefined): V2SessionRecord["lastRuntimeIssue"] {
+    if (typeof value !== "string" || value.trim().length === 0) return null;
+    try {
+        const parsed = SessionRuntimeIssueV1Schema.safeParse(JSON.parse(value));
+        return parsed.success ? parsed.data : null;
+    } catch {
+        return null;
+    }
+}
+
+export function parseStoredSessionLatestTurnStatus(value: string | null | undefined): V2SessionRecord["latestTurnStatus"] {
+    const parsed = PrimaryTurnStatusV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
 }
 
 const V2_SESSION_LIST_SHARE_SELECT = {
@@ -26,6 +41,8 @@ const V2_SESSION_LIST_ROW_BASE_SELECT = {
     lastViewedSessionSeq: true,
     pendingPermissionRequestCount: true,
     pendingUserActionRequestCount: true,
+    latestTurnStatus: true,
+    lastRuntimeIssue: true,
     pendingCount: true,
     pendingVersion: true,
     dataEncryptionKey: true,
@@ -80,6 +97,8 @@ export function mapV2SessionListRow(params: Readonly<{ row: V2SessionListRow; us
         lastViewedSessionSeq: row.lastViewedSessionSeq ?? null,
         pendingPermissionRequestCount: row.pendingPermissionRequestCount,
         pendingUserActionRequestCount: row.pendingUserActionRequestCount,
+        latestTurnStatus: parseStoredSessionLatestTurnStatus(row.latestTurnStatus),
+        lastRuntimeIssue: parseStoredSessionRuntimeIssue(row.lastRuntimeIssue),
         pendingCount: row.pendingCount,
         pendingVersion: row.pendingVersion,
         dataEncryptionKey: isOwner

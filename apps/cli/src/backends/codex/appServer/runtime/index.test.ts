@@ -1645,6 +1645,9 @@ describe('createCodexAppServerRuntime', () => {
         expect(sendCodexMessage).not.toHaveBeenCalledWith(expect.objectContaining({
             type: 'turn_aborted',
         }));
+        expect(sendCodexMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+            type: 'turn_failed',
+        }));
         expect(sendSessionEvent).toHaveBeenCalledWith({
             type: 'message',
             message: expect.stringContaining('refused to continue in the current process'),
@@ -1681,7 +1684,7 @@ describe('createCodexAppServerRuntime', () => {
             message: expect.stringContaining('temporary upstream overload'),
         }));
         expect(sendCodexMessage).toHaveBeenCalledWith(expect.objectContaining({
-            type: 'turn_aborted',
+            type: 'turn_failed',
         }));
 
         const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));

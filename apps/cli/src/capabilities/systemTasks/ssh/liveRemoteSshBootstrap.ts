@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
 
 import * as relayHost from '@happier-dev/cli-common/relayHost';
 import * as systemTasks from '@happier-dev/cli-common/systemTasks';
@@ -27,7 +26,9 @@ import {
 import {
   buildSshKeyscanInvocation,
   readKnownHostsTextSyncWithFs,
+  withOpenSshLocalPortForward,
   writeKnownHostsTextSyncWithFs,
+  type OpenSshAuth,
 } from '@happier-dev/cli-common/ssh';
 
 type JsonRecord = Record<string, unknown>;
@@ -43,12 +44,6 @@ function redactSshStderrForErrorMessage(raw: string): string {
     if (!sanitized) return match;
     return `${prefix}${sanitized}`;
   });
-}
-
-function resolveSshTunnelControlDir(): string {
-  return process.platform === 'win32'
-    ? join(tmpdir(), 'happier-ssh-control')
-    : '/tmp/happier-ssh-control';
 }
 
 function resolveAppKnownHostsPath(): string {
@@ -140,97 +135,7 @@ function parseLoopbackPort(url: string | undefined): number | null {
   }
 }
 
-function withSshLocalPortForward(params: Readonly<{
-  ssh: SystemTaskSshConnectionConfig;
-  auth: SshAuth;
-  knownHostsPath?: string;
-  knownHostsMode?: 'app' | 'system';
-  localPort: number;
-  remotePort: number;
-  fn: () => Promise<void>;
-}>): Promise<void> {
-  const controlDir = resolveSshTunnelControlDir();
-  mkdirSync(controlDir, { recursive: true });
-  const controlPath = join(controlDir, `tunnel-${process.pid}-${Date.now()}-${params.localPort}.sock`);
-
-  const openInvocation = buildSshCommand({
-    sshBin: 'ssh',
-    target: params.ssh.target,
-    port: params.ssh.port,
-    sshConfigFile: params.ssh.sshConfigFile,
-    remoteCommand: [],
-    knownHostsPath: params.knownHostsPath,
-    knownHostsMode: params.knownHostsMode,
-    auth: params.auth,
-    connectTimeoutSec: 10,
-    serverAliveIntervalSec: 15,
-    serverAliveCountMax: 2,
-  });
-
-  const openArgs = [...openInvocation.args];
-  const resolvedTargetIndex = openArgs.lastIndexOf(params.ssh.target);
-  const targetIndex = resolvedTargetIndex >= 0
-    ? resolvedTargetIndex
-    : Math.max(0, openArgs.length - 1);
-  if (targetIndex >= 0) {
-    openArgs.splice(targetIndex, 0,
-      '-o', 'ExitOnForwardFailure=yes',
-      '-o', 'ControlMaster=yes',
-      '-o', `ControlPath=${controlPath}`,
-      '-o', 'ControlPersist=60',
-      '-f',
-      '-N',
-      '-L', `${params.localPort}:127.0.0.1:${params.remotePort}`,
-    );
-  }
-
-  const openResult = spawnSync(openInvocation.command, openArgs, { encoding: 'utf8', windowsHide: true });
-  if (openResult.error) {
-    throw openResult.error;
-  }
-  if ((openResult.status ?? 1) !== 0) {
-    const stderr = String(openResult.stderr ?? '').trim();
-    const stdout = String(openResult.stdout ?? '').trim();
-    const detail = stderr || stdout;
-    const redactedDetail = detail ? redactSshStderrForErrorMessage(detail).trim() : '';
-    throw new Error(redactedDetail ? `SSH tunnel failed: ${redactedDetail}` : 'SSH tunnel failed');
-  }
-
-  const closeTunnel = () => {
-    const closeInvocation = buildSshCommand({
-      sshBin: 'ssh',
-      target: params.ssh.target,
-      port: params.ssh.port,
-      sshConfigFile: params.ssh.sshConfigFile,
-      remoteCommand: [],
-      knownHostsPath: params.knownHostsPath,
-      knownHostsMode: params.knownHostsMode,
-      auth: params.auth,
-      connectTimeoutSec: 10,
-      serverAliveIntervalSec: 15,
-      serverAliveCountMax: 2,
-    });
-    const closeArgs = [...closeInvocation.args];
-    const resolvedCloseTargetIndex = closeArgs.lastIndexOf(params.ssh.target);
-    const closeTargetIndex = resolvedCloseTargetIndex >= 0
-      ? resolvedCloseTargetIndex
-      : Math.max(0, closeArgs.length - 1);
-    if (closeTargetIndex >= 0) {
-      closeArgs.splice(closeTargetIndex, 0,
-        '-o', `ControlPath=${controlPath}`,
-        '-O',
-        'exit',
-      );
-    }
-    spawnSync(closeInvocation.command, closeArgs, { encoding: 'utf8', windowsHide: true });
-  };
-
-  return params.fn().finally(() => {
-    closeTunnel();
-  });
-}
-
-function resolveSshAuthForTunnel(ssh: SystemTaskSshConnectionConfig): SshAuth | null {
+function resolveSshAuthForTunnel(ssh: SystemTaskSshConnectionConfig): OpenSshAuth | null {
   if (ssh.auth === 'keyfile') {
     const identityFile = String(ssh.identityFile ?? '').trim();
     if (!identityFile) {
@@ -919,16 +824,21 @@ export function createLiveRemoteSshBootstrapTaskKind() {
         await withEphemeralLoopbackServerSelection({
           port: localPort,
           fn: async () => {
-            await withSshLocalPortForward({
-              ssh: parsed.ssh,
+            await withOpenSshLocalPortForward({
+              sshBin: 'ssh',
+              target: parsed.ssh.target,
+              port: parsed.ssh.port,
+              sshConfigFile: parsed.ssh.sshConfigFile,
               auth: tunnelAuth,
               knownHostsPath,
               knownHostsMode,
               localPort,
               remotePort: requestedPort,
-              fn: async () => {
-                await approveTerminalAuthRequest({ publicKey });
-              },
+              connectTimeoutSec: 10,
+              serverAliveIntervalSec: 15,
+              serverAliveCountMax: 2,
+            }, async () => {
+              await approveTerminalAuthRequest({ publicKey });
             });
           },
         });

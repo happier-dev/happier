@@ -12,7 +12,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { collectCodexSessionRolloutFiles } from '../rollout/discovery/collectCodexSessionRolloutFiles';
-import { homes } from '../directSessions/homes';
+import { homes } from '../session/external/homes';
 import type { CodexSessionBundle } from '../../../session/handoff/types';
 
 function resolveCodexHome(env: NodeJS.ProcessEnv): string {

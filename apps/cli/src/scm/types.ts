@@ -25,6 +25,12 @@ import type {
     ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmPullRequestGetRequest,
+    ScmPullRequestGetResponse,
+    ScmPullRequestListRequest,
+    ScmPullRequestListResponse,
+    ScmPullRequestOpenComposeRequest,
+    ScmPullRequestOpenComposeResponse,
     ScmRemoteAddRequest,
     ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
@@ -35,6 +41,8 @@ import type {
     ScmRemoteSetUrlRequest,
     ScmRepositoryInitRequest,
     ScmRepositoryInitResponse,
+    ScmRepositoryRemoveIndexLockRequest,
+    ScmRepositoryRemoveIndexLockResponse,
     ScmRepoMode,
     ScmStashApplyRequest,
     ScmStashApplyResponse,
@@ -295,10 +303,26 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmRemotePublishRequest;
     }): Promise<ScmRemotePublishResponse>;
+    pullRequestList?(input: {
+        context: ScmBackendContext;
+        request: ScmPullRequestListRequest;
+    }): Promise<ScmPullRequestListResponse>;
+    pullRequestGet?(input: {
+        context: ScmBackendContext;
+        request: ScmPullRequestGetRequest;
+    }): Promise<ScmPullRequestGetResponse>;
+    pullRequestOpenCompose?(input: {
+        context: ScmBackendContext;
+        request: ScmPullRequestOpenComposeRequest;
+    }): Promise<ScmPullRequestOpenComposeResponse>;
     repositoryInit?(input: {
         context: ScmBackendContext;
         request: ScmRepositoryInitRequest;
     }): Promise<ScmRepositoryInitResponse>;
+    removeIndexLock?(input: {
+        context: ScmBackendContext;
+        request: ScmRepositoryRemoveIndexLockRequest;
+    }): Promise<ScmRepositoryRemoveIndexLockResponse>;
     stashList(input: {
         context: ScmBackendContext;
         request: ScmStashListRequest;

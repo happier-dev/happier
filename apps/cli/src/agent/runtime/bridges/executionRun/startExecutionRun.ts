@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 
 import type { SessionId } from '@/agent/core/AgentBackend';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
+import {
+  resolveExecutionRunIntentProfile,
+  resolveExecutionRunIntentProfileFromCatalog,
+  type ExecutionRunProfileContributionCatalog,
+} from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
@@ -39,10 +43,11 @@ type FinishRunNext = Omit<
   | 'runId'
   | 'callId'
   | 'sidechainId'
-  | 'sessionId'
-  | 'depth'
-  | 'intent'
-  | 'backendTarget'
+    | 'sessionId'
+    | 'depth'
+    | 'intent'
+    | 'profileId'
+    | 'backendTarget'
   | 'backendId'
   | 'instructions'
   | 'permissionMode'
@@ -79,6 +84,7 @@ type ExecuteBoundedRun = (args: {
 
 export async function startExecutionRun(args: Readonly<{
   params: ExecutionRunManagerStartParams;
+  profileCatalog?: ExecutionRunProfileContributionCatalog;
   parentProvider: ACPProvider;
   sendAcp: SendAcp;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
@@ -108,7 +114,9 @@ export async function startExecutionRun(args: Readonly<{
   getDepthByCallId: (callId: string) => number | null;
   onPublicStateUpdated?: (runId: string) => void;
 }>): Promise<ExecutionRunStartResult> {
-  const profile = resolveExecutionRunIntentProfile(args.params.intent);
+  const profile = args.profileCatalog
+    ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, args.params.intent, args.params.profileId)
+    : resolveExecutionRunIntentProfile(args.params.intent);
   const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
   const sendAcp = shouldMaterializeInTranscript ? args.sendAcp : (() => {});
   const computeSidechainStreamText = createExecutionRunSidechainStreamText(profile);
@@ -139,6 +147,10 @@ export async function startExecutionRun(args: Readonly<{
 
   const startedAtMs = args.getNowMs();
   const backendId = resolveExecutionRunRuntimeBackendId(args.params.backendTarget);
+  const profileId =
+    typeof args.params.profileId === 'string' && args.params.profileId.trim().length > 0
+      ? args.params.profileId.trim()
+      : null;
   args.runs.set(runId, {
     runId,
     callId,
@@ -146,6 +158,7 @@ export async function startExecutionRun(args: Readonly<{
     sessionId: args.params.sessionId,
     depth,
     intent: args.params.intent,
+    ...(profileId ? { profileId } : {}),
     backendTarget: args.params.backendTarget,
     backendId,
     instructions: args.params.instructions ?? '',
@@ -218,10 +231,6 @@ export async function startExecutionRun(args: Readonly<{
       const persistenceMode = args.params.transcript?.persistenceMode === 'persistent' ? 'persistent' : 'ephemeral';
 
       const permissionPolicy = args.params.permissionMode === 'no_tools' ? 'no_tools' : 'read_only';
-      const profileId =
-        typeof args.params.profileId === 'string' && args.params.profileId.trim().length > 0
-          ? args.params.profileId.trim()
-          : null;
       const initialContext = [String(args.params.initialContext ?? '').trim(), String(args.params.instructions ?? '').trim()]
         .filter((t) => t.length > 0)
         .join('\n\n');
@@ -508,7 +517,9 @@ export async function startExecutionRun(args: Readonly<{
         ioMode: args.params.ioMode,
         startedAtMs,
       } as const;
-      const profile = resolveExecutionRunIntentProfile(args.params.intent);
+      const profile = args.profileCatalog
+        ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, args.params.intent, args.params.profileId)
+        : resolveExecutionRunIntentProfile(args.params.intent);
       await args.send(runId, { message: profile.buildPrompt(start) });
     }
 

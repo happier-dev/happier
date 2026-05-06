@@ -83,6 +83,145 @@ describe('buildPluginProjectionV2', () => {
         expect(projection.backendsById).toEqual({});
     });
 
+    it('projects backend execution-run capability metadata with default support', () => {
+        const projection = buildPluginProjectionV2({
+            registry: {
+                ...createEmptyResolvedContributionRegistry(),
+                providers: [
+                    {
+                        id: 'acme.provider',
+                        provenance: 'external',
+                        source: { kind: 'path' },
+                        pluginId: 'acme.plugin',
+                        definition: {
+                            kindVersion: 1,
+                            id: 'acme.provider',
+                            ownedBackendIds: ['acme.backend'],
+                        },
+                    },
+                ],
+                backends: [
+                    {
+                        id: 'acme.backend',
+                        providerId: 'acme.provider',
+                        provenance: 'external',
+                        source: { kind: 'path' },
+                        pluginId: 'acme.plugin',
+                        definition: {
+                            kindVersion: 1,
+                            id: 'acme.backend',
+                            providerId: 'acme.provider',
+                        },
+                    },
+                ],
+            },
+            generation: 1,
+        });
+
+        expect((projection.backendsById['acme.backend'] as Record<string, unknown> | undefined)?.capabilities).toEqual({
+            executionRun: { supported: true },
+        });
+    });
+
+    it('projects static MCP contribution families through the canonical projection family surface', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            mcpServers: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'acme.mcp',
+                    manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:mcp',
+                    daemonEntryPath: '/tmp/acme/daemon.mjs',
+                    definition: {
+                        id: 'acme.server',
+                        kind: 'mcp.server',
+                        version: '1.0.0',
+                        name: 'acme-hosted',
+                        transport: 'hosted',
+                    },
+                },
+            ],
+            mcpTools: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'acme.mcp',
+                    manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:mcp',
+                    daemonEntryPath: '/tmp/acme/daemon.mjs',
+                    definition: {
+                        id: 'acme.tool',
+                        kind: 'mcp.tool',
+                        version: '1.0.0',
+                        name: 'ext.acme.mcp.search',
+                    },
+                },
+            ],
+        } as unknown as ResolvedContributionRegistry;
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 6,
+        });
+
+        expect(projection.familiesById.mcp?.entriesById['server:acme.server']).toEqual({
+            id: 'server:acme.server',
+            pluginId: 'acme.mcp',
+            contributionKind: 'server',
+            name: 'acme-hosted',
+            transport: 'hosted',
+        });
+        expect(projection.familiesById.mcp?.entriesById['tool:acme.tool']).toEqual({
+            id: 'tool:acme.tool',
+            pluginId: 'acme.mcp',
+            contributionKind: 'tool',
+            name: 'ext.acme.mcp.search',
+        });
+    });
+
+    it('rejects static MCP tool namespace collisions across plugins', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            mcpTools: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'alpha.mcp',
+                    manifestPath: '/tmp/alpha/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:alpha',
+                    daemonEntryPath: '/tmp/alpha/daemon.mjs',
+                    definition: {
+                        id: 'alpha.tool',
+                        kind: 'mcp.tool',
+                        version: '1.0.0',
+                        name: 'provider.shared.search',
+                    },
+                },
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'beta.mcp',
+                    manifestPath: '/tmp/beta/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:beta',
+                    daemonEntryPath: '/tmp/beta/daemon.mjs',
+                    definition: {
+                        id: 'beta.tool',
+                        kind: 'mcp.tool',
+                        version: '1.0.0',
+                        name: 'provider.shared.lookup',
+                    },
+                },
+            ],
+        } as unknown as ResolvedContributionRegistry;
+
+        expect(() => buildPluginProjectionV2({
+            registry,
+            generation: 7,
+        })).toThrow(/MCP tool namespace collision/);
+    });
+
     it('projects hook semantics from the canonical protocol hook catalog when normalized hook records omit raw v2 fields', () => {
         const registry: ResolvedContributionRegistry = {
             providers: [],

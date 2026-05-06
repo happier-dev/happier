@@ -2,7 +2,7 @@ import { join, relative, resolve } from 'node:path';
 
 import type { LocalHostedDirectTranscriptBinding } from '@/agent/terminalRuntime/directTranscriptBinding';
 
-import { inferCodexDirectSessionsSourceFromHome } from '../directSessions/homeEntries';
+import { inferCodexDirectSessionsSourceFromHome } from '../session/external/homeEntries';
 import { parseCodexRolloutSessionIdFromFilename } from '../rollout/discovery/parseCodexRolloutSessionIdFromFilename';
 
 function isPathInside(parentPath: string, childPath: string): boolean {

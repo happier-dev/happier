@@ -5,7 +5,14 @@ import { inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 import { log } from "@/utils/logging/log";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionStoredContentKind } from "@happier-dev/protocol";
+import {
+    isStoredContentKindAllowedForSessionByStoragePolicy,
+    PrimaryTurnStatusV1Schema,
+    SessionRuntimeIssueV1Schema,
+    type PrimaryTurnStatusV1,
+    type SessionRuntimeIssueV1,
+    type SessionStoredContentKind,
+} from "@happier-dev/protocol";
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
 import { isDeepStrictEqual } from "node:util";
 import { parseSessionMessageSidechainId } from "./parseSessionMessageSidechainId";
@@ -17,6 +24,10 @@ import {
 } from "./readCursor/resolveSessionReadCursorOperation";
 
 type ParticipantCursor = SessionParticipantCursor;
+type RuntimeIssueSummaryV1 = Readonly<{
+    latestTurnStatus: PrimaryTurnStatusV1;
+    lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
+}>;
 type SessionMessageRow = Readonly<{
     id: string;
     seq: number;
@@ -50,6 +61,24 @@ function toSessionActivityBadgeInputs(
         pendingUserActionRequestCount: value?.pendingUserActionRequestCount ?? 0,
         active: value?.active ?? true,
         archivedAt: value?.archivedAt ?? null,
+    };
+}
+
+function parseRuntimeIssueSummary(input: unknown): RuntimeIssueSummaryV1 | null {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+    const record = input as Record<string, unknown>;
+    const latestTurnStatus = PrimaryTurnStatusV1Schema.safeParse(record.latestTurnStatus);
+    if (!latestTurnStatus.success) return null;
+    if (!("lastRuntimeIssue" in record)) {
+        return { latestTurnStatus: latestTurnStatus.data };
+    }
+    const lastRuntimeIssue = record.lastRuntimeIssue === null
+        ? null
+        : SessionRuntimeIssueV1Schema.safeParse(record.lastRuntimeIssue);
+    if (lastRuntimeIssue !== null && !lastRuntimeIssue.success) return null;
+    return {
+        latestTurnStatus: latestTurnStatus.data,
+        lastRuntimeIssue: lastRuntimeIssue === null ? null : lastRuntimeIssue.data,
     };
 }
 
@@ -551,6 +580,8 @@ export type UpdateSessionAgentStateResult =
         badgeAttentionChanged: boolean;
         pendingPermissionRequestCount?: number;
         pendingUserActionRequestCount?: number;
+        latestTurnStatus?: PrimaryTurnStatusV1 | null;
+        lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
       }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "version-mismatch" | "internal"; current?: { version: number; agentState: string | null } };
 
@@ -561,6 +592,7 @@ export async function updateSessionAgentState(params: {
     agentStateCiphertext: string | null;
     pendingPermissionRequestCount?: number;
     pendingUserActionRequestCount?: number;
+    runtimeIssueSummaryV1?: RuntimeIssueSummaryV1;
 }): Promise<UpdateSessionAgentStateResult> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
@@ -575,8 +607,12 @@ export async function updateSessionAgentState(params: {
         typeof params.pendingUserActionRequestCount === "number" && Number.isFinite(params.pendingUserActionRequestCount)
             ? Math.max(0, Math.floor(params.pendingUserActionRequestCount))
             : undefined;
+    const runtimeIssueSummaryV1 = parseRuntimeIssueSummary(params.runtimeIssueSummaryV1);
 
     if (!sessionId || !actorUserId || !Number.isFinite(expectedVersion) || agentStateCiphertext === undefined) {
+        return { ok: false, error: "invalid-params" };
+    }
+    if (params.runtimeIssueSummaryV1 !== undefined && runtimeIssueSummaryV1 === null) {
         return { ok: false, error: "invalid-params" };
     }
 
@@ -613,6 +649,14 @@ export async function updateSessionAgentState(params: {
                         : {}),
                     ...(typeof pendingUserActionRequestCount === "number"
                         ? { pendingUserActionRequestCount }
+                        : {}),
+                    ...(runtimeIssueSummaryV1
+                        ? {
+                            latestTurnStatus: runtimeIssueSummaryV1.latestTurnStatus,
+                            ...("lastRuntimeIssue" in runtimeIssueSummaryV1
+                                ? { lastRuntimeIssue: runtimeIssueSummaryV1.lastRuntimeIssue === null ? null : JSON.stringify(runtimeIssueSummaryV1.lastRuntimeIssue) }
+                                : {}),
+                        }
                         : {}),
                 },
             });
@@ -658,6 +702,8 @@ export async function updateSessionAgentState(params: {
                 badgeAttentionChanged,
                 ...(typeof pendingPermissionRequestCount === "number" ? { pendingPermissionRequestCount } : {}),
                 ...(typeof pendingUserActionRequestCount === "number" ? { pendingUserActionRequestCount } : {}),
+                ...(runtimeIssueSummaryV1 ? { latestTurnStatus: runtimeIssueSummaryV1.latestTurnStatus } : {}),
+                ...(runtimeIssueSummaryV1 && "lastRuntimeIssue" in runtimeIssueSummaryV1 ? { lastRuntimeIssue: runtimeIssueSummaryV1.lastRuntimeIssue ?? null } : {}),
             };
         });
     } catch {

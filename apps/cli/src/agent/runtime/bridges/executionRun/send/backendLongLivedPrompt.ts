@@ -15,6 +15,7 @@ import { resumeBackendControllerForResumableRun } from '../resumeBackendControll
 import { isAbortLikeError, normalizeExecutionRunSendDelivery, resolveInFlightDeliveryAction } from '../turnDelivery';
 import type { ExecutionRunHostRuntime } from '../executionRunHostRuntime';
 import type { ExecutionRunPermissionRequestStoreProvider } from '../executionRunPermissionResponseTarget';
+import type { ExecutionRunProfileContributionCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 
 function readAbortRetryConfig(): { maxAttempts: number; delayMs: number } {
   const parseIntOr = (raw: unknown, fallback: number): number => {
@@ -70,6 +71,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider | null;
   writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean }>) => Promise<void>;
   onPublicStateUpdated?: (runId: string) => void;
+  profileCatalog?: ExecutionRunProfileContributionCatalog;
   }>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
   const run = args.runs.get(args.runId);
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
@@ -104,6 +106,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         getPermissionRequestStore: args.getPermissionRequestStore,
         writeActivityMarker: args.writeActivityMarker,
         getNowMs: args.getNowMs,
+        profileCatalog: args.profileCatalog,
         ...(args.onPublicStateUpdated ? { onPublicStateUpdated: args.onPublicStateUpdated } : {}),
         requireReplayCapture: run.runClass === 'long_lived',
         onModelOutput: () => {

@@ -1,4 +1,8 @@
-import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
+import {
+  resolveExecutionRunIntentProfile,
+  resolveExecutionRunIntentProfileFromCatalog,
+  type ExecutionRunProfileContributionCatalog,
+} from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { ExecutionRunManagerStartParams } from '../executionRunTypes';
 import type { ExecutionRunController, ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
@@ -18,6 +22,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
   sidechainId: string;
   startedAtMs: number;
   params: ExecutionRunManagerStartParams;
+  profileCatalog?: ExecutionRunProfileContributionCatalog;
   controllers: ReadonlyMap<string, ExecutionRunController>;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   parentProvider: ACPProvider;
@@ -26,7 +31,9 @@ export async function executeBoundedBackendRun(args: Readonly<{
   finishRun: FinishExecutionRun;
 }>): Promise<void> {
   const { runId, callId, sidechainId, startedAtMs, params } = args;
-  const profile = resolveExecutionRunIntentProfile(params.intent);
+  const profile = args.profileCatalog
+    ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, params.intent, params.profileId)
+    : resolveExecutionRunIntentProfile(params.intent);
   const shouldMaterializeInTranscript = profile.transcriptMaterialization !== 'none';
   const ctrl = args.controllers.get(runId);
   if (!ctrl) return;

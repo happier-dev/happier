@@ -1,6 +1,5 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
-
-import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import type { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
@@ -48,20 +47,21 @@ export function buildActionExecutorDepsForRpc(
     return params.executorParams;
 }
 
-function resolveRpcActionExecutor(params: RpcActionDispatchRequest): RpcActionExecutor {
+async function resolveRpcActionExecutor(params: RpcActionDispatchRequest): Promise<RpcActionExecutor> {
     if (params.executor) {
         return params.executor;
     }
     if (!params.executorParams) {
         throw new Error('rpc_action_executor_params_required');
     }
-    return createCliActionExecutor(buildActionExecutorDepsForRpc({ executorParams: params.executorParams }));
+    const module = await import('@/session/actions/createCliActionExecutor');
+    return module.createCliActionExecutor(buildActionExecutorDepsForRpc({ executorParams: params.executorParams }));
 }
 
 export async function dispatchActionFromRpc(
     params: RpcActionDispatchRequest,
 ): Promise<ActionExecuteResult> {
-    const executor = resolveRpcActionExecutor(params);
+    const executor = await resolveRpcActionExecutor(params);
     return await executor.execute(
         params.actionId,
         params.input,

@@ -1,5 +1,11 @@
-import type { InstallableKey } from '@happier-dev/protocol';
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
+import {
+  BUILT_IN_INSTALLABLES_REGISTRY,
+  type CapabilityId,
+  type InstallableKey,
+  type InstallablesRegistry,
+} from '@happier-dev/protocol';
+
+import { getGitHubReleaseBinaryRuntimeInstallableAdapter } from './sourceAdapters/githubReleaseBinary';
 
 export type RuntimeInstallableLaunchAvailability =
   | Readonly<{ ok: true }>
@@ -17,20 +23,28 @@ export type RuntimeInstallableInstallResult =
 
 export type RuntimeInstallableAdapter = Readonly<{
   key: InstallableKey;
+  capabilityId: Extract<CapabilityId, `dep.${string}`>;
   detectLaunchResolution: (params?: Readonly<{ env?: NodeJS.ProcessEnv }>) => Promise<RuntimeInstallableLaunchResolution>;
   installOrUpgrade: () => Promise<RuntimeInstallableInstallResult>;
   runBackgroundAutoUpdateCheck: () => Promise<void>;
 }>;
 
-const runtimeInstallableLoaders: Partial<Record<InstallableKey, () => Promise<RuntimeInstallableAdapter>>> = {
-  [INSTALLABLE_KEYS.CODEX_ACP]: async () => (await import('@/backends/codex/acp/runtimeInstallable')).codexAcpRuntimeInstallable,
-};
-
-export async function getRuntimeInstallableAdapter(key: InstallableKey): Promise<RuntimeInstallableAdapter> {
-  const loader = runtimeInstallableLoaders[key];
-  if (!loader) {
+export async function getRuntimeInstallableAdapter(
+  key: InstallableKey,
+  opts: Readonly<{ installablesRegistry?: InstallablesRegistry }> = {},
+): Promise<RuntimeInstallableAdapter> {
+  const registry = opts.installablesRegistry ?? BUILT_IN_INSTALLABLES_REGISTRY;
+  const descriptor = registry.descriptorsByKey[key]?.descriptor;
+  if (!descriptor) {
     throw new Error(`No runtime installable adapter is registered for "${key}"`);
   }
 
-  return await loader();
+  if (descriptor.source.kind === 'github_release_binary') {
+    const adapter = await getGitHubReleaseBinaryRuntimeInstallableAdapter(descriptor);
+    if (adapter) {
+      return adapter;
+    }
+  }
+
+  throw new Error(`Installable source kind "${descriptor.source.kind}" for "${key}" is not executable by the runtime installables adapter`);
 }

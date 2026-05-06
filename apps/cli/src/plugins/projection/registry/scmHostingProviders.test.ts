@@ -78,8 +78,13 @@ describe('SCM hosting-provider plugin contributions', () => {
                                     kind: 'github',
                                     displayName: 'Acme GitHub',
                                     baseUrl: 'https://github.example.com',
+                                    remoteHostMatchers: {
+                                        exactHosts: ['github.example.com'],
+                                    },
                                     urlSafety: {
                                         allowedSchemes: ['https:'],
+                                        allowedBaseUrls: ['https://github.example.com'],
+                                        allowedOrigins: ['https://github.example.com'],
                                     },
                                 },
                             ],
@@ -119,8 +124,13 @@ describe('SCM hosting-provider plugin contributions', () => {
                         kind: 'github',
                         displayName: 'GitHub',
                         baseUrl: 'https://github.com',
+                        remoteHostMatchers: {
+                            exactHosts: ['github.com'],
+                        },
                         urlSafety: {
                             allowedSchemes: ['https:'],
+                            allowedBaseUrls: ['https://github.com'],
+                            allowedOrigins: ['https://github.com'],
                         },
                     },
                 },
@@ -138,8 +148,13 @@ describe('SCM hosting-provider plugin contributions', () => {
                         kind: 'github',
                         displayName: 'Shadow GitHub',
                         baseUrl: 'https://github.shadow.example.com',
+                        remoteHostMatchers: {
+                            exactHosts: ['github.shadow.example.com'],
+                        },
                         urlSafety: {
                             allowedSchemes: ['https:'],
+                            allowedBaseUrls: ['https://github.shadow.example.com'],
+                            allowedOrigins: ['https://github.shadow.example.com'],
                         },
                     },
                 },
@@ -172,8 +187,17 @@ describe('SCM hosting-provider plugin contributions', () => {
                         kind: 'github',
                         displayName: 'Acme GitHub',
                         baseUrl: 'https://github.example.com',
+                        remoteHostMatchers: {
+                            exactHosts: ['github.example.com'],
+                        },
                         urlSafety: {
                             allowedSchemes: ['https:'],
+                            allowedBaseUrls: ['https://github.example.com'],
+                            allowedOrigins: ['https://github.example.com'],
+                        },
+                        capabilities: {
+                            compareUrl: true,
+                            openUrl: true,
                         },
                     },
                 },
@@ -194,7 +218,13 @@ describe('SCM hosting-provider plugin contributions', () => {
             baseUrl: 'https://github.example.com',
             urlSafety: {
                 allowedSchemes: ['https:'],
+                allowedBaseUrls: ['https://github.example.com'],
+                allowedOrigins: ['https://github.example.com'],
             },
+            capabilities: expect.objectContaining({
+                compareUrl: true,
+                openUrl: true,
+            }),
         });
     });
 
@@ -213,8 +243,13 @@ describe('SCM hosting-provider plugin contributions', () => {
                         kind: 'github',
                         displayName: 'GitHub',
                         baseUrl: 'https://github.com',
+                        remoteHostMatchers: {
+                            exactHosts: ['github.com'],
+                        },
                         urlSafety: {
                             allowedSchemes: ['https:'],
+                            allowedBaseUrls: ['https://github.com'],
+                            allowedOrigins: ['https://github.com'],
                         },
                     },
                 },
@@ -237,7 +272,13 @@ describe('SCM hosting-provider plugin contributions', () => {
             baseUrl: 'https://github.com',
             urlSafety: {
                 allowedSchemes: ['https:'],
+                allowedBaseUrls: ['https://github.com'],
+                allowedOrigins: ['https://github.com'],
             },
+            capabilities: expect.objectContaining({
+                compareUrl: false,
+                openUrl: false,
+            }),
         });
     });
 });

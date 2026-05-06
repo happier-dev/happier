@@ -1,6 +1,7 @@
 import { extname } from 'node:path';
 
 import {
+  BackendRuntimeAdapterOperationCatalogV1,
   isHookHandlerTargetV1,
 } from '@happier-dev/protocol';
 import { compareVersions } from '@happier-dev/cli-common/update';
@@ -151,7 +152,7 @@ function readUnsupportedHookTargetDiagnostics(input: unknown): PluginCompatibili
 function pushDuplicateIdDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   values: readonly string[],
-  kind: 'provider' | 'backend' | 'action' | 'tool' | 'command' | 'resource' | 'ui descriptor' | 'notification category' | 'notification channel' | 'SCM hosting provider' | 'hook' | 'lifecycle handler',
+  kind: 'provider' | 'backend' | 'action' | 'tool' | 'command' | 'resource' | 'ui descriptor' | 'notification category' | 'notification channel' | 'SCM hosting provider' | 'installable' | 'hook' | 'lifecycle handler',
 ): void {
   const seen = new Set<string>();
   for (const value of values) {
@@ -237,6 +238,37 @@ function pushUnsupportedRuntimeAdapterOperationIdDiagnostics(
         });
       }
     }
+  }
+}
+
+function backendSupportsExecutionRun(backend: CanonicalPluginManifest['contributes']['backends'][number]): boolean {
+  return backend.capabilities.executionRun.supported !== false;
+}
+
+function hasExecutionRunRuntimeCoreLaunchProof(
+  backend: CanonicalPluginManifest['contributes']['backends'][number],
+): boolean {
+  return backend.runtimeCoreHooks.some((runtimeCoreHook) => (
+    runtimeCoreHook.kind === 'terminalRuntime'
+    && runtimeCoreHook.operation === BackendRuntimeAdapterOperationCatalogV1.terminalRuntime.launch
+  ));
+}
+
+function pushMissingExecutionRunRuntimeCoreDiagnostics(
+  diagnostics: PluginCompatibilityDiagnostic[],
+  manifest: CanonicalPluginManifest,
+): void {
+  for (const backend of manifest.contributes.backends) {
+    if (!backendSupportsExecutionRun(backend)) {
+      continue;
+    }
+    if (hasExecutionRunRuntimeCoreLaunchProof(backend)) {
+      continue;
+    }
+    diagnostics.push({
+      code: 'plugin_manifest_semantic_invalid',
+      message: `Plugin backend '${backend.id}' declares execution-run support but does not declare a runtimeCore terminalRuntime launch adapter`,
+    });
   }
 }
 
@@ -368,6 +400,7 @@ export function validatePluginManifest(input: unknown): PluginManifestValidation
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.notifications ?? []), 'notification category');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.notificationChannels ?? []), 'notification channel');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.scmHostingProviders ?? []), 'SCM hosting provider');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.installables ?? []), 'installable');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.hooks), 'hook');
   pushDuplicateIdDiagnostics(
     diagnostics,
@@ -379,6 +412,7 @@ export function validatePluginManifest(input: unknown): PluginManifestValidation
   pushDuplicateRuntimeAdapterIdDiagnostics(diagnostics, manifest);
   pushDuplicateRuntimeAdapterOperationDiagnostics(diagnostics, manifest);
   pushUnsupportedRuntimeAdapterOperationIdDiagnostics(diagnostics, manifest);
+  pushMissingExecutionRunRuntimeCoreDiagnostics(diagnostics, manifest);
   pushUnsupportedDaemonEntryDiagnostics(diagnostics, manifest);
 
   if (diagnostics.length > 0) {

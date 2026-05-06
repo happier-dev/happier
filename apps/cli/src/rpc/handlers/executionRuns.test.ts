@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,9 +10,11 @@ import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/execution
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import {
   FeaturesResponseSchema,
+  type ActionId,
   type BackendTargetRefV1,
   type ExecutionRunPublicState,
   type ExecutionRunStartResponse,
+  type TurnChangeSet,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -126,6 +128,46 @@ function createStaticBackend(responseText: string): AgentBackend & ExecutionRunH
     async dispose() {},
     async waitForResponseComplete() {},
   });
+}
+
+function createCapturingStaticBackend(
+  responseText: string,
+  capture: { lastPrompt: string },
+): AgentBackend & ExecutionRunHostRuntime {
+  let handler: AgentMessageHandler | null = null;
+  const sessionId: SessionId = 'child_session_1' as SessionId;
+  return asExecutionRunHostRuntime({
+    async startSession() {
+      return { sessionId };
+    },
+    async sendPrompt(_sessionId: SessionId, prompt: string) {
+      capture.lastPrompt = prompt;
+      handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
+    },
+    async cancel(_sessionId: SessionId) {},
+    onMessage(next) {
+      handler = next;
+    },
+    async dispose() {},
+    async waitForResponseComplete() {},
+  });
+}
+
+async function waitForExecutionRunTerminalState(
+  client: ReturnType<typeof createEncryptedRpcTestClient>,
+  runId: string,
+): Promise<any> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, {
+      runId,
+      includeStructured: true,
+    });
+    if (got?.run?.status && got.run.status !== 'running') {
+      return got;
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error('Execution run did not reach a terminal state');
 }
 
 function createDelayedBackend(responseText: string, delayMs: number): AgentBackend & ExecutionRunHostRuntime {
@@ -361,13 +403,31 @@ function createCancelRaceBackend(params: Readonly<{
   return { backend, events };
 }
 
+const executionRunRpcActionBindings = [
+  [SESSION_RPC_METHODS.EXECUTION_RUN_START, 'execution.run.start'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_LIST, 'execution.run.list'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_GET, 'execution.run.get'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_SEND, 'execution.run.send'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, 'execution.run.ensure'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, 'execution.run.ensure_or_start'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START, 'execution.run.stream.start'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ, 'execution.run.stream.read'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL, 'execution.run.stream.cancel'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_STOP, 'execution.run.stop'],
+  [SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, 'execution.run.action'],
+] as const satisfies readonly (readonly [string, ActionId])[];
+
 describe('executionRuns session RPC handlers', () => {
-  it('dispatches public execution-run RPC calls through the shared action adapter seam', async () => {
-    const calls: unknown[] = [];
+  it('dispatches all public execution-run RPC methods through the shared action adapter seam', async () => {
+    const calls: Array<{
+      actionId: ActionId;
+      input: unknown;
+      context: unknown;
+    }> = [];
     const actionExecutor: RpcActionExecutor = {
       execute: async (actionId, input, context) => {
         calls.push({ actionId, input, context });
-        return { ok: true, result: { runs: [{ runId: 'run_from_action' }] } };
+        return { ok: true, result: { handledActionId: actionId } };
       },
     };
 
@@ -385,19 +445,30 @@ describe('executionRuns session RPC handlers', () => {
       },
     });
 
-    const listed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, { limit: 1 });
+    for (const [method, actionId] of executionRunRpcActionBindings) {
+      const input = { marker: actionId };
+      await expect(client.call<unknown, unknown>(method, input)).resolves.toEqual({ handledActionId: actionId });
+    }
 
-    expect(listed).toEqual({ runs: [{ runId: 'run_from_action' }] });
-    expect(calls).toEqual([
-      {
-        actionId: 'execution.run.list',
-        input: { limit: 1 },
-        context: {
-          defaultSessionId: 'sess_1',
-          surface: 'rpc',
-        },
+    expect(calls).toEqual(executionRunRpcActionBindings.map(([, actionId]) => ({
+      actionId,
+      input: { marker: actionId },
+      context: {
+        defaultSessionId: 'sess_1',
+        surface: 'rpc',
       },
-    ]);
+    })));
+  });
+
+  it('keeps execution-run RPC method binding delegated to the generic action-spec registrar', () => {
+    const source = readFileSync(
+      new URL('./executionRuns/registerExecutionRunRpcHandlers.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(source.match(/registerActionSpecRpcHandlers\(/g) ?? []).toHaveLength(1);
+    expect(source).not.toContain('dispatchPublicAction(');
+    expect(source).not.toContain('EXECUTION_RUN_RPC_METHODS');
   });
 
   it('honors canonical action policy when dispatching public execution-run RPC calls', async () => {
@@ -475,6 +546,32 @@ describe('executionRuns session RPC handlers', () => {
       } else {
         process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousActionsSettings;
       }
+    }
+  });
+
+  it('does not materialize the full execution-run public list for bounded list RPC calls', async () => {
+    const { ExecutionRunHostBridge } = await import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge');
+    const listPublic = vi.spyOn(ExecutionRunHostBridge.prototype, 'listPublic');
+
+    try {
+      const client = createEncryptedRpcTestClient({
+        scopePrefix: 'sess_1',
+        registerHandlers: (rpc) => {
+          registerExecutionRunHandlers(rpc, {
+            sessionId: 'sess_1',
+            cwd: process.cwd(),
+            parentProvider: 'claude',
+            createBackend: () => createStaticBackend('unused'),
+            sendAcp: () => {},
+          });
+        },
+      });
+
+      await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_LIST, { limit: 1 });
+
+      expect(listPublic).not.toHaveBeenCalled();
+    } finally {
+      listPublic.mockRestore();
     }
   });
 
@@ -682,6 +779,230 @@ describe('executionRuns session RPC handlers', () => {
         }),
       ]),
     );
+  });
+
+  it('runs scm_commit_message.v1 through execution.run.start and projects the commit message result', async () => {
+    const repoDir = mkdtempSync(join(tmpdir(), 'happier-scm-commit-message-'));
+    const capture = { lastPrompt: '' };
+    const createdBackendOpts: Array<{ backendId: string; permissionMode: string; backendTarget?: unknown }> = [];
+
+    try {
+      runGit(repoDir, ['init', '--initial-branch=main']);
+      runGit(repoDir, ['config', 'user.email', 'test@example.com']);
+      runGit(repoDir, ['config', 'user.name', 'Test User']);
+      writeFileSync(join(repoDir, 'a.txt'), 'hello\n', 'utf8');
+      runGit(repoDir, ['add', 'a.txt']);
+      runGit(repoDir, ['commit', '-m', 'base']);
+      writeFileSync(join(repoDir, 'a.txt'), 'hello world\n', 'utf8');
+
+      const client = createEncryptedRpcTestClient({
+        scopePrefix: 'sess_1',
+        registerHandlers: (rpc) => {
+          registerExecutionRunHandlers(rpc, {
+            sessionId: 'sess_1',
+            cwd: repoDir,
+            parentProvider: 'claude',
+            createBackend: (opts) => {
+              createdBackendOpts.push(opts);
+              return createCapturingStaticBackend(
+                JSON.stringify({
+                  title: 'feat: update a',
+                  body: 'Explain change',
+                  message: 'feat: update a\n\nExplain change',
+                  confidence: 0.8,
+                }),
+                capture,
+              );
+            },
+            sendAcp: () => {},
+          });
+        },
+      });
+
+      const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+        kind: 'scm_commit_message.v1',
+        intent: 'scm_commit_message',
+        backendTarget: {
+          kind: 'backend',
+          backendId: 'review-bot',
+          configuredBackendId: 'review-bot',
+          sourceKind: 'configured',
+        },
+        permissionMode: 'no_tools',
+        retentionPolicy: 'ephemeral',
+        runClass: 'bounded',
+        ioMode: 'request_response',
+        intentInput: {
+          instructions: 'Use conventional commits.',
+          scope: { kind: 'paths', include: ['a.txt'] },
+        },
+      });
+
+      expect(started.runId).toMatch(/^run_/);
+
+      const got = await waitForExecutionRunTerminalState(client, started.runId);
+      expect(got.run?.status).toBe('succeeded');
+      expect(got.latestToolResult).toMatchObject({
+        title: 'feat: update a',
+        body: 'Explain change',
+        message: 'feat: update a\n\nExplain change',
+        confidence: 0.8,
+      });
+      expect(got.structuredMeta).toMatchObject({
+        kind: 'scm_commit_message.v1',
+        payload: {
+          message: 'feat: update a\n\nExplain change',
+        },
+      });
+      expect(createdBackendOpts).toEqual([
+        expect.objectContaining({
+          backendId: 'review-bot',
+          permissionMode: 'no_tools',
+          backendTarget: {
+            kind: 'backend',
+            backendId: 'review-bot',
+            configuredBackendId: 'review-bot',
+            sourceKind: 'configured',
+          },
+        }),
+      ]);
+      expect(capture.lastPrompt).toContain('Commit message generator.');
+      expect(capture.lastPrompt).toContain('Use conventional commits.');
+      expect(capture.lastPrompt).toContain('### a.txt');
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  it('runs scm_diff_summary.v1 through execution.run.start and projects the buffered summary result', async () => {
+    const capture = { lastPrompt: '' };
+    const createdBackendOpts: Array<{ backendId: string; permissionMode: string; backendTarget?: unknown }> = [];
+    const turnChangeSet: TurnChangeSet = {
+      sessionId: 'sess_1',
+      turnId: 'turn_1',
+      seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 },
+      status: 'completed',
+      files: [{
+        filePath: 'src/a.ts',
+        changeKind: 'modified',
+        source: 'scm_checkpoint',
+        confidence: 'exact',
+        provider: 'codex',
+        unifiedDiff: '@@ -1 +1 @@\n-old\n+new\n',
+      }],
+      provider: 'codex',
+      derivedAt: 1,
+      repositoryCheckpoint: {
+        version: 1,
+        scopeId: 'scope_1',
+        baseRefSource: 'turn_start',
+        contentConfidence: 'exact',
+        attributionScope: 'shared_worktree',
+        receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/1' }],
+      },
+    };
+
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: '/repo',
+          parentProvider: 'claude',
+          createBackend: (opts) => {
+            createdBackendOpts.push(opts);
+            return createCapturingStaticBackend(
+              JSON.stringify({
+                summaryMarkdown: '## Summary\n\nChanged src/a.ts.',
+                risks: ['Shared worktree attribution.'],
+                testImpact: 'Unit tests.',
+                suggestedPrBody: 'Updated source.',
+              }),
+              capture,
+            );
+          },
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      kind: 'scm_diff_summary.v1',
+      intent: 'scm_diff_summary',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'summary-bot',
+        configuredBackendId: 'summary-bot',
+        sourceKind: 'configured',
+      },
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      intentInput: {
+        cwd: '/repo',
+        source: { kind: 'turnCheckpoint' },
+        turnId: 'turn_1',
+        checkpointReceiptId: 'checkpoint.diff_computed',
+        turnChangeSet,
+      },
+    });
+
+    const got = await waitForExecutionRunTerminalState(client, started.runId);
+    expect(got.run?.status).toBe('succeeded');
+    expect(got.latestToolResult).toMatchObject({
+      success: true,
+      summaryMarkdown: '## Summary\n\nChanged src/a.ts.',
+      sourceKey: 'turnCheckpoint:turn_1:checkpoint.diff_computed',
+      checkpointReceiptId: 'checkpoint.diff_computed',
+      metadata: {
+        contentConfidence: 'exact',
+        attributionScope: 'shared_worktree',
+      },
+    });
+    expect(got.structuredMeta).toMatchObject({
+      kind: 'scm_diff_summary.v1',
+      payload: {
+        summaryMarkdown: '## Summary\n\nChanged src/a.ts.',
+      },
+    });
+    expect(createdBackendOpts).toEqual([
+      expect.objectContaining({
+        backendId: 'summary-bot',
+        permissionMode: 'read_only',
+      }),
+    ]);
+    expect(capture.lastPrompt).toContain('SCM diff summary generator.');
+    expect(capture.lastPrompt).toContain('src/a.ts');
+    expect(capture.lastPrompt).toContain('@@ -1 +1 @@');
+  });
+
+  it('rejects write-capable scm_commit_message.v1 execution-run starts', async () => {
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => createStaticBackend('should not run'),
+          sendAcp: () => {},
+        });
+      },
+    });
+
+    const res = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      kind: 'scm_commit_message.v1',
+      intent: 'scm_commit_message',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'workspace_write',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+
+    expect(res.ok).toBe(false);
+    expect(res.errorCode).toBe('execution_run_invalid_action_input');
   });
 
   it('prefers backendTarget over legacy backendId in execution.run.list filters on the canonical handler path', async () => {
@@ -2367,7 +2688,7 @@ describe('executionRuns session RPC handlers', () => {
   it('releases execution budgets when voice_agent start fails', async () => {
     const budgetRegistry = new ExecutionBudgetRegistry({
       maxConcurrentExecutionRuns: 1,
-      maxConcurrentEphemeralTasks: 1,
+      maxConcurrentOneShotTasks: 1,
     });
 
     const client = createEncryptedRpcTestClient({
@@ -2924,7 +3245,7 @@ describe('executionRuns session RPC handlers', () => {
   it('enforces per-intent budget caps when a budget registry is provided', async () => {
     const budgetRegistry = new ExecutionBudgetRegistry({
       maxConcurrentExecutionRuns: 10,
-      maxConcurrentEphemeralTasks: 10,
+      maxConcurrentOneShotTasks: 10,
       maxConcurrentByClass: { review: 1 },
     });
 

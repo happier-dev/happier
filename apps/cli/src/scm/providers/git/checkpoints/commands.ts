@@ -10,6 +10,7 @@ export type GitCheckpointCommandOptions = Readonly<{
     args: readonly string[];
     timeoutMs?: number;
     stdin?: string;
+    maxOutputBytes?: number;
     env?: Record<string, string | undefined>;
 }>;
 
@@ -31,6 +32,7 @@ export function runGitCheckpointCommand(input: GitCheckpointCommandOptions): Pro
         args: [...input.args],
         timeoutMs: input.timeoutMs,
         stdin: input.stdin,
+        maxOutputBytes: input.maxOutputBytes,
         env: input.env,
     });
 }
