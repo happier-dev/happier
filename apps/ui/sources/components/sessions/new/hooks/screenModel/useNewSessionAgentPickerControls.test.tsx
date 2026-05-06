@@ -31,6 +31,10 @@ vi.mock('@/components/sessions/new/components/NewSessionEngineOptionDetail', () 
     NewSessionEngineOptionDetail: (props: Record<string, unknown>) => React.createElement('NewSessionEngineOptionDetail', props),
 }));
 
+vi.mock('@/components/sessions/new/components/NewSessionFavoriteModelsDetail', () => ({
+    NewSessionFavoriteModelsDetail: (props: Record<string, unknown>) => React.createElement('NewSessionFavoriteModelsDetail', props),
+}));
+
 function createBuiltInBackendEntry(backendId: 'claude' | 'codex', title: string, subtitle: string | null): ResolvedBackendCatalogEntry {
     const backendTarget = { kind: 'backend' as const, backendId };
     return {
@@ -148,6 +152,68 @@ describe('useNewSessionAgentPickerControls', () => {
         ]);
         expect(hook.getCurrent().agentPickerOptions?.[0]?.label).toBe('profiles.groups.favorites');
         expect(hook.getCurrent().agentPickerOptions?.[0]?.closeOnSelectImmediate).toBe(false);
+    });
+
+    it('keeps a favorite model selection when the backend tab becomes focused before external model state catches up', async () => {
+        const setBackendTarget = vi.fn();
+        const setModelMode = vi.fn();
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
+        const initialParams: Parameters<typeof useNewSessionAgentPickerControls>[0] = {
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [claudeEntry, codexEntry],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => true,
+            selectedBackendEntry: claudeEntry,
+            selectedBackendTargetKey: claudeEntry.backendTargetKey,
+            setBackendTarget,
+            modelMode: 'default',
+            setModelMode: setModelMode as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+            favoriteModelSelections: [
+                {
+                    backendTargetKey: codexEntry.backendTargetKey,
+                    providerAgentId: 'codex',
+                    builtInAgentId: 'codex',
+                    modelId: 'gpt-5.5',
+                    modelLabel: 'GPT 5.5',
+                },
+            ],
+            setFavoriteModelSelections: vi.fn(),
+        };
+        const hook = await renderHook((props: Parameters<typeof useNewSessionAgentPickerControls>[0]) => (
+            useNewSessionAgentPickerControls(props)
+        ), { initialProps: initialParams });
+
+        const favoriteDetail = hook.getCurrent().agentPickerOptions?.[0]?.renderDetailContent?.() as React.ReactElement<{
+            onSelectFavoriteModel?: (entry: ResolvedBackendCatalogEntry, modelId: string) => void;
+        }> | undefined;
+
+        favoriteDetail?.props?.onSelectFavoriteModel?.(codexEntry, 'gpt-5.5');
+
+        expect(setBackendTarget).toHaveBeenCalledWith(codexEntry.backendTarget);
+        expect(setModelMode).toHaveBeenCalledWith('gpt-5.5');
+
+        await hook.rerender({
+            ...initialParams,
+            selectedBackendEntry: codexEntry,
+            selectedBackendTargetKey: codexEntry.backendTargetKey,
+            modelMode: 'default',
+        });
+
+        const codexDetail = hook.getCurrent().agentPickerOptions?.find((option) => option.id === codexEntry.backendTargetKey)
+            ?.renderDetailContent?.() as React.ReactElement<{ selectedModelId?: string }> | undefined;
+
+        expect(codexDetail?.props.selectedModelId).toBe('gpt-5.5');
     });
 
     it('does not expose favorite model selections for backends incompatible with the selected profile', async () => {

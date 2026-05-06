@@ -16,8 +16,15 @@ import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/opera
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import type { ScmPushRejectPolicy, ScmRemoteConfirmPolicy } from '@/scm/settings/preferences';
 import { shouldConfirmRemoteOperation } from '@/scm/settings/remoteConfirmationPolicy';
+import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode, type ScmRemoteResponse } from '@happier-dev/protocol';
+import {
+    SCM_OPERATION_ERROR_CODES,
+    type ScmOperationErrorCode,
+    type ScmRemoteResponse,
+    type ScmRepositoryRemoveIndexLockRequest,
+    type ScmRepositoryRemoveIndexLockResponse,
+} from '@happier-dev/protocol';
 
 export type ScmRemoteOperationKind = RemoteOperationKind;
 
@@ -55,6 +62,9 @@ export async function executeScmRemoteOperation(input: Readonly<{
         kind: ScmRemoteOperationKind,
         target: RemoteTargetDisplay,
     ) => Promise<ScmRemoteResponse>;
+    removeIndexLock?: (
+        request: ScmRepositoryRemoveIndexLockRequest,
+    ) => Promise<ScmRepositoryRemoveIndexLockResponse>;
     reportOperation: (input: RemoteOperationReportInput) => void;
     refreshAfterSuccess: (kind: ScmRemoteOperationKind) => Promise<void>;
     shouldContinue?: (() => boolean) | null;
@@ -80,6 +90,7 @@ export async function executeScmRemoteOperation(input: Readonly<{
         return;
     }
     if (!input.repoPath) return;
+    const repoPath = input.repoPath;
 
     const remoteTarget = inferRemoteTargetFromSnapshot(input.scmSnapshot);
     let shouldOfferFetchAfterPushReject = false;
@@ -106,7 +117,16 @@ export async function executeScmRemoteOperation(input: Readonly<{
         input.setScmOperationBusy(true);
         input.setScmOperationStatus(buildRemoteOperationBusyLabel(input.kind, remoteTarget, t('files.detachedHead')));
         try {
-            const response = await input.executeRemoteOperation(input.kind, remoteTarget);
+            const runRemoteOperation = () => input.executeRemoteOperation(input.kind, remoteTarget);
+            let response = await runRemoteOperation();
+            if (!response.success && input.removeIndexLock) {
+                response = await runScmOperationWithGitIndexLockRecovery({
+                    cwd: repoPath,
+                    failedResponse: response,
+                    removeIndexLock: input.removeIndexLock,
+                    retryOriginalOperation: runRemoteOperation,
+                });
+            }
             if (!response.success) {
                 const message = getScmUserFacingError({
                     errorCode: response.errorCode,

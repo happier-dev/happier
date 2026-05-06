@@ -74,6 +74,25 @@ export function getScmUserFacingError(input: {
     }
 }
 
+export function isRecoverableGitIndexLockError(input: {
+    success: boolean;
+    errorCode?: ScmOperationErrorCode | string;
+    error?: string;
+    stderr?: string;
+}): boolean {
+    if (input.success) return false;
+    if (
+        input.errorCode !== SCM_OPERATION_ERROR_CODES.COMMAND_FAILED
+        && input.errorCode !== SCM_OPERATION_ERROR_CODES.CHANGE_APPLY_FAILED
+    ) {
+        return false;
+    }
+    return looksLikeLockContention(
+        (input.error ?? '').toLowerCase(),
+        (input.stderr ?? '').toLowerCase(),
+    );
+}
+
 function sanitizeCommandFailureFallback(error: string | undefined, fallback: string): string {
     if (looksLikeRawScmOutput(error) || looksLikeRawScmOutput(fallback)) {
         return 'Source control command failed. Refresh repository status and try again.';

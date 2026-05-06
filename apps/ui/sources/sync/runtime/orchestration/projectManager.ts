@@ -28,7 +28,7 @@ import {
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { normalizeWorkspaceScopeBase, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { normalizeMachineHost } from '@happier-dev/protocol';
-import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 
 /**
  * Unique project identifier based on machine ID and path

@@ -19,6 +19,27 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     setSessionConfigOptionOverrides: React.Dispatch<React.SetStateAction<ReturnType<typeof buildAcpConfigOptionOverridesV1> | null>>;
 }>;
 
+function areConfigOverridesEqual(
+    a: Readonly<Record<string, string>> | undefined,
+    b: Readonly<Record<string, string>> | undefined,
+): boolean {
+    const left = a ?? {};
+    const right = b ?? {};
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) return false;
+    return leftKeys.every((key) => left[key] === right[key]);
+}
+
+function areEngineSelectionsEqual(
+    a: NewSessionAgentPickerSelection,
+    b: NewSessionAgentPickerSelection,
+): boolean {
+    return a.modelId === b.modelId
+        && a.sessionModeId === b.sessionModeId
+        && areConfigOverridesEqual(a.configOverrides, b.configOverrides);
+}
+
 export function useNewSessionAgentPickerEngineSelectionState(
     params: UseNewSessionAgentPickerEngineSelectionStateParams,
 ): Readonly<{
@@ -26,6 +47,10 @@ export function useNewSessionAgentPickerEngineSelectionState(
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => void;
 }> {
     const engineSelectionByTargetKeyRef = React.useRef(new Map<string, NewSessionAgentPickerSelection>());
+    const pendingAppliedSelectionRef = React.useRef<{
+        targetKey: string;
+        selection: NewSessionAgentPickerSelection;
+    } | null>(null);
     const selectedTargetKey = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
 
     const buildInitialEngineSelection = React.useCallback((targetKey: string): NewSessionAgentPickerSelection => ({
@@ -48,7 +73,17 @@ export function useNewSessionAgentPickerEngineSelectionState(
     ]);
 
     React.useEffect(() => {
-        engineSelectionByTargetKeyRef.current.set(selectedTargetKey, buildInitialEngineSelection(selectedTargetKey));
+        const nextSelection = buildInitialEngineSelection(selectedTargetKey);
+        const pendingAppliedSelection = pendingAppliedSelectionRef.current;
+        if (pendingAppliedSelection?.targetKey === selectedTargetKey) {
+            if (!areEngineSelectionsEqual(nextSelection, pendingAppliedSelection.selection)) {
+                engineSelectionByTargetKeyRef.current.set(selectedTargetKey, pendingAppliedSelection.selection);
+                return;
+            }
+            pendingAppliedSelectionRef.current = null;
+        }
+
+        engineSelectionByTargetKeyRef.current.set(selectedTargetKey, nextSelection);
     }, [buildInitialEngineSelection, selectedTargetKey]);
 
     const getEngineSelectionForTargetKey = React.useCallback((targetKey: string) => {
@@ -61,6 +96,10 @@ export function useNewSessionAgentPickerEngineSelectionState(
 
     const applyEngineSelection = React.useCallback((entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => {
         const nextConfigOverrides: Readonly<Record<string, string>> = selection.configOverrides ?? {};
+        pendingAppliedSelectionRef.current = {
+            targetKey: entry.backendTargetKey,
+            selection,
+        };
         params.setBackendTarget(entry.backendTarget);
         params.setModelMode(selection.modelId as ModelMode);
         params.setAcpSessionModeId(selection.sessionModeId);

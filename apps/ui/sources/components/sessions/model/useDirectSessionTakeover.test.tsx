@@ -16,7 +16,7 @@ const modalAlertSpy = vi.hoisted(() => vi.fn());
 
 let activeServerId = 'server-1';
 
-vi.mock('@/components/sessions/directSessions/takeover/showDirectSessionTakeoverDialog', () => ({
+vi.mock('@/components/sessions/external/takeover/showDirectSessionTakeoverDialog', () => ({
   showDirectSessionTakeoverDialog: showDirectSessionTakeoverDialogSpy,
 }));
 vi.mock('@/modal', async () => {

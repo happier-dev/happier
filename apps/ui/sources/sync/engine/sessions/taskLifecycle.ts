@@ -1,5 +1,5 @@
 export type TaskLifecycleEvent = {
-    type: 'task_started' | 'task_complete' | 'turn_aborted';
+    type: 'task_started' | 'task_complete' | 'turn_failed' | 'turn_cancelled' | 'turn_aborted';
     id: string;
     createdAt: number;
 };
@@ -14,7 +14,13 @@ export function getTaskLifecycleEventFromRawContent(content: unknown, createdAt:
         return null;
     }
 
-    if (dataType === 'task_started' || dataType === 'task_complete' || dataType === 'turn_aborted') {
+    if (
+        dataType === 'task_started'
+        || dataType === 'task_complete'
+        || dataType === 'turn_failed'
+        || dataType === 'turn_cancelled'
+        || dataType === 'turn_aborted'
+    ) {
         if (typeof dataId !== 'string' || dataId.length === 0) {
             return null;
         }

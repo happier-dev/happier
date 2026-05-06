@@ -1621,6 +1621,25 @@ export const es: TranslationStructure = {
     remoteHostsPrivateKeySavedHint: "Ya hay una clave privada guardada. Déjalo en blanco para mantenerla sin cambios.",
     remoteHostsSecretMaterialDisabledTitle: "Guardar secretos deshabilitado",
     remoteHostsSecretMaterialDisabledSubtitle: "Esta compilación no permite almacenar contraseñas ni claves privadas.",
+    remoteHostsSetupAsMachineTitle: "Configurar como máquina Happier",
+    remoteHostsSetupAsMachineFailed: "No se pudo configurar este host como máquina Happier.",
+    remoteHostsConnectFromThisDeviceTitle: "Conectar desde este dispositivo",
+    remoteHostsConnectFromThisDeviceSubtitle: "Solo este dispositivo. Abre un túnel SSH local para esta sesión de la app.",
+    remoteHostsConnectFromThisDeviceFailed: "No se pudo abrir el túnel SSH local.",
+    remoteHostsSshTunnelGroupTitle: "Acceder al host remoto desde este dispositivo",
+    remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `Túnel SSH activo para ${host}`,
+    remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `Solo este dispositivo. Endpoint local: ${url}`,
+    remoteHostsSshTunnelStopTitle: "Detener túnel SSH local",
+    remoteHostsUseAsRelayHostTitle: "Usar como host de Relay",
+    remoteHostsUseAsRelayHostSubtitle: "Configura el acceso de Relay en este host SSH.",
+    remoteHostsConfigureAccessTitle: "Configurar acceso",
+    remoteHostsConfigureAccessSubtitle: "Elige cómo se puede acceder a este host remoto.",
+    remoteHostsOpenDetailsTitle: "Detalles del host",
+    remoteHostsRelayAccessGroupTitle: "Acceso remoto",
+    remoteHostsRelayAccessActiveTitle: ({ host }: { host: string }) => `Configurando acceso para ${host}`,
+    remoteHostsRelayAccessActiveSubtitle: "Los comandos de acceso de Relay se ejecutan en el host remoto por SSH. Esto no crea un túnel SSH.",
+    remoteHostsMissingServerUrl: "Selecciona un servidor antes de configurar una máquina remota.",
+    remoteHostsRelayAccessIdentityFileRequired: "El acceso de Relay en este host requiere un archivo de identidad SSH local.",
     remoteHostsTestConnectionTitle: "Probar conexión",
     remoteHostsInstallOrUpdateCliTitle: "Instalar o actualizar CLI",
     remoteHostsDaemonServiceInstallOrUpdateTitle: "Instalar o actualizar servicio del daemon",
@@ -1638,6 +1657,20 @@ export const es: TranslationStructure = {
     remoteHostsPasswordRequiredTitle: "Se requiere contraseña SSH",
     remoteHostsConnectionSucceeded: "Conexión correcta.",
     remoteHostsConnectionFailed: "La conexión falló.",
+    sshConfiguredHostPickerTitle: "Hosts SSH sugeridos",
+    sshConfiguredHostPickerSubtitle: "Rellena desde tu configuración SSH local o known_hosts.",
+    sshConfiguredHostPickerRefreshingSubtitle: "Actualizando sugerencias; se muestran los últimos resultados.",
+    sshConfiguredHostPickerSourceSshConfig: "Configuración SSH",
+    sshConfiguredHostPickerSourceKnownHosts: "known_hosts",
+    sshConfiguredHostPickerUnsupportedTitle: "Introduce los detalles SSH manualmente",
+    sshConfiguredHostPickerUnsupportedSubtitle: "El descubrimiento SSH local solo está disponible en la app de escritorio.",
+    sshConfiguredHostPickerLoadingTitle: "Buscando hosts SSH…",
+    sshConfiguredHostPickerLoadingSubtitle: "Comprobando la configuración SSH local y known_hosts mediante el puente de escritorio.",
+    sshConfiguredHostPickerEmptyTitle: "No hay hosts SSH sugeridos",
+    sshConfiguredHostPickerEmptySubtitle: "Introduce los detalles SSH manualmente o actualiza después de cambiar tu configuración SSH.",
+    sshConfiguredHostPickerErrorTitle: "No se pudieron cargar las sugerencias SSH",
+    sshConfiguredHostPickerRefreshTitle: "Actualizar sugerencias SSH",
+    sshConfiguredHostPickerRefreshingTitle: "Actualizando sugerencias SSH",
     features: "Características",
     social: "Redes sociales",
     account: "Cuenta",
@@ -1803,6 +1836,41 @@ export const es: TranslationStructure = {
       missingToken: 'Introduce un token para continuar.',
       webHandoffTitle: 'Ejecuta esto en tu ordenador',
       webHandoffSubtitle: 'Usa el CLI para configurar el acceso al relay, luego vuelve aquí y actualiza.',
+    },
+    accessEndpoints: {
+      scope: {
+        availableToOtherDevices: 'Available to other devices',
+        thisDeviceOnly: 'This device only',
+      },
+      direction: {
+        makeCurrentServerReachable: 'Make this server reachable',
+        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
+        unknown: 'Access channel',
+      },
+      kind: {
+        'relay-access-provider': 'Relay access',
+        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
+        'ssh-tunnel-native': 'Native SSH tunnel',
+        'server-profile-url': 'Server URL',
+        'peer-mediation': 'Peer mediation',
+        'manual-url': 'Manual URL',
+      },
+      recommendedUse: {
+        'multi-device': 'Best for other devices',
+        'native-this-device': 'Works in this native app',
+        'hosted-web': 'Works from hosted web',
+        'lan-only': 'LAN or private network only',
+        diagnostic: 'Needs attention',
+      },
+      limitation: {
+        'this-device-only': 'This device only',
+        'not-hosted-web-compatible': 'Not available to hosted web',
+        'not-public-share-url': 'Not a public share URL',
+        'session-scoped': 'Session scoped',
+        'foreground-only': 'Requires the app to stay in the foreground',
+        'requires-auth': 'Requires SSH authentication',
+        'requires-host-key-trust': 'Requires host-key trust',
+      },
     },
     systemTaskStepPrepare: "Preparar tarea",
     systemTaskStepInstallRuntime: "Instalar runtime",
@@ -2247,6 +2315,8 @@ export const es: TranslationStructure = {
       openai: "Clave API de OpenAI",
       anthropic: "Clave API de Anthropic",
       gemini: "Gemini de Google",
+      github: "GitHub",
+      bitbucket: "Bitbucket",
     },
     title: "Servicios conectados",
     authChip: {
@@ -2369,6 +2439,14 @@ export const es: TranslationStructure = {
       connectApiKeySubtitle: "Pega una clave API de Anthropic",
       connectSetupTokenTitle: "Conectar con setup-token",
       connectSetupTokenSubtitle: "Pega un setup-token de Claude (de claude setup-token)",
+      connectPersonalAccessTokenTitle: "Conectar token de acceso personal",
+      connectPersonalAccessTokenSubtitle: "Pega un token de acceso personal granular",
+      connectApiTokenTitle: "Conectar token API",
+      connectApiTokenSubtitle: "Pega un token API del proveedor o una contraseña de app",
+      openTokenSetupTitle: "Abrir configuración del token",
+      openTokenSetupSubtitle: "Abre la página de configuración del proveedor",
+      openPersonalAccessTokenSetupTitle: "Crear token de acceso personal",
+      openPersonalAccessTokenSetupSubtitle: "Abre la configuración del token granular de GitHub",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `¿Desconectar ${service} (${profileId})?`,
       prompts: {
@@ -2380,6 +2458,12 @@ export const es: TranslationStructure = {
         setupTokenTitle: "Token de configuración",
         setupTokenBody: "Pega tu setup-token de Claude (de claude setup-token).",
         setupTokenPlaceholder: "p. ej. sk-ant-oat01-…",
+        personalAccessTokenTitle: "Token de acceso personal",
+        personalAccessTokenBody: "Pega tu token de acceso personal granular de GitHub.",
+        personalAccessTokenPlaceholder: "github_pat_…",
+        apiTokenTitle: "Token API",
+        apiTokenBody: "Pega tu token API del proveedor o una contraseña de app.",
+        apiTokenPlaceholder: "Token API",
         profileLabelTitle: "Etiqueta de perfil",
         profileLabelBody: "Opcional. Se muestra en los selectores de autenticación.",
         profileLabelPlaceholder: "Cuenta de trabajo",
@@ -2833,6 +2917,8 @@ export const es: TranslationStructure = {
     accountLibraryTitle: 'Biblioteca de la cuenta',
     accountLibraryFooter: 'Las mascotas sincronizadas están disponibles en tus dispositivos conectados.',
     accountPetTileSubtitle: 'Sincronizada desde tu cuenta.',
+    importToDeviceDaemonErrorTitle: 'No se pudo importar la mascota',
+    importToDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `El daemon no pudo importar esta mascota. Vuelve a detectar las mascotas de Codex e inténtalo otra vez. (${code})`,
     importToAccountTitle: 'Importar a la cuenta',
     importToAccountSubtitle: 'Sube una mascota local compatible para usarla entre dispositivos.',
     desktopOverlayTitle: 'Superposición de escritorio',
@@ -3925,6 +4011,9 @@ export const es: TranslationStructure = {
       codexAcp: {
         title: "Adaptador ACP de Codex",
       },
+      gh: {
+        title: "GitHub CLI",
+      },
     },
     ui: {
       notAvailable: "No disponible",
@@ -4174,6 +4263,19 @@ export const es: TranslationStructure = {
       reinstallTitle: "¿Reinstalar Codex ACP?",
       description:
         "Esto instala un adaptador ACP experimental alrededor de Codex que admite cargar/reanudar hilos.",
+    },
+    ghCliBanner: {
+      title: "GitHub CLI",
+      install: "Instalar",
+      update: "Actualizar",
+      reinstall: "Reinstalar",
+    },
+    ghCliInstallModal: {
+      installTitle: "¿Instalar GitHub CLI?",
+      updateTitle: "¿Actualizar GitHub CLI?",
+      reinstallTitle: "¿Reinstalar GitHub CLI?",
+      description:
+        "Esto instala la dependencia opcional GitHub CLI usada por los flujos de control de código de GitHub después de tu confirmación.",
     },
   },
 
@@ -4537,8 +4639,20 @@ export const es: TranslationStructure = {
   commandPalette: {
     placeholder: "Escriba un comando o busque...",
     noCommandsFound: "No se encontraron comandos",
+    pets: {
+      category: "Mascotas",
+      wakeTitle: "Despertar mascota",
+      wakeSubtitle: "Muestra la compañera en esta superficie.",
+      tuckTitle: "Guardar mascota",
+      tuckSubtitle: "Oculta la compañera en esta superficie.",
+      resetPositionTitle: "Restablecer posición de la mascota",
+      resetPositionSubtitle: "Devuelve la compañera a su lugar predeterminado.",
+      chooseTitle: "Elegir mascota",
+      chooseSubtitle: "Abre la configuración de mascotas.",
+      refreshCodexTitle: "Actualizar mascotas de Codex",
+      refreshCodexSubtitle: "Abre la configuración y detecta mascotas locales de Codex.",
+    },
   },
-
   commandView: {
     completedWithNoOutput: "[Comando completado sin salida]",
   },
@@ -4694,7 +4808,6 @@ export const es: TranslationStructure = {
     signedOut: "Sesión cerrada",
     authStatusUnknown: "Estado de autenticación desconocido",
     switchToServer: "Cambiar a este Relay",
-    manageRelay: "Gestionar Relay",
     active: "Activo",
     default: "Predeterminado",
     addServerTitle: "Añadir Relay",
@@ -5493,6 +5606,12 @@ export const es: TranslationStructure = {
       searchFailed: "La búsqueda falló. Inténtalo de nuevo.",
     },
     detachedHead: "HEAD separado",
+    indexLockRecovery: {
+      title: "¿Eliminar el bloqueo de índice de Git obsoleto?",
+      body: "Happier puede eliminar el archivo index.lock resuelto por Git para este repositorio y reintentar la operación de control de código una sola vez. Esto no ejecuta reset, clean, restore ni ninguna reparación amplia.",
+      confirm: "Eliminar bloqueo y reintentar",
+      failed: ({ error }: { error: string }) => `Error al recuperar el bloqueo de índice: ${error}`,
+    },
     branchSwitchDialog: {
       title: "Cambiar de rama",
       body: "Tienes cambios sin confirmar. ¿Cómo quieres manejarlos?",
@@ -5627,10 +5746,24 @@ export const es: TranslationStructure = {
       `Cambios atribuidos a la sesión (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `Cambios del último turno (${count})`,
+    agentReportedTurnChanges: ({ count }: { count: number }) =>
+      `Último turno informado por el agente (${count})`,
+    checkpointTurnChanges: ({ count }: { count: number }) =>
+      `Último turno del checkpoint (${count})`,
     selectedForCommitChanges: ({ count }: { count: number }) =>
       `Seleccionados para el commit (${count})`,
     latestTurnDescription:
       "Cambios respaldados por el proveedor del turno completado más reciente.",
+    agentReportedTurnDescription:
+      "Archivos informados por el agente/runtime para el turno completado más reciente.",
+    checkpointAttributionExclusive:
+      "El contenido del checkpoint es exacto para este intervalo de turno y el worktree era exclusivo de esta sesión.",
+    checkpointAttributionShared:
+      "El contenido del checkpoint es exacto para el intervalo del repositorio. La atribución es limitada porque este worktree era compartido.",
+    checkpointAttributionUnknown:
+      "El contenido del checkpoint es exacto para el intervalo del repositorio. La atribución del actor es desconocida.",
+    checkpointUnavailable:
+      "La evidencia del checkpoint no está disponible para este turno.",
     otherRepositoryChanges: ({ count }: { count: number }) =>
       `Otros cambios del repositorio (${count})`,
     attributionReliabilityHigh:
@@ -5646,6 +5779,10 @@ export const es: TranslationStructure = {
       "No se detectaron cambios atribuidos a la sesión.",
     noLatestTurnChanges:
       "No se detectaron cambios del último turno.",
+    noAgentReportedTurnChanges:
+      "No se detectaron cambios informados por el agente para este turno.",
+    noCheckpointTurnChanges:
+      "No se detectaron cambios de checkpoint para este turno.",
     notRepo: "No es un repositorio de control de versiones",
     notUnderSourceControl: "Este directorio no está bajo control de versiones",
     searching: "Buscando archivos...",
@@ -5755,6 +5892,7 @@ export const es: TranslationStructure = {
         cannotDisplayBinary: "No se puede mostrar el contenido del archivo binario",
         diff: "Diferencias",
       file: "Archivo",
+      markdown: "Markdown",
     diffModes: {
       pending: "Pendiente",
       included: "Incluido",
@@ -5786,6 +5924,8 @@ export const es: TranslationStructure = {
       repositoryView: "Vista del repositorio",
       selectedForCommitView: "Seleccionados para el commit",
       turnView: "Vista del turno",
+      agentReportedTurnView: "Turno informado por el agente",
+      checkpointTurnView: "Turno del checkpoint",
       sessionView: "Vista de la sesión",
       view: "Vista",
       review: "Revisión",

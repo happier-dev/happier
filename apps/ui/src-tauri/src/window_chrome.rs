@@ -5,9 +5,6 @@ use serde::Serialize;
 use tauri::{App, Emitter, Manager, Runtime, TitleBarStyle, WebviewWindow, Window, WindowEvent};
 
 #[cfg(desktop)]
-use crate::tray::show_main_window;
-
-#[cfg(desktop)]
 const MAIN_WINDOW_LABEL: &str = "main";
 
 #[cfg(desktop)]
@@ -59,6 +56,20 @@ pub struct DesktopWindowStatePayload {
 enum DesktopWindowCloseStrategy {
     Hide,
     Close,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DesktopMainWindowLifecycleEvent {
+    AppReady,
+    MacOsReopen { has_visible_windows: bool },
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DesktopMainWindowPresentationIntent {
+    None,
+    Show,
 }
 
 #[cfg(desktop)]
@@ -128,6 +139,24 @@ fn resolve_desktop_window_close_strategy(window_label: &str) -> DesktopWindowClo
     }
 
     DesktopWindowCloseStrategy::Close
+}
+
+#[cfg(desktop)]
+pub(crate) fn resolve_desktop_main_window_presentation_intent(
+    event: DesktopMainWindowLifecycleEvent,
+) -> DesktopMainWindowPresentationIntent {
+    match event {
+        DesktopMainWindowLifecycleEvent::AppReady => DesktopMainWindowPresentationIntent::Show,
+        DesktopMainWindowLifecycleEvent::MacOsReopen {
+            has_visible_windows,
+        } => {
+            if has_visible_windows {
+                DesktopMainWindowPresentationIntent::None
+            } else {
+                DesktopMainWindowPresentationIntent::Show
+            }
+        }
+    }
 }
 
 #[cfg(desktop)]
@@ -213,6 +242,32 @@ fn emit_desktop_window_state<R: Runtime>(window: &WebviewWindow<R>) {
             window.is_maximized().unwrap_or(false),
         ),
     );
+}
+
+#[cfg(desktop)]
+pub(crate) fn show_main_window<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        window.unminimize()?;
+        window.show()?;
+        window.set_focus()?;
+    }
+    Ok(())
+}
+
+#[cfg(desktop)]
+pub(crate) fn present_main_window_for_lifecycle_event<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    event: DesktopMainWindowLifecycleEvent,
+) {
+    if resolve_desktop_main_window_presentation_intent(event)
+        != DesktopMainWindowPresentationIntent::Show
+    {
+        return;
+    }
+
+    if let Err(error) = show_main_window(app) {
+        log::warn!("failed to show main window for lifecycle event {event:?}: {error}");
+    }
 }
 
 #[cfg(desktop)]
@@ -419,6 +474,36 @@ mod tests {
         assert_eq!(
             resolve_desktop_window_close_strategy(MAIN_WINDOW_LABEL),
             DesktopWindowCloseStrategy::Hide
+        );
+    }
+
+    #[test]
+    fn app_ready_shows_the_main_window_when_it_started_hidden() {
+        assert_eq!(
+            resolve_desktop_main_window_presentation_intent(
+                DesktopMainWindowLifecycleEvent::AppReady
+            ),
+            DesktopMainWindowPresentationIntent::Show
+        );
+    }
+
+    #[test]
+    fn macos_reopen_shows_the_main_window_only_when_no_window_is_visible() {
+        assert_eq!(
+            resolve_desktop_main_window_presentation_intent(
+                DesktopMainWindowLifecycleEvent::MacOsReopen {
+                    has_visible_windows: false,
+                }
+            ),
+            DesktopMainWindowPresentationIntent::Show
+        );
+        assert_eq!(
+            resolve_desktop_main_window_presentation_intent(
+                DesktopMainWindowLifecycleEvent::MacOsReopen {
+                    has_visible_windows: true,
+                }
+            ),
+            DesktopMainWindowPresentationIntent::None
         );
     }
 

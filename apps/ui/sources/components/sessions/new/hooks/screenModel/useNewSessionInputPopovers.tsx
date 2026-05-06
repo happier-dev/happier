@@ -10,8 +10,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { AgentId } from '@/agents/catalog/catalog';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
-import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
+import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openDirectSessionsResumeIdPickerModal';
+import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/external/browse/resolveDirectBrowseLockedSourceOption';
 
 const LARGE_PICKER_LAYOUT: Pick<
     AgentInputContentPopoverConfig,

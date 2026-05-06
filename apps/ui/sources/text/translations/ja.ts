@@ -1920,6 +1920,25 @@ export const ja: TranslationStructure = {
     remoteHostsPrivateKeySavedHint: "秘密鍵はすでに保存されています。変更しない場合は空欄のままにしてください。",
     remoteHostsSecretMaterialDisabledTitle: "シークレットの保存は無効です",
     remoteHostsSecretMaterialDisabledSubtitle: "このビルドではパスワードや秘密鍵を保存できません。",
+    remoteHostsSetupAsMachineTitle: "Happier マシンとして設定",
+    remoteHostsSetupAsMachineFailed: "このホストを Happier マシンとして設定できませんでした。",
+    remoteHostsConnectFromThisDeviceTitle: "このデバイスから接続",
+    remoteHostsConnectFromThisDeviceSubtitle: "このデバイスのみ。このアプリセッション用のローカル SSH トンネルを開きます。",
+    remoteHostsConnectFromThisDeviceFailed: "ローカル SSH トンネルを開けませんでした。",
+    remoteHostsSshTunnelGroupTitle: "このデバイスからリモートホストに到達",
+    remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `${host} の SSH トンネルが有効です`,
+    remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `このデバイスのみ。ローカルエンドポイント: ${url}`,
+    remoteHostsSshTunnelStopTitle: "ローカル SSH トンネルを停止",
+    remoteHostsUseAsRelayHostTitle: "Relay ホストとして使う",
+    remoteHostsUseAsRelayHostSubtitle: "この SSH ホストで Relay アクセスを設定します。",
+    remoteHostsConfigureAccessTitle: "アクセスを設定",
+    remoteHostsConfigureAccessSubtitle: "このリモートホストへの到達方法を選択します。",
+    remoteHostsOpenDetailsTitle: "ホストの詳細",
+    remoteHostsRelayAccessGroupTitle: "リモートアクセス",
+    remoteHostsRelayAccessActiveTitle: ({ host }: { host: string }) => `${host} のアクセスを設定中`,
+    remoteHostsRelayAccessActiveSubtitle: "Relay アクセスコマンドは SSH 経由でリモートホスト上で実行されます。SSH トンネルは作成しません。",
+    remoteHostsMissingServerUrl: "リモートマシンを設定する前にサーバーを選択してください。",
+    remoteHostsRelayAccessIdentityFileRequired: "このホストで Relay アクセスを使うにはローカル SSH ID ファイルが必要です。",
     remoteHostsTestConnectionTitle: "接続をテスト",
     remoteHostsInstallOrUpdateCliTitle: "CLI をインストール／更新",
     remoteHostsDaemonServiceInstallOrUpdateTitle: "デーモンサービスをインストール／更新",
@@ -1937,6 +1956,20 @@ export const ja: TranslationStructure = {
     remoteHostsPasswordRequiredTitle: "SSHパスワードが必要です",
     remoteHostsConnectionSucceeded: "接続に成功しました。",
     remoteHostsConnectionFailed: "接続に失敗しました。",
+    sshConfiguredHostPickerTitle: "候補の SSH ホスト",
+    sshConfiguredHostPickerSubtitle: "ローカル SSH 設定または known_hosts から入力します。",
+    sshConfiguredHostPickerRefreshingSubtitle: "候補を更新中です。最後の結果を表示しています。",
+    sshConfiguredHostPickerSourceSshConfig: "SSH 設定",
+    sshConfiguredHostPickerSourceKnownHosts: "known_hosts",
+    sshConfiguredHostPickerUnsupportedTitle: "SSH 詳細を手動で入力",
+    sshConfiguredHostPickerUnsupportedSubtitle: "ローカル SSH 検出はデスクトップアプリでのみ利用できます。",
+    sshConfiguredHostPickerLoadingTitle: "SSH ホストを検索中…",
+    sshConfiguredHostPickerLoadingSubtitle: "デスクトップブリッジ経由でローカル SSH 設定と known_hosts を確認しています。",
+    sshConfiguredHostPickerEmptyTitle: "候補の SSH ホストはありません",
+    sshConfiguredHostPickerEmptySubtitle: "SSH 詳細を手動で入力するか、SSH 設定を更新してから再読み込みしてください。",
+    sshConfiguredHostPickerErrorTitle: "SSH 候補を読み込めませんでした",
+    sshConfiguredHostPickerRefreshTitle: "SSH 候補を更新",
+    sshConfiguredHostPickerRefreshingTitle: "SSH 候補を更新中",
     features: "機能",
     social: "ソーシャル",
     account: "アカウント",
@@ -2102,6 +2135,41 @@ localTailscale: {
       missingToken: '続行するにはトークンを入力してください。',
       webHandoffTitle: 'このコマンドを実行',
       webHandoffSubtitle: 'CLI で relay アクセスを設定し、ここに戻って更新してください。',
+    },
+    accessEndpoints: {
+      scope: {
+        availableToOtherDevices: 'Available to other devices',
+        thisDeviceOnly: 'This device only',
+      },
+      direction: {
+        makeCurrentServerReachable: 'Make this server reachable',
+        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
+        unknown: 'Access channel',
+      },
+      kind: {
+        'relay-access-provider': 'Relay access',
+        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
+        'ssh-tunnel-native': 'Native SSH tunnel',
+        'server-profile-url': 'Server URL',
+        'peer-mediation': 'Peer mediation',
+        'manual-url': 'Manual URL',
+      },
+      recommendedUse: {
+        'multi-device': 'Best for other devices',
+        'native-this-device': 'Works in this native app',
+        'hosted-web': 'Works from hosted web',
+        'lan-only': 'LAN or private network only',
+        diagnostic: 'Needs attention',
+      },
+      limitation: {
+        'this-device-only': 'This device only',
+        'not-hosted-web-compatible': 'Not available to hosted web',
+        'not-public-share-url': 'Not a public share URL',
+        'session-scoped': 'Session scoped',
+        'foreground-only': 'Requires the app to stay in the foreground',
+        'requires-auth': 'Requires SSH authentication',
+        'requires-host-key-trust': 'Requires host-key trust',
+      },
     },
     systemTaskStepPrepare: "タスクを準備",
     systemTaskStepInstallRuntime: "ランタイムをインストール",
@@ -2543,6 +2611,7 @@ localTailscale: {
       openai: "OpenAI API キー",
       anthropic: "Anthropic API キー",
       gemini: "Google Gemini（Google）",
+      github: "GitHub",
     },
     title: "接続済みサービス",
     authChip: {
@@ -2661,6 +2730,12 @@ localTailscale: {
       connectApiKeySubtitle: "Anthropic の API キーを貼り付け",
       connectSetupTokenTitle: "setup-token で接続",
       connectSetupTokenSubtitle: "Claude の setup-token（claude setup-token）を貼り付け",
+      connectPersonalAccessTokenTitle: "個人アクセストークンで接続",
+      connectPersonalAccessTokenSubtitle: "Fine-grained 個人アクセストークンを貼り付け",
+      openTokenSetupTitle: "トークン設定を開く",
+      openTokenSetupSubtitle: "プロバイダーの設定ページを開く",
+      openPersonalAccessTokenSetupTitle: "個人アクセストークンを作成",
+      openPersonalAccessTokenSetupSubtitle: "GitHub fine-grained トークン設定を開く",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `「${service}（${profileId}）」を切断しますか？`,
       prompts: {
@@ -2672,6 +2747,9 @@ localTailscale: {
         setupTokenTitle: "セットアップトークン",
         setupTokenBody: "Claude の setup-token（claude setup-token）を貼り付けてください。",
         setupTokenPlaceholder: "例: sk-ant-oat01-…",
+        personalAccessTokenTitle: "個人アクセストークン",
+        personalAccessTokenBody: "GitHub の Fine-grained 個人アクセストークンを貼り付けてください。",
+        personalAccessTokenPlaceholder: "github_pat_…",
         profileLabelTitle: "プロファイルラベル",
         profileLabelBody: "任意。認証ピッカーに表示されます。",
         profileLabelPlaceholder: "仕事用アカウント",
@@ -3119,6 +3197,8 @@ localTailscale: {
     accountLibraryTitle: 'アカウントライブラリ',
     accountLibraryFooter: '同期済みペットはサインイン済みデバイスで利用できます。',
     accountPetTileSubtitle: 'アカウントから同期済みです。',
+    importToDeviceDaemonErrorTitle: 'ペットをインポートできませんでした',
+    importToDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `デーモンがこのペットをインポートできませんでした。Codex ペットを再検出してからもう一度お試しください。(${code})`,
     importToAccountTitle: 'アカウントへインポート',
     importToAccountSubtitle: '互換性のあるローカルペットをアップロードして複数デバイスで使います。',
     desktopOverlayTitle: 'デスクトップオーバーレイ',
@@ -4194,6 +4274,9 @@ localTailscale: {
       codexAcp: {
         title: "Codex ACP アダプター",
       },
+      gh: {
+        title: "GitHub CLI",
+      },
     },
     ui: {
       notAvailable: "利用できません",
@@ -4440,6 +4523,19 @@ localTailscale: {
       reinstallTitle: "Codex ACP を再インストールしますか？",
       description:
         "これはスレッドの読み込み/再開に対応した、Codex 向けの実験的な ACP アダプターをインストールします。",
+    },
+    ghCliBanner: {
+      title: "GitHub CLI",
+      install: "インストール",
+      update: "更新",
+      reinstall: "再インストール",
+    },
+    ghCliInstallModal: {
+      installTitle: "GitHub CLI をインストールしますか？",
+      updateTitle: "GitHub CLI を更新しますか？",
+      reinstallTitle: "GitHub CLI を再インストールしますか？",
+      description:
+        "確認後、GitHub のソース管理ワークフローで使用する任意の GitHub CLI 依存関係をインストールします。",
     },
   },
 
@@ -4798,8 +4894,20 @@ localTailscale: {
   commandPalette: {
     placeholder: "コマンドを入力または検索...",
     noCommandsFound: "コマンドが見つかりません",
+    pets: {
+      category: "ペット",
+      wakeTitle: "ペットを起こす",
+      wakeSubtitle: "このサーフェスにコンパニオンを表示します。",
+      tuckTitle: "ペットをしまう",
+      tuckSubtitle: "このサーフェスでコンパニオンを非表示にします。",
+      resetPositionTitle: "ペットの位置をリセット",
+      resetPositionSubtitle: "コンパニオンを既定の場所へ戻します。",
+      chooseTitle: "ペットを選択",
+      chooseSubtitle: "ペット設定を開きます。",
+      refreshCodexTitle: "Codex ペットを更新",
+      refreshCodexSubtitle: "設定を開き、ローカルの Codex ペットを検出します。",
+    },
   },
-
   commandView: {
     completedWithNoOutput: "[出力なしでコマンドが完了しました]",
   },
@@ -4955,7 +5063,6 @@ localTailscale: {
     signedOut: "サインアウト済み",
     authStatusUnknown: "認証状態が不明",
     switchToServer: "この Relay に切り替え",
-    manageRelay: "Relayを管理",
     active: "アクティブ",
     default: "デフォルト",
     addServerTitle: "Relayを追加",
@@ -5750,6 +5857,12 @@ localTailscale: {
       searchFailed: "検索に失敗しました。もう一度お試しください。",
     },
     detachedHead: "切り離された HEAD",
+    indexLockRecovery: {
+      title: "古い Git index lock を削除しますか？",
+      body: "Happier は、このリポジトリで Git が解決した index.lock ファイルを削除し、失敗したソース管理操作を 1 回だけ再試行できます。reset、clean、restore、または広範な修復は実行しません。",
+      confirm: "lock を削除して再試行",
+      failed: ({ error }: { error: string }) => `index lock の復旧に失敗しました: ${error}`,
+    },
     branchSwitchDialog: {
       title: "ブランチを切り替え",
       body: "未コミットの変更があります。どのように扱いますか？",
@@ -5882,10 +5995,24 @@ localTailscale: {
       `セッションに紐づく変更 (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `直近のターンの変更（${count}）`,
+    agentReportedTurnChanges: ({ count }: { count: number }) =>
+      `エージェント報告の直近ターン（${count}）`,
+    checkpointTurnChanges: ({ count }: { count: number }) =>
+      `チェックポイントの直近ターン（${count}）`,
     selectedForCommitChanges: ({ count }: { count: number }) =>
       `コミット対象として選択（${count}）`,
     latestTurnDescription:
       '直近で完了したターンのプロバイダ由来の変更です。',
+    agentReportedTurnDescription:
+      '直近で完了したターンについてエージェント/runtime が報告したファイルです。',
+    checkpointAttributionExclusive:
+      'チェックポイントの内容はこのターン区間に対して正確で、この worktree はこのセッション専用でした。',
+    checkpointAttributionShared:
+      'チェックポイントの内容はリポジトリ区間に対して正確です。この worktree は共有されていたため、帰属は限定的です。',
+    checkpointAttributionUnknown:
+      'チェックポイントの内容はリポジトリ区間に対して正確です。変更主体の帰属は不明です。',
+    checkpointUnavailable:
+      'このターンのチェックポイント証跡は利用できません。',
     otherRepositoryChanges: ({ count }: { count: number }) =>
       `その他のリポジトリ変更 (${count})`,
     attributionReliabilityHigh:
@@ -5901,6 +6028,10 @@ localTailscale: {
       "現在、セッションに紐づく変更は検出されていません。",
     noLatestTurnChanges:
       "直近のターンの変更は検出されていません。",
+    noAgentReportedTurnChanges:
+      "このターンについてエージェント報告の変更は検出されていません。",
+    noCheckpointTurnChanges:
+      "このターンについてチェックポイントの変更は検出されていません。",
     notRepo: "ソース管理リポジトリではありません",
     notUnderSourceControl: "このディレクトリはソース管理下にありません",
     searching: "ファイルを検索中...",
@@ -6007,6 +6138,7 @@ localTailscale: {
         cannotDisplayBinary: "バイナリファイルの内容を表示できません",
         diff: "差分",
       file: "ファイル",
+      markdown: "Markdown",
     diffModes: {
       pending: "保留中",
       included: "含めた",
@@ -6037,6 +6169,8 @@ localTailscale: {
       repositoryView: "リポジトリ表示",
       selectedForCommitView: "コミット対象として選択",
       turnView: "ターン表示",
+      agentReportedTurnView: "エージェント報告ターン",
+      checkpointTurnView: "チェックポイントターン",
       sessionView: "セッション表示",
       view: "表示",
       review: "レビュー",

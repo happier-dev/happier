@@ -11,12 +11,14 @@ describe('suggestionCommands', () => {
     it('includes UI action-registry slash commands even when the session has no metadata', async () => {
         storage.setState({
             sessions: { s1: { metadata: undefined } },
-            settings: { experiments: true, featureToggles: { 'execution.runs': true } },
+            settings: { experiments: true, featureToggles: { 'execution.runs': true, 'pets.companion': true } },
         } as any);
         const { getAllCommands } = await import('./suggestionCommands');
         const commands = getAllCommands('s1');
         expect(commands.some((c) => c.command === 'review')).toBe(true);
         expect(commands.some((c) => c.command === 'h.review')).toBe(true);
+        expect(commands.some((c) => c.command === 'pet')).toBe(true);
+        expect(commands.some((c) => c.command === 'h.pet')).toBe(true);
         expect(commands.some((c) => c.command === 'clear')).toBe(true);
     });
 

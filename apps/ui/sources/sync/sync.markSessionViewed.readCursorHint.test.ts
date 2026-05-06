@@ -199,6 +199,18 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
         });
     });
 
+    it('marks the session locally viewed even when the cursor publish fails', async () => {
+        const sessionId = 's_read_hint_local_failure';
+        storage.getState().applySessions([createPlainSession({ sessionId })]);
+        emitWithAckMock.mockRejectedValueOnce(new Error('socket offline'));
+
+        const { sync } = await import('./sync');
+
+        await expect(sync.markSessionViewed(sessionId)).resolves.toBeUndefined();
+
+        expect(storage.getState().sessions[sessionId]?.lastViewedSessionSeq).toBe(3);
+    });
+
     it('marks the latest observed direct-session progress as viewed without persisting transcript bodies', async () => {
         const sessionId = 's_direct_attention_1';
         storage.getState().applySessions([createDirectSessionWithObservedAttention({ sessionId })]);

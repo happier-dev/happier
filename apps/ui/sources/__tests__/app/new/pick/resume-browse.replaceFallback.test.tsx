@@ -6,7 +6,7 @@ import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type {
     DirectSessionsBrowseInteraction,
     DirectSessionsBrowseScopeLock,
-} from '@/components/sessions/directSessions/browse/DirectSessionsBrowseScreen';
+} from '@/components/sessions/external/browse/DirectSessionsBrowseScreen';
 import {
     createNavigationMock,
     createRouterMock,
@@ -79,14 +79,14 @@ installPickerCommonModuleMocks({
         }),
 });
 
-vi.mock('@/components/sessions/directSessions/browse/DirectSessionsBrowseScreen', () => ({
+vi.mock('@/components/sessions/external/browse/DirectSessionsBrowseScreen', () => ({
     DirectSessionsBrowseScreen: (props: Record<string, unknown>) => {
         browseScreenPropsRef.current = props;
         return null;
     },
 }));
 
-vi.mock('@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption', () => ({
+vi.mock('@/components/sessions/external/browse/resolveDirectBrowseLockedSourceOption', () => ({
     canBrowseDirectSessions: (providerId: string) => directBrowseSupportState.supportedByProviderId[providerId] ?? true,
     resolveDirectBrowseLockedSource: (params: { providerId: string }) =>
         (directBrowseSupportState.supportedByProviderId[params.providerId] ?? true) ? { kind: 'test' } : null,

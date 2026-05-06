@@ -11,6 +11,7 @@ import { createAdvancedDebounce } from '@/utils/timing/debounce';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { workspaceFileEditorDraftCache } from './workspaceFileEditorDraftCache';
+import type { FileDisplayMode } from '@/components/workspaces/files/file/FileActionToolbar';
 
 export type WorkspaceFileEditorState = Readonly<{
     editorSurfaceEnabled: boolean;
@@ -33,7 +34,7 @@ export type WorkspaceFileEditorState = Readonly<{
 export function useWorkspaceFileEditorState(input: Readonly<{
     scope: WorkspaceScopeBase;
     filePath: string;
-    displayMode: 'file' | 'diff';
+    displayMode: FileDisplayMode;
     fileText: string | null;
     fileWriteSupported: boolean;
     setFileWriteSupported: (value: boolean) => void;

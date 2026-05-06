@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { DirectSessionStatusGetResponse } from '@happier-dev/protocol';
 import { AppState, Platform } from 'react-native';
 
-import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import {

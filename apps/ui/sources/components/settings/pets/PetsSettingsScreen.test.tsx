@@ -105,7 +105,7 @@ const petManifest = {
     displayName: 'Blink fixture',
     description: 'Test pet fixture',
     spritesheetPath: 'spritesheet.webp',
-};
+} as const;
 
 const detectedPet = {
     sourceKey: 'detected:blink-e2e-fixture',
@@ -132,7 +132,7 @@ const alternatePetManifest = {
     displayName: 'Milo fixture',
     description: 'Alternate test pet fixture',
     spritesheetPath: 'spritesheet.webp',
-};
+} as const;
 
 const alternateDetectedPet = {
     sourceKey: 'detected:milo-e2e-fixture',
@@ -1060,6 +1060,36 @@ describe('PetsSettingsScreen', () => {
             }),
         ]);
         expect(screen.findByTestId('settings-pets-select-source-local-milo-e2e-fixture')).not.toBeNull();
+    });
+
+    it('shows an error when a discovered daemon pet cannot be imported locally', async () => {
+        machineRpcWithServerScopeMock.mockImplementation(({ method }: { method: string }) => {
+            if (method === PET_DAEMON_RPC_METHODS.DISCOVER_PACKAGES) {
+                return Promise.resolve({ ok: true, pets: [detectedPet] });
+            }
+            if (method === PET_DAEMON_RPC_METHODS.IMPORT_LOCAL_PACKAGE) {
+                return Promise.resolve({
+                    ok: false,
+                    errorCode: 'not_found',
+                    error: 'The detected pet is no longer available.',
+                });
+            }
+            return Promise.reject(new Error(`Unexpected RPC method ${method}`));
+        });
+
+        const { PetsSettingsScreen } = await import('./PetsSettingsScreen');
+        const screen = await renderScreen(<PetsSettingsScreen />);
+
+        await screen.pressByTestIdAsync('settings-pets-detect-codex-pets');
+        await screen.pressByTestIdAsync('settings-pets-use-on-this-device-blink-e2e-fixture');
+
+        expect(screen.findByTestId('settings-pets-import-local-daemon-error')).not.toBeNull();
+        expect(screen.findByTestId('settings-pets-detected-source-blink-e2e-fixture')).not.toBeNull();
+        expect(applyLocalSettingsSpy).not.toHaveBeenCalledWith(expect.objectContaining({
+            petsSelectedPetOverride: expect.objectContaining({
+                kind: 'happierManagedLocal',
+            }),
+        }));
     });
 
     it('renders persisted imported Codex pets without running detection', async () => {

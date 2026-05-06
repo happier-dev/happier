@@ -477,7 +477,7 @@ installNewSessionScreenModelCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal', () => ({
+vi.mock('@/components/sessions/external/browse/openDirectSessionsResumeIdPickerModal', () => ({
     openDirectSessionsResumeIdPickerModal: (args: unknown) => openDirectSessionsResumeIdPickerModalMock(args),
 }));
 

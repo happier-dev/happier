@@ -157,6 +157,7 @@ export function useFilesScmOperations(input: {
 
         const result = await executeScmCommit({
             sessionId,
+            repoPath: sessionPath,
             commitMessage: validation.message,
             scmCommitStrategy,
             commitSelectionPaths,

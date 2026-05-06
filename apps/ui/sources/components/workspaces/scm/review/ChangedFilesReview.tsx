@@ -9,7 +9,7 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { RepositoryCheckpointTurnMetadata, ScmDiffArea } from '@happier-dev/protocol';
 import { useChangedFilesReviewDiffLoading } from '@/components/workspaces/scm/review/useChangedFilesReviewDiffLoading';
 import { type ChangedFilesReviewRow } from '@/components/workspaces/scm/review/buildChangedFilesReviewRows';
 import { useChangedFilesReviewPrefetch } from '@/components/workspaces/scm/review/useChangedFilesReviewPrefetch';
@@ -47,6 +47,13 @@ type ChangedFilesReviewTheme = Readonly<{
     }>;
 }>;
 
+function resolveCheckpointAttributionCopy(metadata: RepositoryCheckpointTurnMetadata | null | undefined): string | null {
+    if (!metadata) return null;
+    if (metadata.contentConfidence === 'unavailable') return t('files.checkpointUnavailable');
+    if (metadata.attributionScope === 'shared_worktree') return t('files.checkpointAttributionShared');
+    return t('files.checkpointAttributionUnknown');
+}
+
 type ChangedFilesReviewProps = {
     theme: ChangedFilesReviewTheme;
     sessionId: string;
@@ -55,6 +62,9 @@ type ChangedFilesReviewProps = {
     attributionReliability: SessionAttributionReliability;
     allRepositoryChangedFiles: ScmFileStatus[];
     turnAttributedFiles?: SessionAttributedFile[];
+    turnAgentReportedFiles?: SessionAttributedFile[];
+    turnCheckpointFiles?: SessionAttributedFile[];
+    turnCheckpointMetadata?: RepositoryCheckpointTurnMetadata | null;
     turnRepositoryOnlyFiles?: ScmFileStatus[];
     sessionAttributedFiles: SessionAttributedFile[];
     repositoryOnlyFiles: ScmFileStatus[];
@@ -96,6 +106,9 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         attributionReliability,
         allRepositoryChangedFiles,
         turnAttributedFiles = [],
+        turnAgentReportedFiles = [],
+        turnCheckpointFiles = [],
+        turnCheckpointMetadata = null,
         sessionAttributedFiles,
         suppressedInferredCount,
         maxFiles,
@@ -173,6 +186,12 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         const latestTurnFiles = turnAttributedFiles
             .filter((entry) => entry?.file && !isDirectoryLikeScmFileStatus(entry.file))
             .map((entry) => entry.file);
+        const agentReportedTurnFiles = turnAgentReportedFiles
+            .filter((entry) => entry?.file && !isDirectoryLikeScmFileStatus(entry.file))
+            .map((entry) => entry.file);
+        const checkpointTurnFiles = turnCheckpointFiles
+            .filter((entry) => entry?.file && !isDirectoryLikeScmFileStatus(entry.file))
+            .map((entry) => entry.file);
         const sessionChangedFiles = sessionAttributedFiles
             .filter((entry) => entry?.file && !isDirectoryLikeScmFileStatus(entry.file))
             .map((entry) => entry.file);
@@ -197,6 +216,26 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
             ] as const;
         }
 
+        if (changedFilesViewMode === 'turn_agent_reported') {
+            return [
+                {
+                    key: 'turn_agent_reported',
+                    kind: 'turn_agent_reported',
+                    files: agentReportedTurnFiles,
+                },
+            ] as const;
+        }
+
+        if (changedFilesViewMode === 'turn_checkpoint') {
+            return [
+                {
+                    key: 'turn_checkpoint',
+                    kind: 'turn_checkpoint',
+                    files: checkpointTurnFiles,
+                },
+            ] as const;
+        }
+
         return [
             {
                 key: 'session',
@@ -204,7 +243,14 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                 files: sessionChangedFiles,
             },
         ] as const;
-    }, [allRepositoryChangedFiles, changedFilesViewMode, sessionAttributedFiles, turnAttributedFiles]);
+    }, [
+        allRepositoryChangedFiles,
+        changedFilesViewMode,
+        sessionAttributedFiles,
+        turnAgentReportedFiles,
+        turnAttributedFiles,
+        turnCheckpointFiles,
+    ]);
 
     const sections = React.useMemo(() => {
         const out: { key: string; title: string; files: ScmFileStatus[] }[] = [];
@@ -217,8 +263,14 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                 seen.add(file.fullPath);
 
                 const delta = entryDeltaByPath.get(file.fullPath) ?? null;
-                if (!fileHasDeltaForArea(file, delta, diffArea)) continue;
-                files.push(toAreaFileStatus(file, delta, diffArea));
+                const isUnmatchedTurnEvidence = delta === null
+                    && (
+                        section.kind === 'turn'
+                        || section.kind === 'turn_agent_reported'
+                        || section.kind === 'turn_checkpoint'
+                    );
+                if (!isUnmatchedTurnEvidence && !fileHasDeltaForArea(file, delta, diffArea)) continue;
+                files.push(isUnmatchedTurnEvidence ? file : toAreaFileStatus(file, delta, diffArea));
             }
 
             if (section.kind === 'repository') {
@@ -233,6 +285,22 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                 out.push({
                     key: section.key,
                     title: t('files.latestTurnChanges', { count: files.length }),
+                    files,
+                });
+                continue;
+            }
+            if (section.kind === 'turn_agent_reported') {
+                out.push({
+                    key: section.key,
+                    title: t('files.agentReportedTurnChanges', { count: files.length }),
+                    files,
+                });
+                continue;
+            }
+            if (section.kind === 'turn_checkpoint') {
+                out.push({
+                    key: section.key,
+                    title: t('files.checkpointTurnChanges', { count: files.length }),
                     files,
                 });
                 continue;
@@ -705,7 +773,7 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                     onChange={setDiffArea}
                 />
 
-                {reviewFiles.length === 0 && (
+                {reviewFiles.length === 0 && !(changedFilesViewMode === 'turn_checkpoint' && turnCheckpointMetadata?.contentConfidence === 'unavailable') && (
                     <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}>
                         <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
                             {t('files.noChanges')}
@@ -717,6 +785,22 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                     <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
                         <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
                             {t('files.reviewLargeDiffOneAtATime')}
+                        </Text>
+                    </View>
+                )}
+
+                {(changedFilesViewMode === 'turn' || changedFilesViewMode === 'turn_checkpoint') && turnCheckpointMetadata && (
+                    <View
+                        style={{
+                            backgroundColor: theme.colors.surfaceHigh,
+                            paddingHorizontal: 16,
+                            paddingVertical: 12,
+                            borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                            borderBottomColor: theme.colors.divider,
+                        }}
+                    >
+                        <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                            {resolveCheckpointAttributionCopy(turnCheckpointMetadata)}
                         </Text>
                     </View>
                 )}
@@ -759,6 +843,7 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         theme.colors.surfaceHigh,
         theme.colors.textSecondary,
         tooLarge,
+        turnCheckpointMetadata,
     ]);
 
     const renderBeforeFileRow = React.useCallback(({ file }: Readonly<{ file: any; index: number }>) => {

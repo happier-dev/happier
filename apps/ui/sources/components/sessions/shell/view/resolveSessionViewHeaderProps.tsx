@@ -10,7 +10,7 @@ import { Text } from '@/components/ui/text/Text';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName } from '@/utils/sessions/sessionUtils';
 import { LruMap } from '@/utils/cache/lruMap';
 

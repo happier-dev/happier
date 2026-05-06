@@ -23,6 +23,9 @@ export function createStorageModuleStub<TOverrides extends object>(
 ): StorageModule {
     const allMachines = [] as ReturnType<StorageModule['useAllMachines']>;
     const allSessions = [] as ReturnType<StorageModule['useAllSessions']>;
+    const allAttentionSessions = [] as ReturnType<StorageModule['useAllSessionsForAttention']>;
+    const allSessionListRenderables = [] as ReturnType<StorageModule['useAllSessionListRenderables']>;
+    const allSessionListAttentionRows = [] as ReturnType<StorageModule['useAllSessionListAttentionRows']>;
     const sessionListRenderablesById = {} as ReturnType<StorageModule['useSessionListRenderablesById']>;
     const sessionListRowStateByServerId = {} as ReturnType<StorageModule['useSessionListRowStateByServerId']>;
     const sessionListIndexByServerId = {} as ReturnType<StorageModule['useSessionListIndexByServerId']>;
@@ -68,6 +71,9 @@ export function createStorageModuleStub<TOverrides extends object>(
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true } as const),
         useAllMachines: () => allMachines,
         useAllSessions: () => allSessions,
+        useAllSessionsForAttention: () => allAttentionSessions,
+        useAllSessionListRenderables: () => allSessionListRenderables,
+        useAllSessionListAttentionRows: () => allSessionListAttentionRows,
         useMachine: (machineId: string) => store.getState().machines[machineId] ?? null,
         useSession: () => null,
         useProjectForSession: (sessionId: string | null) => {

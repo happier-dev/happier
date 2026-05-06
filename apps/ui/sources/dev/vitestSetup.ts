@@ -689,6 +689,20 @@ vi.mock('react-native-unistyles', () => {
             switch: { track: { inactive: '#dddddd', active: '#34C759' }, thumb: { active: '#FFFFFF', inactive: '#767577' } },
             radio: { active: '#007AFF', inactive: '#C0C0C0', dot: '#007AFF' },
             modal: { border: 'rgba(0, 0, 0, 0.1)' },
+            segmentedControl: {
+                trackBackground: '#f0f0f0',
+                trackGradient: {
+                    colors: ['#f0f0f0', '#f5f5f5'],
+                    start: { x: 0.5, y: 1 },
+                    end: { x: 0.5, y: 0 },
+                },
+                activeBackground: '#ffffff',
+                activeGradient: {
+                    colors: ['#fafafa', '#ffffff'],
+                    start: { x: 0.5, y: 1 },
+                    end: { x: 0.5, y: 0 },
+                },
+            },
             button: {
                 primary: { background: '#000000', tint: '#FFFFFF', disabled: '#C0C0C0' },
                 secondary: { tint: '#666666', surface: '#ffffff' },

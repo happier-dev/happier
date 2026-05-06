@@ -1,17 +1,15 @@
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import { buildLocalMachineSetupSystemTaskSpec } from './buildLocalMachineSetupSystemTaskSpec';
-import { createDeterministicSystemTaskBridge } from './createDeterministicSystemTaskBridge';
+import { createSystemTaskBridge } from './createSystemTaskBridge';
 import { createSystemTaskRunner } from './createSystemTaskRunner';
-import { createTauriSystemTaskBridge } from './createTauriSystemTaskBridge';
-import { createUnavailableSystemTaskBridge } from './createUnavailableSystemTaskBridge';
 import type { SystemTaskRunner, SystemTaskRunnerMode } from './types';
 
 let sharedRunner: SystemTaskRunner | null = null;
 
 function resolveRunnerMode(): SystemTaskRunnerMode {
     const explicitMode = String(process.env.EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE ?? '').trim();
-    if (explicitMode === 'tauri' || explicitMode === 'dev' || explicitMode === 'unavailable') {
+    if (explicitMode === 'tauri' || explicitMode === 'native' || explicitMode === 'dev' || explicitMode === 'unavailable') {
         return explicitMode;
     }
     if (isTauriDesktop()) {
@@ -29,11 +27,9 @@ export function getSystemTasksRunner(): SystemTaskRunner {
     }
 
     const mode = resolveRunnerMode();
-    const bridge = mode === 'tauri'
-        ? createTauriSystemTaskBridge()
-        : (mode === 'dev'
-            ? createDeterministicSystemTaskBridge()
-            : createUnavailableSystemTaskBridge());
+    const bridge = createSystemTaskBridge({
+        mode,
+    });
     sharedRunner = createSystemTaskRunner({ bridge, mode });
     return sharedRunner;
 }

@@ -1,4 +1,10 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import {
+  CONNECTED_ACCOUNT_DESCRIPTORS,
+  getConnectedAccountDescriptor,
+  type ConnectedAccountOauthAddActionMode,
+  type ConnectedAccountTokenKind,
+  type ConnectedServiceId,
+} from '@happier-dev/protocol';
 
 export type ConnectedServiceDisplayNameKey =
   | 'connectedServices.serviceNames.claudeSubscription'
@@ -6,6 +12,8 @@ export type ConnectedServiceDisplayNameKey =
   | 'connectedServices.serviceNames.openai'
   | 'connectedServices.serviceNames.anthropic'
   | 'connectedServices.serviceNames.gemini'
+  | 'connectedServices.serviceNames.github'
+  | 'connectedServices.serviceNames.bitbucket'
   | 'connectedServices.fallbackName';
 
 export type ConnectedServiceOauthPasteCopyKeyPrefix =
@@ -24,56 +32,37 @@ export type ConnectedServiceRegistryEntry = Readonly<{
    *
    * When omitted or length <= 1, the UI uses the generic "Add OAuth profile" action.
    */
-  oauthAddActionModes?: ReadonlyArray<'device' | 'paste' | 'browser'>;
+  oauthAddActionModes?: ReadonlyArray<ConnectedAccountOauthAddActionMode>;
   supportsToken?: boolean;
-  tokenKind?: 'api-key' | 'setup-token';
+  tokenKind?: ConnectedAccountTokenKind;
+  tokenSetupUrl?: string;
+  tokenPromptLabelKey?: string;
+  tokenMissingValueErrorKey?: string;
+  tokenIdentityPromptLabelKey?: string;
+  tokenIdentityMissingValueErrorKey?: string;
 }>;
 
-export const CONNECTED_SERVICES_REGISTRY: readonly ConnectedServiceRegistryEntry[] = Object.freeze([
-  {
-    serviceId: 'claude-subscription',
-    connectCommand: 'happier connect claude',
-    displayNameKey: 'connectedServices.serviceNames.claudeSubscription',
-    oauthPasteCopyKeyPrefix: 'connectedServices.oauthPaste.providerOverrides.claudeSubscription',
-    supportsOauth: true,
-    oauthAddActionModes: ['paste', 'browser'],
-    supportsToken: true,
-    tokenKind: 'setup-token',
-  },
-  {
-    serviceId: 'openai-codex',
-    connectCommand: 'happier connect codex',
-    displayNameKey: 'connectedServices.serviceNames.openaiCodex',
-    supportsOauth: true,
-    oauthAddActionModes: ['device', 'paste', 'browser'],
-  },
-  {
-    serviceId: 'openai',
-    connectCommand: 'happier connect codex --api-key',
-    displayNameKey: 'connectedServices.serviceNames.openai',
-    supportsOauth: false,
-    supportsToken: true,
-    tokenKind: 'api-key',
-  },
-  {
-    serviceId: 'anthropic',
-    connectCommand: 'happier connect claude --api-key',
-    displayNameKey: 'connectedServices.serviceNames.anthropic',
-    supportsOauth: false,
-    supportsToken: true,
-    tokenKind: 'api-key',
-  },
-  {
-    serviceId: 'gemini',
-    connectCommand: 'happier connect gemini',
-    displayNameKey: 'connectedServices.serviceNames.gemini',
-    supportsOauth: true,
-    oauthAddActionModes: ['paste', 'browser'],
-  },
-]);
+export const CONNECTED_SERVICES_REGISTRY: readonly ConnectedServiceRegistryEntry[] = Object.freeze(
+  CONNECTED_ACCOUNT_DESCRIPTORS.map((descriptor) => ({
+    serviceId: descriptor.id,
+    connectCommand: descriptor.ui.connectCommand,
+    displayNameKey: descriptor.displayKey as ConnectedServiceDisplayNameKey,
+    oauthPasteCopyKeyPrefix: descriptor.ui.oauthPasteCopyKeyPrefix as ConnectedServiceOauthPasteCopyKeyPrefix | undefined,
+    supportsOauth: descriptor.credentialKinds.includes('oauth'),
+    oauthAddActionModes: descriptor.ui.oauthAddActionModes,
+    supportsToken: descriptor.credentialKinds.includes('token'),
+    tokenKind: descriptor.tokenSetup?.tokenKind,
+    tokenSetupUrl: descriptor.tokenSetup?.setupUrl,
+    tokenPromptLabelKey: descriptor.tokenSetup?.promptLabelKey,
+    tokenMissingValueErrorKey: descriptor.tokenSetup?.missingValueErrorKey,
+    tokenIdentityPromptLabelKey: descriptor.tokenSetup?.identity?.promptLabelKey,
+    tokenIdentityMissingValueErrorKey: descriptor.tokenSetup?.identity?.missingValueErrorKey,
+  })),
+);
 
 export function getConnectedServiceRegistryEntry(serviceId: ConnectedServiceId): ConnectedServiceRegistryEntry {
-  const entry = CONNECTED_SERVICES_REGISTRY.find((s) => s.serviceId === serviceId);
+  const descriptor = getConnectedAccountDescriptor(serviceId);
+  const entry = descriptor ? CONNECTED_SERVICES_REGISTRY.find((s) => s.serviceId === descriptor.id) : null;
   if (entry) return entry;
   return {
     serviceId,

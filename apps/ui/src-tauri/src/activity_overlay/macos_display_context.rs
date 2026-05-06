@@ -1,7 +1,7 @@
+use super::display_identity::{resolve_display_identity, DisplayIdentityComponents};
 use super::host_mode::{
     DesktopActivityOverlayDisplayContext, DesktopActivityOverlayPhysicalNotchSize,
 };
-use super::display_identity::{resolve_display_identity, DisplayIdentityComponents};
 use super::placement::Rect;
 
 #[cfg(target_os = "macos")]

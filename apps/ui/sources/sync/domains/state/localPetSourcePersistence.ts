@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { PetAssetMediaTypeV1Schema } from '@happier-dev/protocol';
+import {
+    PetAssetMediaTypeV1Schema,
+    PetPackageManifestV1Schema,
+} from '@happier-dev/protocol';
 
 import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceTypes';
 
@@ -27,18 +30,11 @@ const LocalPetPackageSourceSchema = z.discriminatedUnion('kind', [
     }).strip(),
 ]);
 
-const LocalPetManifestSchema = z.object({
-    id: z.string().min(1).max(200),
-    displayName: z.string().min(1).max(200),
-    description: z.string().min(1).max(2000),
-    spritesheetPath: z.string().min(1).max(2000),
-}).strip();
-
 const LocalPetSourceMetadataSchema = z.object({
     sourceKey: SourceKeySchema,
     source: LocalPetPackageSourceSchema,
     displayName: z.string().min(1).max(200),
-    manifest: LocalPetManifestSchema,
+    manifest: PetPackageManifestV1Schema,
     mediaType: PetAssetMediaTypeV1Schema,
     digest: z.string().min(1).max(500).nullable(),
     sizeBytes: z.number().int().min(0).nullable(),

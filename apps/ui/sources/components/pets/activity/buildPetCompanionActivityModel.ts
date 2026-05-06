@@ -1,5 +1,5 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 
 import {
     PET_COMPANION_ACTIVITY_EXPIRY_MS,
@@ -30,10 +30,14 @@ function isFiniteTimestamp(value: unknown): value is number {
     return typeof value === 'number' && Number.isFinite(value);
 }
 
+function isPositiveTimestamp(value: unknown): value is number {
+    return isFiniteTimestamp(value) && value > 0;
+}
+
 function latestTimestamp(values: readonly unknown[]): number | null {
     let latest: number | null = null;
     for (const value of values) {
-        if (!isFiniteTimestamp(value)) continue;
+        if (!isPositiveTimestamp(value)) continue;
         latest = latest === null ? value : Math.max(latest, value);
     }
     return latest;
@@ -44,6 +48,8 @@ function hasWaitingActivity(session: Session, signals: PetCompanionSessionSignal
         (session.pendingPermissionRequestCount ?? 0) > 0
         || (session.pendingUserActionRequestCount ?? 0) > 0
         || (session.pendingCount ?? 0) > 0
+        || signals?.hasPendingPermissionRequests === true
+        || signals?.hasPendingUserActionRequests === true
         || (signals?.pendingMessageCount ?? 0) > 0
     );
 }
@@ -51,6 +57,7 @@ function hasWaitingActivity(session: Session, signals: PetCompanionSessionSignal
 function resolveCandidate(
     session: Session,
     signals: PetCompanionSessionSignals | undefined,
+    nowMs: number | undefined,
 ): SessionActivityCandidate | null {
     if (hasWaitingActivity(session, signals)) {
         const activityAtMs = latestTimestamp([
@@ -97,11 +104,20 @@ function resolveCandidate(
         };
     }
 
-    if (session.thinking || isFiniteTimestamp(signals?.latestThinkingActivityAtMs)) {
+    const isInThinkingGrace =
+        isPositiveTimestamp(session.thinkingGraceUntil)
+        && (!isFiniteTimestamp(nowMs) || session.thinkingGraceUntil > nowMs);
+    const hasRecentThinkingActivity =
+        isPositiveTimestamp(signals?.latestThinkingActivityAtMs)
+        || isPositiveTimestamp(session.thinkingAt)
+        || isPositiveTimestamp(session.optimisticThinkingAt);
+
+    if (session.thinking || isInThinkingGrace || hasRecentThinkingActivity) {
         const activityAtMs = session.thinking
             ? latestTimestamp([
                 signals?.latestThinkingActivityAtMs,
                 session.thinkingAt,
+                session.optimisticThinkingAt,
                 session.updatedAt,
                 session.activeAt,
                 session.createdAt,
@@ -109,12 +125,15 @@ function resolveCandidate(
             : latestTimestamp([
                 signals?.latestThinkingActivityAtMs,
                 session.thinkingAt,
+                session.optimisticThinkingAt,
+                isInThinkingGrace ? session.updatedAt : null,
+                isInThinkingGrace ? session.activeAt : null,
             ]);
         return {
             session,
             status: 'running',
             activityAtMs,
-            expiresAtMs: session.thinking || activityAtMs === null
+            expiresAtMs: session.thinking || isInThinkingGrace || activityAtMs === null
                 ? null
                 : activityAtMs + PET_COMPANION_ACTIVITY_EXPIRY_MS.running,
         };
@@ -136,7 +155,10 @@ function createDismissKey(candidate: SessionActivityCandidate): string {
     ].join(':');
 }
 
-function createTrayItem(candidate: SessionActivityCandidate): PetCompanionTrayItem {
+function createTrayItem(
+    candidate: SessionActivityCandidate,
+    signals: PetCompanionSessionSignals | undefined,
+): PetCompanionTrayItem {
     const dismissKey = createDismissKey(candidate);
     return {
         id: dismissKey,
@@ -145,7 +167,7 @@ function createTrayItem(candidate: SessionActivityCandidate): PetCompanionTrayIt
         status: candidate.status,
         priority: PET_COMPANION_ACTIVITY_PRIORITY[candidate.status],
         title: getSessionName(candidate.session),
-        subtitle: getSessionSubtitle(candidate.session),
+        subtitle: signals?.lastMessageSubtitle ?? null,
         activityAtMs: candidate.activityAtMs,
         expiresAtMs: candidate.expiresAtMs,
         actions: {
@@ -185,10 +207,17 @@ export function buildPetCompanionActivityModel(
     const selectedSessionId = typeof input.selectedSessionId === 'string' ? input.selectedSessionId : '';
     const dismissedKeys = normalizeDismissedKeys(input);
     const trayItems = input.sessions
-        .map((session) => resolveCandidate(session, input.signalsBySessionId?.[session.id]))
-        .filter((candidate): candidate is SessionActivityCandidate => candidate !== null)
-        .filter((candidate) => !isExpired(candidate, input.nowMs))
-        .map(createTrayItem)
+        .map((session) => {
+            const signals = input.signalsBySessionId?.[session.id];
+            const candidate = resolveCandidate(session, signals, input.nowMs);
+            return candidate ? { candidate, signals } : null;
+        })
+        .filter((entry): entry is Readonly<{
+            candidate: SessionActivityCandidate;
+            signals: PetCompanionSessionSignals | undefined;
+        }> => entry !== null)
+        .filter(({ candidate }) => !isExpired(candidate, input.nowMs))
+        .map(({ candidate, signals }) => createTrayItem(candidate, signals))
         .filter((item) => !dismissedKeys.has(item.dismissKey))
         .sort((a, b) => compareTrayItems(selectedSessionId, a, b));
     const primary = trayItems[0] ?? null;

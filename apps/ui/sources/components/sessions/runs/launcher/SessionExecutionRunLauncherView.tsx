@@ -25,7 +25,7 @@ import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session
 import { useSession, useSettings } from '@/sync/domains/state/storage';
 import { buildExecutionRunsGuidanceBlock, coerceExecutionRunsGuidanceEntries } from '@/sync/domains/settings/executionRunsGuidance';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
-import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resumeSession } from '@/sync/ops/sessions';
 import { t } from '@/text';

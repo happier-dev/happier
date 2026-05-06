@@ -19,7 +19,9 @@ import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 import { getRemoteHostLocalOverridesStore } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { isTauriDesktop } from '@/utils/platform/tauri';
-import { createDefaultSshCredentialsDraft, isSshCredentialsDraftReady } from '@/components/ssh/sshCredentialsDraft';
+import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDraft, isSshCredentialsDraftReady } from '@/components/ssh/sshCredentialsDraft';
+import { filterConfiguredSshHostSuggestions, type SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
+import { useConfiguredSshHostSuggestions } from '@/components/ssh/useConfiguredSshHostSuggestions';
 import type { SecretString } from '@/sync/encryption/secretSettings';
 import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 
@@ -189,11 +191,22 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
 
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const remoteHostsSecretMaterialEnabled = useFeatureEnabled('remoteHosts.secretMaterial');
+    const canDiscoverConfiguredSshHosts = props.runner
+        ? props.runner.mode === 'tauri'
+        : isTauriDesktop();
+    const configuredHostSuggestions = useConfiguredSshHostSuggestions({
+        ...(props.runner ? { runner: props.runner } : {}),
+        enabled: canDiscoverConfiguredSshHosts,
+    });
 
     const usableRemoteHostsV1 = React.useMemo(
         () => (remoteHostsManagementEnabled ? remoteHostsV1 : []),
         [remoteHostsManagementEnabled, remoteHostsV1],
     );
+    const filteredConfiguredHostSuggestions = React.useMemo(() => filterConfiguredSshHostSuggestions({
+        suggestions: configuredHostSuggestions.suggestions,
+        remoteHosts: usableRemoteHostsV1,
+    }), [configuredHostSuggestions.suggestions, usableRemoteHostsV1]);
 
     const [saveHost, setSaveHost] = React.useState(false);
     const saveHostInitializedRef = React.useRef(false);
@@ -260,6 +273,16 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         setSelectedSavedRemoteHostId(itemId);
         setDraft(buildRemoteHostDraftFromHost(selected));
     }, [draft, selectedSavedRemoteHostId, usableRemoteHostsV1]);
+
+    const handleSelectConfiguredHostSuggestion = React.useCallback((suggestion: SshConfiguredHostSuggestion) => {
+        setHostPickerOpen(false);
+        setSelectedSavedRemoteHostId(SAVED_REMOTE_HOST_NEW_ID);
+        setDraft((current) => {
+            const next = applyConfiguredSshHostSuggestionToDraft(current, suggestion);
+            savedDraftRef.current = next;
+            return next;
+        });
+    }, []);
 
     const {
         activeTaskSnapshot,
@@ -695,6 +718,15 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 selectedHostPickerId={selectedSavedRemoteHostId}
                 onSelectHostPickerId={handleSelectSavedRemoteHostId}
                 usingSavedHost={usingSavedHost}
+                configuredHostSuggestions={{
+                    suggestions: filteredConfiguredHostSuggestions,
+                    loading: configuredHostSuggestions.loading,
+                    refreshing: configuredHostSuggestions.refreshing,
+                    unsupported: configuredHostSuggestions.unsupported,
+                    error: configuredHostSuggestions.error,
+                }}
+                onRefreshConfiguredHostSuggestions={configuredHostSuggestions.refresh}
+                onSelectConfiguredHostSuggestion={handleSelectConfiguredHostSuggestion}
                 draft={draft}
                 onChangeDraft={(next) => {
                     savedDraftRef.current = next;

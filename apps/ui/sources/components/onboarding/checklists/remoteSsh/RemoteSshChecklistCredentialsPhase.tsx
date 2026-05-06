@@ -7,6 +7,9 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
+import { SshConfiguredHostPicker } from '@/components/ssh/SshConfiguredHostPicker';
+import type { SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
+import type { ConfiguredSshHostSuggestionsState } from '@/components/ssh/useConfiguredSshHostSuggestions';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { WizardChoiceRow } from '../../ui/WizardChoiceRow';
@@ -25,6 +28,9 @@ export type RemoteSshChecklistCredentialsPhaseProps = Readonly<{
     selectedHostPickerId: string;
     onSelectHostPickerId: (itemId: string) => void;
     usingSavedHost: boolean;
+    configuredHostSuggestions: Omit<ConfiguredSshHostSuggestionsState, 'refresh'>;
+    onRefreshConfiguredHostSuggestions: () => void | Promise<void>;
+    onSelectConfiguredHostSuggestion: (suggestion: SshConfiguredHostSuggestion) => void;
 
     draft: SshCredentialsDraft;
     onChangeDraft: (next: SshCredentialsDraft) => void;
@@ -65,6 +71,19 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
 
     return (
         <View testID={props.testID} style={styles.root}>
+            <View style={styles.sectionBlock}>
+                <SshConfiguredHostPicker
+                    testID={props.testID ? `${props.testID}-configured-host-picker` : 'remote-ssh-checklist-configured-host-picker'}
+                    suggestions={props.configuredHostSuggestions.suggestions}
+                    loading={props.configuredHostSuggestions.loading}
+                    refreshing={props.configuredHostSuggestions.refreshing}
+                    unsupported={props.configuredHostSuggestions.unsupported}
+                    error={props.configuredHostSuggestions.error}
+                    onRefresh={props.onRefreshConfiguredHostSuggestions}
+                    onSelectSuggestion={props.onSelectConfiguredHostSuggestion}
+                />
+            </View>
+
             {props.remoteHostsCount > 0 ? (
                 <View style={styles.sectionBlock}>
                     <DropdownMenu

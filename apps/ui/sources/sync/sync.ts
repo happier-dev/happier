@@ -175,13 +175,13 @@ import { runWithInFlightDedupe } from '@/sync/runtime/orchestration/runWithInFli
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { decideMessageCatchUpPolicy } from '@/sync/runtime/orchestration/messageCatchUpPolicy';
 import { applyMessageCatchUpDecision } from '@/sync/runtime/orchestration/applyMessageCatchUpDecision';
-import { readDirectSessionLink, type DirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { readDirectSessionLink, type DirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
 import {
     deriveDirectSessionObservedProgress,
     updateMetadataWithObservedDirectSessionProgress,
     updateMetadataWithViewedDirectSessionProgress,
-} from '@/sync/domains/session/directSessions/directSessionAttentionMetadata';
-import { normalizeDirectTranscriptMessages } from '@/sync/runtime/directSessions/normalizeDirectTranscriptMessages';
+} from '@/sync/domains/session/external/directSessionAttentionMetadata';
+import { normalizeDirectTranscriptMessages } from '@/sync/runtime/external/normalizeDirectTranscriptMessages';
 import { readStoredSessionRawRecord } from '@/sync/runtime/readStoredSessionContent';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -2237,6 +2237,24 @@ class Sync {
         });
     }
 
+    private applyLocalReadCursor(sessionId: string, lastViewedSessionSeq: number): void {
+        const session = storage.getState().sessions[sessionId];
+        if (!session) return;
+
+        const nextViewedSeq = Math.max(0, Math.trunc(lastViewedSessionSeq));
+        const existingViewedSeq =
+            typeof session.lastViewedSessionSeq === 'number' && Number.isFinite(session.lastViewedSessionSeq)
+                ? Math.max(0, Math.trunc(session.lastViewedSessionSeq))
+                : 0;
+        const effectiveViewedSeq = Math.max(existingViewedSeq, nextViewedSeq);
+        if (session.lastViewedSessionSeq === effectiveViewedSeq) return;
+
+        storage.getState().applySessions([{
+            ...session,
+            lastViewedSessionSeq: effectiveViewedSeq,
+        }]);
+    }
+
     async markSessionViewed(sessionId: string, opts?: { sessionSeq?: number; pendingActivityAt?: number }): Promise<void> {
         const session = storage.getState().sessions[sessionId];
         if (!session) return;
@@ -2273,23 +2291,26 @@ class Sync {
         if (!needsRepair && !early.didChange && !shouldPublishReadCursor && !shouldPublishDirectAttention) return;
 
         if (shouldPublishReadCursor) {
-            const result = await apiSocket.emitWithAck<{
-                result: 'success' | 'forbidden' | 'error';
-                lastViewedSessionSeq?: number;
-            }>('update-read-cursor', {
-                sid: sessionId,
-                lastViewedSessionSeq: nextAuthoritativeSeq,
-            });
+            this.applyLocalReadCursor(sessionId, nextAuthoritativeSeq);
 
-            if (result.result === 'success') {
-                const acknowledgedSeq =
-                    typeof result.lastViewedSessionSeq === 'number' && Number.isFinite(result.lastViewedSessionSeq)
-                        ? Math.max(0, Math.trunc(result.lastViewedSessionSeq))
-                        : nextAuthoritativeSeq;
-                storage.getState().applySessions([{
-                    ...session,
-                    lastViewedSessionSeq: acknowledgedSeq,
-                }]);
+            try {
+                const result = await apiSocket.emitWithAck<{
+                    result: 'success' | 'forbidden' | 'error';
+                    lastViewedSessionSeq?: number;
+                }>('update-read-cursor', {
+                    sid: sessionId,
+                    lastViewedSessionSeq: nextAuthoritativeSeq,
+                });
+
+                if (result.result === 'success') {
+                    const acknowledgedSeq =
+                        typeof result.lastViewedSessionSeq === 'number' && Number.isFinite(result.lastViewedSessionSeq)
+                            ? Math.max(0, Math.trunc(result.lastViewedSessionSeq))
+                            : nextAuthoritativeSeq;
+                    this.applyLocalReadCursor(sessionId, acknowledgedSeq);
+                }
+            } catch {
+                // The local read cursor is a UI observation. Keep it even if the server publish is retried by later sync.
             }
         }
 
@@ -4645,7 +4666,7 @@ class Sync {
             },
             getSessionEncryption,
             getSession: (sessionId) => storage.getState().sessions[sessionId],
-            applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages, { notifyVoice: false }),
+            applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages, { notifyVoice: false, notifyActivity: true }),
             updateDirectSessionTranscript: (ephemeralUpdate) => this.handleDirectSessionTranscriptEphemeralUpdate(ephemeralUpdate),
         }), { tag: 'Sync.handleEphemeralUpdate' });
     }

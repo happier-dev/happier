@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
+import {
+    REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
+    SCM_OPERATION_ERROR_CODES,
+    type ScmRemoteResponse,
+} from '@happier-dev/protocol';
 import {
     createModalModuleMock,
     createStorageModuleStub,
@@ -10,11 +15,13 @@ import {
 
 const {
     sessionScmRemotePush,
+    sessionScmRepositoryRemoveIndexLock,
     invalidateFromMutationAndAwait,
     loadCommitHistory,
     refreshScmData,
 } = vi.hoisted(() => ({
-    sessionScmRemotePush: vi.fn(async () => ({ success: true, stdout: 'pushed' })),
+    sessionScmRemotePush: vi.fn(async (): Promise<ScmRemoteResponse> => ({ success: true, stdout: 'pushed' })),
+    sessionScmRepositoryRemoveIndexLock: vi.fn(async () => ({ success: true, removed: true, lockPath: '/repo/.git/index.lock' })),
     invalidateFromMutationAndAwait: vi.fn(async () => {}),
     loadCommitHistory: vi.fn(async () => {}),
     refreshScmData: vi.fn(async () => {}),
@@ -27,6 +34,7 @@ vi.mock('@/sync/ops', () => ({
     sessionScmRemoteFetch: vi.fn(async () => ({ success: true, stdout: 'fetched' })),
     sessionScmRemotePull: vi.fn(async () => ({ success: true, stdout: 'pulled' })),
     sessionScmRemotePush,
+    sessionScmRepositoryRemoveIndexLock,
 }));
 
 vi.mock('@/sync/domains/state/storage', () => storageMock);
@@ -69,6 +77,16 @@ vi.mock('@/scm/operations/scmDaemonUnavailableAlert', () => ({
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('useScmRemoteOperations', () => {
+    beforeEach(() => {
+        modalMock.spies.confirm.mockClear();
+        sessionScmRemotePush.mockReset();
+        sessionScmRemotePush.mockResolvedValue({ success: true, stdout: 'pushed' });
+        sessionScmRepositoryRemoveIndexLock.mockClear();
+        invalidateFromMutationAndAwait.mockClear();
+        loadCommitHistory.mockClear();
+        refreshScmData.mockClear();
+    });
+
     afterEach(() => {
         standardCleanup();
     });
@@ -98,5 +116,41 @@ describe('useScmRemoteOperations', () => {
         });
         expect(invalidateFromMutationAndAwait).toHaveBeenCalledWith('session-1');
         expect(loadCommitHistory).toHaveBeenCalledWith({ reset: true });
+    });
+
+    it('offers stale Git index-lock recovery and retries remote push once', async () => {
+        sessionScmRemotePush
+            .mockResolvedValueOnce({
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+            })
+            .mockResolvedValueOnce({ success: true, stdout: 'pushed after recovery' });
+
+        const { useScmRemoteOperations } = await import('./useScmRemoteOperations');
+        const hook = await renderHook(() => useScmRemoteOperations({
+            sessionId: 'session-1',
+            sessionPath: '/repo',
+            scmSnapshot: null,
+            scmWriteEnabled: true,
+            scmCommitStrategy: 'atomic',
+            scmRemoteConfirmPolicy: 'never',
+            scmPushRejectPolicy: 'prompt_fetch',
+            refreshScmData,
+            loadCommitHistory,
+        }));
+
+        await act(async () => {
+            await hook.getCurrent().runRemoteOperation('push');
+        });
+
+        expect(modalMock.spies.confirm).toHaveBeenCalledTimes(1);
+        expect(sessionScmRepositoryRemoveIndexLock).toHaveBeenCalledWith('session-1', {
+            cwd: '/repo',
+            confirmed: true,
+            confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
+        });
+        expect(sessionScmRemotePush).toHaveBeenCalledTimes(2);
+        expect(invalidateFromMutationAndAwait).toHaveBeenCalledWith('session-1');
     });
 });

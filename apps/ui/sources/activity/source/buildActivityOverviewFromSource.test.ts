@@ -164,6 +164,51 @@ describe('buildActivityOverviewFromSource', () => {
         expect(overview.candidates).toEqual([]);
     });
 
+    it('includes unread sessions that only exist in the concurrent server row cache', () => {
+        const overview = buildActivityOverviewFromSource({
+            source: {
+                ...createSource({ sessions: [] }),
+                sessionsById: {},
+                sessionListRenderablesById: {},
+                sessionListIndexByServerId: {},
+                concurrentSessionListCacheByServerId: {
+                    'server-b': {
+                        serverName: 'Server B',
+                        sessions: {
+                            'concurrent-unread': {
+                                id: 'concurrent-unread',
+                                seq: 5,
+                                lastViewedSessionSeq: 1,
+                                createdAt: 1,
+                                updatedAt: 50,
+                                active: false,
+                                activeAt: 1,
+                                archivedAt: null,
+                                metadataVersion: 1,
+                                agentStateVersion: 0,
+                                metadata: { path: '/repo', host: 'remote' },
+                                thinking: false,
+                                thinkingAt: 0,
+                                presence: 1,
+                                hasUnreadMessages: true,
+                            },
+                        },
+                    },
+                },
+            },
+            nowMs: 1_000,
+        });
+
+        expect(overview.counts.unread).toBe(1);
+        expect(overview.candidates[0]).toMatchObject({
+            sessionId: 'concurrent-unread',
+            serverId: 'server-b',
+            serverName: 'Server B',
+            route: '/session/concurrent-unread?serverId=server-b',
+            target: 'open-session:concurrent-unread?serverId=server-b',
+        });
+    });
+
     it('builds a stable fingerprint that ignores generated time fields outside visible meaning', () => {
         const source = createSource({
             sessions: [

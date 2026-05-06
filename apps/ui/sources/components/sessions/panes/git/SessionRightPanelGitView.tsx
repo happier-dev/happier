@@ -23,6 +23,7 @@ import { resolveCommitAdjacentPushActionState } from '@/scm/operations/commitAdj
 import { confirmCommitAdjacentPush } from '@/scm/operations/commitAdjacentPushConfirmation';
 import { formatRemoteTargetForDisplay } from '@/scm/operations/remoteFeedback';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
+import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import {
@@ -62,6 +63,7 @@ import {
     sessionScmBranchOperationAbort,
     sessionScmBranchOperationContinue,
     sessionScmBranchRebase,
+    sessionScmRepositoryRemoveIndexLock,
     sessionScmRemoteAdd,
     sessionScmRemoteRemove,
     sessionScmRemoteSetUrl,
@@ -472,7 +474,17 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             sessionId: props.sessionId,
             operation: input.operation,
             run: async () => {
-                const response = await input.run();
+                let response = await input.run();
+                if (!response.success) {
+                    if (sessionPath) {
+                        response = await runScmOperationWithGitIndexLockRecovery({
+                            cwd: sessionPath,
+                            failedResponse: response,
+                            removeIndexLock: (request) => sessionScmRepositoryRemoveIndexLock(props.sessionId, request),
+                            retryOriginalOperation: input.run,
+                        });
+                    }
+                }
                 if (!response.success) {
                     reportSessionScmOperation({
                         state: storage.getState(),
@@ -517,7 +529,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             } as T;
         }
         return lockResult.value;
-    }, [props.sessionId]);
+    }, [props.sessionId, sessionPath]);
     const addRemote = React.useCallback(
         (request: Parameters<typeof sessionScmRemoteAdd>[1]) => runSessionUpdateMutation({
             operation: 'remote_add',

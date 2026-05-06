@@ -365,7 +365,7 @@ describe('useFilesScmOperations integration', () => {
             await hook.getCurrent().createCommit();
         });
 
-        expect(mockSessionRPC.mock.calls.some((call) => call[1] === SESSION_RPC_METHODS.EPHEMERAL_TASK_RUN)).toBe(false);
+        expect(mockSessionRPC.mock.calls.some((call) => call[1] === SESSION_RPC_METHODS.EXECUTION_RUN_START)).toBe(false);
         expect(git(workspace, ['log', '-1', '--pretty=%s'])).toBe('chore: typed commit message');
 
         await hook.unmount();

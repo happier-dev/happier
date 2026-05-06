@@ -395,7 +395,7 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: (props: any) => React.createElement('AgentInput', { testID: 'session-agent-input', ...props }),
 }));
-vi.mock('@/components/sessions/directSessions/takeover/showDirectSessionTakeoverDialog', () => ({
+vi.mock('@/components/sessions/external/takeover/showDirectSessionTakeoverDialog', () => ({
   showDirectSessionTakeoverDialog: showDirectSessionTakeoverDialogSpy,
 }));
 vi.mock('@/voice/binding/sendVoiceSessionComposerText', () => ({

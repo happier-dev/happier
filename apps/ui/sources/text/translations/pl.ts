@@ -1651,6 +1651,25 @@ export const pl: TranslationStructure = {
     remoteHostsPrivateKeySavedHint: "Klucz prywatny jest już zapisany. Pozostaw puste, aby zachować bez zmian.",
     remoteHostsSecretMaterialDisabledTitle: "Zapisywanie sekretów wyłączone",
     remoteHostsSecretMaterialDisabledSubtitle: "Ta kompilacja nie pozwala przechowywać haseł ani kluczy prywatnych.",
+    remoteHostsSetupAsMachineTitle: "Skonfiguruj jako maszynę Happier",
+    remoteHostsSetupAsMachineFailed: "Nie udało się skonfigurować tego hosta jako maszyny Happier.",
+    remoteHostsConnectFromThisDeviceTitle: "Połącz z tego urządzenia",
+    remoteHostsConnectFromThisDeviceSubtitle: "Tylko to urządzenie. Otwiera lokalny tunel SSH dla tej sesji aplikacji.",
+    remoteHostsConnectFromThisDeviceFailed: "Nie udało się otworzyć lokalnego tunelu SSH.",
+    remoteHostsSshTunnelGroupTitle: "Połącz z hostem zdalnym z tego urządzenia",
+    remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `Tunel SSH aktywny dla ${host}`,
+    remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `Tylko to urządzenie. Lokalny punkt końcowy: ${url}`,
+    remoteHostsSshTunnelStopTitle: "Zatrzymaj lokalny tunel SSH",
+    remoteHostsUseAsRelayHostTitle: "Użyj jako hosta Relay",
+    remoteHostsUseAsRelayHostSubtitle: "Skonfiguruj dostęp Relay na tym hoście SSH.",
+    remoteHostsConfigureAccessTitle: "Skonfiguruj dostęp",
+    remoteHostsConfigureAccessSubtitle: "Wybierz, jak ten host zdalny będzie osiągalny.",
+    remoteHostsOpenDetailsTitle: "Szczegóły hosta",
+    remoteHostsRelayAccessGroupTitle: "Dostęp zdalny",
+    remoteHostsRelayAccessActiveTitle: ({ host }: { host: string }) => `Konfigurowanie dostępu dla ${host}`,
+    remoteHostsRelayAccessActiveSubtitle: "Polecenia dostępu Relay działają na hoście zdalnym przez SSH. To nie tworzy tunelu SSH.",
+    remoteHostsMissingServerUrl: "Wybierz serwer przed skonfigurowaniem maszyny zdalnej.",
+    remoteHostsRelayAccessIdentityFileRequired: "Dostęp Relay na tym hoście wymaga lokalnego pliku tożsamości SSH.",
     remoteHostsTestConnectionTitle: "Test połączenia",
     remoteHostsInstallOrUpdateCliTitle: "Zainstaluj lub zaktualizuj CLI",
     remoteHostsDaemonServiceInstallOrUpdateTitle: "Zainstaluj lub zaktualizuj usługę demona",
@@ -1668,6 +1687,20 @@ export const pl: TranslationStructure = {
     remoteHostsPasswordRequiredTitle: "Wymagane hasło SSH",
     remoteHostsConnectionSucceeded: "Połączenie udane.",
     remoteHostsConnectionFailed: "Połączenie nieudane.",
+    sshConfiguredHostPickerTitle: "Sugerowane hosty SSH",
+    sshConfiguredHostPickerSubtitle: "Wypełnij z lokalnej konfiguracji SSH lub known_hosts.",
+    sshConfiguredHostPickerRefreshingSubtitle: "Odświeżanie sugestii; pokazujemy ostatnie wyniki.",
+    sshConfiguredHostPickerSourceSshConfig: "Konfiguracja SSH",
+    sshConfiguredHostPickerSourceKnownHosts: "known_hosts",
+    sshConfiguredHostPickerUnsupportedTitle: "Wprowadź dane SSH ręcznie",
+    sshConfiguredHostPickerUnsupportedSubtitle: "Lokalne wykrywanie SSH jest dostępne tylko w aplikacji desktopowej.",
+    sshConfiguredHostPickerLoadingTitle: "Wyszukiwanie hostów SSH…",
+    sshConfiguredHostPickerLoadingSubtitle: "Sprawdzanie lokalnej konfiguracji SSH i known_hosts przez most desktopowy.",
+    sshConfiguredHostPickerEmptyTitle: "Brak sugerowanych hostów SSH",
+    sshConfiguredHostPickerEmptySubtitle: "Wprowadź dane SSH ręcznie albo odśwież po zmianie konfiguracji SSH.",
+    sshConfiguredHostPickerErrorTitle: "Nie udało się załadować sugestii SSH",
+    sshConfiguredHostPickerRefreshTitle: "Odśwież sugestie SSH",
+    sshConfiguredHostPickerRefreshingTitle: "Odświeżanie sugestii SSH",
     features: "Funkcje",
     social: "Społeczność",
     account: "Konto",
@@ -1833,6 +1866,41 @@ export const pl: TranslationStructure = {
       missingToken: 'Wpisz token, aby kontynuować.',
       webHandoffTitle: 'Uruchom to na komputerze',
       webHandoffSubtitle: 'Użyj CLI, aby skonfigurować dostęp do Relay, a potem wróć tutaj i odśwież.',
+    },
+    accessEndpoints: {
+      scope: {
+        availableToOtherDevices: 'Available to other devices',
+        thisDeviceOnly: 'This device only',
+      },
+      direction: {
+        makeCurrentServerReachable: 'Make this server reachable',
+        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
+        unknown: 'Access channel',
+      },
+      kind: {
+        'relay-access-provider': 'Relay access',
+        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
+        'ssh-tunnel-native': 'Native SSH tunnel',
+        'server-profile-url': 'Server URL',
+        'peer-mediation': 'Peer mediation',
+        'manual-url': 'Manual URL',
+      },
+      recommendedUse: {
+        'multi-device': 'Best for other devices',
+        'native-this-device': 'Works in this native app',
+        'hosted-web': 'Works from hosted web',
+        'lan-only': 'LAN or private network only',
+        diagnostic: 'Needs attention',
+      },
+      limitation: {
+        'this-device-only': 'This device only',
+        'not-hosted-web-compatible': 'Not available to hosted web',
+        'not-public-share-url': 'Not a public share URL',
+        'session-scoped': 'Session scoped',
+        'foreground-only': 'Requires the app to stay in the foreground',
+        'requires-auth': 'Requires SSH authentication',
+        'requires-host-key-trust': 'Requires host-key trust',
+      },
     },
     systemTaskStepPrepare: "Przygotuj zadanie",
     systemTaskStepInstallRuntime: "Zainstaluj środowisko uruchomieniowe",
@@ -2276,6 +2344,7 @@ export const pl: TranslationStructure = {
       openai: "Klucz API OpenAI",
       anthropic: "Klucz API Anthropic",
       gemini: "Gemini od Google",
+      github: "GitHub",
     },
     title: "Połączone usługi",
     authChip: {
@@ -2397,6 +2466,12 @@ export const pl: TranslationStructure = {
       connectApiKeySubtitle: "Wklej klucz API Anthropic",
       connectSetupTokenTitle: "Połącz setup-token",
       connectSetupTokenSubtitle: "Wklej setup-token Claude (z claude setup-token)",
+      connectPersonalAccessTokenTitle: "Połącz token dostępu osobistego",
+      connectPersonalAccessTokenSubtitle: "Wklej fine-grained personal access token",
+      openTokenSetupTitle: "Otwórz konfigurację tokenu",
+      openTokenSetupSubtitle: "Otwórz stronę konfiguracji dostawcy",
+      openPersonalAccessTokenSetupTitle: "Utwórz personal access token",
+      openPersonalAccessTokenSetupSubtitle: "Otwórz konfigurację fine-grained tokenu GitHub",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `Odłączyć ${service} (${profileId})?`,
       prompts: {
@@ -2408,6 +2483,9 @@ export const pl: TranslationStructure = {
         setupTokenTitle: "Token konfiguracji",
         setupTokenBody: "Wklej swój setup-token Claude (z claude setup-token).",
         setupTokenPlaceholder: "np. sk-ant-oat01-…",
+        personalAccessTokenTitle: "Token dostępu osobistego",
+        personalAccessTokenBody: "Wklej swój fine-grained personal access token GitHub.",
+        personalAccessTokenPlaceholder: "github_pat_…",
         profileLabelTitle: "Etykieta profilu",
         profileLabelBody: "Opcjonalne. Wyświetlane w wyborze autoryzacji.",
         profileLabelPlaceholder: "Konto służbowe",
@@ -2863,6 +2941,8 @@ settingsPets: {
     accountLibraryTitle: 'Biblioteka konta',
     accountLibraryFooter: 'Zsynchronizowane zwierzaki są dostępne na zalogowanych urządzeniach.',
     accountPetTileSubtitle: 'Zsynchronizowany z Twojego konta.',
+    importToDeviceDaemonErrorTitle: 'Nie udało się zaimportować zwierzaka',
+    importToDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `Demon nie mógł zaimportować tego zwierzaka. Wykryj ponownie zwierzaki Codex i spróbuj jeszcze raz. (${code})`,
     importToAccountTitle: 'Importuj na konto',
     importToAccountSubtitle: 'Prześlij zgodnego lokalnego zwierzaka do użycia na wielu urządzeniach.',
     desktopOverlayTitle: 'Nakładka pulpitu',
@@ -3958,6 +4038,9 @@ settingsPets: {
       codexAcp: {
         title: "Adapter Codex ACP",
       },
+      gh: {
+        title: "GitHub CLI",
+      },
     },
     ui: {
       notAvailable: "Niedostępne",
@@ -4194,6 +4277,19 @@ settingsPets: {
       reinstallTitle: "Zainstalować ponownie Codex ACP?",
       description:
         "To instaluje eksperymentalny adapter ACP dla Codex, który obsługuje ładowanie/wznawianie wątków.",
+    },
+    ghCliBanner: {
+      title: "GitHub CLI",
+      install: "Zainstaluj",
+      update: "Zaktualizuj",
+      reinstall: "Zainstaluj ponownie",
+    },
+    ghCliInstallModal: {
+      installTitle: "Zainstalować GitHub CLI?",
+      updateTitle: "Zaktualizować GitHub CLI?",
+      reinstallTitle: "Zainstalować ponownie GitHub CLI?",
+      description:
+        "To instaluje opcjonalną zależność GitHub CLI używaną przez przepływy kontroli źródeł GitHub po potwierdzeniu.",
     },
   },
 
@@ -4556,8 +4652,20 @@ settingsPets: {
   commandPalette: {
     placeholder: "Wpisz polecenie lub wyszukaj...",
     noCommandsFound: "Nie znaleziono poleceń",
+    pets: {
+      category: "Zwierzaki",
+      wakeTitle: "Obudź zwierzaka",
+      wakeSubtitle: "Pokaż towarzysza na tej powierzchni.",
+      tuckTitle: "Schowaj zwierzaka",
+      tuckSubtitle: "Ukryj towarzysza na tej powierzchni.",
+      resetPositionTitle: "Resetuj pozycję zwierzaka",
+      resetPositionSubtitle: "Przenieś towarzysza z powrotem w domyślne miejsce.",
+      chooseTitle: "Wybierz zwierzaka",
+      chooseSubtitle: "Otwórz ustawienia zwierzaków.",
+      refreshCodexTitle: "Odśwież zwierzaki Codex",
+      refreshCodexSubtitle: "Otwórz ustawienia i wykryj lokalne zwierzaki Codex.",
+    },
   },
-
   commandView: {
     completedWithNoOutput: "[Polecenie zakończone bez danych wyjściowych]",
   },
@@ -4712,7 +4820,6 @@ settingsPets: {
     signedOut: "Wylogowano",
     authStatusUnknown: "Nieznany stan uwierzytelnienia",
     switchToServer: "Przełącz na ten Relay",
-    manageRelay: "Zarządzaj Relay",
     active: "Aktywny",
     default: "Domyślny",
     addServerTitle: "Dodaj Relay",
@@ -5509,6 +5616,12 @@ settingsPets: {
       searchFailed: "Wyszukiwanie nie powiodło się. Spróbuj ponownie.",
     },
     detachedHead: "odłączony HEAD",
+    indexLockRecovery: {
+      title: "Usunąć przestarzałą blokadę indeksu Git?",
+      body: "Happier może usunąć plik index.lock rozwiązany przez Git dla tego repozytorium i ponowić nieudaną operację kontroli kodu tylko raz. Nie uruchamia reset, clean, restore ani szerokiej naprawy.",
+      confirm: "Usuń blokadę i ponów",
+      failed: ({ error }: { error: string }) => `Odzyskiwanie blokady indeksu nie powiodło się: ${error}`,
+    },
     branchSwitchDialog: {
       title: "Przełącz gałąź",
       body: "Masz niezacommitowane zmiany. Jak chcesz je obsłużyć?",
@@ -5638,10 +5751,24 @@ settingsPets: {
       `Session-attributed changes (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `Zmiany ostatniej tury (${count})`,
+    agentReportedTurnChanges: ({ count }: { count: number }) =>
+      `Ostatnia tura zgłoszona przez agenta (${count})`,
+    checkpointTurnChanges: ({ count }: { count: number }) =>
+      `Ostatnia tura z checkpointu (${count})`,
     selectedForCommitChanges: ({ count }: { count: number }) =>
       `Wybrane do commita (${count})`,
     latestTurnDescription:
       'Zmiany pochodzące od dostawcy z ostatnio zakończonej tury.',
+    agentReportedTurnDescription:
+      'Pliki zgłoszone przez agenta/runtime dla ostatnio zakończonej tury.',
+    checkpointAttributionExclusive:
+      'Zawartość checkpointu jest dokładna dla tego przedziału tury, a worktree był wyłączny dla tej sesji.',
+    checkpointAttributionShared:
+      'Zawartość checkpointu jest dokładna dla przedziału repozytorium. Atrybucja jest ograniczona, ponieważ ten worktree był współdzielony.',
+    checkpointAttributionUnknown:
+      'Zawartość checkpointu jest dokładna dla przedziału repozytorium. Atrybucja aktora jest nieznana.',
+    checkpointUnavailable:
+      'Dowody checkpointu są niedostępne dla tej tury.',
     otherRepositoryChanges: ({ count }: { count: number }) =>
       `Other repository changes (${count})`,
     attributionReliabilityHigh:
@@ -5657,6 +5784,10 @@ settingsPets: {
       "Obecnie nie wykryto zmian przypisanych do sesji.",
     noLatestTurnChanges:
       "Obecnie nie wykryto zmian ostatniej tury.",
+    noAgentReportedTurnChanges:
+      "Nie wykryto zmian zgłoszonych przez agenta dla tej tury.",
+    noCheckpointTurnChanges:
+      "Nie wykryto zmian checkpointu dla tej tury.",
     notRepo: "To nie jest repozytorium kontroli wersji",
     notUnderSourceControl: "Ten katalog nie jest pod kontrolą wersji",
     searching: "Wyszukiwanie plików...",
@@ -5764,6 +5895,7 @@ settingsPets: {
         cannotDisplayBinary: "Nie można wyświetlić zawartości pliku binarnego",
         diff: "Różnice",
       file: "Plik",
+      markdown: "Markdown",
     diffModes: {
       pending: "Oczekujące",
       included: "Uwzględnione",
@@ -5794,6 +5926,8 @@ settingsPets: {
       repositoryView: "Widok repozytorium",
       selectedForCommitView: "Wybrane do commita",
       turnView: "Widok tury",
+      agentReportedTurnView: "Tura zgłoszona przez agenta",
+      checkpointTurnView: "Tura checkpointu",
       sessionView: "Widok sesji",
       view: "Widok",
       review: "Przegląd",

@@ -75,4 +75,40 @@ describe('deriveSessionListAttentionState', () => {
             sessionState: 'waiting',
         })).toBe('pending');
     });
+
+    it('uses failed attention for failed primary-session runtime issues', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: true,
+            pendingCount: 2,
+            sessionState: 'thinking',
+            latestTurnStatus: 'failed',
+            lastRuntimeIssue: {
+                v: 1,
+                scope: 'primary_session',
+                status: 'failed',
+                code: 'provider_status_error',
+                source: 'provider_status_error',
+                occurredAt: 100,
+                sanitizedPreview: 'Provider reported an error',
+            },
+        })).toBe('failed');
+    });
+
+    it('preserves running attention while a new turn is in progress with a previous audit issue', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: true,
+            pendingCount: 0,
+            sessionState: 'thinking',
+            latestTurnStatus: 'in_progress',
+            lastRuntimeIssue: {
+                v: 1,
+                scope: 'primary_session',
+                status: 'failed',
+                code: 'provider_status_error',
+                source: 'provider_status_error',
+                occurredAt: 100,
+                sanitizedPreview: 'Provider reported an error',
+            },
+        })).toBe('thinking');
+    });
 });

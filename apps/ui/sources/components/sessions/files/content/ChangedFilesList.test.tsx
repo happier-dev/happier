@@ -29,6 +29,9 @@ installFilesContentCommonModuleMocks({
                 if (key === 'files.sessionAttributedChanges') return `Session-attributed changes (${String(params?.count ?? '')})`;
                 if (key === 'files.otherRepositoryChanges') return `Other repository changes (${String(params?.count ?? '')})`;
                 if (key === 'files.noLatestTurnChanges') return 'No latest-turn changes currently detected.';
+                if (key === 'files.checkpointTurnChanges') return `Checkpoint changes (${String(params?.count ?? '')})`;
+                if (key === 'files.checkpointUnavailable') return 'Checkpoint evidence is unavailable.';
+                if (key === 'files.noCheckpointTurnChanges') return 'No checkpoint changes currently detected.';
                 if (key === 'files.noSessionAttributedChanges') return 'No session-attributed changes currently detected.';
                 if (key === 'files.attributionReliabilityLimited') {
                     return 'Reliability limited: multiple sessions are active for this repository';
@@ -247,6 +250,33 @@ describe('ChangedFilesList', () => {
 
         const rows = screen.findAllByType('ScmChangeRow' as any);
         expect(rows).toHaveLength(1);
+    });
+
+    it('does not render checkpoint empty copy when checkpoint evidence is unavailable', async () => {
+        const { ChangedFilesList } = await import('./ChangedFilesList');
+        const screen = await renderScreen(<ChangedFilesList
+                    theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
+                    changedFilesViewMode="turn_checkpoint"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[]}
+                    turnCheckpointFiles={[]}
+                    turnCheckpointMetadata={{
+                        version: 1,
+                        scopeId: 's1:/repo',
+                        baseRefSource: 'unavailable',
+                        contentConfidence: 'unavailable',
+                        attributionScope: 'unknown',
+                        receipts: [],
+                    }}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    onFilePress={vi.fn()}
+                />);
+
+        const textContent = screen.getTextContent();
+        expect(textContent).toContain('Checkpoint evidence is unavailable.');
+        expect(textContent).not.toContain('No checkpoint changes currently detected.');
     });
 
     it('keeps session view scoped to session-attributed files', async () => {

@@ -33,6 +33,7 @@ const sourceControlBranchMenuModuleState = vi.hoisted(() => ({
     routerPushSpy: vi.fn(),
     sessionScmBranchCheckoutMock: vi.fn(),
     sessionScmBranchCreateMock: vi.fn(),
+    sessionScmRepositoryRemoveIndexLockMock: vi.fn(),
     sessionScmRemotePublishMock: vi.fn(),
     usePublishBranchActionMock: vi.fn(),
     useSettingMock: vi.fn(),
@@ -66,6 +67,12 @@ export function resetSourceControlBranchMenuCommonModuleMockState() {
     sourceControlBranchMenuModuleState.routerPushSpy.mockReset();
     sourceControlBranchMenuModuleState.sessionScmBranchCheckoutMock.mockReset();
     sourceControlBranchMenuModuleState.sessionScmBranchCreateMock.mockReset();
+    sourceControlBranchMenuModuleState.sessionScmRepositoryRemoveIndexLockMock.mockReset();
+    sourceControlBranchMenuModuleState.sessionScmRepositoryRemoveIndexLockMock.mockResolvedValue({
+        success: true,
+        removed: true,
+        lockPath: '/repo/.git/index.lock',
+    });
     sourceControlBranchMenuModuleState.sessionScmRemotePublishMock.mockReset();
     sourceControlBranchMenuModuleState.usePublishBranchActionMock.mockReset();
     sourceControlBranchMenuModuleState.usePublishBranchActionMock.mockImplementation(({ writeEnabled, disabled, snapshot }: any) => ({
@@ -212,6 +219,7 @@ export function installSourceControlBranchMenuCommonModuleMocks(
         sessionScmBranchCheckout: sourceControlBranchMenuModuleState.sessionScmBranchCheckoutMock,
         sessionScmRemotePublish: sourceControlBranchMenuModuleState.sessionScmRemotePublishMock,
         sessionScmBranchCreate: sourceControlBranchMenuModuleState.sessionScmBranchCreateMock,
+        sessionScmRepositoryRemoveIndexLock: sourceControlBranchMenuModuleState.sessionScmRepositoryRemoveIndexLockMock,
     }));
 
     vi.mock('@/scm/repository/repoScmBranchService', () => ({

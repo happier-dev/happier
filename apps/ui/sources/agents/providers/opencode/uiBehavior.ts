@@ -6,8 +6,8 @@ import {
     normalizeOpenCodeBackendMode,
 } from '@happier-dev/agents';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { resolveOpenCodeBrowseSourceOptions } from '@/agents/providers/opencode/directSessions/resolveOpenCodeBrowseSourceOptions';
-import { resolveOpenCodeLinkEnsureRequestExtras } from '@/agents/providers/opencode/directSessions/resolveOpenCodeLinkEnsureRequestExtras';
+import { resolveOpenCodeBrowseSourceOptions } from '@/agents/providers/opencode/externalSessions/resolveOpenCodeBrowseSourceOptions';
+import { resolveOpenCodeLinkEnsureRequestExtras } from '@/agents/providers/opencode/externalSessions/resolveOpenCodeLinkEnsureRequestExtras';
 import { buildOpenCodeSessionHandoffProviderPatch } from '@/agents/providers/opencode/buildOpenCodeSessionHandoffProviderPatch';
 
 function readOpenCodeScopedServerBaseUrlFromSettings(opts: {

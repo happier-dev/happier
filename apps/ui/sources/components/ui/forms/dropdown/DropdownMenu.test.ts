@@ -263,6 +263,24 @@ describe('DropdownMenu', () => {
         expect(screen.findAllByType('Popover' as any).length).toBe(0);
     });
 
+    it('forwards testID to the production dropdown anchor', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const { Text, View } = await import('react-native');
+
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            testID: 'settings-ssh-configured-host-menu',
+            open: false,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement(Text, null, 'Trigger'),
+        }));
+
+        expect(screen.findAllByType(View).some((view) => (
+            view.props.testID === 'settings-ssh-configured-host-menu'
+        ))).toBe(true);
+    });
+
     it('does not auto-focus the search field by default', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const { Text } = await import('react-native');

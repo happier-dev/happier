@@ -10,4 +10,10 @@ describe('resolveConnectedServiceDisplayName', () => {
 
         expect(resolveConnectedServiceDisplayName('claude-subscription', (key) => key)).toBe(entry.displayNameKey);
     });
+
+    it('projects the GitHub display name from descriptor metadata', () => {
+        const entry = getConnectedServiceRegistryEntry('github');
+
+        expect(resolveConnectedServiceDisplayName('github', (key) => key)).toBe(entry.displayNameKey);
+    });
 });

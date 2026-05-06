@@ -4,6 +4,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/reportNewAgentRequestsFromSessionTransition';
+import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import type {
@@ -13,6 +14,10 @@ import type {
 import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
+import {
+    buildSessionListRenderableFromCacheEntry,
+    isSessionListCacheEntryMetadataUsable,
+} from '@/sync/domains/state/warmCacheAdapters';
 import {
     createSessionDataKeyHydrationPlan,
     hydrateSessionDataKeys,
@@ -109,6 +114,12 @@ function normalizeAccessLevel(accessLevel: unknown): 'view' | 'edit' | 'admin' |
     return accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;
 }
 
+function normalizeLastViewedSessionSeq(value: number | null | undefined): number | null {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.max(0, Math.trunc(value))
+        : null;
+}
+
 function buildRenderableFromRowAndCache(
     row: SessionListRow,
     cachedEntry: SessionListCacheEntryV1 | undefined,
@@ -120,24 +131,7 @@ function buildRenderableFromRowAndCache(
     const existingMetadataMatches = existingSession?.metadataVersion === row.metadataVersion
         && existingRenderable?.metadata != null;
     const existingAgentStateMatches = existingSession?.agentStateVersion === row.agentStateVersion;
-
-    const hasPendingPermissionRequests =
-        typeof row.pendingPermissionRequestCount === 'number'
-            ? row.pendingPermissionRequestCount > 0
-            : agentStateMatches
-                ? cachedEntry?.hasPendingPermissionRequests === true
-                : existingAgentStateMatches
-                    ? existingRenderable?.hasPendingPermissionRequests === true
-                    : undefined;
-    const hasPendingUserActionRequests =
-        typeof row.pendingUserActionRequestCount === 'number'
-            ? row.pendingUserActionRequestCount > 0
-            : agentStateMatches
-                ? cachedEntry?.hasPendingUserActionRequests === true
-                : existingAgentStateMatches
-                    ? existingRenderable?.hasPendingUserActionRequests === true
-                    : undefined;
-    const cachedRenderableMetadata: SessionListRenderableMetadata | null = cachedEntry
+    const cachedRenderableMetadata: SessionListRenderableMetadata | null = isSessionListCacheEntryMetadataUsable(cachedEntry)
         ? {
             name: cachedEntry.name,
             summaryText: cachedEntry.summaryText ?? null,
@@ -158,6 +152,29 @@ function buildRenderableFromRowAndCache(
         : useExistingSessionMetadata
             ? existingRenderable?.metadata ?? null
             : null;
+    const hasPendingPermissionRequests =
+        typeof row.pendingPermissionRequestCount === 'number'
+            ? row.pendingPermissionRequestCount > 0
+            : agentStateMatches
+                ? cachedEntry?.hasPendingPermissionRequests === true
+                : existingAgentStateMatches
+                    ? existingRenderable?.hasPendingPermissionRequests === true
+                    : undefined;
+    const hasPendingUserActionRequests =
+        typeof row.pendingUserActionRequestCount === 'number'
+            ? row.pendingUserActionRequestCount > 0
+            : agentStateMatches
+                ? cachedEntry?.hasPendingUserActionRequests === true
+                : existingAgentStateMatches
+                    ? existingRenderable?.hasPendingUserActionRequests === true
+                    : undefined;
+    const lastViewedSessionSeq = normalizeLastViewedSessionSeq(row.lastViewedSessionSeq);
+    const hasUnreadMessages = computeHasUnreadActivity({
+        sessionSeq: row.seq ?? 0,
+        pendingActivityAt: 0,
+        lastViewedSessionSeq: lastViewedSessionSeq ?? undefined,
+        lastViewedPendingActivityAt: undefined,
+    });
 
     return {
         id: row.id,
@@ -169,6 +186,7 @@ function buildRenderableFromRowAndCache(
         archivedAt: row.archivedAt ?? null,
         pendingCount: row.pendingCount,
         pendingVersion: row.pendingVersion,
+        lastViewedSessionSeq,
         metadataVersion: useStaleCacheMetadata
             ? cachedEntry?.metadataVersion ?? row.metadataVersion
             : row.metadataVersion,
@@ -181,41 +199,12 @@ function buildRenderableFromRowAndCache(
         canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
         hasPendingPermissionRequests,
         hasPendingUserActionRequests,
+        hasUnreadMessages,
     };
 }
 
 function buildRenderableFromCachedEntry(cachedEntry: SessionListCacheEntryV1): SessionListRenderableSession {
-    return {
-        id: cachedEntry.sessionId,
-        seq: 0,
-        createdAt: cachedEntry.createdAt,
-        updatedAt: cachedEntry.updatedAt,
-        active: cachedEntry.active,
-        activeAt: cachedEntry.activeAt,
-        archivedAt: cachedEntry.archivedAt ?? null,
-        pendingCount: cachedEntry.pendingCount,
-        pendingVersion: cachedEntry.pendingVersion,
-        metadataVersion: cachedEntry.metadataVersion,
-        agentStateVersion: cachedEntry.agentStateVersion,
-        metadata: {
-            name: cachedEntry.name,
-            summaryText: cachedEntry.summaryText ?? null,
-            path: cachedEntry.path,
-            homeDir: cachedEntry.homeDir ?? null,
-            host: cachedEntry.host ?? null,
-            machineId: cachedEntry.machineId ?? null,
-            flavor: cachedEntry.flavor ?? null,
-            directSessionV1: cachedEntry.directSessionV1 ?? null,
-            hiddenSystemSession: cachedEntry.hiddenSystemSession === true,
-        },
-        thinking: false,
-        thinkingAt: 0,
-        presence: cachedEntry.active ? 'online' : cachedEntry.activeAt,
-        accessLevel: cachedEntry.accessLevel,
-        canApprovePermissions: cachedEntry.canApprovePermissions,
-        hasPendingPermissionRequests: cachedEntry.hasPendingPermissionRequests,
-        hasPendingUserActionRequests: cachedEntry.hasPendingUserActionRequests,
-    };
+    return buildSessionListRenderableFromCacheEntry(cachedEntry);
 }
 
 function needsWarmHydration(params: {

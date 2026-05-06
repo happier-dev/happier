@@ -26,6 +26,65 @@ beforeEach(() => {
 });
 
 describe('messages domain: ordering', () => {
+    it('advances the stored session and renderable unread state from committed message activity', () => {
+        const { get, domain } = createHarness({
+            sessions: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    lastViewedSessionSeq: 1,
+                    metadataVersion: 1,
+                    agentStateVersion: 1,
+                    metadata: null,
+                    agentState: null,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    permissionMode: null,
+                    permissionModeUpdatedAt: 0,
+                },
+            },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    lastViewedSessionSeq: 1,
+                    metadataVersion: 1,
+                    agentStateVersion: 1,
+                    metadata: null,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    hasUnreadMessages: false,
+                },
+            },
+        });
+
+        domain.applyMessages('s1', [
+            {
+                id: 'm3',
+                seq: 3,
+                localId: null,
+                createdAt: 1000,
+                isSidechain: false,
+                role: 'agent',
+                content: [{ type: 'text', text: 'done' }],
+            } as any,
+        ]);
+
+        expect(get().sessions.s1.seq).toBe(3);
+        expect(get().sessionListRenderables.s1.seq).toBe(3);
+        expect(get().sessionListRenderables.s1.hasUnreadMessages).toBe(true);
+    });
+
     it('orders committed transcript messages by seq when available (oldest first)', () => {
         const { get, domain } = createHarness({
             sessions: {

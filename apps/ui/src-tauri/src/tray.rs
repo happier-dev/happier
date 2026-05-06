@@ -61,7 +61,7 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                     ..
                 }
             ) {
-                let _ = show_main_window(tray.app_handle());
+                let _ = crate::window_chrome::show_main_window(tray.app_handle());
             }
         })
         .build(app)?;
@@ -135,7 +135,7 @@ pub fn desktop_set_tray_state<R: Runtime>(
 fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     match event.id().0.as_str() {
         SHOW_MAIN_WINDOW_MENU_ID => {
-            let _ = show_main_window(app);
+            let _ = crate::window_chrome::show_main_window(app);
         }
         OPEN_SETUP_MENU_ID => {
             let _ = navigate_main_window_to_path(app, "/setup/wizard");
@@ -163,18 +163,8 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
 }
 
 #[cfg(desktop)]
-pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.unminimize()?;
-        window.show()?;
-        window.set_focus()?;
-    }
-    Ok(())
-}
-
-#[cfg(desktop)]
 fn navigate_main_window_to_path<R: Runtime>(app: &AppHandle<R>, path: &str) -> tauri::Result<()> {
-    show_main_window(app)?;
+    crate::window_chrome::show_main_window(app)?;
     if let Some(window) = app.get_webview_window("main") {
         let script = build_navigation_script(path);
         window.eval(&script)?;

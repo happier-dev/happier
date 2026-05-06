@@ -38,6 +38,7 @@ const APP_TAURI_COMMANDS: &[&str] = &[
     "desktop_activity_overlay_set_input_locked",
     "desktop_activity_overlay_apply_drag_delta",
     "desktop_activity_overlay_release_drag_velocity",
+    "desktop_activity_overlay_apply_momentum_delta",
     "desktop_activity_overlay_reset_position",
     "desktop_activity_overlay_emit_interaction",
     "desktop_activity_overlay_emit_interaction_result",

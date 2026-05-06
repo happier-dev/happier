@@ -1,8 +1,17 @@
+import { requireConnectedAccountDescriptor } from '@happier-dev/protocol';
+
+import { buildConnectedAccountAuthorizationUrl } from './connectedServiceOauthAdapters';
+
+const OPENAI_CODEX_DESCRIPTOR = requireConnectedAccountDescriptor('openai-codex');
+if (!OPENAI_CODEX_DESCRIPTOR.oauth) {
+  throw new Error('OpenAI Codex descriptor is missing OAuth metadata');
+}
+
 export const OPENAI_CODEX_OAUTH = Object.freeze({
-  clientId: 'app_EMoamEEZ73f0CkXaXp7hrann',
-  authBaseUrl: 'https://auth.openai.com',
-  defaultRedirectUri: 'http://localhost:1455/auth/callback',
-  scope: 'openid profile email offline_access',
+  clientId: OPENAI_CODEX_DESCRIPTOR.oauth.publicClientId.defaultValue,
+  authBaseUrl: new URL(OPENAI_CODEX_DESCRIPTOR.oauth.authorization.endpointUrl).origin,
+  defaultRedirectUri: OPENAI_CODEX_DESCRIPTOR.oauth.authorization.defaultRedirectUri,
+  scope: OPENAI_CODEX_DESCRIPTOR.oauth.authorization.scopes.join(' '),
 });
 
 export function buildOpenAiCodexAuthorizationUrl(params: Readonly<{
@@ -10,16 +19,10 @@ export function buildOpenAiCodexAuthorizationUrl(params: Readonly<{
   state: string;
   challenge: string;
 }>): string {
-  const query = new URLSearchParams({
-    response_type: 'code',
-    client_id: OPENAI_CODEX_OAUTH.clientId,
-    redirect_uri: params.redirectUri,
-    scope: OPENAI_CODEX_OAUTH.scope,
-    code_challenge: params.challenge,
-    code_challenge_method: 'S256',
-    id_token_add_organizations: 'true',
-    codex_cli_simplified_flow: 'true',
+  return buildConnectedAccountAuthorizationUrl({
+    descriptor: OPENAI_CODEX_DESCRIPTOR,
+    redirectUri: params.redirectUri,
     state: params.state,
+    challenge: params.challenge,
   });
-  return `${OPENAI_CODEX_OAUTH.authBaseUrl}/oauth/authorize?${query.toString()}`;
 }

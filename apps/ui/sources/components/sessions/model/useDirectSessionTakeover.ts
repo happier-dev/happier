@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { showDirectSessionTakeoverDialog } from '@/components/sessions/directSessions/takeover/showDirectSessionTakeoverDialog';
+import { showDirectSessionTakeoverDialog } from '@/components/sessions/external/takeover/showDirectSessionTakeoverDialog';
 import { Modal } from '@/modal';
 import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
 import { machineDirectSessionTakeover, machineDirectSessionTakeoverPersist } from '@/sync/ops/machineDirectSessions';

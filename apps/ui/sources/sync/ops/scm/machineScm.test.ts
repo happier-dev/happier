@@ -265,4 +265,125 @@ describe('machineScm', () => {
             timeoutMs: 120_000,
         });
     });
+
+    it('routes remove index-lock through the canonical machine SCM RPC', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValue({
+            success: true,
+            removed: true,
+            reason: 'removed',
+            lockPath: '/repo/.git/index.lock',
+        });
+
+        const { machineScmRepositoryRemoveIndexLock } = await import('./machineScm');
+        const response = await machineScmRepositoryRemoveIndexLock('machine-1', {
+            cwd: '/repo',
+            confirmed: true,
+            confirmationToken: 'remove-stale-index-lock',
+        });
+
+        expect(response).toMatchObject({
+            success: true,
+            removed: true,
+            reason: 'removed',
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK,
+            payload: {
+                cwd: '/repo',
+                confirmed: true,
+                confirmationToken: 'remove-stale-index-lock',
+            },
+            timeoutMs: undefined,
+        });
+    });
+
+    it('maps remove index-lock missing machine RPC to feature unsupported response', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+        });
+        machineRpcWithServerScopeMock.mockRejectedValue(
+            Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND), {
+                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+            }),
+        );
+
+        const { machineScmRepositoryRemoveIndexLock } = await import('./machineScm');
+        const response = await machineScmRepositoryRemoveIndexLock('machine-1', {
+            cwd: '/repo',
+            confirmed: true,
+            confirmationToken: 'remove-stale-index-lock',
+        });
+
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
+        expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND);
+    });
+
+    it('routes pull-request read and compose operations through canonical machine SCM RPCs', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValue({
+            success: true,
+            pullRequests: [],
+        });
+
+        const module = await import('./machineScm');
+        await module.machineScmPullRequestList('machine-1', {
+            cwd: '/repo',
+            base: 'main',
+            head: 'feature/pr-cache',
+            state: 'open',
+        });
+        await module.machineScmPullRequestGet('machine-1', {
+            cwd: '/repo',
+            prReference: { number: 42 },
+        });
+        await module.machineScmPullRequestOpenCompose('machine-1', {
+            cwd: '/repo',
+            base: 'main',
+            head: 'feature/pr-cache',
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, {
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_PULL_REQUEST_LIST,
+            payload: {
+                cwd: '/repo',
+                base: 'main',
+                head: 'feature/pr-cache',
+                state: 'open',
+            },
+            timeoutMs: undefined,
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, {
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_PULL_REQUEST_GET,
+            payload: {
+                cwd: '/repo',
+                prReference: { number: 42 },
+            },
+            timeoutMs: undefined,
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, {
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
+            payload: {
+                cwd: '/repo',
+                base: 'main',
+                head: 'feature/pr-cache',
+            },
+            timeoutMs: undefined,
+        });
+    });
 });

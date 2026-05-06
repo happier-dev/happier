@@ -53,6 +53,46 @@ describe('readTurnChangeToolMetadata', () => {
         });
     });
 
+    it('parses repository checkpoint metadata from a turn-scoped tool envelope', () => {
+        const payload = {
+            _happier: {
+                sessionChangeScope: 'turn',
+                turnId: 'turn_checkpoint_1',
+                sessionId: 'session_checkpoint_1',
+                provider: 'scm:git',
+                source: 'scm_checkpoint',
+                confidence: 'exact',
+                turnStatus: 'completed',
+                seqRange: { startSeqInclusive: 5, endSeqInclusive: 5 },
+                repositoryCheckpoint: {
+                    version: 1,
+                    scopeId: 'session_checkpoint_1:/repo',
+                    startRef: 'refs/happier/checkpoints/scope/turn-start/turn_checkpoint_1',
+                    finalRef: 'refs/happier/checkpoints/scope/turn-final/turn_checkpoint_1',
+                    baseRefSource: 'turn_start',
+                    contentConfidence: 'exact',
+                    attributionScope: 'shared_worktree',
+                    receipts: [{ id: 'checkpoint.diff_computed', ref: 'refs/happier/checkpoints/scope/turn-final/turn_checkpoint_1' }],
+                },
+            },
+        };
+
+        expect(readTurnChangeToolMetadata(payload)).toEqual({
+            turnId: 'turn_checkpoint_1',
+            sessionId: 'session_checkpoint_1',
+            provider: 'scm:git',
+            source: 'scm_checkpoint',
+            confidence: 'exact',
+            turnStatus: 'completed',
+            seqRange: { startSeqInclusive: 5, endSeqInclusive: 5 },
+            repositoryCheckpoint: expect.objectContaining({
+                contentConfidence: 'exact',
+                attributionScope: 'shared_worktree',
+                receipts: [expect.objectContaining({ id: 'checkpoint.diff_computed' })],
+            }),
+        });
+    });
+
     it('parses turn-change metadata when it is nested under an output envelope', () => {
         const payload = {
             output: {

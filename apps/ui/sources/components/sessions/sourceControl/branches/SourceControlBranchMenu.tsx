@@ -7,7 +7,8 @@ import { repoScmBranchService } from '@/scm/repository/repoScmBranchService';
 import { resolveSessionPathWithinWorktree } from '@/scm/repository/resolveSessionPathWithinWorktree';
 import { useRepoScmBranchList } from '@/scm/repository/useRepoScmBranchList';
 import { repoScmWorktreeService } from '@/scm/repository/repoScmWorktreeService';
-import { sessionScmBranchCheckout, sessionScmBranchCreate } from '@/sync/ops';
+import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
+import { sessionScmBranchCheckout, sessionScmBranchCreate, sessionScmRepositoryRemoveIndexLock } from '@/sync/ops';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
@@ -41,6 +42,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     const snapshot = props.snapshot;
     const currentBranch = props.currentBranch;
     const machineTarget = readMachineTargetForSession(props.sessionId);
+    const repoPath = machineTarget?.basePath ?? snapshot?.repo.rootPath ?? null;
 
     const branchSwitchSettingRaw = useSetting('scmUncommittedChangesStrategy');
     const branchSwitchSetting = normalizeBranchSwitchSetting(branchSwitchSettingRaw);
@@ -101,6 +103,18 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         onError: handleBranchLoadError,
     });
     const loading = phase !== 'idle';
+    const runSessionBranchMutation = React.useCallback(async <
+        TResponse extends { success: boolean; error?: string; stderr?: string; errorCode?: string },
+    >(operation: () => Promise<TResponse>): Promise<TResponse> => {
+        const response = await operation();
+        if (response.success || !repoPath) return response;
+        return await runScmOperationWithGitIndexLockRecovery<TResponse, TResponse>({
+            cwd: repoPath,
+            failedResponse: response,
+            removeIndexLock: (request) => sessionScmRepositoryRemoveIndexLock(props.sessionId, request),
+            retryOriginalOperation: operation,
+        });
+    }, [props.sessionId, repoPath]);
 
     const { branchItems, worktreeItems } = React.useMemo(() => {
         return buildWorkspaceScmBranchPopoverItems({
@@ -134,7 +148,9 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         if (!canCreate) return;
         const trimmed = name.trim();
         if (!trimmed) return;
-        const response = await sessionScmBranchCreate(props.sessionId, { name: trimmed, checkout: true });
+        const response = await runSessionBranchMutation(() =>
+            sessionScmBranchCreate(props.sessionId, { name: trimmed, checkout: true })
+        );
         if (!response.success) {
             Modal.alert(t('common.error'), response.error || t('files.branchMenu.create.failed'));
             return;
@@ -143,7 +159,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);
         setOpen(true);
         void refresh('loading');
-    }, [canCreate, props.sessionId, refresh]);
+    }, [canCreate, props.sessionId, refresh, runSessionBranchMutation]);
 
     const closeMenu = React.useCallback(() => setOpen(false), []);
 
@@ -185,7 +201,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             });
         };
 
-        let response = await attemptCheckout(false);
+        let response = await runSessionBranchMutation(() => attemptCheckout(false));
         if (strategy === 'stash_on_current_branch' && isBranchStashAlreadyExistsError(response)) {
             const shouldOverwrite =
                 askBeforeOverwrite
@@ -201,7 +217,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
                     : true;
 
             if (!shouldOverwrite) return;
-            response = await attemptCheckout(true);
+            response = await runSessionBranchMutation(() => attemptCheckout(true));
         }
 
         if (!response.success) {
@@ -219,6 +235,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         closeMenu,
         currentBranch,
         props.sessionId,
+        runSessionBranchMutation,
         snapshot,
     ]);
 

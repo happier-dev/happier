@@ -2,15 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { getConfig } from '@expo/config';
 
 const execFile = promisify(execFileCallback);
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const appRoot = dirname(scriptsDir);
 const repoRoot = dirname(dirname(appRoot));
+const nodeRequire = createRequire(import.meta.url);
 
 async function readJson(path) {
     return JSON.parse(await readFile(path, 'utf-8'));
@@ -27,6 +30,22 @@ async function searchAutolinkedModules(platform) {
     });
 
     return JSON.parse(stdout);
+}
+
+async function loadAppConfigWithNativeSshFlag(value) {
+    const previous = process.env.HAPPIER_ENABLE_NATIVE_SSH;
+    process.env.HAPPIER_ENABLE_NATIVE_SSH = value;
+    try {
+        const resolved = nodeRequire.resolve(join(appRoot, 'app.config.js'));
+        delete nodeRequire.cache[resolved];
+        return getConfig(appRoot, { skipSDKVersionRequirement: true, isPublicConfig: true }).exp;
+    } finally {
+        if (previous === undefined) {
+            delete process.env.HAPPIER_ENABLE_NATIVE_SSH;
+        } else {
+            process.env.HAPPIER_ENABLE_NATIVE_SSH = previous;
+        }
+    }
 }
 
 test('apps/ui fast test lane includes the native modules package contract check', async () => {
@@ -60,6 +79,49 @@ test('sherpa-native declares Expo module metadata consistent with sibling native
             modules: ['dev.happier.sherpa.HappierSherpaNativeModule'],
         },
     });
+});
+
+test('ssh-native declares Expo module metadata and package surface', async () => {
+    const sshPackageRoot = join(repoRoot, 'packages', 'ssh-native');
+    const sshPackageJson = await readJson(join(sshPackageRoot, 'package.json'));
+    const sshModuleConfig = await readJson(join(sshPackageRoot, 'expo-module.config.json'));
+
+    assert.equal(sshPackageJson.name, '@happier-dev/ssh-native');
+    assert.equal(sshPackageJson.private, true);
+    assert.deepEqual(sshPackageJson.files, [
+        'src',
+        'ios',
+        'android',
+        'expo-module.config.json',
+        'package.json',
+        'README.md',
+    ]);
+    assert.deepEqual(sshModuleConfig, {
+        name: 'HappierSshNative',
+        platforms: ['ios', 'android'],
+        ios: {
+            modules: ['HappierSshNativeModule'],
+        },
+        android: {
+            modules: ['dev.happier.ssh.HappierSshNativeModule'],
+        },
+    });
+});
+
+test('HAPPIER_ENABLE_NATIVE_SSH controls Expo autolinking exclusion for ssh-native', async () => {
+    const disabledConfig = await loadAppConfigWithNativeSshFlag('0');
+    assert.deepEqual(disabledConfig?.autolinking, {
+        exclude: ['@happier-dev/ssh-native'],
+        ios: {
+            exclude: ['@happier-dev/ssh-native'],
+        },
+        android: {
+            exclude: ['@happier-dev/ssh-native'],
+        },
+    });
+
+    const enabledConfig = await loadAppConfigWithNativeSshFlag('1');
+    assert.equal(enabledConfig?.autolinking, undefined);
 });
 
 test('Expo autolinking discovers sherpa-native alongside audio-stream-native for Android', async () => {

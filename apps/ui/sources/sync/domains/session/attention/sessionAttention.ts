@@ -1,9 +1,11 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
-import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/directSessions/readDirectSessionAttention';
-import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/external/readDirectSessionAttention';
+import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
 import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
+export { deriveSessionAttentionState } from './deriveSessionAttentionState';
+export type { SessionAttentionState } from './types';
 
 export type SessionAttentionOptions = Readonly<{
     showUnread?: boolean;

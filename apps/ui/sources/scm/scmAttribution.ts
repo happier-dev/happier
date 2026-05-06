@@ -2,7 +2,13 @@ import type { ScmFileStatus } from './scmStatusFiles';
 import type { ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 
 export type SessionAttributionConfidence = 'high' | 'inferred';
-export type ChangedFilesViewMode = 'repository' | 'selected' | 'turn' | 'session';
+export type ChangedFilesViewMode =
+    | 'repository'
+    | 'selected'
+    | 'turn'
+    | 'turn_agent_reported'
+    | 'turn_checkpoint'
+    | 'session';
 export type ChangedFilesPresentation = 'list' | 'review';
 export type SessionAttributionReliability = 'high' | 'limited';
 
@@ -17,30 +23,37 @@ export function getDefaultChangedFilesViewMode(): ChangedFilesViewMode {
 
 export function getPreferredChangedFilesViewMode(input: {
     showTurnViewToggle: boolean;
+    showTurnAgentReportedViewToggle?: boolean;
+    showTurnCheckpointViewToggle?: boolean;
     showSessionViewToggle: boolean;
     showSelectedViewToggle?: boolean;
 }): ChangedFilesViewMode {
     if (input.showTurnViewToggle) return 'turn';
     if (input.showSessionViewToggle) return 'session';
-    if (input.showSelectedViewToggle === true) return 'selected';
     return getDefaultChangedFilesViewMode();
 }
 
 export function isChangedFilesViewModeAvailable(input: {
     mode: ChangedFilesViewMode;
     showTurnViewToggle: boolean;
+    showTurnAgentReportedViewToggle?: boolean;
+    showTurnCheckpointViewToggle?: boolean;
     showSessionViewToggle: boolean;
     showSelectedViewToggle?: boolean;
 }): boolean {
     if (input.mode === 'repository') return true;
     if (input.mode === 'selected') return input.showSelectedViewToggle === true;
     if (input.mode === 'turn') return input.showTurnViewToggle;
+    if (input.mode === 'turn_agent_reported') return input.showTurnAgentReportedViewToggle === true;
+    if (input.mode === 'turn_checkpoint') return input.showTurnCheckpointViewToggle === true;
     return input.showSessionViewToggle;
 }
 
 export function resolveChangedFilesViewMode(input: {
     mode: ChangedFilesViewMode;
     showTurnViewToggle: boolean;
+    showTurnAgentReportedViewToggle?: boolean;
+    showTurnCheckpointViewToggle?: boolean;
     showSessionViewToggle: boolean;
     showSelectedViewToggle?: boolean;
 }): ChangedFilesViewMode {
@@ -50,16 +63,26 @@ export function resolveChangedFilesViewMode(input: {
 
 export function getSelectableChangedFilesViewModes(input: {
     showTurnViewToggle: boolean;
+    showTurnAgentReportedViewToggle?: boolean;
+    showTurnCheckpointViewToggle?: boolean;
     showSessionViewToggle: boolean;
     showSelectedViewToggle?: boolean;
 }): ChangedFilesViewMode[] {
-    if (!input.showTurnViewToggle && !input.showSessionViewToggle && input.showSelectedViewToggle !== true) {
+    if (
+        !input.showTurnViewToggle
+        && input.showTurnAgentReportedViewToggle !== true
+        && input.showTurnCheckpointViewToggle !== true
+        && !input.showSessionViewToggle
+        && input.showSelectedViewToggle !== true
+    ) {
         return [];
     }
     return [
         'repository',
         ...(input.showSelectedViewToggle === true ? ['selected' as const] : []),
         ...(input.showTurnViewToggle ? ['turn' as const] : []),
+        ...(input.showTurnAgentReportedViewToggle === true ? ['turn_agent_reported' as const] : []),
+        ...(input.showTurnCheckpointViewToggle === true ? ['turn_checkpoint' as const] : []),
         ...(input.showSessionViewToggle ? ['session' as const] : []),
     ];
 }

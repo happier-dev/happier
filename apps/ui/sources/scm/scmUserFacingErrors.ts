@@ -1,1 +1,4 @@
-export { getScmUserFacingError } from './operations/userFacingErrors';
+export {
+    getScmUserFacingError,
+    isRecoverableGitIndexLockError,
+} from './operations/userFacingErrors';

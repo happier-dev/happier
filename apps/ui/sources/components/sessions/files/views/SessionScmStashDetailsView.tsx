@@ -3,7 +3,15 @@ import * as React from 'react';
 import { ScmStashDetailsCore } from '@/components/workspaces/scm/stash/ScmStashDetailsCore';
 import type { ScmStashDetailsAdapter } from '@/components/workspaces/scm/stash/scmStashAdapter';
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { sessionScmStashDrop, sessionScmStashList, sessionScmStashPop, sessionScmStashShow } from '@/sync/ops';
+import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
+import {
+    sessionScmRepositoryRemoveIndexLock,
+    sessionScmStashDrop,
+    sessionScmStashList,
+    sessionScmStashPop,
+    sessionScmStashShow,
+} from '@/sync/ops';
+import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
 export type SessionScmStashDetailsViewProps = Readonly<{
     sessionId: string;
@@ -13,12 +21,27 @@ export type SessionScmStashDetailsViewProps = Readonly<{
 }>;
 
 export const SessionScmStashDetailsView = React.memo((props: SessionScmStashDetailsViewProps) => {
+    const machineTarget = readMachineTargetForSession(props.sessionId);
+    const repoPath = machineTarget?.basePath ?? null;
+    const runStashMutation = React.useCallback(async <
+        TResponse extends { success: boolean; error?: string; stderr?: string; errorCode?: string },
+    >(operation: () => Promise<TResponse>): Promise<TResponse> => {
+        const response = await operation();
+        if (response.success || !repoPath) return response;
+        return await runScmOperationWithGitIndexLockRecovery<TResponse, TResponse>({
+            cwd: repoPath,
+            failedResponse: response,
+            removeIndexLock: (request) => sessionScmRepositoryRemoveIndexLock(props.sessionId, request),
+            retryOriginalOperation: operation,
+        });
+    }, [props.sessionId, repoPath]);
+
     const adapter = React.useMemo<ScmStashDetailsAdapter>(() => ({
         list: () => sessionScmStashList(props.sessionId, {}),
         show: (stashRef) => sessionScmStashShow(props.sessionId, { stashRef }),
-        pop: (stashRef) => sessionScmStashPop(props.sessionId, { stashRef }),
-        drop: (stashRef) => sessionScmStashDrop(props.sessionId, { stashRef }),
-    }), [props.sessionId]);
+        pop: (stashRef) => runStashMutation(() => sessionScmStashPop(props.sessionId, { stashRef })),
+        drop: (stashRef) => runStashMutation(() => sessionScmStashDrop(props.sessionId, { stashRef })),
+    }), [props.sessionId, runStashMutation]);
 
     const handleAfterMutation = React.useCallback(async () => {
         await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);

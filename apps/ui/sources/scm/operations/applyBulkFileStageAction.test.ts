@@ -5,6 +5,7 @@ import { installScmOperationsCommonModuleMocks } from './scmOperationsTestHelper
 
 const sessionScmChangeInclude = vi.hoisted(() => vi.fn());
 const sessionScmChangeExclude = vi.hoisted(() => vi.fn());
+const sessionScmRepositoryRemoveIndexLock = vi.hoisted(() => vi.fn());
 const invalidateFromMutationAndAwait = vi.hoisted(() => vi.fn(async () => {}));
 const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: any) => {
     await input.run();
@@ -15,6 +16,7 @@ const evaluateScmOperationPreflight = vi.hoisted(() => vi.fn(() => ({ allowed: t
 vi.mock('@/sync/ops', () => ({
     sessionScmChangeInclude,
     sessionScmChangeExclude,
+    sessionScmRepositoryRemoveIndexLock,
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({
@@ -65,6 +67,7 @@ describe('applyBulkFileStageAction', () => {
         storage.setState(initialStorageState, true);
         sessionScmChangeInclude.mockReset();
         sessionScmChangeExclude.mockReset();
+        sessionScmRepositoryRemoveIndexLock.mockReset();
         invalidateFromMutationAndAwait.mockReset();
         withSessionProjectScmOperationLock.mockClear();
         evaluateScmOperationPreflight.mockClear();
@@ -111,6 +114,45 @@ describe('applyBulkFileStageAction', () => {
 
         expect(sessionScmChangeInclude).toHaveBeenCalledTimes(1);
         expect(sessionScmChangeInclude).toHaveBeenCalledWith('s1', { paths: ['a.txt', 'b.txt'] });
+        expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
+    });
+
+    it('confirms stale index-lock recovery and retries a bulk stage operation once', async () => {
+        const modalConfirm = vi.mocked((await import('@/modal')).Modal.confirm);
+        modalConfirm.mockResolvedValueOnce(true);
+        sessionScmChangeInclude
+            .mockResolvedValueOnce({
+                success: false,
+                errorCode: 'COMMAND_FAILED',
+                error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+            })
+            .mockResolvedValueOnce({ success: true });
+        sessionScmRepositoryRemoveIndexLock.mockResolvedValueOnce({
+            success: true,
+            removed: true,
+            lockPath: '/repo/.git/index.lock',
+        });
+
+        const { applyBulkFileStageAction } = await import('./applyBulkFileStageAction');
+
+        await applyBulkFileStageAction({
+            sessionId: 's1',
+            sessionPath: '/repo',
+            snapshot: null,
+            scmWriteEnabled: true,
+            commitStrategy: 'git_staging',
+            stage: true,
+            paths: ['a.txt', 'b.txt'],
+            surface: 'files',
+        });
+
+        expect(modalConfirm).toHaveBeenCalledTimes(1);
+        expect(sessionScmRepositoryRemoveIndexLock).toHaveBeenCalledWith('s1', {
+            cwd: '/repo',
+            confirmed: true,
+            confirmationToken: expect.any(String),
+        });
+        expect(sessionScmChangeInclude).toHaveBeenCalledTimes(2);
         expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
     });
 });

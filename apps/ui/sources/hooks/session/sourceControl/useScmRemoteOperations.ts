@@ -5,6 +5,7 @@ import {
     sessionScmRemoteFetch,
     sessionScmRemotePull,
     sessionScmRemotePush,
+    sessionScmRepositoryRemoveIndexLock,
 } from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -119,6 +120,7 @@ export function useScmRemoteOperations(input: {
                             branch: remoteTarget.branch ?? undefined,
                         });
             },
+            removeIndexLock: (request) => sessionScmRepositoryRemoveIndexLock(sessionId, request),
             reportOperation: ({ operation, status, detail, rawError, errorCode }) => {
                 reportSessionScmOperation({
                     state: storage.getState(),

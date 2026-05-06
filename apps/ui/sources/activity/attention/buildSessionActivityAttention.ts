@@ -9,6 +9,8 @@ import { isRecentActivityCompletion } from './activityCompletionTiming';
 
 function resolveAttentionPriority(state: SessionActivityAttention['attentionState']): number {
     switch (state) {
+        case 'failed':
+            return 700;
         case 'permission_required':
             return 600;
         case 'action_required':
@@ -40,6 +42,8 @@ export function buildSessionActivityAttention(params: Readonly<{
         hasUnreadMessages: reasons.hasUnread,
         pendingCount: params.session.pendingCount ?? 0,
         sessionState: status.state,
+        latestTurnStatus: params.session.latestTurnStatus ?? null,
+        lastRuntimeIssue: params.session.lastRuntimeIssue ?? null,
     });
     const attentionState = isRecentActivityCompletion(lastTurnCompletedAt, params.nowMs ?? Date.now())
         ? 'pending'

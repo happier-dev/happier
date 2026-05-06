@@ -1798,35 +1798,37 @@ function SessionViewLoaded({
                         return;
                     }
 
-                    if (
-                        resolved.kind === 'action' &&
-                        (
-                            resolved.actionId === 'ui.voice_global.reset' ||
-                            resolved.actionId === 'execution.run.list' ||
-                            resolved.actionId === 'review.start' ||
-                            resolved.actionId === 'subagents.plan.start' ||
-                            resolved.actionId === 'subagents.delegate.start'
-                        )
-                    ) {
-                        if (!agentId) {
-                            Modal.alert(t('common.error'), t('session.resumeFailed'));
-                            return;
-                        }
-                        const previousMessage = message;
-                        void executeSessionComposerResolution({
-                            resolved,
-                            sessionId,
-                            agentId,
-                            backendTarget: sessionActionDefaultBackend?.backendTarget ?? null,
-                            permissionMode,
-                            actionExecutor,
-                            previousMessage,
-                            setMessage,
-                            clearDraft,
-                            trackMessageSent,
-                            navigateToRuns: () => router.push(buildCurrentSessionHref('/runs') as any),
-                            modalAlert: (_title, msg) => Modal.alert(t('common.error'), msg),
-                        });
+	                    if (
+	                        resolved.kind === 'action' &&
+	                        (
+	                            resolved.actionId === 'ui.voice_global.reset' ||
+	                            resolved.actionId === 'ui.pet.choose' ||
+	                            resolved.actionId === 'execution.run.list' ||
+	                            resolved.actionId === 'review.start' ||
+	                            resolved.actionId === 'subagents.plan.start' ||
+	                            resolved.actionId === 'subagents.delegate.start'
+	                        )
+	                    ) {
+	                        if (!agentId && resolved.actionId !== 'ui.pet.choose') {
+	                            Modal.alert(t('common.error'), t('session.resumeFailed'));
+	                            return;
+	                        }
+	                        const previousMessage = message;
+	                        void executeSessionComposerResolution({
+	                            resolved,
+	                            sessionId,
+	                            agentId: agentId ?? '',
+	                            backendTarget: sessionActionDefaultBackend?.backendTarget ?? null,
+	                            permissionMode,
+	                            actionExecutor,
+	                            previousMessage,
+	                            setMessage,
+	                            clearDraft,
+	                            trackMessageSent,
+	                            navigateToRuns: () => router.push(buildCurrentSessionHref('/runs') as any),
+	                            navigateToPetSettings: () => router.push('/settings/pets' as any),
+	                            modalAlert: (_title, msg) => Modal.alert(t('common.error'), msg),
+	                        });
                         return;
                     }
 

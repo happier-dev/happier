@@ -9,6 +9,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import {
+    REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
     SCM_OPERATION_ERROR_CODES,
     type ScmStashDropResponse,
     type ScmStashListRequest,
@@ -18,6 +19,8 @@ import {
     type ScmStashPopResponse,
     type ScmStashShowRequest,
     type ScmStashShowResponse,
+    type ScmRepositoryRemoveIndexLockRequest,
+    type ScmRepositoryRemoveIndexLockResponse,
 } from '@happier-dev/protocol';
 
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
@@ -55,6 +58,17 @@ const sessionScmStashPopSpy = vi.fn<
 const sessionScmStashDropSpy = vi.fn<
     (sessionId: string, request: ScmStashDropRequest) => Promise<ScmStashDropResponse>
 >(async (_sessionId, _request) => ({ success: true }));
+const sessionScmRepositoryRemoveIndexLockSpy = vi.fn<
+    (sessionId: string, request: ScmRepositoryRemoveIndexLockRequest) => Promise<ScmRepositoryRemoveIndexLockResponse>
+>(async (_sessionId, _request) => ({
+    success: true,
+    removed: true,
+    lockPath: '/repo/.git/index.lock',
+}));
+const readMachineTargetForSessionSpy = vi.fn<(sessionId: string) => { machineId: string; basePath: string }>(() => ({
+    machineId: 'machine-1',
+    basePath: '/repo',
+}));
 
 let scmWriteEnabled = true;
 
@@ -114,9 +128,15 @@ vi.mock('@/sync/ops', async (importOriginal) => {
             sessionScmStashShow: (sessionId: string, request: ScmStashShowRequest) => sessionScmStashShowSpy(sessionId, request),
             sessionScmStashPop: (sessionId: string, request: ScmStashPopRequest) => sessionScmStashPopSpy(sessionId, request),
             sessionScmStashDrop: (sessionId: string, request: ScmStashDropRequest) => sessionScmStashDropSpy(sessionId, request),
+            sessionScmRepositoryRemoveIndexLock: (sessionId: string, request: ScmRepositoryRemoveIndexLockRequest) =>
+                sessionScmRepositoryRemoveIndexLockSpy(sessionId, request),
         },
     });
 });
+
+vi.mock('@/sync/ops/sessionMachineTarget', () => ({
+    readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionSpy(sessionId),
+}));
 
 const invalidateFromMutationAndAwaitSpy = vi.fn(async (..._args: any[]) => {});
 vi.mock('@/scm/scmStatusSync', () => ({
@@ -143,6 +163,17 @@ describe('SessionScmStashDetailsView', () => {
         sessionScmStashShowSpy.mockClear();
         sessionScmStashPopSpy.mockClear();
         sessionScmStashDropSpy.mockClear();
+        sessionScmRepositoryRemoveIndexLockSpy.mockClear();
+        sessionScmRepositoryRemoveIndexLockSpy.mockResolvedValue({
+            success: true,
+            removed: true,
+            lockPath: '/repo/.git/index.lock',
+        });
+        readMachineTargetForSessionSpy.mockClear();
+        readMachineTargetForSessionSpy.mockReturnValue({
+            machineId: 'machine-1',
+            basePath: '/repo',
+        });
         diffFilesListSpy.mockClear();
         invalidateFromMutationAndAwaitSpy.mockClear();
         modalAlertSpy.mockClear();
@@ -381,5 +412,28 @@ describe('SessionScmStashDetailsView', () => {
         expect(sessionScmStashDropSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ stashRef: 'stash@{0}' }));
         expect(invalidateFromMutationAndAwaitSpy).toHaveBeenCalledWith('s1');
         expect(modalAlertSpy).not.toHaveBeenCalled();
+    });
+
+    it('offers stale Git index-lock recovery and retries stash pop once', async () => {
+        sessionScmStashPopSpy
+            .mockResolvedValueOnce({
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+            })
+            .mockResolvedValueOnce({ success: true });
+        const screen = await renderStashDetailsView();
+
+        await screen.pressByTestIdAsync('scm-stash-restore-button');
+        await settleStashDetailsView();
+
+        expect(modalConfirmSpy).toHaveBeenCalled();
+        expect(sessionScmRepositoryRemoveIndexLockSpy).toHaveBeenCalledWith('s1', {
+            cwd: '/repo',
+            confirmed: true,
+            confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
+        });
+        expect(sessionScmStashPopSpy).toHaveBeenCalledTimes(2);
+        expect(invalidateFromMutationAndAwaitSpy).toHaveBeenCalledWith('s1');
     });
 });

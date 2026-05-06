@@ -481,6 +481,69 @@ describe('RemoteSshChecklistStep', () => {
         expect(runnerHarness.respondSpy).toHaveBeenCalledTimes(0);
     });
 
+    it('prefills the inline SSH form from a configured-host suggestion without selecting a saved host', async () => {
+        tauriState.isDesktop = true;
+        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
+        const runnerHarness = createRunner({
+            startBehavior: (spec, taskId) => {
+                if (spec.kind !== 'local.ssh.discoverConfiguredHosts.v1') {
+                    return undefined;
+                }
+                return {
+                    taskId,
+                    snapshot: {
+                        taskId,
+                        status: 'succeeded',
+                        currentStepId: null,
+                        latestMessage: null,
+                        awaitingInput: false,
+                        cancelRequested: false,
+                        events: [],
+                        result: {
+                            protocolVersion: 1,
+                            taskId,
+                            ok: true,
+                            data: [
+                                {
+                                    id: 'ssh-config:devbox',
+                                    alias: 'devbox',
+                                    hostname: '10.0.0.5',
+                                    port: 2222,
+                                    username: 'ubuntu',
+                                    source: 'ssh-config',
+                                    sourcePath: '/Users/test/.ssh/config',
+                                },
+                            ],
+                        },
+                    } as SystemTaskRunState,
+                };
+            },
+        });
+
+        const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
+            testID: 'remote-ssh-step',
+            mode: 'remoteRelayHost',
+            relayUrl: 'https://relay.example.test',
+            runner: { ...runnerHarness.runner, mode: 'tauri' },
+        }));
+
+        await flushHookEffects({ cycles: 3, turns: 3 });
+
+        const menu = screen.findByTestId('remote-ssh-step-configured-host-picker-menu') as unknown as {
+            props: { onSelect: (id: string) => void };
+        } | null;
+        expect(menu).toBeTruthy();
+
+        await act(async () => {
+            menu?.props.onSelect('ssh-config:devbox');
+        });
+
+        expect(screen.findByTestId('remote-ssh-step-ssh-sshUsernameInput')?.props.value).toBe('ubuntu');
+        expect(screen.findByTestId('remote-ssh-step-ssh-sshHostInput')?.props.value).toBe('devbox');
+        expect(screen.findByTestId('remote-ssh-step-ssh-sshPortInput')?.props.value).toBe('2222');
+        expect(screen.findAllByTestId('remote-ssh-step-remote-host-picker')).toHaveLength(0);
+    });
+
     it('branches remote relay hosting into a relay-host plan and uses serviceMode=none for the bootstrap task', async () => {
         const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner();

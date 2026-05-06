@@ -2,9 +2,8 @@ use super::host_window::resolve_macos_overlay_window_builder_defaults;
 use super::monitor_resolution::resolve_parking_monitor_rect;
 use super::{OVERLAY_PARK_OFFSCREEN_DISTANCE_PX, OVERLAY_WINDOW_LABEL, OVERLAY_WINDOW_ROUTE};
 use tauri::{
-    utils::config::Color,
-    AppHandle, LogicalPosition, LogicalSize, Manager, Runtime, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    utils::config::Color, AppHandle, LogicalPosition, LogicalSize, Manager, Runtime, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,9 +100,7 @@ pub(crate) fn show_overlay_window_without_activation<R: Runtime>(
         OverlayWindowShowStrategy::OrderFrontRegardless => {
             show_macos_overlay_window_without_activation(window)
         }
-        OverlayWindowShowStrategy::TauriShow => window
-            .show()
-            .map_err(|error| error.to_string()),
+        OverlayWindowShowStrategy::TauriShow => window.show().map_err(|error| error.to_string()),
     }
 }
 

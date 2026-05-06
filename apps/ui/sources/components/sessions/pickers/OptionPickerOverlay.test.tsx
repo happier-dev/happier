@@ -481,6 +481,37 @@ describe('OptionPickerOverlay', () => {
         expect(onSelect).not.toHaveBeenCalled();
     });
 
+    it('keeps the favorite toggle hit target above option card content', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+
+        const screen = await renderScreen(<OptionPickerOverlay
+            title="Model"
+            effectiveLabel="GPT 5.4"
+            notes={[]}
+            options={[
+                {
+                    value: 'gpt-5.4',
+                    label: 'GPT 5.4',
+                    description: 'A long description that wraps under the right-side icon area.',
+                },
+            ]}
+            selectedValue="gpt-5.4"
+            emptyText="empty"
+            canEnterCustomValue={false}
+            favoriteOptions={{
+                values: new Set(['gpt-5.4']),
+                onToggle: vi.fn(),
+            }}
+            onSelect={vi.fn()}
+        />);
+
+        const indicator = screen.findByTestId('model-picker-overlay-option-selected-indicator:gpt-5.4');
+        const indicatorStyle = flattenStyle(indicator?.props.style);
+
+        expect(indicator?.props.pointerEvents).toBe('box-none');
+        expect(indicatorStyle.zIndex).toBeGreaterThan(0);
+    });
+
     it('uses caller-provided search and refresh copy when supplied', async () => {
         const onRefresh = vi.fn();
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');

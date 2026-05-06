@@ -6,11 +6,15 @@ import {
     connectedServicesModuleState,
     installConnectedServicesCommonModuleMocks,
 } from './connectedServicesTestHelpers';
+import type { IModal } from '@/modal/types';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const promptSpy = vi.fn<() => Promise<string | null>>(async () => null);
+const { openExternalUrlSpy } = vi.hoisted(() => ({
+    openExternalUrlSpy: vi.fn(async () => true),
+}));
+const promptSpy = vi.fn<IModal['prompt']>(async () => null);
 const alertSpy = vi.fn(async () => {});
 const storeCredentialSpy = vi.fn(async () => {});
 const applySettingsSpy = vi.fn(async () => {});
@@ -29,7 +33,23 @@ installConnectedServicesCommonModuleMocks({
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
             translate: (key) =>
-                key === 'connectedServices.detail.connectSetupTokenTitle' ? 'Connect setup-token' : key,
+                key === 'connectedServices.detail.connectSetupTokenTitle'
+                    ? 'Connect setup-token'
+                    : key === 'connectedServices.tokenPrompts.githubPersonalAccessToken'
+                      ? 'Descriptor GitHub PAT title'
+                      : key === 'connectedServices.tokenPrompts.bitbucketEmailOrUsername'
+                        ? 'Bitbucket email title'
+                        : key === 'connectedServices.tokenPrompts.bitbucketApiToken'
+                          ? 'Bitbucket token title'
+                    : key,
+            translateLoose: (key) =>
+                key === 'connectedServices.tokenPrompts.githubPersonalAccessToken'
+                    ? 'Descriptor GitHub PAT title'
+                    : key === 'connectedServices.tokenPrompts.bitbucketEmailOrUsername'
+                      ? 'Bitbucket email title'
+                      : key === 'connectedServices.tokenPrompts.bitbucketApiToken'
+                        ? 'Bitbucket token title'
+                    : key,
         });
     },
     searchParams: { serviceId: 'claude-subscription' },
@@ -77,6 +97,10 @@ vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAcco
   deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
 }));
 
+vi.mock('@/utils/url/openExternalUrl', () => ({
+  openExternalUrl: openExternalUrlSpy,
+}));
+
 vi.mock('@/components/ui/lists/ItemRowActions', () => {
   const React = require('react');
   return {
@@ -117,5 +141,101 @@ describe('ConnectedServiceDetailView token kind copy', () => {
 
     const tokenItem = tree.find((n) => n.props?.testID === 'connected-services-action:connect-token');
     expect(tokenItem.props.title).toBe('Connect setup-token');
+  });
+
+  it('opens descriptor token setup URL before prompting for a GitHub PAT', async () => {
+    connectedServicesModuleState.searchParams = { serviceId: 'github' };
+    openExternalUrlSpy.mockReset();
+
+    const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
+
+    const setupItem = tree.find((n) => n.props?.testID === 'connected-services-action:open-token-setup');
+    await act(async () => {
+      await pressTestInstanceAsync(setupItem);
+    });
+
+    expect(openExternalUrlSpy).toHaveBeenCalledWith(
+      expect.stringContaining('https://github.com/settings/personal-access-tokens/new'),
+      { platformOS: 'web' },
+    );
+  });
+
+  it('prompts for GitHub PAT values as secure text', async () => {
+    connectedServicesModuleState.searchParams = { serviceId: 'github' };
+    promptSpy.mockReset();
+    storeCredentialSpy.mockReset();
+    promptSpy.mockResolvedValueOnce('work');
+    promptSpy.mockResolvedValueOnce('github_pat_ui');
+
+    const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
+
+    const tokenItem = tree.find((n) => n.props?.testID === 'connected-services-action:connect-token');
+    await act(async () => {
+      await pressTestInstanceAsync(tokenItem);
+    });
+
+    expect(promptSpy).toHaveBeenCalledTimes(2);
+    expect(promptSpy.mock.calls[1]?.[2]).toEqual(expect.objectContaining({
+      inputType: 'secure-text',
+    }));
+    expect(storeCredentialSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses descriptor token prompt metadata for GitHub PAT input', async () => {
+    connectedServicesModuleState.searchParams = { serviceId: 'github' };
+    promptSpy.mockReset();
+    promptSpy.mockResolvedValueOnce('work');
+    promptSpy.mockResolvedValueOnce('github_pat_descriptor');
+
+    const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
+
+    const tokenItem = tree.find((n) => n.props?.testID === 'connected-services-action:connect-token');
+    await act(async () => {
+      await pressTestInstanceAsync(tokenItem);
+    });
+
+    expect(promptSpy.mock.calls[1]?.[0]).toBe('Descriptor GitHub PAT title');
+  });
+
+  it('prompts for Bitbucket email before storing API-token credentials', async () => {
+    connectedServicesModuleState.searchParams = { serviceId: 'bitbucket' };
+    promptSpy.mockReset();
+    storeCredentialSpy.mockReset();
+    promptSpy.mockResolvedValueOnce('work');
+    promptSpy.mockResolvedValueOnce('dev@example.com');
+    promptSpy.mockResolvedValueOnce('bb-token');
+
+    const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
+
+    const tokenItem = tree.find((n) => n.props?.testID === 'connected-services-action:connect-token');
+    await act(async () => {
+      await pressTestInstanceAsync(tokenItem);
+    });
+
+    expect(promptSpy.mock.calls[1]?.[0]).toBe('Bitbucket email title');
+    expect(promptSpy.mock.calls[2]?.[0]).toBe('Bitbucket token title');
+    expect(storeCredentialSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      serviceId: 'bitbucket',
+      profileId: 'work',
+      record: expect.objectContaining({
+        serviceId: 'bitbucket',
+        token: expect.objectContaining({
+          token: 'bb-token',
+          providerEmail: 'dev@example.com',
+        }),
+      }),
+    }));
   });
 });

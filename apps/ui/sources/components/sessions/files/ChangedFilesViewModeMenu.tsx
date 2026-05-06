@@ -15,6 +15,8 @@ type ChangedFilesViewModeMenuProps = Readonly<{
     theme: any;
     changedFilesViewMode: ChangedFilesViewMode;
     showTurnViewToggle?: boolean;
+    showTurnAgentReportedViewToggle?: boolean;
+    showTurnCheckpointViewToggle?: boolean;
     showSessionViewToggle?: boolean;
     showSelectedViewToggle?: boolean;
     onChangedFilesViewMode?: (mode: ChangedFilesViewMode) => void;
@@ -30,6 +32,8 @@ type ChangedFilesViewModeMenuProps = Readonly<{
 function getModeIcon(mode: ChangedFilesViewMode): React.ComponentProps<typeof Octicons>['name'] {
     if (mode === 'selected') return 'diff-added';
     if (mode === 'turn') return 'clock';
+    if (mode === 'turn_agent_reported') return 'comment-discussion';
+    if (mode === 'turn_checkpoint') return 'git-commit';
     if (mode === 'session') return 'history';
     return 'list-unordered';
 }
@@ -37,6 +41,8 @@ function getModeIcon(mode: ChangedFilesViewMode): React.ComponentProps<typeof Oc
 function getModeLabel(mode: ChangedFilesViewMode): string {
     if (mode === 'selected') return t('files.toolbar.selectedForCommitView');
     if (mode === 'turn') return t('files.toolbar.turnView');
+    if (mode === 'turn_agent_reported') return t('files.toolbar.agentReportedTurnView');
+    if (mode === 'turn_checkpoint') return t('files.toolbar.checkpointTurnView');
     if (mode === 'session') return t('files.toolbar.sessionView');
     return t('files.toolbar.repositoryView');
 }
@@ -45,9 +51,17 @@ export const ChangedFilesViewModeMenu = React.memo((props: ChangedFilesViewModeM
     const [open, setOpen] = React.useState(false);
     const selectableModes = React.useMemo(() => getSelectableChangedFilesViewModes({
         showTurnViewToggle: props.showTurnViewToggle === true,
+        showTurnAgentReportedViewToggle: props.showTurnAgentReportedViewToggle === true,
+        showTurnCheckpointViewToggle: props.showTurnCheckpointViewToggle === true,
         showSessionViewToggle: props.showSessionViewToggle === true,
         showSelectedViewToggle: props.showSelectedViewToggle === true,
-    }), [props.showSelectedViewToggle, props.showSessionViewToggle, props.showTurnViewToggle]);
+    }), [
+        props.showSelectedViewToggle,
+        props.showSessionViewToggle,
+        props.showTurnAgentReportedViewToggle,
+        props.showTurnCheckpointViewToggle,
+        props.showTurnViewToggle,
+    ]);
 
     const selectedMode = selectableModes.includes(props.changedFilesViewMode)
         ? props.changedFilesViewMode
@@ -60,7 +74,16 @@ export const ChangedFilesViewModeMenu = React.memo((props: ChangedFilesViewModeM
     })), [props.theme.colors.textSecondary, selectableModes]);
 
     const onSelect = React.useCallback((itemId: string) => {
-        if (itemId !== 'repository' && itemId !== 'selected' && itemId !== 'turn' && itemId !== 'session') return;
+        if (
+            itemId !== 'repository'
+            && itemId !== 'selected'
+            && itemId !== 'turn'
+            && itemId !== 'turn_agent_reported'
+            && itemId !== 'turn_checkpoint'
+            && itemId !== 'session'
+        ) {
+            return;
+        }
         props.onChangedFilesViewMode?.(itemId);
     }, [props.onChangedFilesViewMode]);
 

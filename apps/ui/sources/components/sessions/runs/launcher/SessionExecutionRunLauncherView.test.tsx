@@ -158,7 +158,7 @@ vi.mock('@/sync/domains/actions/resolveExecutionRunActionAllowedPermissionModes'
     resolveExecutionRunActionAllowedPermissionModes: () => [],
 }));
 
-vi.mock('@/sync/domains/session/directSessions/resolveSessionMachineId', () => ({
+vi.mock('@/sync/domains/session/external/resolveSessionMachineId', () => ({
     resolveSessionMachineId: () => 'machine-launcher',
 }));
 

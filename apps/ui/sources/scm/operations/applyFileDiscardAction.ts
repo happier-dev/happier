@@ -1,6 +1,9 @@
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { sessionScmChangeDiscard } from '@/sync/ops';
+import {
+    sessionScmChangeDiscard,
+    sessionScmRepositoryRemoveIndexLock,
+} from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -8,6 +11,7 @@ import { scmStatusSync } from '@/scm/scmStatusSync';
 import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
+import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
@@ -72,9 +76,21 @@ export async function applyFileDiscardAction(input: Readonly<{
         sessionId,
         operation: 'discard',
         run: async () => {
-            const response = await sessionScmChangeDiscard(sessionId, {
+            const runScmOperation = async () => sessionScmChangeDiscard(sessionId, {
                 entries: [{ path: file.fullPath, kind: file.status }],
             });
+            let response = await runScmOperation();
+
+            if (!response.success) {
+                if (sessionPath) {
+                    response = await runScmOperationWithGitIndexLockRecovery({
+                        cwd: sessionPath,
+                        failedResponse: response,
+                        removeIndexLock: (request) => sessionScmRepositoryRemoveIndexLock(sessionId, request),
+                        retryOriginalOperation: runScmOperation,
+                    });
+                }
+            }
 
             if (!response.success) {
                 const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({

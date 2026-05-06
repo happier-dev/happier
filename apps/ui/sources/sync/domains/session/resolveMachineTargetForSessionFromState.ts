@@ -6,7 +6,7 @@ import {
     resolveSessionMachineRpcTarget,
     type SessionMachineTargetPeer,
 } from '@/sync/domains/session/resolveSessionReachableMachineId';
-import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 
 type MachineTargetLikeState = SessionListLookupStateLike & Readonly<{

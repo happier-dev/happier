@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Platform } from 'react-native';
 
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useChangelog } from '@/hooks/inbox/useChangelog';
 import { useUpdates } from '@/hooks/inbox/useUpdates';
 import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
@@ -10,6 +11,7 @@ import { useActivityAttentionSource } from '@/activity/source/useActivityAttenti
 import { AttentionDeviceOverridesV1Schema } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import { useFriendRequests, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import { serverFetch } from '@/sync/http/client';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -17,16 +19,54 @@ import { buildActivityBadgeStateFromOverview } from './buildActivityBadgeState';
 import { applyExpoNativeBadgeState } from './channels/applyExpoNativeBadgeState';
 import { applyTauriBadgeState } from './channels/applyTauriBadgeState';
 
+type ServerBadgeSnapshot = Readonly<{
+    count: number;
+    serverGeneration: number;
+    serverId: string;
+}>;
+
+type ActivityBadgeSessionOptions = Readonly<{
+    showUnread: boolean;
+    showPendingPermissionRequests: boolean;
+    showPendingUserActionRequests: boolean;
+    showQueuedUserInput: boolean;
+}>;
+
+async function fetchServerBadgeCount(): Promise<number | null> {
+    try {
+        const response = await serverFetch('/v1/account/activity/badge-snapshot', {
+            method: 'GET',
+        }, { retry: 'none' });
+        if (!response.ok) return null;
+        const json = await response.json();
+        const badgeCount = (json as { badgeCount?: unknown } | null | undefined)?.badgeCount;
+        return typeof badgeCount === 'number' && Number.isInteger(badgeCount) && badgeCount >= 0 ? badgeCount : null;
+    } catch {
+        return null;
+    }
+}
+
+function canUseServerBadgeSnapshot(options: ActivityBadgeSessionOptions): boolean {
+    return options.showUnread
+        && options.showPendingPermissionRequests
+        && options.showPendingUserActionRequests
+        && options.showQueuedUserInput;
+}
+
 export function ActivityBadgeRuntime(): React.ReactElement | null {
     const activitySource = useActivityAttentionSource();
     const friendRequests = useFriendRequests();
     const localSettings = useLocalSettings();
     const accountSettings = useSettings();
+    const activeServer = useActiveServerSnapshot();
     const { updateAvailable } = useUpdates();
     const { hasUnread: changelogHasUnread } = useChangelog();
     const parsedLocalSettings = React.useMemo(() => localSettingsParse(localSettings), [localSettings]);
+    const isTauriDesktopHost = isTauriDesktop();
+    const shouldApplyBadgeRuntime = isTauriDesktopHost || Platform.OS !== 'web';
+    const [serverBadgeSnapshot, setServerBadgeSnapshot] = React.useState<ServerBadgeSnapshot | null>(null);
 
-    const badgeState = React.useMemo(() => {
+    const badgeModel = React.useMemo(() => {
         const now = new Date();
         const readyPlan = resolveActivityAttentionDeliveryPlan({
             accountSettings,
@@ -49,12 +89,21 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
             channel: 'badge',
             now,
         });
-        if (
+        const channelDisabled =
             readyPlan.reason === 'channel_disabled'
             && permissionPlan.reason === 'channel_disabled'
-            && userActionPlan.reason === 'channel_disabled'
-        ) {
-            return { count: 0, showNonNumericDot: false };
+            && userActionPlan.reason === 'channel_disabled';
+        if (channelDisabled) {
+            return {
+                channelDisabled,
+                sessionOptions: {
+                    showUnread: false,
+                    showPendingPermissionRequests: false,
+                    showPendingUserActionRequests: false,
+                    showQueuedUserInput: false,
+                },
+                localBadgeState: { count: 0, showNonNumericDot: false },
+            };
         }
         const deviceOverrides = AttentionDeviceOverridesV1Schema.parse(parsedLocalSettings.attentionDeviceOverridesV1);
 
@@ -68,19 +117,24 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
             source: activitySource,
             nowMs: now.getTime(),
             sessionOptions,
+            includeWarmSourceWhenNotReady: true,
         });
 
-        return buildActivityBadgeStateFromOverview({
-            overview,
-            numericInboxCount:
-                !deviceOverrides.badge.includeFriendRequestsInboxCount
-                    ? 0
-                    : friendRequests.length,
-            hasNonNumericInboxAttention:
-                deviceOverrides.badge.includeDesktopNonNumericDot &&
-                (updateAvailable || changelogHasUnread),
+        return {
+            channelDisabled,
             sessionOptions,
-        });
+            localBadgeState: buildActivityBadgeStateFromOverview({
+                overview,
+                numericInboxCount:
+                    !deviceOverrides.badge.includeFriendRequestsInboxCount
+                        ? 0
+                        : friendRequests.length,
+                hasNonNumericInboxAttention:
+                    deviceOverrides.badge.includeDesktopNonNumericDot &&
+                    (updateAvailable || changelogHasUnread),
+                sessionOptions,
+            }),
+        };
     }, [
         accountSettings,
         activitySource,
@@ -90,8 +144,69 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
         updateAvailable,
     ]);
 
+    const serverSnapshotAllowed = !badgeModel.channelDisabled && canUseServerBadgeSnapshot(badgeModel.sessionOptions);
+    const hasLocalActivitySource =
+        Object.keys(activitySource.sessionsById).length > 0
+        || Object.keys(activitySource.sessionListRenderablesById).length > 0
+        || Object.values(activitySource.sessionListIndexByServerId).some((items) => Array.isArray(items) && items.length > 0)
+        || Object.values(activitySource.concurrentSessionListCacheByServerId).some((entry) => {
+            return entry && typeof entry === 'object' && Object.keys(entry.sessions ?? {}).length > 0;
+        });
+
     React.useEffect(() => {
-        if (isTauriDesktop()) {
+        if (!shouldApplyBadgeRuntime || !serverSnapshotAllowed || !activeServer.serverId || !activeServer.serverUrl) {
+            setServerBadgeSnapshot(null);
+            return;
+        }
+
+        let cancelled = false;
+        setServerBadgeSnapshot(null);
+        void fetchServerBadgeCount().then((count) => {
+            if (cancelled || count === null) return;
+            setServerBadgeSnapshot({
+                count,
+                serverGeneration: activeServer.generation,
+                serverId: activeServer.serverId,
+            });
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        activeServer.generation,
+        activeServer.serverId,
+        activeServer.serverUrl,
+        serverSnapshotAllowed,
+        shouldApplyBadgeRuntime,
+    ]);
+
+    const badgeState = React.useMemo(() => {
+        if (badgeModel.channelDisabled) return badgeModel.localBadgeState;
+        if (activitySource.isDataReady || hasLocalActivitySource) return badgeModel.localBadgeState;
+        if (
+            serverSnapshotAllowed
+            && serverBadgeSnapshot
+            && serverBadgeSnapshot.serverGeneration === activeServer.generation
+            && serverBadgeSnapshot.serverId === activeServer.serverId
+        ) {
+            return { count: serverBadgeSnapshot.count, showNonNumericDot: false };
+        }
+        return null;
+    }, [
+        activeServer.generation,
+        activeServer.serverId,
+        activitySource.isDataReady,
+        badgeModel,
+        hasLocalActivitySource,
+        serverBadgeSnapshot,
+        serverSnapshotAllowed,
+    ]);
+
+    React.useEffect(() => {
+        if (!badgeState) return;
+
+        if (isTauriDesktopHost) {
             fireAndForget(applyTauriBadgeState(badgeState), {
                 tag: 'ActivityBadgeRuntime.applyTauriBadgeState',
             });
@@ -103,7 +218,7 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
         fireAndForget(applyExpoNativeBadgeState(badgeState), {
             tag: 'ActivityBadgeRuntime.applyExpoNativeBadgeState',
         });
-    }, [badgeState]);
+    }, [badgeState, isTauriDesktopHost]);
 
     return null;
 }

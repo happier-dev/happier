@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { Platform, Pressable, type StyleProp, type ViewStyle } from 'react-native';
-import { startDesktopWindowDragging } from '@/utils/platform/desktopWindowBridge';
+import {
+    startDesktopWindowDragging,
+    toggleDesktopWindowMaximize,
+} from '@/utils/platform/desktopWindowBridge';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type DesktopWindowDragRegionProps = Readonly<{
@@ -37,6 +40,8 @@ export type DesktopWindowDragMouseProps = Readonly<{
     'data-tauri-drag-region'?: true;
 }>;
 
+export type DesktopWindowTitlebarMouseAction = 'drag' | 'toggleMaximize' | 'none';
+
 const NON_DRAGGABLE_TARGET_SELECTOR = [
     'button',
     'a',
@@ -60,6 +65,10 @@ function resolveMouseTarget(event: DesktopWindowPointerLikeEvent): unknown {
     return event.target ?? event.nativeEvent?.target;
 }
 
+function resolveMouseDetail(event: DesktopWindowPointerLikeEvent): number | undefined {
+    return event.detail ?? event.nativeEvent?.detail;
+}
+
 function isNonDraggableTarget(target: unknown): boolean {
     const candidate = target as ClosestCapableTarget | null | undefined;
     if (!candidate || typeof candidate.closest !== 'function') {
@@ -69,14 +78,47 @@ function isNonDraggableTarget(target: unknown): boolean {
     return candidate.closest(NON_DRAGGABLE_TARGET_SELECTOR) != null;
 }
 
-export function shouldStartDesktopWindowDraggingFromMouseEvent(event: DesktopWindowPointerLikeEvent): boolean {
+function isPrimaryTitlebarMouseEvent(event: DesktopWindowPointerLikeEvent): boolean {
     const buttons = resolvePrimaryButtonState(event);
     if (typeof buttons === 'number') {
-        return buttons === 1 && !isNonDraggableTarget(resolveMouseTarget(event));
+        return buttons === 1;
     }
 
     const button = resolveMouseButton(event);
-    return (button == null || button === 0) && !isNonDraggableTarget(resolveMouseTarget(event));
+    return button == null || button === 0;
+}
+
+export function resolveDesktopWindowTitlebarMouseAction(
+    event: DesktopWindowPointerLikeEvent,
+): DesktopWindowTitlebarMouseAction {
+    if (!isPrimaryTitlebarMouseEvent(event) || isNonDraggableTarget(resolveMouseTarget(event))) {
+        return 'none';
+    }
+
+    return resolveMouseDetail(event) === 2 ? 'toggleMaximize' : 'drag';
+}
+
+export function shouldStartDesktopWindowDraggingFromMouseEvent(event: DesktopWindowPointerLikeEvent): boolean {
+    return resolveDesktopWindowTitlebarMouseAction(event) === 'drag';
+}
+
+export function handleDesktopWindowTitlebarMouseAction(
+    event: DesktopWindowPointerLikeEvent,
+    tag: string,
+): DesktopWindowTitlebarMouseAction {
+    const action = resolveDesktopWindowTitlebarMouseAction(event);
+    if (action === 'none') {
+        return action;
+    }
+
+    event.preventDefault?.();
+    if (action === 'toggleMaximize') {
+        fireAndForget(toggleDesktopWindowMaximize(), { tag });
+        return action;
+    }
+
+    fireAndForget(startDesktopWindowDragging(), { tag });
+    return action;
 }
 
 export function useDesktopWindowDragMouseProps(): DesktopWindowDragMouseProps {
@@ -87,19 +129,14 @@ export function useDesktopWindowDragMouseProps(): DesktopWindowDragMouseProps {
             return {};
         }
 
-        const startDraggingFromEvent = (event: DesktopWindowPointerLikeEvent, tag: string) => {
-            if (!shouldStartDesktopWindowDraggingFromMouseEvent(event)) {
-                return false;
-            }
-            event.preventDefault?.();
-            fireAndForget(startDesktopWindowDragging(), { tag });
-            return true;
+        const handleTitlebarMouseEvent = (event: DesktopWindowPointerLikeEvent, tag: string) => {
+            return handleDesktopWindowTitlebarMouseAction(event, tag) !== 'none';
         };
 
         return {
             'data-tauri-drag-region': true,
             onPointerDown: (event: DesktopWindowPointerLikeEvent) => {
-                handledPointerDownRef.current = startDraggingFromEvent(
+                handledPointerDownRef.current = handleTitlebarMouseEvent(
                     event,
                     'DesktopWindowDragRegion.pointerDown',
                 );
@@ -109,7 +146,7 @@ export function useDesktopWindowDragMouseProps(): DesktopWindowDragMouseProps {
                     handledPointerDownRef.current = false;
                     return;
                 }
-                startDraggingFromEvent(event, 'DesktopWindowDragRegion.mouseDown');
+                handleTitlebarMouseEvent(event, 'DesktopWindowDragRegion.mouseDown');
             },
         };
     }, []);

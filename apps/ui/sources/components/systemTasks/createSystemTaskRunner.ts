@@ -178,6 +178,7 @@ export function createSystemTaskRunner(options: Readonly<{
 
     return {
         mode: options.mode ?? 'tauri',
+        capabilities: options.bridge.capabilities,
         async start(spec: SystemTaskSpec): Promise<string> {
             const parsedSpec = SystemTaskSpecSchema.parse(spec);
             const taskId = await options.bridge.start(parsedSpec);

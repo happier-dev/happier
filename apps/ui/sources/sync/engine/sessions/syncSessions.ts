@@ -168,6 +168,20 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
             typeof updateBody.pendingUserActionRequestCount === 'number'
                 ? updateBody.pendingUserActionRequestCount
                 : session.pendingUserActionRequestCount,
+        latestTurnStatus:
+            updateBody.latestTurnStatus === 'in_progress'
+            || updateBody.latestTurnStatus === 'completed'
+            || updateBody.latestTurnStatus === 'cancelled'
+            || updateBody.latestTurnStatus === 'failed'
+                ? updateBody.latestTurnStatus
+                : updateBody.latestTurnStatus === null
+                    ? null
+                    : session.latestTurnStatus,
+        lastRuntimeIssue:
+            updateBody.lastRuntimeIssue === null
+            || (updateBody.lastRuntimeIssue && typeof updateBody.lastRuntimeIssue === 'object')
+                ? updateBody.lastRuntimeIssue
+                : session.lastRuntimeIssue,
         archivedAt:
             typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
                 ? updateBody.archivedAt
@@ -248,6 +262,20 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
             typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
                 ? updateBody.archivedAt
                 : renderable.archivedAt,
+        latestTurnStatus:
+            updateBody.latestTurnStatus === 'in_progress'
+            || updateBody.latestTurnStatus === 'completed'
+            || updateBody.latestTurnStatus === 'cancelled'
+            || updateBody.latestTurnStatus === 'failed'
+                ? updateBody.latestTurnStatus
+                : updateBody.latestTurnStatus === null
+                    ? null
+                    : renderable.latestTurnStatus,
+        lastRuntimeIssue:
+            updateBody.lastRuntimeIssue === null
+            || (updateBody.lastRuntimeIssue && typeof updateBody.lastRuntimeIssue === 'object')
+                ? updateBody.lastRuntimeIssue
+                : renderable.lastRuntimeIssue,
         hasPendingPermissionRequests: pendingFlags.hasPendingPermissionRequests,
         hasPendingUserActionRequests: pendingFlags.hasPendingUserActionRequests,
         hasUnreadMessages: deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch({

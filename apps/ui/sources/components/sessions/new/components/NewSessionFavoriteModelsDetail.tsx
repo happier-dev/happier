@@ -11,7 +11,12 @@ import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hoo
 import {
     resolveNewSessionCapabilityProbeContext,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { computeAcpConfigOptionControlsForProvider } from '@/sync/acp/configOptionsControl';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type {
+    SessionConfigOptionControl,
+    SessionConfigOptionValueId,
+} from '@/sync/domains/sessionControl/configOptionsControl';
 import {
     buildFavoriteModelAvailabilityById,
     favoriteModelSelectionMatchesBackend,
@@ -28,17 +33,43 @@ type FavoriteModelTogglePayload = Readonly<{
     modelLabel: string;
 }>;
 
+type FavoriteModelOption = Readonly<{
+    value: string;
+    label: string;
+    description: string;
+}>;
+
+type FavoriteModelSnapshot = Readonly<{
+    entry: ResolvedBackendCatalogEntry;
+    options: readonly FavoriteModelOption[];
+    favoriteValues: readonly string[];
+    availableValues: readonly string[];
+    staleFavoriteByValue: ReadonlyMap<string, FavoriteModelSelectionV1>;
+    modelByValue: ReadonlyMap<string, FavoriteModelTogglePayload & { modelId: string }>;
+    selectedOptionControls: readonly SessionConfigOptionControl[] | null;
+    selectedValue: string;
+    selectedLabel?: string;
+    probe: OptionPickerProbeState | null;
+}>;
+
 export type NewSessionFavoriteModelsDetailProps = Readonly<{
     favoriteModelSelections: readonly FavoriteModelSelectionV1[];
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
     selectedBackendTargetKey: string;
     selectedModelId: string;
+    selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
     onSelectFavoriteModel: (entry: ResolvedBackendCatalogEntry, modelId: string) => void;
+    onSelectFavoriteModelOptionValue?: (
+        entry: ResolvedBackendCatalogEntry,
+        modelId: string,
+        configId: string,
+        valueId: SessionConfigOptionValueId,
+    ) => void;
     onToggleFavoriteModel: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
 }>;
@@ -52,19 +83,56 @@ function buildFavoriteBackendIdentity(entry: ResolvedBackendCatalogEntry): Favor
     };
 }
 
-function FavoriteBackendModelsSection(props: Readonly<{
+const FAVORITE_OPTION_VALUE_SEPARATOR = '\x1f';
+
+function buildFavoriteOptionValue(entry: ResolvedBackendCatalogEntry, modelId: string): string {
+    return `${entry.backendTargetKey}${FAVORITE_OPTION_VALUE_SEPARATOR}${modelId}`;
+}
+
+function areFavoriteModelSnapshotsEqual(a: FavoriteModelSnapshot, b: FavoriteModelSnapshot): boolean {
+    if (a.entry.backendTargetKey !== b.entry.backendTargetKey) return false;
+    if (a.selectedValue !== b.selectedValue) return false;
+    if (a.selectedLabel !== b.selectedLabel) return false;
+    if (a.probe?.phase !== b.probe?.phase) return false;
+    if ((a.selectedOptionControls?.length ?? 0) !== (b.selectedOptionControls?.length ?? 0)) return false;
+    for (let index = 0; index < (a.selectedOptionControls?.length ?? 0); index += 1) {
+        const left = a.selectedOptionControls?.[index];
+        const right = b.selectedOptionControls?.[index];
+        if (
+            left?.option.id !== right?.option.id
+            || left?.effectiveValue !== right?.effectiveValue
+            || left?.requestedValue !== right?.requestedValue
+        ) {
+            return false;
+        }
+    }
+    if (a.options.length !== b.options.length) return false;
+    for (let index = 0; index < a.options.length; index += 1) {
+        const left = a.options[index]!;
+        const right = b.options[index]!;
+        if (
+            left.value !== right.value
+            || left.label !== right.label
+            || left.description !== right.description
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function FavoriteBackendModelsCollector(props: Readonly<{
     entry: ResolvedBackendCatalogEntry;
     favoriteModelSelections: readonly FavoriteModelSelectionV1[];
     selectedBackendTargetKey: string;
     selectedModelId: string;
+    selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
-    onSelectFavoriteModel: (entry: ResolvedBackendCatalogEntry, modelId: string) => void;
-    onToggleFavoriteModel: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
-    onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
+    onSnapshot: (targetKey: string, snapshot: FavoriteModelSnapshot) => void;
 }>) {
     const backendIdentity = React.useMemo(() => buildFavoriteBackendIdentity(props.entry), [props.entry]);
     const capabilityProbeContext = React.useMemo(() => resolveNewSessionCapabilityProbeContext({
@@ -118,78 +186,94 @@ function FavoriteBackendModelsSection(props: Readonly<{
         return out;
     }, [availableFavorites, matchingFavorites]);
 
-    const favoriteModelValues = React.useMemo(
-        () => new Set([
-            ...availableFavorites.map((model) => model.modelId),
-            ...staleFavorites.map((favorite) => normalizeFavoriteModelId(favorite.modelId)),
-        ]),
-        [availableFavorites, staleFavorites],
-    );
-
     const options = React.useMemo(() => [
         ...availableFavorites.map((model) => ({
-            value: model.modelId,
+            value: buildFavoriteOptionValue(props.entry, model.modelId),
             label: model.modelLabel,
             description: model.modelDescription,
         })),
         ...staleFavorites.map((favorite) => {
             const modelId = normalizeFavoriteModelId(favorite.modelId);
             return {
-                value: modelId,
+                value: buildFavoriteOptionValue(props.entry, modelId),
                 label: favorite.modelLabel || modelId,
                 description: t('agentInput.model.configureInCli'),
             };
         }),
-    ], [availableFavorites, staleFavorites]);
+    ], [availableFavorites, props.entry, staleFavorites]);
+
+    const favoriteValues = React.useMemo(() => options.map((option) => option.value), [options]);
+    const availableValues = React.useMemo(() => availableFavorites.map((model) => (
+        buildFavoriteOptionValue(props.entry, model.modelId)
+    )), [availableFavorites, props.entry]);
+    const staleFavoriteByValue = React.useMemo(() => new Map(staleFavorites.map((favorite) => {
+        const modelId = normalizeFavoriteModelId(favorite.modelId);
+        return [buildFavoriteOptionValue(props.entry, modelId), favorite] as const;
+    })), [props.entry, staleFavorites]);
+    const modelByValue = React.useMemo(() => new Map(availableFavorites.map((model) => [
+        buildFavoriteOptionValue(props.entry, model.modelId),
+        {
+            modelId: model.modelId,
+            modelLabel: model.modelLabel,
+        },
+    ] as const)), [availableFavorites, props.entry]);
+    const modelOptionByValue = React.useMemo(() => new Map(availableFavorites.flatMap((model) => {
+        const option = modelOptions.find((candidate) => candidate.value === model.modelId) ?? null;
+        return option ? [[buildFavoriteOptionValue(props.entry, model.modelId), option] as const] : [];
+    })), [availableFavorites, modelOptions, props.entry]);
 
     const selectedValue = props.selectedBackendTargetKey === props.entry.backendTargetKey
-        ? props.selectedModelId
+        ? buildFavoriteOptionValue(props.entry, props.selectedModelId)
         : '';
     const selectedOption = options.find((option) => option.value === selectedValue) ?? null;
+    const selectedOptionControls = React.useMemo(() => {
+        const selectedModelOption = modelOptionByValue.get(selectedValue) ?? null;
+        if (!selectedModelOption?.modelOptions?.length) return null;
+        return computeAcpConfigOptionControlsForProvider({
+            providerId: props.entry.backendTarget.configuredBackendId ?? props.entry.backendTarget.backendId,
+            configOptions: selectedModelOption.modelOptions,
+            overrides: Object.fromEntries(
+                Object.entries(props.selectedConfigOverrides ?? {}).map(([optionId, value]) => [optionId, { value }]),
+            ),
+        }) ?? null;
+    }, [
+        modelOptionByValue,
+        props.entry.backendTarget,
+        props.selectedConfigOverrides,
+        selectedValue,
+    ]);
     const unifiedProbe = React.useMemo(() => mergeOptionPickerProbes([
         props.refreshProbe ?? null,
         modelProbe ?? null,
     ]), [modelProbe, props.refreshProbe]);
 
-    if (options.length === 0 && unifiedProbe?.phase === 'idle') {
-        return null;
-    }
+    React.useEffect(() => {
+        props.onSnapshot(props.entry.backendTargetKey, {
+            entry: props.entry,
+            options,
+            favoriteValues,
+            availableValues,
+            staleFavoriteByValue,
+            modelByValue,
+            selectedOptionControls,
+            selectedValue,
+            ...(selectedOption?.label ? { selectedLabel: selectedOption.label } : {}),
+            probe: unifiedProbe ?? null,
+        });
+    }, [
+        availableValues,
+        favoriteValues,
+        modelByValue,
+        options,
+        props,
+        selectedOptionControls,
+        selectedOption?.label,
+        selectedValue,
+        staleFavoriteByValue,
+        unifiedProbe,
+    ]);
 
-    return (
-        <OptionPickerOverlay
-            title={props.entry.title}
-            effectiveLabel={selectedOption?.label}
-            notes={[]}
-            options={options}
-            selectedValue={selectedValue}
-            emptyText={t('agentInput.model.configureInCli')}
-            canEnterCustomValue={false}
-            optionTestIDPrefix={`new-session-favorite-model-option:${props.entry.backendTargetKey}`}
-            refreshTestID={`new-session-favorite-model-refresh:${props.entry.backendTargetKey}`}
-            probe={unifiedProbe ?? undefined}
-            favoriteOptions={{
-                values: favoriteModelValues,
-                isFavoritable: (option) => favoriteModelValues.has(option.value) || availabilityById.has(option.value),
-                onToggle: (option) => {
-                    const staleFavorite = staleFavorites.find((favorite) => (
-                        normalizeFavoriteModelId(favorite.modelId) === option.value
-                    ));
-                    if (staleFavorite) {
-                        props.onRemoveFavoriteModelSelection?.(staleFavorite);
-                        return;
-                    }
-                    props.onToggleFavoriteModel(props.entry, {
-                        modelId: option.value,
-                        modelLabel: option.label,
-                    });
-                },
-            }}
-            onSelect={(modelId) => {
-                if (!availabilityById.has(modelId)) return;
-                props.onSelectFavoriteModel(props.entry, modelId);
-            }}
-        />
-    );
+    return null;
 }
 
 export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDetailProps) {
@@ -198,25 +282,127 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
         return props.favoriteModelSelections.some((favorite) => favoriteModelSelectionMatchesBackend(favorite, backendIdentity));
     }), [props.favoriteModelSelections, props.resolvedBackendEntries]);
 
+    const [snapshotsByTargetKey, setSnapshotsByTargetKey] = React.useState<ReadonlyMap<string, FavoriteModelSnapshot>>(() => new Map());
+
+    React.useEffect(() => {
+        const allowedTargetKeys = new Set(favoriteBackendEntries.map((entry) => entry.backendTargetKey));
+        setSnapshotsByTargetKey((current) => {
+            let changed = false;
+            const next = new Map<string, FavoriteModelSnapshot>();
+            for (const [targetKey, snapshot] of current) {
+                if (!allowedTargetKeys.has(targetKey)) {
+                    changed = true;
+                    continue;
+                }
+                next.set(targetKey, snapshot);
+            }
+            return changed ? next : current;
+        });
+    }, [favoriteBackendEntries]);
+
+    const handleSnapshot = React.useCallback((targetKey: string, snapshot: FavoriteModelSnapshot) => {
+        setSnapshotsByTargetKey((current) => {
+            const existing = current.get(targetKey);
+            if (existing && areFavoriteModelSnapshotsEqual(existing, snapshot)) {
+                return current;
+            }
+            const next = new Map(current);
+            next.set(targetKey, snapshot);
+            return next;
+        });
+    }, []);
+
+    const orderedSnapshots = React.useMemo(() => favoriteBackendEntries
+        .map((entry) => snapshotsByTargetKey.get(entry.backendTargetKey) ?? null)
+        .filter((snapshot): snapshot is FavoriteModelSnapshot => Boolean(snapshot)), [
+        favoriteBackendEntries,
+        snapshotsByTargetKey,
+    ]);
+    const options = React.useMemo(() => orderedSnapshots.flatMap((snapshot) => snapshot.options), [orderedSnapshots]);
+    const favoriteValues = React.useMemo(() => new Set(orderedSnapshots.flatMap((snapshot) => snapshot.favoriteValues)), [orderedSnapshots]);
+    const availableValues = React.useMemo(() => new Set(orderedSnapshots.flatMap((snapshot) => snapshot.availableValues)), [orderedSnapshots]);
+    const selectedSnapshot = orderedSnapshots.find((snapshot) => snapshot.selectedValue.length > 0) ?? null;
+    const selectedValue = selectedSnapshot?.selectedValue ?? '';
+    const unifiedProbe = React.useMemo(() => mergeOptionPickerProbes([
+        props.refreshProbe ?? null,
+        ...orderedSnapshots.map((snapshot) => snapshot.probe),
+    ]), [orderedSnapshots, props.refreshProbe]);
+    const snapshotByOptionValue = React.useMemo(() => {
+        const out = new Map<string, FavoriteModelSnapshot>();
+        for (const snapshot of orderedSnapshots) {
+            for (const option of snapshot.options) {
+                out.set(option.value, snapshot);
+            }
+        }
+        return out;
+    }, [orderedSnapshots]);
+
     return (
         <View style={styles.container}>
             {favoriteBackendEntries.map((entry) => (
-                <FavoriteBackendModelsSection
+                <FavoriteBackendModelsCollector
                     key={formatBackendTargetKeyV2(entry.backendTarget)}
                     entry={entry}
                     favoriteModelSelections={props.favoriteModelSelections}
                     selectedBackendTargetKey={props.selectedBackendTargetKey}
                     selectedModelId={props.selectedModelId}
+                    selectedConfigOverrides={props.selectedConfigOverrides}
                     selectedMachineId={props.selectedMachineId}
                     capabilityServerId={props.capabilityServerId}
                     cwd={props.cwd}
                     settings={props.settings}
                     refreshProbe={props.refreshProbe}
-                    onSelectFavoriteModel={props.onSelectFavoriteModel}
-                    onToggleFavoriteModel={props.onToggleFavoriteModel}
-                    onRemoveFavoriteModelSelection={props.onRemoveFavoriteModelSelection}
+                    onSnapshot={handleSnapshot}
                 />
             ))}
+            {options.length > 0 || unifiedProbe?.phase !== 'idle' ? (
+                <OptionPickerOverlay
+                    title={t('profiles.groups.favorites')}
+                    effectiveLabel={selectedSnapshot?.selectedLabel}
+                    notes={[]}
+                    options={options}
+                    selectedValue={selectedValue}
+                    emptyText={t('agentInput.model.configureInCli')}
+                    canEnterCustomValue={false}
+                    optionTestIDPrefix="new-session-favorite-model-option"
+                    refreshTestID="new-session-favorite-model-refresh"
+                    probe={unifiedProbe ?? undefined}
+                    selectedOptionControls={selectedSnapshot?.selectedOptionControls ?? undefined}
+                    onSelectOptionControlValue={(configId, valueId) => {
+                        if (!selectedSnapshot || selectedValue.length === 0) return;
+                        const model = selectedSnapshot.modelByValue.get(selectedValue);
+                        if (!model) return;
+                        props.onSelectFavoriteModelOptionValue?.(
+                            selectedSnapshot.entry,
+                            model.modelId,
+                            configId,
+                            valueId,
+                        );
+                    }}
+                    favoriteOptions={{
+                        values: favoriteValues,
+                        isFavoritable: (option) => favoriteValues.has(option.value) || availableValues.has(option.value),
+                        onToggle: (option) => {
+                            const snapshot = snapshotByOptionValue.get(option.value);
+                            if (!snapshot) return;
+                            const staleFavorite = snapshot.staleFavoriteByValue.get(option.value);
+                            if (staleFavorite) {
+                                props.onRemoveFavoriteModelSelection?.(staleFavorite);
+                                return;
+                            }
+                            const model = snapshot.modelByValue.get(option.value);
+                            if (!model) return;
+                            props.onToggleFavoriteModel(snapshot.entry, model);
+                        },
+                    }}
+                    onSelect={(value) => {
+                        const snapshot = snapshotByOptionValue.get(value);
+                        const model = snapshot?.modelByValue.get(value);
+                        if (!snapshot || !model || !availableValues.has(value)) return;
+                        props.onSelectFavoriteModel(snapshot.entry, model.modelId);
+                    }}
+                />
+            ) : null}
         </View>
     );
 }

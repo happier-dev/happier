@@ -1,3 +1,6 @@
+import { RepositoryCheckpointTurnMetadataSchema } from '@happier-dev/protocol';
+import type { RepositoryCheckpointTurnMetadata } from '@happier-dev/protocol';
+
 type RecordLike = Record<string, unknown>;
 
 function asRecord(value: unknown): RecordLike | null {
@@ -22,13 +25,14 @@ export type TurnChangeToolMetadata = Readonly<{
     turnId: string;
     sessionId: string;
     provider: string;
-    source: 'provider_native' | 'provider_tool' | 'canonical_diff_tool' | 'canonical_patch_tool' | 'scm_reconciled' | 'inferred';
+    source: 'provider_native' | 'provider_tool' | 'canonical_diff_tool' | 'canonical_patch_tool' | 'scm_checkpoint' | 'scm_reconciled' | 'inferred';
     confidence: 'exact' | 'strong' | 'best_effort';
     turnStatus: 'completed' | 'aborted' | 'interrupted' | 'unknown';
     seqRange: {
         startSeqInclusive: number;
         endSeqInclusive: number;
     };
+    repositoryCheckpoint?: RepositoryCheckpointTurnMetadata;
 }>;
 
 export function readTurnChangeToolMetadata(input: unknown): TurnChangeToolMetadata | null {
@@ -47,6 +51,7 @@ export function readTurnChangeToolMetadata(input: unknown): TurnChangeToolMetada
         const startSeqInclusive = typeof seqRange?.startSeqInclusive === 'number' ? seqRange.startSeqInclusive : null;
         const endSeqInclusive = typeof seqRange?.endSeqInclusive === 'number' ? seqRange.endSeqInclusive : null;
         if (startSeqInclusive == null || endSeqInclusive == null) return null;
+        const repositoryCheckpoint = RepositoryCheckpointTurnMetadataSchema.safeParse(meta.repositoryCheckpoint);
         return {
             turnId: meta.turnId.trim(),
             sessionId: meta.sessionId.trim(),
@@ -58,6 +63,7 @@ export function readTurnChangeToolMetadata(input: unknown): TurnChangeToolMetada
                 startSeqInclusive,
                 endSeqInclusive,
             },
+            ...(repositoryCheckpoint.success ? { repositoryCheckpoint: repositoryCheckpoint.data } : {}),
         };
     }
 

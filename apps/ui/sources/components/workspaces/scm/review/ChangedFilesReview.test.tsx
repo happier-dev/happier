@@ -1139,6 +1139,147 @@ describe('ChangedFilesReview', () => {
         ]);
     });
 
+    it('keeps reconciled turn review mixed evidence visible and renders checkpoint attribution ambiguity', async () => {
+        diffFilesListViewSpy.mockClear();
+        const screen = await renderChangedFilesReview({
+            changedFilesViewMode: 'turn',
+            allRepositoryChangedFiles: [fileA, fileB, fileC],
+            turnAttributedFiles: [{ file: fileA, confidence: 'high' }, { file: fileB, confidence: 'high' }],
+            turnAgentReportedFiles: [{ file: fileA, confidence: 'high' }],
+            turnCheckpointFiles: [{ file: fileB, confidence: 'high' }],
+            turnRepositoryOnlyFiles: [fileC],
+            turnCheckpointMetadata: {
+                version: 1,
+                scopeId: 's1:/repo',
+                baseRefSource: 'turn_start',
+                contentConfidence: 'exact',
+                attributionScope: 'shared_worktree',
+                receipts: [{ id: 'checkpoint.diff_computed' }],
+            },
+        });
+
+        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(lastProps).toBeTruthy();
+        expect(lastProps.files).toEqual([
+            expect.objectContaining({
+                key: 'src/a.ts',
+                filePath: 'src/a.ts',
+            }),
+            expect.objectContaining({
+                key: 'src/b.ts',
+                filePath: 'src/b.ts',
+            }),
+        ]);
+        expect(screen.getTextContent()).toContain('files.checkpointAttributionShared');
+    });
+
+    it('keeps agent-reported turn review scoped away from checkpoint-only files', async () => {
+        diffFilesListViewSpy.mockClear();
+        await renderChangedFilesReview({
+            changedFilesViewMode: 'turn_agent_reported',
+            allRepositoryChangedFiles: [fileA, fileB],
+            turnAttributedFiles: [{ file: fileA, confidence: 'high' }, { file: fileB, confidence: 'high' }],
+            turnAgentReportedFiles: [{ file: fileA, confidence: 'high' }],
+            turnCheckpointFiles: [{ file: fileB, confidence: 'high' }],
+        });
+
+        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(lastProps).toBeTruthy();
+        expect(lastProps.files).toEqual([
+            expect.objectContaining({
+                key: 'src/a.ts',
+                filePath: 'src/a.ts',
+            }),
+        ]);
+    });
+
+    it('keeps checkpoint turn review scoped away from agent-reported files and renders attribution ambiguity', async () => {
+        diffFilesListViewSpy.mockClear();
+        const screen = await renderChangedFilesReview({
+            changedFilesViewMode: 'turn_checkpoint',
+            allRepositoryChangedFiles: [fileA, fileB],
+            turnAttributedFiles: [{ file: fileA, confidence: 'high' }, { file: fileB, confidence: 'high' }],
+            turnAgentReportedFiles: [{ file: fileA, confidence: 'high' }],
+            turnCheckpointFiles: [{ file: fileB, confidence: 'high' }],
+            turnCheckpointMetadata: {
+                version: 1,
+                scopeId: 's1:/repo',
+                baseRefSource: 'turn_start',
+                contentConfidence: 'exact',
+                attributionScope: 'shared_worktree',
+                receipts: [{ id: 'checkpoint.diff_computed' }],
+            },
+        });
+
+        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(lastProps).toBeTruthy();
+        expect(lastProps.files).toEqual([
+            expect.objectContaining({
+                key: 'src/b.ts',
+                filePath: 'src/b.ts',
+            }),
+        ]);
+        expect(screen.getTextContent()).toContain('files.checkpointAttributionShared');
+    });
+
+    it('keeps unmatched checkpoint evidence visible when the review area is included', async () => {
+        diffFilesListViewSpy.mockClear();
+        const includedOnlySnapshot = {
+            ...snapshot,
+            capabilities: { ...snapshot.capabilities, writeInclude: true, writeExclude: true },
+            entries: [],
+            totals: {
+                ...snapshot.totals,
+                includedFiles: 1,
+                pendingFiles: 0,
+                includedAdded: 1,
+                includedRemoved: 1,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
+        };
+
+        await renderChangedFilesReview({
+            snapshot: includedOnlySnapshot,
+            changedFilesViewMode: 'turn_checkpoint',
+            allRepositoryChangedFiles: [],
+            turnCheckpointFiles: [{ file: fileC, confidence: 'high' }],
+        });
+
+        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(lastProps).toBeTruthy();
+        expect(lastProps.files).toEqual([
+            expect.objectContaining({
+                key: 'src/c.ts',
+                filePath: 'src/c.ts',
+            }),
+        ]);
+    });
+
+    it('renders checkpoint unavailable metadata without claiming agent-authored changes', async () => {
+        const screen = await renderChangedFilesReview({
+            changedFilesViewMode: 'turn_checkpoint',
+            allRepositoryChangedFiles: [fileA],
+            turnAttributedFiles: [{ file: fileA, confidence: 'high' }],
+            turnAgentReportedFiles: [{ file: fileA, confidence: 'high' }],
+            turnCheckpointFiles: [],
+            turnCheckpointMetadata: {
+                version: 1,
+                scopeId: 's1:/repo',
+                baseRefSource: 'unavailable',
+                contentConfidence: 'unavailable',
+                attributionScope: 'unknown',
+                receipts: [],
+                unavailableReason: 'refs missing',
+            },
+        });
+
+        expect(screen.getTextContent()).toContain('files.checkpointUnavailable');
+        expect(screen.getTextContent()).not.toContain('files.noChanges');
+        expect(screen.getTextContent()).not.toContain('refs missing');
+        expect(screen.getTextContent()).not.toContain('agent-authored');
+    });
+
     it('keeps session review scoped to session-attributed files', async () => {
         diffFilesListViewSpy.mockClear();
         await renderChangedFilesReview({

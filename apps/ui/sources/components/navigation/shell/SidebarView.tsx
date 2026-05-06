@@ -18,6 +18,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { DesktopSidebarChrome } from './desktopChrome/DesktopSidebarChrome';
 import { useResolvedDesktopWindowControls } from './desktopChrome/useResolvedDesktopWindowControls';
+import { useDesktopSidebarHistoryNavigationAvailability } from './desktopChrome/useDesktopSidebarHistoryNavigationAvailability';
 import { useSidebarHeaderActions } from './desktopChrome/useSidebarHeaderActions';
 
 export type SidebarViewProps = Readonly<{
@@ -48,6 +49,7 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
     useVoiceSurfaceE2eFixture();
     const voiceEnabled = useFeatureEnabled('voice');
     const { headerActions, topUtilityActions, renderHeaderOverflowVisual } = useSidebarHeaderActions();
+    const navigationAvailability = useDesktopSidebarHistoryNavigationAvailability();
     const resolvedDesktopWindowControls = useResolvedDesktopWindowControls({
         variant: 'expanded',
         desktopWindowControls: props.desktopWindowControls,
@@ -101,6 +103,8 @@ export const SidebarView = React.memo((props: SidebarViewProps) => {
                         onPressCollapse={handleCollapseSidebar}
                         onPressBack={handleNavigateBack}
                         onPressForward={handleNavigateForward}
+                        canNavigateBack={navigationAvailability.canNavigateBack}
+                        canNavigateForward={navigationAvailability.canNavigateForward}
                         environmentBadge={environmentBadge}
                         headerActions={headerActions}
                         topUtilityActions={topUtilityActions}

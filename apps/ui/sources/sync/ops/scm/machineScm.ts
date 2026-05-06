@@ -22,6 +22,12 @@ import type {
     ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmPullRequestGetRequest,
+    ScmPullRequestGetResponse,
+    ScmPullRequestListRequest,
+    ScmPullRequestListResponse,
+    ScmPullRequestOpenComposeRequest,
+    ScmPullRequestOpenComposeResponse,
     ScmRemoteAddRequest,
     ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
@@ -30,6 +36,8 @@ import type {
     ScmRemoteRequest,
     ScmRemoteResponse,
     ScmRemoteSetUrlRequest,
+    ScmRepositoryRemoveIndexLockRequest,
+    ScmRepositoryRemoveIndexLockResponse,
     ScmStashApplyRequest,
     ScmStashApplyResponse,
     ScmStashDropRequest,
@@ -348,6 +356,42 @@ export async function machineScmRemoteRemove(
     request: ScmRemoteRemoveRequest,
 ): Promise<ScmRemoteManagementResponse> {
     return await callMachineScm<ScmRemoteManagementResponse, ScmRemoteRemoveRequest>(machineId, RPC_METHODS.SCM_REMOTE_REMOVE, request);
+}
+
+export async function machineScmPullRequestList(
+    machineId: string,
+    request: ScmPullRequestListRequest,
+): Promise<ScmPullRequestListResponse> {
+    return await callMachineScm<ScmPullRequestListResponse, ScmPullRequestListRequest>(machineId, RPC_METHODS.SCM_PULL_REQUEST_LIST, request);
+}
+
+export async function machineScmPullRequestGet(
+    machineId: string,
+    request: ScmPullRequestGetRequest,
+): Promise<ScmPullRequestGetResponse> {
+    return await callMachineScm<ScmPullRequestGetResponse, ScmPullRequestGetRequest>(machineId, RPC_METHODS.SCM_PULL_REQUEST_GET, request);
+}
+
+export async function machineScmPullRequestOpenCompose(
+    machineId: string,
+    request: ScmPullRequestOpenComposeRequest,
+): Promise<ScmPullRequestOpenComposeResponse> {
+    return await callMachineScm<ScmPullRequestOpenComposeResponse, ScmPullRequestOpenComposeRequest>(
+        machineId,
+        RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
+        request,
+    );
+}
+
+export async function machineScmRepositoryRemoveIndexLock(
+    machineId: string,
+    request: ScmRepositoryRemoveIndexLockRequest,
+): Promise<ScmRepositoryRemoveIndexLockResponse> {
+    return await callMachineScm<ScmRepositoryRemoveIndexLockResponse, ScmRepositoryRemoveIndexLockRequest>(
+        machineId,
+        RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK,
+        request,
+    );
 }
 
 export async function machineScmStashList(

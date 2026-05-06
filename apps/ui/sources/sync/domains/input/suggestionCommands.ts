@@ -7,6 +7,7 @@ import Fuse from 'fuse.js';
 import { listActionSpecs } from '@happier-dev/protocol';
 import { storage } from '../state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
+import { t } from '@/text';
 
 export interface CommandItem {
     command: string;        // The command without slash (e.g., "compact")
@@ -67,6 +68,7 @@ function describeActionSlashToken(token: string, fallbackTitle: string): string 
     if (token === '/h.voice') return 'Start a voice agent run';
     if (token === '/h.runs') return 'List execution runs';
     if (token === '/h.voice.reset') return 'Reset the global voice agent';
+    if (token === '/pet' || token === '/h.pet') return t('commandPalette.pets.chooseSubtitle');
     return fallbackTitle;
 }
 

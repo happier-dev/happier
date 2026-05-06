@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-import { getScmUserFacingError } from './scmUserFacingErrors';
+import { getScmUserFacingError, isRecoverableGitIndexLockError } from './scmUserFacingErrors';
 
 describe('getScmUserFacingError', () => {
     it('maps known scm error codes to stable user-facing messages', () => {
@@ -94,6 +94,25 @@ describe('getScmUserFacingError', () => {
         });
 
         expect(message).toContain('Another source control operation is in progress');
+    });
+
+    it('exposes lock contention as a stable recoverability predicate', () => {
+        expect(
+            isRecoverableGitIndexLockError({
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+                stderr: 'Another git process seems to be running in this repository.',
+            })
+        ).toBe(true);
+
+        expect(
+            isRecoverableGitIndexLockError({
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_REJECTED,
+                error: 'remote rejected',
+            })
+        ).toBe(false);
     });
 
     it('surfaces a specific hint when pull/merge would overwrite local changes', () => {

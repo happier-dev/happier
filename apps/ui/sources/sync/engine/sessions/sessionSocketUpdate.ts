@@ -40,10 +40,23 @@ function inferTaskLifecycleFromMessageContent(content: unknown, createdAt: numbe
     lifecycleEvent: TaskLifecycleEvent | null;
 } {
     const lifecycleEvent = getTaskLifecycleEventFromRawContent(content, createdAt);
-    const isTaskComplete = lifecycleEvent?.type === 'task_complete' || lifecycleEvent?.type === 'turn_aborted';
+    const isTaskComplete =
+        lifecycleEvent?.type === 'task_complete'
+        || lifecycleEvent?.type === 'turn_failed'
+        || lifecycleEvent?.type === 'turn_cancelled'
+        || lifecycleEvent?.type === 'turn_aborted';
     const isTaskStarted = lifecycleEvent?.type === 'task_started';
 
     return { isTaskComplete, isTaskStarted, lifecycleEvent };
+}
+
+function latestTurnStatusFromLifecycleEvent(event: TaskLifecycleEvent | null) {
+    if (!event) return undefined;
+    if (event.type === 'task_started') return 'in_progress' as const;
+    if (event.type === 'task_complete') return 'completed' as const;
+    if (event.type === 'turn_failed') return 'failed' as const;
+    if (event.type === 'turn_cancelled' || event.type === 'turn_aborted') return 'cancelled' as const;
+    return undefined;
 }
 
 type HandleSessionMessageSocketUpdateParams = {
@@ -184,6 +197,7 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
                     seq: nextSessionSeq,
                     ...(inferLifecycle && isTaskComplete ? { thinking: false } : {}),
                     ...(inferLifecycle && isTaskStarted ? { thinking: true } : {}),
+                    ...(inferLifecycle ? { latestTurnStatus: latestTurnStatusFromLifecycleEvent(lifecycleEvent) ?? sessionForApply.latestTurnStatus } : {}),
                 };
                 const applySession = () => applySessions([
                     {

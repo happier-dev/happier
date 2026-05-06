@@ -38,7 +38,7 @@ function sampleRecord(): ConnectedServiceCredentialRecordV1 {
   const now = Date.now();
   return {
     v: 1,
-    serviceId: 'openai-codex',
+    serviceId: 'github',
     profileId: 'work',
     kind: 'token',
     createdAt: now,
@@ -64,7 +64,11 @@ describe('storeConnectedServiceCredentialForAccount', () => {
       if (url.endsWith('/v1/account/encryption') && method === 'GET') {
         return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }), { status: 200 });
       }
-      if (url.endsWith('/v3/connect/openai-codex/profiles/work/credential') && method === 'POST') {
+      if (url.endsWith('/v3/connect/github/profiles/work/credential') && method === 'POST') {
+        const body = init?.body ? JSON.parse(String(init.body)) : null;
+        expect(body?.content?.t).toBe('plain');
+        expect(body?.content?.v?.kind).toBe('token');
+        expect(body?.content?.v?.serviceId).toBe('github');
         return new Response(JSON.stringify({ success: true }), { status: 200 });
       }
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
@@ -73,13 +77,13 @@ describe('storeConnectedServiceCredentialForAccount', () => {
 
     const { storeConnectedServiceCredentialForAccount } = await import('./storeConnectedServiceCredentialForAccount');
     await storeConnectedServiceCredentialForAccount(legacyCredentials, {
-      serviceId: 'openai-codex',
+      serviceId: 'github',
       profileId: 'work',
       record: sampleRecord(),
     });
 
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
-    expect(urls.some((u) => u.includes('/v3/connect/openai-codex/profiles/work/credential'))).toBe(true);
+    expect(urls.some((u) => u.includes('/v3/connect/github/profiles/work/credential'))).toBe(true);
   });
 
   it('stores sealed credentials via v2 when account mode is e2ee', async () => {
@@ -96,10 +100,11 @@ describe('storeConnectedServiceCredentialForAccount', () => {
       if (url.endsWith('/v1/account/encryption') && method === 'GET') {
         return new Response(JSON.stringify({ mode: 'e2ee', updatedAt: 1 }), { status: 200 });
       }
-      if (url.endsWith('/v2/connect/openai-codex/profiles/work/credential') && method === 'POST') {
+      if (url.endsWith('/v2/connect/github/profiles/work/credential') && method === 'POST') {
         const body = init?.body ? JSON.parse(String(init.body)) : null;
         expect(body?.sealed?.format).toBe('account_scoped_v1');
         expect(typeof body?.sealed?.ciphertext).toBe('string');
+        expect(body?.metadata?.kind).toBe('token');
         return new Response(JSON.stringify({ success: true }), { status: 200 });
       }
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
@@ -108,12 +113,12 @@ describe('storeConnectedServiceCredentialForAccount', () => {
 
     const { storeConnectedServiceCredentialForAccount } = await import('./storeConnectedServiceCredentialForAccount');
     await storeConnectedServiceCredentialForAccount(legacyCredentials, {
-      serviceId: 'openai-codex',
+      serviceId: 'github',
       profileId: 'work',
       record: sampleRecord(),
     }, { randomBytes: (length) => new Uint8Array(length).fill(1) });
 
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
-    expect(urls.some((u) => u.includes('/v2/connect/openai-codex/profiles/work/credential'))).toBe(true);
+    expect(urls.some((u) => u.includes('/v2/connect/github/profiles/work/credential'))).toBe(true);
   });
 });

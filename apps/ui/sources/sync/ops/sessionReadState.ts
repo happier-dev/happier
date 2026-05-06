@@ -2,7 +2,7 @@ import { apiSocket } from '@/sync/api/session/apiSocket';
 import {
     updateMetadataWithUnreadDirectSessionProgress,
     updateMetadataWithViewedDirectSessionProgress,
-} from '@/sync/domains/session/directSessions/directSessionAttentionMetadata';
+} from '@/sync/domains/session/external/directSessionAttentionMetadata';
 import { getFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {

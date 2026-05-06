@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { ScrollView, useWindowDimensions, View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { HorizontalOverflowScrollView } from '@/components/ui/scroll/HorizontalOverflowScrollView';
 import { buildCodeLinesFromFile } from '@/components/ui/code/model/buildCodeLinesFromFile';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
@@ -20,10 +21,17 @@ import { useIntraLineWordDiffConfig } from '@/components/ui/code/diff/useIntraLi
 import { buildSelectedDiffLineKey } from '@/scm/scmPatchSelection';
 import { formatReviewCommentCodeLineContent } from '@/components/ui/code/reviewComments/buildReviewCommentDraftFromCodeLine';
 import { computeLineContentHash, findLineIndexByContentHash } from '@/utils/text/lineContentHash';
+import type { FileDisplayMode } from './FileActionToolbar';
+
+const MARKDOWN_PREVIEW_WIDE_VIEWPORT_WIDTH = 768;
+const MARKDOWN_PREVIEW_COMPACT_PADDING = 16;
+const MARKDOWN_PREVIEW_WIDE_HORIZONTAL_PADDING = 32;
+const MARKDOWN_PREVIEW_WIDE_TOP_PADDING = 24;
+const MARKDOWN_PREVIEW_WIDE_BOTTOM_PADDING = 32;
 
 type FileContentPanelProps = {
     theme: any;
-    displayMode: 'file' | 'diff';
+    displayMode: FileDisplayMode;
     sessionId: string;
     filePath: string;
     diffContent: string | null;
@@ -75,9 +83,19 @@ export function FileContentPanel({
     onScroll,
 }: FileContentPanelProps) {
     const intraLineDiff = useIntraLineWordDiffConfig();
+    const { width: viewportWidth } = useWindowDimensions();
     const effectiveWrapLines = wrapLines ?? true;
     const effectiveShowLineNumbers = showLineNumbers ?? true;
     const effectiveShowPrefix = showPrefix ?? effectiveShowLineNumbers;
+    const markdownPreviewHorizontalPadding = viewportWidth >= MARKDOWN_PREVIEW_WIDE_VIEWPORT_WIDTH
+        ? MARKDOWN_PREVIEW_WIDE_HORIZONTAL_PADDING
+        : MARKDOWN_PREVIEW_COMPACT_PADDING;
+    const markdownPreviewTopPadding = viewportWidth >= MARKDOWN_PREVIEW_WIDE_VIEWPORT_WIDTH
+        ? MARKDOWN_PREVIEW_WIDE_TOP_PADDING
+        : MARKDOWN_PREVIEW_COMPACT_PADDING;
+    const markdownPreviewBottomPadding = viewportWidth >= MARKDOWN_PREVIEW_WIDE_VIEWPORT_WIDTH
+        ? MARKDOWN_PREVIEW_WIDE_BOTTOM_PADDING
+        : MARKDOWN_PREVIEW_COMPACT_PADDING;
 
     const needsDiffCodeLines = displayMode === 'diff'
         && typeof diffContent === 'string'
@@ -274,6 +292,45 @@ export function FileContentPanel({
                         showPrefix={effectiveShowPrefix}
                     />
                 </ScrollView>
+            ) : displayMode === 'markdown' && typeof fileContent === 'string' ? (
+                fileContent.length > 0 ? (
+                    <ScrollView
+                        style={{ flex: 1, minHeight: 0 }}
+                        testID={scrollTestID}
+                        onLayout={onLayout}
+                        onContentSizeChange={onContentSizeChange}
+                        onScroll={onScroll}
+                        scrollEventThrottle={16}
+                    >
+                        <View
+                            style={{
+                                paddingHorizontal: markdownPreviewHorizontalPadding,
+                                paddingTop: markdownPreviewTopPadding,
+                                paddingBottom: markdownPreviewBottomPadding,
+                            }}
+                        >
+                            <MarkdownView
+                                testID="file-markdown-preview"
+                                markdown={fileContent}
+                                profile="default"
+                                streamingMode="static"
+                                selectable
+                            />
+                        </View>
+                    </ScrollView>
+                ) : (
+                    <Text
+                        style={{
+                            fontSize: 16,
+                            color: theme.colors.textSecondary,
+                            fontStyle: 'italic',
+                            padding: 16,
+                            ...Typography.default(),
+                        }}
+                    >
+                        {t('files.fileEmpty')}
+                    </Text>
+                )
             ) : displayMode === 'file' && typeof fileContent === 'string' ? (
                 fileContent.length > 0 ? (
                     effectiveWrapLines ? (

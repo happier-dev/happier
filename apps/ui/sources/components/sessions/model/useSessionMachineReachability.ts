@@ -5,7 +5,7 @@ import { useAllMachines, useAllSessions, useProjectForSession, useSession } from
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 
 export function useSessionReachableMachineTarget(sessionId: string): { machineId: string; basePath: string } | null {
     const resolvedSessionId = normalizeSessionId(sessionId);

@@ -48,8 +48,7 @@ function requireTab(screen: RenderedScreen, testID: string) {
 
 function requireTabLabel(screen: RenderedScreen, testID: string): string {
     const tab = requireTab(screen, testID);
-    const labelNode = tab.props.children;
-    expect(React.isValidElement(labelNode)).toBe(true);
+    const labelNode = tab.findByType('Text' as never);
     return labelNode.props.children;
 }
 
@@ -119,6 +118,9 @@ describe('SegmentedTabBar', () => {
         // The active tab ("beta") should include the tabActive background color.
         const activeFlat = flattenStyle(screen.findByTestId('seg:beta')?.props.style);
         expect(activeFlat.backgroundColor).toBe(theme.colors.surface);
+        expect(screen.findByTestId('seg:beta')?.findByType('LinearGradient' as never).props.colors).toEqual(
+            theme.colors.segmentedControl.activeGradient?.colors,
+        );
 
         // Inactive tabs should NOT have the active background color.
         for (const testID of ['seg:alpha', 'seg:gamma'] as const) {

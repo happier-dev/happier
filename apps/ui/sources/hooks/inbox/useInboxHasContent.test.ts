@@ -41,6 +41,7 @@ describe('useInboxHasContent', () => {
             friends: {},
             feedItems: [],
             sessions: {},
+            sessionListRenderables: {},
             artifacts: {},
             isDataReady: true,
         } as any);
@@ -58,6 +59,7 @@ describe('useInboxHasContent', () => {
             friends: {},
             feedItems: [],
             sessions: {},
+            sessionListRenderables: {},
             artifacts: {},
             isDataReady: true,
         } as any);
@@ -210,6 +212,127 @@ describe('useInboxHasContent', () => {
                     metadataVersion: 0,
                     agentState: null,
                     agentStateVersion: 0,
+                },
+            },
+        } as any);
+
+        let latest: boolean | null = null;
+        function Test() {
+            latest = useInboxHasContent();
+            return React.createElement('View');
+        }
+
+        tree = (await renderScreen(React.createElement(Test))).tree;
+
+        expect(latest).toBe(true);
+    });
+
+    it('returns true when an unread session only exists in the session list rows', async () => {
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {},
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 4,
+                    updatedAt: 10,
+                    createdAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                    metadata: {
+                        name: 'Renderable unread',
+                        path: '/Users/leeroy/renderable',
+                        homeDir: '/Users/leeroy',
+                    },
+                    metadataVersion: 0,
+                    agentStateVersion: 0,
+                    hasUnreadMessages: true,
+                },
+            },
+        } as any);
+
+        let latest: boolean | null = null;
+        function Test() {
+            latest = useInboxHasContent();
+            return React.createElement('View');
+        }
+
+        tree = (await renderScreen(React.createElement(Test))).tree;
+
+        expect(latest).toBe(true);
+    });
+
+    it('returns true when an unread session only exists in a server-scoped session row cache', async () => {
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {},
+            sessionListRenderables: {},
+            sessionListRowStateByServerId: {
+                'server-b': {
+                    s1: {
+                        id: 's1',
+                        seq: 4,
+                        updatedAt: 10,
+                        createdAt: 1,
+                        active: false,
+                        activeAt: 1,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 1,
+                        metadata: {
+                            name: 'Scoped unread',
+                            path: '/Users/leeroy/scoped',
+                            homeDir: '/Users/leeroy',
+                        },
+                        metadataVersion: 0,
+                        agentStateVersion: 0,
+                        hasUnreadMessages: true,
+                    },
+                },
+            },
+        } as any);
+
+        let latest: boolean | null = null;
+        function Test() {
+            latest = useInboxHasContent();
+            return React.createElement('View');
+        }
+
+        tree = (await renderScreen(React.createElement(Test))).tree;
+
+        expect(latest).toBe(true);
+    });
+
+    it('returns true for warm unread session rows before full data readiness', async () => {
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {},
+            isDataReady: false,
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 4,
+                    updatedAt: 10,
+                    createdAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                    metadata: {
+                        name: 'Warm unread',
+                        path: '/Users/leeroy/warm',
+                        homeDir: '/Users/leeroy',
+                    },
+                    metadataVersion: 0,
+                    agentStateVersion: 0,
+                    hasUnreadMessages: true,
                 },
             },
         } as any);

@@ -245,6 +245,89 @@ describe('SessionRightPanelGitCommitTabContent', () => {
         expect(commitTabRenderSpy.mock.calls.at(-1)?.[0].changedFilesViewMode).toBe('repository');
     });
 
+    it('adopts latest-turn view when turn evidence arrives after the first render until the user selects a mode', async () => {
+        let turnEvidenceAvailable = false;
+        useChangedFilesDataSpy.mockClear();
+        useChangedFilesDataSpy.mockImplementation(() => makeChangedFilesData(turnEvidenceAvailable
+            ? {
+                showTurnViewToggle: true,
+                turnAttributedFiles: [{ file: { fullPath: 'src/late.ts' }, confidence: 'high' }],
+            }
+            : {
+                showTurnViewToggle: false,
+                showSessionViewToggle: false,
+            }));
+        useDerivedSessionChangeSetSpy.mockImplementation((): any => ({
+            turnChangeSets: [],
+            latestTurnChangeSet: turnEvidenceAvailable ? { sessionId: 's1', files: [{ filePath: 'src/late.ts' }] } : null,
+            latestTurnScopedChangeSet: turnEvidenceAvailable ? {
+                sessionId: 's1',
+                turns: ['turn_2'],
+                files: [{ filePath: 'src/late.ts' }],
+                rolledBackTurnIds: [],
+                confidenceSummary: { source: 'provider_native', confidence: 'exact' },
+            } as any : null,
+            sessionChangeSet: null,
+            latestTurnDiffByPath: null,
+            providerDiffByPath: null,
+        }));
+
+        const { SessionRightPanelGitCommitTabContent } = await import('./SessionRightPanelGitCommitTabContent');
+
+        function View() {
+            return <SessionRightPanelGitCommitTabContent
+                        theme={{}}
+                        sessionId="s1"
+                        sessionPath="/tmp/repo"
+                        scmSnapshot={{ capabilities: {} } as any}
+                        touchedPaths={[]}
+                        operationLog={[]}
+                        projectSessionIds={[]}
+                        commitSelectionPaths={[]}
+                        commitSelectionPatches={[]}
+                        scmCommitStrategy="atomic"
+                        scmWriteEnabled={true}
+                        inFlightScmOperation={null}
+                        hasGlobalOperationInFlight={false}
+                        scmOperationBusy={false}
+                        scmOperationStatus={null}
+                        backendLabel="Git"
+                        commitActionLabel="Commit"
+                        hasConflicts={false}
+                        commitAllowedForComposer={true}
+                        commitBlockedMessageForComposer={null}
+                        commitWriteEnabled={true}
+                        commitSelectionUiEnabled={false}
+                        commitDraftMessage=""
+                        onCommitDraftMessageChange={vi.fn()}
+                        onCommitFromMessage={vi.fn()}
+                        commitMessageGeneratorEnabled={false}
+                        onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
+                        onOpenFilesSidebar={vi.fn()}
+                        onOpenReviewAllChanges={vi.fn()}
+                        onOpenStashDetails={vi.fn()}
+                        openFileInDetails={vi.fn()}
+                        openFileInDetailsPinned={vi.fn()}
+                    />;
+        }
+
+        const screen = await renderScreen(<View />);
+        expect(commitTabRenderSpy.mock.calls.at(-1)?.[0].changedFilesViewMode).toBe('repository');
+
+        turnEvidenceAvailable = true;
+        await act(async () => {
+            screen.tree.update(<View />);
+        });
+
+        expect(commitTabRenderSpy.mock.calls.at(-1)?.[0].changedFilesViewMode).toBe('turn');
+
+        await act(async () => {
+            commitTabRenderSpy.mock.calls.at(-1)?.[0].onChangedFilesViewMode('repository');
+        });
+
+        expect(commitTabRenderSpy.mock.calls.at(-1)?.[0].changedFilesViewMode).toBe('repository');
+    });
+
     it('keeps repository view selected after the user explicitly switches away from a scoped view', async () => {
         useChangedFilesDataSpy.mockClear();
         useChangedFilesDataSpy.mockReturnValue(makeChangedFilesData({

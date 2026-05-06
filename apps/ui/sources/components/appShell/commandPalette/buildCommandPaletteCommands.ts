@@ -7,6 +7,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import { t } from '@/text';
 
 function normalizeId(value: unknown): string {
   return String(value ?? '').trim();
@@ -38,11 +39,27 @@ async function requireSession(
   return null;
 }
 
+export type PetCommandSurface = 'desktopOverlay' | 'appShell' | 'none';
+
+export type PetCommandControls = Readonly<{
+  surface: PetCommandSurface;
+  wake: () => void | Promise<void>;
+  tuck: () => void | Promise<void>;
+  resetPosition?: () => void | Promise<void>;
+  refreshCodexPets: () => void | Promise<void>;
+}>;
+
 export function buildCommandPaletteCommands(params: Readonly<{
   sessionsById: Record<string, any>;
   isDev: boolean;
   activeSessionId: string | null;
-  features: Readonly<{ executionRunsEnabled: boolean; voiceEnabled: boolean; memorySearchEnabled: boolean }>;
+  features: Readonly<{
+    executionRunsEnabled: boolean;
+    voiceEnabled: boolean;
+    memorySearchEnabled: boolean;
+    petsCompanionEnabled?: boolean;
+  }>;
+  petControls?: PetCommandControls;
   nav: Readonly<{
     push: (path: string) => void;
     navigateToSession: (sessionId: string) => void;
@@ -117,6 +134,57 @@ export function buildCommandPaletteCommands(params: Readonly<{
       icon: 'search-outline',
       category: 'Navigation',
       action: () => nav.push('/search'),
+    });
+  }
+
+  if (features.petsCompanionEnabled === true) {
+    const petCategory = t('commandPalette.pets.category');
+    const petControls = params.petControls;
+    if (petControls && petControls.surface !== 'none') {
+      cmds.push(
+        {
+          id: 'pet-wake',
+          title: t('commandPalette.pets.wakeTitle'),
+          subtitle: t('commandPalette.pets.wakeSubtitle'),
+          icon: 'paw-outline',
+          category: petCategory,
+          action: () => petControls.wake(),
+        },
+        {
+          id: 'pet-tuck',
+          title: t('commandPalette.pets.tuckTitle'),
+          subtitle: t('commandPalette.pets.tuckSubtitle'),
+          icon: 'moon-outline',
+          category: petCategory,
+          action: () => petControls.tuck(),
+        },
+      );
+      if (petControls.resetPosition) {
+        cmds.push({
+          id: 'pet-reset-position',
+          title: t('commandPalette.pets.resetPositionTitle'),
+          subtitle: t('commandPalette.pets.resetPositionSubtitle'),
+          icon: 'locate-outline',
+          category: petCategory,
+          action: () => petControls.resetPosition?.(),
+        });
+      }
+      cmds.push({
+        id: 'pet-refresh-codex',
+        title: t('commandPalette.pets.refreshCodexTitle'),
+        subtitle: t('commandPalette.pets.refreshCodexSubtitle'),
+        icon: 'refresh-outline',
+        category: petCategory,
+        action: () => petControls.refreshCodexPets(),
+      });
+    }
+    cmds.push({
+      id: 'ui.pet.choose',
+      title: t('commandPalette.pets.chooseTitle'),
+      subtitle: t('commandPalette.pets.chooseSubtitle'),
+      icon: 'color-palette-outline',
+      category: petCategory,
+      action: () => nav.push('/settings/pets'),
     });
   }
 

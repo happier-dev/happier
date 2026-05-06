@@ -7,7 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
-import { t } from '@/text';
+import { t, tLoose } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { sync } from '@/sync/sync';
 import { useProfile, useSettings } from '@/sync/store/hooks';
@@ -16,13 +16,14 @@ import { deleteConnectedServiceCredentialForAccount, storeConnectedServiceCreden
 import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { connectedServiceProfileKey, resolveConnectedServiceProfileLabel } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import {
-  buildConnectedServiceCredentialRecord,
+  buildConnectedAccountCredentialRecordFromTokenInput,
   ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
 import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { openExternalUrl } from '@/utils/url/openExternalUrl';
 
 import { ConnectedServiceDetailActionsGroup } from './detail/ConnectedServiceDetailActionsGroup';
 import { ConnectedServiceDetailProfilesGroup } from './detail/ConnectedServiceDetailProfilesGroup';
@@ -140,19 +141,47 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
     if (!profileId) return;
 
     const tokenKind = entry?.tokenKind ?? null;
+    const identity = entry.tokenIdentityPromptLabelKey
+      ? await Modal.prompt(
+        tLoose(entry.tokenIdentityPromptLabelKey),
+        '',
+        {
+          confirmText: t('common.save'),
+          cancelText: t('common.cancel'),
+        },
+      )
+      : null;
+    const identityValue = typeof identity === 'string' ? identity.trim() : '';
+    if (entry.tokenIdentityPromptLabelKey && !identityValue) return;
+
     const token = await Modal.prompt(
-      tokenKind === 'setup-token'
-        ? t('connectedServices.detail.prompts.setupTokenTitle')
-        : t('connectedServices.detail.prompts.apiKeyTitle'),
+      entry.tokenPromptLabelKey
+        ? tLoose(entry.tokenPromptLabelKey)
+        : tokenKind === 'setup-token'
+          ? t('connectedServices.detail.prompts.setupTokenTitle')
+          : tokenKind === 'personal-access-token'
+            ? t('connectedServices.detail.prompts.personalAccessTokenTitle')
+            : tokenKind === 'api-token'
+              ? t('connectedServices.detail.prompts.apiTokenTitle')
+            : t('connectedServices.detail.prompts.apiKeyTitle'),
       tokenKind === 'setup-token'
         ? t('connectedServices.detail.prompts.setupTokenBody')
+        : tokenKind === 'personal-access-token'
+          ? t('connectedServices.detail.prompts.personalAccessTokenBody')
+          : tokenKind === 'api-token'
+            ? t('connectedServices.detail.prompts.apiTokenBody')
         : t('connectedServices.detail.prompts.apiKeyBody'),
       {
         placeholder: tokenKind === 'setup-token'
           ? t('connectedServices.detail.prompts.setupTokenPlaceholder')
+          : tokenKind === 'personal-access-token'
+            ? t('connectedServices.detail.prompts.personalAccessTokenPlaceholder')
+            : tokenKind === 'api-token'
+              ? t('connectedServices.detail.prompts.apiTokenPlaceholder')
           : t('connectedServices.detail.prompts.apiKeyPlaceholder'),
         confirmText: t('common.save'),
         cancelText: t('common.cancel'),
+        inputType: 'secure-text',
       },
     );
     const tokenValue = typeof token === 'string' ? token.trim() : '';
@@ -160,16 +189,13 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
 
     const credentials = ensureCredentials();
     const now = Date.now();
-    const record = buildConnectedServiceCredentialRecord({
+    const record = buildConnectedAccountCredentialRecordFromTokenInput({
       now,
       serviceId: serviceId!,
       profileId,
-      kind: 'token',
-      token: {
-        token: tokenValue,
-        providerAccountId: null,
-        providerEmail: null,
-      },
+      token: tokenValue,
+      providerAccountId: identityValue || null,
+      providerEmail: identityValue || null,
     });
     await storeConnectedServiceCredentialForAccount(credentials, {
       serviceId: serviceId!,
@@ -184,6 +210,11 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
         profileId,
       }),
     );
+  };
+
+  const handleOpenTokenSetup = () => {
+    if (!entry?.tokenSetupUrl) return;
+    void openExternalUrl(entry.tokenSetupUrl, { platformOS: Platform.OS });
   };
 
   const handleAddOauthProfile = async (method: 'device' | 'paste' | 'browser' | null) => {
@@ -332,8 +363,10 @@ export const ConnectedServiceDetailView = React.memo(function ConnectedServiceDe
         oauthAddActionModes={oauthAddActionModes}
         supportsToken={Boolean(entry.supportsToken)}
         tokenKind={entry.tokenKind ?? null}
+        tokenSetupUrl={entry.tokenSetupUrl ?? null}
         onAddOauthProfile={(method) => void handleAddOauthProfile(method)}
         onConnectToken={() => void handleConnectToken()}
+        onOpenTokenSetup={handleOpenTokenSetup}
       />
 
     </ItemList>

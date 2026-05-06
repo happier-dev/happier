@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { SessionChangeSet, TurnChangeSet } from '@happier-dev/protocol';
+import type { ChangeEvidenceSource, SessionChangeSet, TurnChangeSet } from '@happier-dev/protocol';
 
 import { useSession, useSessionMessages } from '@/sync/domains/state/storage';
 
@@ -14,12 +14,37 @@ type UseDerivedSessionChangeSetResult = Readonly<{
     latestTurnScopedChangeSet: SessionChangeSet | null;
     sessionChangeSet: SessionChangeSet | null;
     latestTurnDiffByPath: ReadonlyMap<string, string> | null;
+    latestTurnAgentReportedDiffByPath: ReadonlyMap<string, string> | null;
+    latestTurnCheckpointDiffByPath: ReadonlyMap<string, string> | null;
     providerDiffByPath: ReadonlyMap<string, string> | null;
 }>;
+
+const AGENT_REPORTED_TURN_SOURCES = new Set<ChangeEvidenceSource>([
+    'provider_native',
+    'provider_tool',
+    'canonical_diff_tool',
+    'canonical_patch_tool',
+]);
 
 function buildDiffByPath(changeSet: SessionChangeSet | null): ReadonlyMap<string, string> | null {
     if (!changeSet) return null;
     const entries = changeSet.files
+        .map((file) => {
+            const diff = typeof file.unifiedDiff === 'string' ? file.unifiedDiff.trim() : '';
+            if (!diff) return null;
+            return [file.filePath, diff] as const;
+        })
+        .filter((entry): entry is readonly [string, string] => entry !== null);
+    return entries.length > 0 ? new Map(entries) : null;
+}
+
+function buildTurnDiffByPath(
+    turn: TurnChangeSet | null,
+    acceptSource: (source: ChangeEvidenceSource) => boolean,
+): ReadonlyMap<string, string> | null {
+    if (!turn) return null;
+    const entries = turn.files
+        .filter((file) => acceptSource(file.source))
         .map((file) => {
             const diff = typeof file.unifiedDiff === 'string' ? file.unifiedDiff.trim() : '';
             if (!diff) return null;
@@ -61,6 +86,14 @@ export function useDerivedSessionChangeSet(sessionId: string): UseDerivedSession
         return buildDiffByPath(latestTurnScopedChangeSet);
     }, [latestTurnScopedChangeSet]);
 
+    const latestTurnAgentReportedDiffByPath = React.useMemo<ReadonlyMap<string, string> | null>(() => {
+        return buildTurnDiffByPath(latestTurnChangeSet, (source) => AGENT_REPORTED_TURN_SOURCES.has(source));
+    }, [latestTurnChangeSet]);
+
+    const latestTurnCheckpointDiffByPath = React.useMemo<ReadonlyMap<string, string> | null>(() => {
+        return buildTurnDiffByPath(latestTurnChangeSet, (source) => source === 'scm_checkpoint');
+    }, [latestTurnChangeSet]);
+
     const providerDiffByPath = React.useMemo<ReadonlyMap<string, string> | null>(() => {
         return buildDiffByPath(sessionChangeSet);
     }, [sessionChangeSet]);
@@ -71,6 +104,8 @@ export function useDerivedSessionChangeSet(sessionId: string): UseDerivedSession
         latestTurnScopedChangeSet,
         sessionChangeSet,
         latestTurnDiffByPath,
+        latestTurnAgentReportedDiffByPath,
+        latestTurnCheckpointDiffByPath,
         providerDiffByPath,
     };
 }

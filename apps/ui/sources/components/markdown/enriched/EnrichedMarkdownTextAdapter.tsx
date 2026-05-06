@@ -18,8 +18,10 @@ const ENRICHED_REVEAL_STYLE_ID = 'happier-streaming-enriched-markdown-reveal-sty
 const ENRICHED_REVEAL_DURATION_VAR = '--happier-streaming-enriched-markdown-duration';
 const ENRICHED_REVEAL_EASING_VAR = '--happier-streaming-enriched-markdown-easing';
 const ENRICHED_REVEAL_TRANSLATE_Y_VAR = '--happier-streaming-enriched-markdown-y';
+const ENRICHED_LEADING_MARGIN_STYLE_ID = 'happier-enriched-markdown-leading-margin-style';
 
 let enrichedRevealStyleInjected = false;
+let enrichedLeadingMarginStyleInjected = false;
 
 function injectEnrichedRevealStyle(): void {
     if (enrichedRevealStyleInjected || Platform.OS !== 'web') return;
@@ -53,6 +55,23 @@ function injectEnrichedRevealStyle(): void {
     document.head.appendChild(style);
 }
 
+function injectEnrichedLeadingMarginStyle(): void {
+    if (enrichedLeadingMarginStyleInjected || Platform.OS !== 'web') return;
+    if (typeof document === 'undefined') return;
+
+    enrichedLeadingMarginStyleInjected = true;
+    if (document.getElementById(ENRICHED_LEADING_MARGIN_STYLE_ID)) return;
+
+    const style = document.createElement('style');
+    style.id = ENRICHED_LEADING_MARGIN_STYLE_ID;
+    style.textContent = [
+        '[data-happier-enriched-markdown-trim-leading-margin="true"] :is(h1, h2, h3, h4, h5, h6, p, blockquote, pre, ul, ol, table):first-child {',
+        '  margin-top: 0 !important;',
+        '}',
+    ].join('\n');
+    document.head.appendChild(style);
+}
+
 type EnrichedMarkdownTextAdapterProps = Readonly<{
     markdown: string;
     profile: MarkdownRenderingProfile;
@@ -62,6 +81,7 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
     streamingAnimated: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
     testID?: string;
+    suppressLeadingTopMargin?: boolean;
 }>;
 
 export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTextAdapterProps) => {
@@ -90,6 +110,11 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         injectStyle: injectEnrichedRevealStyle,
     });
 
+    useWebRevealStyleInsertion({
+        enabled: props.suppressLeadingTopMargin === true,
+        injectStyle: injectEnrichedLeadingMarginStyle,
+    });
+
     const platformProps = React.useMemo<Record<string, unknown>>(() => {
         if (Platform.OS === 'web') {
             const webProps: Record<string, unknown> = {
@@ -97,6 +122,9 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
             };
             if (props.streamingAnimated) {
                 webProps.streamingAnimation = true;
+            }
+            if (props.suppressLeadingTopMargin === true) {
+                webProps['data-happier-enriched-markdown-trim-leading-margin'] = 'true';
             }
             return webProps;
         }
@@ -107,7 +135,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
             allowFontScaling: true,
             streamingAnimation: props.streamingAnimated && flavor === 'commonmark',
         };
-    }, [flavor, props.streamingAnimated, props.testID]);
+    }, [flavor, props.streamingAnimated, props.suppressLeadingTopMargin, props.testID]);
 
     const containerStyle = React.useMemo(() => {
         if (Platform.OS !== 'web' || revealConfig == null) {

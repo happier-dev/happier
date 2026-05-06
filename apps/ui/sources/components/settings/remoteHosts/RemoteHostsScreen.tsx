@@ -24,9 +24,15 @@ import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/rea
 import { useSshSystemTaskPromptModals } from '@/components/systemTasks/ssh/useSshSystemTaskPromptModals';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { buildRemoteSshManageHostSystemTaskSpec } from '@/components/systemTasks/specs/remoteSsh/buildRemoteSshManageHostSystemTaskSpec';
+import { RelayAccessControlSection } from '@/components/settings/server/relayAccess/RelayAccessControlSection';
 
 import { RemoteHostForm } from './RemoteHostForm';
+import { pinnedRemoteHostOutcomeActionIds } from './remoteHostOutcomeActions';
+import { useRemoteHostOutcomeActions } from './useRemoteHostOutcomeActions';
+import { useRemoteHostSshTunnelControl } from './useRemoteHostSshTunnelControl';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
+
+const REMOTE_HOST_ROW_ACTIONS_OVERFLOW_THRESHOLD = Number.MAX_SAFE_INTEGER;
 
 function sortByLastUsedDesc(hosts: readonly RemoteHost[]): RemoteHost[] {
     return [...hosts].sort((left, right) => (right.lastUsedAt ?? 0) - (left.lastUsedAt ?? 0));
@@ -49,6 +55,7 @@ function removeRemoteHost(list: readonly RemoteHost[], remoteHostId: string): Re
 
 export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
     const isDesktop = isTauriDesktop();
+    const runner = getDefaultSystemTaskRunner();
     const { theme } = useUnistyles();
     const supportsWholeRowPress = Platform.OS !== 'web';
     const [remoteHosts, setRemoteHosts] = useSettingMutable('remoteHostsV1');
@@ -94,6 +101,7 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
             hosts={hosts}
             remoteHosts={remoteHosts}
             setRemoteHosts={setRemoteHosts}
+            runner={runner}
             secretMaterialAllowed={secretMaterialAllowed}
             supportsWholeRowPress={supportsWholeRowPress}
             themeTextSecondary={theme.colors.textSecondary}
@@ -104,12 +112,13 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
 const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: Readonly<{
     hosts: RemoteHost[];
     remoteHosts: RemoteHost[] | null;
+    runner: ReturnType<typeof getDefaultSystemTaskRunner>;
     setRemoteHosts: (value: RemoteHost[]) => void;
     secretMaterialAllowed: boolean;
     supportsWholeRowPress: boolean;
     themeTextSecondary: string;
 }>) {
-    const runner = getDefaultSystemTaskRunner();
+    const runner = props.runner;
     const [activeTaskId, setActiveTaskId] = React.useState<string | null>(null);
     const [activeTaskTitle, setActiveTaskTitle] = React.useState<string | null>(null);
     const [activeTaskAction, setActiveTaskAction] = React.useState<string | null>(null);
@@ -145,6 +154,23 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
             }
         })();
     }, [activeTaskAction, activeTaskId, activeTaskSnapshot?.result, activeTaskTitle]);
+
+    const sshTunnelControl = useRemoteHostSshTunnelControl({ runner });
+    const remoteHostOutcomeActions = useRemoteHostOutcomeActions({
+        runner,
+        remoteHosts: props.remoteHosts ?? [],
+        secretMaterialAllowed: props.secretMaterialAllowed,
+        onSshTunnelEnsured: () => {
+            void sshTunnelControl.refreshTunnels();
+        },
+    });
+    const activeRemoteHostSshTunnels = React.useMemo(() => (
+        sshTunnelControl.tunnels.filter((tunnel) => tunnel.purpose === 'remote-host-access')
+    ), [sshTunnelControl.tunnels]);
+    const desktopSshTunnelRemoteHostIds = React.useMemo(() => new Set(
+        runner.mode === 'tauri' ? props.hosts.map((host) => host.id) : [],
+    ), [props.hosts, runner.mode]);
+    const hostNameById = React.useMemo(() => new Map(props.hosts.map((host) => [host.id, host.name])), [props.hosts]);
 
     const startManageHostAction = React.useCallback(async (
         remoteHost: RemoteHost,
@@ -200,6 +226,8 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
             props: {
                 remoteHost: existing,
                 localOverrides,
+                savedRemoteHosts: props.remoteHosts ?? [],
+                systemTaskRunner: runner,
                 secretMaterialAllowed: props.secretMaterialAllowed,
                 onSave: ({ remoteHost, localOverrides }) => {
                     const nextList = upsertRemoteHost(props.remoteHosts ?? [], remoteHost);
@@ -230,7 +258,53 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                 ) : null}
                 {props.hosts.map((host) => (
                     (() => {
+                        const canConnectFromThisDevice = desktopSshTunnelRemoteHostIds.has(host.id);
                         const actions: ItemAction[] = [
+                            {
+                                id: 'setupAsMachine',
+                                title: t('settings.remoteHostsSetupAsMachineTitle'),
+                                icon: 'rocket-outline',
+                                inlineTestID: `settings.remoteHosts.action.setupAsMachine.${host.id}`,
+                                onPress: () => {
+                                    void remoteHostOutcomeActions.setupAsMachine(host);
+                                },
+                            },
+                            ...(canConnectFromThisDevice ? [{
+                                id: 'connectFromThisDevice',
+                                title: t('settings.remoteHostsConnectFromThisDeviceTitle'),
+                                subtitle: t('settings.remoteHostsConnectFromThisDeviceSubtitle'),
+                                icon: 'git-network-outline',
+                                inlineTestID: `settings.remoteHosts.action.connectFromThisDevice.${host.id}`,
+                                onPress: () => {
+                                    void remoteHostOutcomeActions.connectFromThisDevice(host);
+                                },
+                            }] satisfies ItemAction[] : []),
+                            {
+                                id: 'useAsRelayHost',
+                                title: t('settings.remoteHostsUseAsRelayHostTitle'),
+                                subtitle: t('settings.remoteHostsUseAsRelayHostSubtitle'),
+                                icon: 'radio-outline',
+                                inlineTestID: `settings.remoteHosts.action.useAsRelayHost.${host.id}`,
+                                onPress: () => {
+                                    void remoteHostOutcomeActions.openRelayAccess(host);
+                                },
+                            },
+                            {
+                                id: 'configureAccess',
+                                title: t('settings.remoteHostsConfigureAccessTitle'),
+                                subtitle: t('settings.remoteHostsConfigureAccessSubtitle'),
+                                icon: 'git-network-outline',
+                                inlineTestID: `settings.remoteHosts.action.configureAccess.${host.id}`,
+                                onPress: () => {
+                                    void remoteHostOutcomeActions.openRelayAccess(host);
+                                },
+                            },
+                            {
+                                id: 'openDetails',
+                                title: t('settings.remoteHostsOpenDetailsTitle'),
+                                icon: 'information-circle-outline',
+                                onPress: () => openEditor(host.id),
+                            },
                             {
                                 id: 'testConnection',
                                 title: t('settings.remoteHostsTestConnectionTitle'),
@@ -246,55 +320,55 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                 onPress: () => void startManageHostAction(host, 'installOrUpdateCli', t('settings.remoteHostsInstallOrUpdateCliTitle')),
                             },
                             {
-                                id: 'daemonInstallOrUpdate',
+                                id: 'daemonService.installOrUpdate',
                                 title: t('settings.remoteHostsDaemonServiceInstallOrUpdateTitle'),
                                 icon: 'construct-outline',
                                 onPress: () => void startManageHostAction(host, 'daemonService.installOrUpdate', t('settings.remoteHostsDaemonServiceInstallOrUpdateTitle')),
                             },
                             {
-                                id: 'daemonStart',
+                                id: 'daemonService.start',
                                 title: t('settings.remoteHostsDaemonServiceStartTitle'),
                                 icon: 'play-outline',
                                 onPress: () => void startManageHostAction(host, 'daemonService.start', t('settings.remoteHostsDaemonServiceStartTitle')),
                             },
                             {
-                                id: 'daemonStop',
+                                id: 'daemonService.stop',
                                 title: t('settings.remoteHostsDaemonServiceStopTitle'),
                                 icon: 'stop-outline',
                                 onPress: () => void startManageHostAction(host, 'daemonService.stop', t('settings.remoteHostsDaemonServiceStopTitle')),
                             },
                             {
-                                id: 'daemonRestart',
+                                id: 'daemonService.restart',
                                 title: t('settings.remoteHostsDaemonServiceRestartTitle'),
                                 icon: 'refresh-outline',
                                 onPress: () => void startManageHostAction(host, 'daemonService.restart', t('settings.remoteHostsDaemonServiceRestartTitle')),
                             },
                             {
-                                id: 'relayRuntimeStatus',
+                                id: 'relayRuntime.status',
                                 title: t('settings.remoteHostsRelayRuntimeStatusTitle'),
                                 icon: 'information-circle-outline',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.status', t('settings.remoteHostsRelayRuntimeStatusTitle')),
                             },
                             {
-                                id: 'relayRuntimeInstallOrUpdate',
+                                id: 'relayRuntime.installOrUpdate',
                                 title: t('settings.remoteHostsRelayRuntimeInstallOrUpdateTitle'),
                                 icon: 'download-outline',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.installOrUpdate', t('settings.remoteHostsRelayRuntimeInstallOrUpdateTitle')),
                             },
                             {
-                                id: 'relayRuntimeStart',
+                                id: 'relayRuntime.start',
                                 title: t('settings.remoteHostsRelayRuntimeStartTitle'),
                                 icon: 'play-outline',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.start', t('settings.remoteHostsRelayRuntimeStartTitle')),
                             },
                             {
-                                id: 'relayRuntimeStop',
+                                id: 'relayRuntime.stop',
                                 title: t('settings.remoteHostsRelayRuntimeStopTitle'),
                                 icon: 'stop-outline',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.stop', t('settings.remoteHostsRelayRuntimeStopTitle')),
                             },
                             {
-                                id: 'relayRuntimeRestart',
+                                id: 'relayRuntime.restart',
                                 title: t('settings.remoteHostsRelayRuntimeRestartTitle'),
                                 icon: 'refresh-outline',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.restart', t('settings.remoteHostsRelayRuntimeRestartTitle')),
@@ -347,8 +421,10 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                     <ItemRowActions
                                         title={host.name}
                                         actions={actions}
-                                        compactActionIds={['testConnection']}
-                                        pinnedActionIds={['testConnection']}
+                                        compactActionIds={[...pinnedRemoteHostOutcomeActionIds]}
+                                        pinnedActionIds={[...pinnedRemoteHostOutcomeActionIds]}
+                                        compactThreshold={REMOTE_HOST_ROW_ACTIONS_OVERFLOW_THRESHOLD}
+                                        overflowTriggerTestID={`settings.remoteHosts.actions.more.${host.id}`}
                                         overflowPosition="beforePinned"
                                     />
                                 )}
@@ -366,15 +442,70 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                 />
             </ItemGroup>
 
-            {activeTaskSnapshot ? (
+            {activeRemoteHostSshTunnels.length > 0 ? (
+                <ItemGroup title={t('settings.remoteHostsSshTunnelGroupTitle')}>
+                    {activeRemoteHostSshTunnels.map((tunnel) => {
+                        const remoteHostId = tunnel.remoteHostId ?? tunnel.tunnelKey;
+                        const hostName = tunnel.remoteHostId ? hostNameById.get(tunnel.remoteHostId) : null;
+                        const label = hostName ?? tunnel.tunnelKey;
+                        return (
+                            <React.Fragment key={tunnel.tunnelKey}>
+                                <Item
+                                    testID={`settings.remoteHosts.sshTunnel.${remoteHostId}`}
+                                    title={t('settings.remoteHostsSshTunnelActiveTitle', { host: label })}
+                                    subtitle={t('settings.remoteHostsSshTunnelActiveSubtitle', { url: tunnel.httpBaseUrl })}
+                                    mode="info"
+                                    showChevron={false}
+                                />
+                                <Item
+                                    testID={`settings.remoteHosts.sshTunnel.stop.${remoteHostId}`}
+                                    title={t('settings.remoteHostsSshTunnelStopTitle')}
+                                    showChevron={false}
+                                    onPress={() => {
+                                        void sshTunnelControl.stopTunnel(tunnel.tunnelKey);
+                                    }}
+                                />
+                            </React.Fragment>
+                        );
+                    })}
+                </ItemGroup>
+            ) : null}
+
+            {remoteHostOutcomeActions.relayAccessSelection ? (
+                <>
+                    <ItemGroup title={t('settings.remoteHostsRelayAccessGroupTitle')}>
+                        <Item
+                            testID={`settings.remoteHosts.relayAccess.${remoteHostOutcomeActions.relayAccessSelection.host.id}`}
+                            title={t('settings.remoteHostsRelayAccessActiveTitle', { host: remoteHostOutcomeActions.relayAccessSelection.host.name })}
+                            subtitle={t('settings.remoteHostsRelayAccessActiveSubtitle')}
+                            mode="info"
+                            showChevron={false}
+                        />
+                    </ItemGroup>
+                    <RelayAccessControlSection
+                        target={remoteHostOutcomeActions.relayAccessSelection.target}
+                        upstreamUrl={remoteHostOutcomeActions.relayAccessSelection.upstreamUrl}
+                        runner={runner}
+                    />
+                </>
+            ) : null}
+
+            {(remoteHostOutcomeActions.activeTaskSnapshot ?? sshTunnelControl.activeTaskSnapshot ?? activeTaskSnapshot) ? (
                 <ItemGroup title={t('settings.remoteHostsActiveTaskTitle')}>
                     <SystemTaskProgressCard
-                        snapshot={activeTaskSnapshot}
-                        onCancel={activeTaskSnapshot.result ? undefined : () => {
-                            if (!activeTaskId) return;
-                            void runner.cancel(activeTaskId);
+                        snapshot={remoteHostOutcomeActions.activeTaskSnapshot ?? sshTunnelControl.activeTaskSnapshot ?? activeTaskSnapshot!}
+                        onCancel={(remoteHostOutcomeActions.activeTaskSnapshot ?? sshTunnelControl.activeTaskSnapshot ?? activeTaskSnapshot)?.result ? undefined : () => {
+                            const taskId = remoteHostOutcomeActions.activeTaskSnapshot?.taskId
+                                ?? sshTunnelControl.activeTaskSnapshot?.taskId
+                                ?? activeTaskId;
+                            if (!taskId) return;
+                            void runner.cancel(taskId);
                         }}
-                        title={activeTaskTitle ?? t('settings.remoteHostsActiveTaskTitle')}
+                        title={remoteHostOutcomeActions.activeTaskSnapshot
+                            ? (remoteHostOutcomeActions.activeTaskTitle ?? t('settings.remoteHostsActiveTaskTitle'))
+                            : sshTunnelControl.activeTaskSnapshot
+                                ? t('settings.remoteHostsSshTunnelGroupTitle')
+                                : (activeTaskTitle ?? t('settings.remoteHostsActiveTaskTitle'))}
                     />
                 </ItemGroup>
             ) : null}

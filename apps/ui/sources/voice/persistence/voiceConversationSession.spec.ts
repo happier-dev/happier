@@ -46,7 +46,7 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe(...args),
 }));
 
-vi.mock('@/sync/domains/session/directSessions/readDirectSessionLink', () => ({
+vi.mock('@/sync/domains/session/external/readDirectSessionLink', () => ({
   readDirectSessionLink: () => null,
 }));
 

@@ -9,10 +9,12 @@ import type { SessionAttentionOptions } from '@/sync/domains/session/attention/s
 import {
     listSessionListLookupActiveSessionIds,
     listSessionListLookupServerSessions,
+    findSessionListLookupSession,
     resolveSessionListLookupSessionServerScopeFromState,
     type SessionServerLookupStateLike,
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
     createActivitySurfaceSessionRoute,
     createActivitySurfaceSessionTarget,
@@ -75,8 +77,11 @@ function buildLookupState(source: ActivityAttentionSource): SessionServerLookupS
     };
 }
 
-function collectLookupSessionIds(source: ActivityAttentionSource): readonly string[] {
-    if (!source.isDataReady) {
+function collectLookupSessionIds(
+    source: ActivityAttentionSource,
+    includeWarmSourceWhenNotReady: boolean,
+): readonly string[] {
+    if (!source.isDataReady && !includeWarmSourceWhenNotReady) {
         return [];
     }
 
@@ -121,15 +126,59 @@ function collectLookupSessionIds(source: ActivityAttentionSource): readonly stri
     return sessionIds;
 }
 
-function collectSourceSessions(source: ActivityAttentionSource): readonly Session[] {
-    const sessions: Session[] = [];
+function buildSessionFromRenderable(
+    renderable: SessionListRenderableSession,
+    serverId?: string | null,
+): Session {
+    const seq = Math.max(0, Math.trunc(renderable.seq ?? 0));
+    const normalizedServerId = typeof serverId === 'string' && serverId.trim() ? serverId.trim() : undefined;
+    return {
+        id: renderable.id,
+        serverId: normalizedServerId,
+        seq: renderable.hasUnreadMessages === true ? Math.max(1, seq) : seq,
+        createdAt: renderable.createdAt,
+        updatedAt: renderable.updatedAt,
+        active: renderable.active,
+        activeAt: renderable.activeAt,
+        archivedAt: renderable.archivedAt ?? null,
+        pendingVersion: renderable.pendingVersion,
+        pendingCount: renderable.pendingCount,
+        lastViewedSessionSeq: renderable.hasUnreadMessages === true ? 0 : seq,
+        pendingPermissionRequestCount: renderable.hasPendingPermissionRequests === true ? 1 : 0,
+        pendingUserActionRequestCount: renderable.hasPendingUserActionRequests === true ? 1 : 0,
+        metadata: renderable.metadata as Session['metadata'],
+        metadataVersion: renderable.metadataVersion,
+        agentState: null,
+        agentStateVersion: renderable.agentStateVersion,
+        thinking: renderable.thinking,
+        thinkingAt: renderable.thinkingAt,
+        presence: renderable.presence,
+        optimisticThinkingAt: renderable.optimisticThinkingAt,
+        thinkingGraceUntil: renderable.thinkingGraceUntil,
+        owner: renderable.owner,
+        accessLevel: renderable.accessLevel,
+        canApprovePermissions: renderable.canApprovePermissions,
+    };
+}
 
-    for (const sessionId of collectLookupSessionIds(source)) {
+function collectSourceSessions(
+    source: ActivityAttentionSource,
+    includeWarmSourceWhenNotReady: boolean,
+): readonly Session[] {
+    const sessions: Session[] = [];
+    const lookupState = buildLookupState(source);
+
+    for (const sessionId of collectLookupSessionIds(source, includeWarmSourceWhenNotReady)) {
         const session = source.sessionsById[sessionId];
-        if (!session) {
+        if (session) {
+            sessions.push(session);
             continue;
         }
-        sessions.push(session);
+        const lookupEntry = findSessionListLookupSession(lookupState, sessionId);
+        const renderable = lookupEntry?.session ?? source.sessionListRenderablesById[sessionId];
+        if (renderable) {
+            sessions.push(buildSessionFromRenderable(renderable, lookupEntry?.serverId ?? null));
+        }
     }
 
     return sessions;
@@ -217,10 +266,11 @@ export function buildActivityOverviewFromSource(params: Readonly<{
     activityName?: string | null;
     directActionsEnabled?: boolean;
     surfaceTiming?: ActivitySurfaceTimingInput;
+    includeWarmSourceWhenNotReady?: boolean;
 }>): ActivityOverviewSnapshot {
     const lookupState = buildLookupState(params.source);
     const surfaceTiming = resolveActivitySurfaceTiming(params.surfaceTiming);
-    const candidates = collectSourceSessions(params.source)
+    const candidates = collectSourceSessions(params.source, params.includeWarmSourceWhenNotReady === true)
         .map((session) => buildSessionActivityAttention({
             session,
             sessionOptions: params.sessionOptions,

@@ -13,6 +13,7 @@
     "allow-desktop-activity-overlay-set-input-locked",
     "allow-desktop-activity-overlay-apply-drag-delta",
     "allow-desktop-activity-overlay-release-drag-velocity",
+    "allow-desktop-activity-overlay-apply-momentum-delta",
     "allow-desktop-activity-overlay-emit-interaction"
   ]
 }

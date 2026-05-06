@@ -9,7 +9,7 @@ import type { SessionListIndexItem } from '../../sessionList/sessionListIndex';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
 import { normalizeSessionListServerScope } from './normalizeSessionListServerScope';
 import { getActiveServerSnapshot } from '../../server/serverRuntime';
-import { resolveSessionMachineId } from '../directSessions/resolveSessionMachineId';
+import { resolveSessionMachineId } from '../session/external/resolveSessionMachineId';
 
 export type SessionListLookupStateLike = Readonly<{
     sessionListIndexByServerId?: Readonly<Record<string, ReadonlyArray<SessionListIndexItem> | null | undefined>> | null | undefined;

@@ -25,13 +25,15 @@ describe('typesRaw progress record handling', () => {
     expect(normalized).toBeNull();
   });
 
-  it('accepts codex turn_aborted records and drops them during normalization', () => {
+  it.each(['turn_failed', 'turn_cancelled', 'turn_aborted'] as const)(
+    'accepts codex %s records and drops them during normalization',
+    (type) => {
     const raw: any = {
       role: 'agent',
       content: {
         type: 'codex',
         data: {
-          type: 'turn_aborted',
+          type,
         },
       },
       meta: { source: 'cli' },
@@ -40,7 +42,8 @@ describe('typesRaw progress record handling', () => {
     const parsed = RawRecordSchema.safeParse(raw);
     expect(parsed.success).toBe(true);
 
-    const normalized = normalizeRawMessage('msg-turn-aborted', null, 1000, raw);
+    const normalized = normalizeRawMessage(`msg-${type}`, null, 1000, raw);
     expect(normalized).toBeNull();
-  });
+    },
+  );
 });

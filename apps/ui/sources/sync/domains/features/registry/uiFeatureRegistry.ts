@@ -415,6 +415,9 @@ export const UI_FEATURE_REGISTRY = {
     'setup.machine.allowRemoteSshMachineSetup': {
         settingsToggle: undefined,
     },
+    'setup.ssh.nativeTransport': {
+        settingsToggle: undefined,
+    },
     'setup.providers.allowProviderSetup': {
         settingsToggle: undefined,
     },

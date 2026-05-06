@@ -95,6 +95,24 @@ export type DesktopActivityOverlayDragVelocityPayload = Readonly<{
     sampleWindowMs: number;
 }>;
 
+export type DesktopActivityOverlayMomentumDeltaPayload = Readonly<{
+    generation: number;
+    deltaX: number;
+    deltaY: number;
+}>;
+
+type DesktopActivityOverlayScheduledMomentumDelta = Readonly<{
+    deltaX: number;
+    deltaY: number;
+    delayMs: number;
+}>;
+
+type DesktopActivityOverlayMomentumPlan = Readonly<{
+    generation: number;
+    tickMs: number;
+    deltas: readonly DesktopActivityOverlayScheduledMomentumDelta[];
+}>;
+
 function createDesktopActivityOverlayInteractionRequestId(): string {
     nextDesktopActivityOverlayInteractionRequestSequence =
         (nextDesktopActivityOverlayInteractionRequestSequence + 1) % Number.MAX_SAFE_INTEGER;
@@ -128,11 +146,38 @@ export async function applyDesktopActivityOverlayDragDelta(deltaX: number, delta
 export async function releaseDesktopActivityOverlayDragVelocity(
     payload: DesktopActivityOverlayDragVelocityPayload,
 ): Promise<void> {
-    await invokeTauri<void>('desktop_activity_overlay_release_drag_velocity', {
+    const plan = await invokeTauri<DesktopActivityOverlayMomentumPlan>('desktop_activity_overlay_release_drag_velocity', {
         payload: {
             ...payload,
             pointerId: String(payload.pointerId),
         },
+    });
+    scheduleDesktopActivityOverlayMomentumPlan(plan);
+}
+
+export async function applyDesktopActivityOverlayMomentumDelta(
+    payload: DesktopActivityOverlayMomentumDeltaPayload,
+): Promise<void> {
+    await invokeTauri<void>('desktop_activity_overlay_apply_momentum_delta', { payload });
+}
+
+function scheduleDesktopActivityOverlayMomentumPlan(
+    plan: DesktopActivityOverlayMomentumPlan | undefined,
+): void {
+    if (!plan || !Array.isArray(plan.deltas)) {
+        return;
+    }
+    plan.deltas.forEach((delta, index) => {
+        const delayMs = Number.isFinite(delta.delayMs) && delta.delayMs >= 0
+            ? delta.delayMs * (index + 1)
+            : plan.tickMs * (index + 1);
+        setTimeout(() => {
+            void applyDesktopActivityOverlayMomentumDelta({
+                generation: plan.generation,
+                deltaX: delta.deltaX,
+                deltaY: delta.deltaY,
+            }).catch(() => undefined);
+        }, delayMs);
     });
 }
 

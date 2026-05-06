@@ -869,7 +869,7 @@ export function normalizeRawMessage(
                     usage,
                 } satisfies NormalizedMessage;
             }
-            // Task lifecycle events (task_started, task_complete, turn_aborted)
+            // Task lifecycle events (including canonical turn terminal markers)
             // are status/metrics - skip normalization, they don't need UI rendering
         }
     }
@@ -879,7 +879,13 @@ export function normalizeRawMessage(
         const contentType = raw.content.type;
         if (contentType === 'codex' || contentType === 'acp') {
             const dataType = (raw.content as any).data?.type;
-            if (dataType === 'task_started' || dataType === 'task_complete' || dataType === 'turn_aborted') {
+            if (
+                dataType === 'task_started'
+                || dataType === 'task_complete'
+                || dataType === 'turn_failed'
+                || dataType === 'turn_cancelled'
+                || dataType === 'turn_aborted'
+            ) {
                 return null;
             }
         }

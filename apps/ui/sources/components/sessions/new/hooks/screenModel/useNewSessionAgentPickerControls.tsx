@@ -100,6 +100,23 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         selectEngineSelection(entry, nextSelection);
     }, [getEngineSelectionForTargetKey, selectEngineSelection]);
 
+    const handleSelectFavoriteModelOptionValue = React.useCallback((
+        entry: ResolvedBackendCatalogEntry,
+        modelId: string,
+        configId: string,
+        valueId: string,
+    ) => {
+        const currentSelection = getEngineSelectionForTargetKey(entry.backendTargetKey);
+        selectEngineSelection(entry, {
+            ...currentSelection,
+            modelId,
+            configOverrides: {
+                ...currentSelection.configOverrides,
+                [configId]: valueId,
+            },
+        });
+    }, [getEngineSelectionForTargetKey, selectEngineSelection]);
+
     const handleRemoveFavoriteModelSelection = React.useCallback((favorite: FavoriteModelSelectionV1) => {
         if (!params.setFavoriteModelSelections) return;
         const favoriteModelId = normalizeFavoriteModelId(favorite.modelId);
@@ -133,10 +150,13 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         refreshProbe: params.refreshProbe,
         favoriteModelSelections: params.favoriteModelSelections ?? [],
         onSelectFavoriteModel: handleSelectFavoriteModel,
+        selectedConfigOverrides: getEngineSelectionForTargetKey(selectedBackendTargetKey).configOverrides,
+        onSelectFavoriteModelOptionValue: handleSelectFavoriteModelOptionValue,
         onToggleFavoriteModel: handleToggleFavoriteModel,
         onRemoveFavoriteModelSelection: handleRemoveFavoriteModelSelection,
     }), [
         getEngineSelectionForTargetKey,
+        handleSelectFavoriteModelOptionValue,
         params.capabilityServerId,
         params.favoriteModelSelections,
         params.getCompatibleProfileBackendEntries,

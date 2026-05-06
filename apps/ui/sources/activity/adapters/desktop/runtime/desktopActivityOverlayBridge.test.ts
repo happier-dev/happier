@@ -17,6 +17,7 @@ vi.mock('@/utils/platform/tauri', () => ({
 
 describe('desktopActivityOverlayBridge', () => {
     afterEach(() => {
+        vi.useRealTimers();
         invokeTauriMock.mockReset();
         listenTauriEventMock.mockReset();
     });
@@ -126,6 +127,67 @@ describe('desktopActivityOverlayBridge', () => {
                 sampleWindowMs: 100,
             },
         });
+    });
+
+    it('schedules native momentum deltas from the activity overlay release velocity plan', async () => {
+        vi.useFakeTimers();
+        invokeTauriMock.mockImplementation(async (command) => {
+            if (command === 'desktop_activity_overlay_release_drag_velocity') {
+                return {
+                    generation: 42,
+                    tickMs: 16,
+                    deltas: [
+                        { deltaX: 8, deltaY: -4, delayMs: 16 },
+                        { deltaX: 4, deltaY: -2, delayMs: 16 },
+                    ],
+                };
+            }
+            return undefined;
+        });
+        const { releaseDesktopActivityOverlayDragVelocity } = await import('./desktopActivityOverlayBridge');
+
+        await releaseDesktopActivityOverlayDragVelocity({
+            pointerId: 9,
+            vx: 640,
+            vy: -320,
+            sampleWindowMs: 100,
+        });
+        await vi.advanceTimersByTimeAsync(16);
+        await vi.advanceTimersByTimeAsync(16);
+
+        expect(invokeTauriMock.mock.calls).toEqual([
+            [
+                'desktop_activity_overlay_release_drag_velocity',
+                {
+                    payload: {
+                        pointerId: '9',
+                        vx: 640,
+                        vy: -320,
+                        sampleWindowMs: 100,
+                    },
+                },
+            ],
+            [
+                'desktop_activity_overlay_apply_momentum_delta',
+                {
+                    payload: {
+                        generation: 42,
+                        deltaX: 8,
+                        deltaY: -4,
+                    },
+                },
+            ],
+            [
+                'desktop_activity_overlay_apply_momentum_delta',
+                {
+                    payload: {
+                        generation: 42,
+                        deltaX: 4,
+                        deltaY: -2,
+                    },
+                },
+            ],
+        ]);
     });
 
     it('sets the native overlay input lock through tauri invoke', async () => {

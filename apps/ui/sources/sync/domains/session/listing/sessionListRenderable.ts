@@ -1,8 +1,9 @@
 import type { AgentState, Metadata, Session } from '@/sync/domains/state/storageTypes';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/directSessions/readDirectSessionAttention';
-import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/external/readDirectSessionAttention';
+import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
 import {
     derivePendingRequestFlagsFromAgentState,
     derivePendingRequestFlagsFromSession,
@@ -49,6 +50,8 @@ export interface SessionListRenderableSession {
     pendingVersion?: number;
     pendingCount?: number;
     lastViewedSessionSeq?: number | null;
+    latestTurnStatus?: PrimaryTurnStatusV1 | null;
+    lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
     metadataVersion: number;
     agentStateVersion: number;
     metadata: SessionListRenderableMetadata | null;
@@ -197,6 +200,8 @@ export function buildSessionListRenderableFromSession(
         pendingVersion: session.pendingVersion,
         pendingCount: session.pendingCount,
         lastViewedSessionSeq: normalizeLastViewedSessionSeq(session.lastViewedSessionSeq),
+        latestTurnStatus: session.latestTurnStatus ?? null,
+        lastRuntimeIssue: session.lastRuntimeIssue ?? null,
         metadataVersion: preserveMetadata && previous ? previous.metadataVersion : session.metadataVersion,
         agentStateVersion: preservePendingFlags && previous ? previous.agentStateVersion : session.agentStateVersion,
         metadata: previous && areSessionListRenderableMetadataComparisonsEqual(previousMetadata, nextMetadata)
@@ -306,6 +311,8 @@ export function areSessionListRenderablesEqual(
         && (previous.pendingVersion ?? null) === (next.pendingVersion ?? null)
         && (previous.pendingCount ?? null) === (next.pendingCount ?? null)
         && (previous.lastViewedSessionSeq ?? null) === (next.lastViewedSessionSeq ?? null)
+        && (previous.latestTurnStatus ?? null) === (next.latestTurnStatus ?? null)
+        && JSON.stringify(previous.lastRuntimeIssue ?? null) === JSON.stringify(next.lastRuntimeIssue ?? null)
         && previous.metadataVersion === next.metadataVersion
         && previous.agentStateVersion === next.agentStateVersion
         && previous.thinking === next.thinking

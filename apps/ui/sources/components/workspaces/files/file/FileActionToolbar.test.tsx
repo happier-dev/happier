@@ -313,6 +313,45 @@ describe('FileActionToolbar', () => {
         expect(menu?.props.items.map((item: any) => item.id)).toEqual(['diff', 'file']);
     });
 
+    it('adds Markdown to the display mode menu when markdown preview is available', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onDisplayMode = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'markdown',
+                onDisplayMode,
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: false,
+                hasIncludedDelta: false,
+                scmWriteEnabled: false,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: false,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                showDiffToggle: true,
+                showFileToggle: true,
+                showMarkdownToggle: true,
+            }),
+        );
+
+        const menu = screen.findByType('DropdownMenu' as any);
+        expect(menu?.props.items.map((item: any) => item.id)).toEqual(['diff', 'file', 'markdown']);
+        expect(menu?.props.selectedId).toBe('markdown');
+
+        menu?.props.onSelect('markdown');
+        expect(onDisplayMode).toHaveBeenCalledWith('markdown');
+    });
+
     it('only shows the diff area menu when more than one diff area is available', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
 

@@ -59,6 +59,8 @@ describe('FilesToolbar', () => {
             changedFilesViewMode="repository"
             changedFilesPresentation="list"
             showTurnViewToggle={true}
+            showTurnAgentReportedViewToggle={true}
+            showTurnCheckpointViewToggle={true}
             showSessionViewToggle={true}
             onChangedFilesViewMode={onChangedFilesViewMode}
             onChangedFilesPresentationChange={onChangedFilesPresentationChange}
@@ -77,10 +79,12 @@ describe('FilesToolbar', () => {
         expect(viewModeMenu.props.items.map((item: { id: string }) => item.id)).toEqual([
             'repository',
             'turn',
+            'turn_agent_reported',
+            'turn_checkpoint',
             'session',
         ]);
-        viewModeMenu.props.onSelect('turn');
-        expect(onChangedFilesViewMode).toHaveBeenCalledWith('turn');
+        viewModeMenu.props.onSelect('turn_checkpoint');
+        expect(onChangedFilesViewMode).toHaveBeenCalledWith('turn_checkpoint');
 
         // Smoke-check: the toolbar still exposes the basic navigation callbacks.
         expect(typeof onShowChangedFiles).toBe('function');
@@ -118,6 +122,38 @@ describe('FilesToolbar', () => {
         expect(textContent).not.toContain('files.toolbar.sessionView');
         expect(screen.tree.findAllByType('DropdownMenu' as any)).toHaveLength(0);
         expect(textContent).toContain('files.attributionReliabilityLimited');
+    });
+
+    it('shows source view controls when only scoped turn evidence is available', async () => {
+        const { FilesToolbar } = await import('./FilesToolbar');
+
+        const screen = await renderScreen(<FilesToolbar
+            theme={theme}
+            searchQuery=""
+            onSearchQueryChange={vi.fn()}
+            showAllRepositoryFiles={false}
+            onShowChangedFiles={vi.fn()}
+            onShowAllRepositoryFiles={vi.fn()}
+            changedFilesCount={0}
+            changedFilesViewMode="turn_checkpoint"
+            changedFilesPresentation="review"
+            showTurnViewToggle={false}
+            showTurnAgentReportedViewToggle={false}
+            showTurnCheckpointViewToggle={true}
+            showSessionViewToggle={false}
+            onChangedFilesViewMode={vi.fn()}
+            onChangedFilesPresentationChange={vi.fn()}
+            scmPanelExpanded={false}
+            onToggleScmPanel={vi.fn()}
+        />);
+
+        const viewModeMenu = screen.tree.findByType('DropdownMenu' as any);
+        expect(viewModeMenu.props.selectedId).toBe('turn_checkpoint');
+        expect(viewModeMenu.props.items.map((item: { id: string }) => item.id)).toEqual([
+            'repository',
+            'turn_checkpoint',
+        ]);
+        expect(screen.getTextContent()).toContain('files.toolbar.review');
     });
 
     it('allows hiding the attribution notice when used outside sessions', async () => {

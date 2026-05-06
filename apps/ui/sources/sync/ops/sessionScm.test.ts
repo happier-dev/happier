@@ -381,4 +381,158 @@ describe('sessionScm', () => {
         );
         expect(sessionRpcMock).not.toHaveBeenCalled();
     });
+
+    it('routes remove index-lock through the attached machine target', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+            sessions: {
+                'session-1': {
+                    active: true,
+                    metadata: {
+                        path: '~/repo',
+                        homeDir: '/Users/tester',
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+        machineRpcMock.mockResolvedValue({
+            success: true,
+            removed: true,
+            reason: 'removed',
+            lockPath: '/Users/tester/repo/.git/index.lock',
+        });
+
+        const { sessionScmRepositoryRemoveIndexLock } = await import('./sessionScm');
+        const response = await sessionScmRepositoryRemoveIndexLock('session-1', {
+            cwd: '.',
+            confirmed: true,
+            confirmationToken: 'remove-stale-index-lock',
+        });
+
+        expect(response).toMatchObject({
+            success: true,
+            removed: true,
+            reason: 'removed',
+        });
+        expect(machineRpcMock).toHaveBeenCalledWith(
+            'machine-1',
+            RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK,
+            {
+                cwd: '~/repo',
+                confirmed: true,
+                confirmationToken: 'remove-stale-index-lock',
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+    });
+
+    it('maps remove index-lock missing machine RPC to feature unsupported response', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+            sessions: {
+                'session-1': {
+                    active: true,
+                    metadata: {
+                        path: '~/repo',
+                        homeDir: '/Users/tester',
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+        machineRpcMock.mockRejectedValue(
+            Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND), {
+                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+            }),
+        );
+
+        const { sessionScmRepositoryRemoveIndexLock } = await import('./sessionScm');
+        const response = await sessionScmRepositoryRemoveIndexLock('session-1', {
+            cwd: '.',
+            confirmed: true,
+            confirmationToken: 'remove-stale-index-lock',
+        });
+
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
+        expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND);
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+    });
+
+    it('routes pull-request read and compose operations through the attached machine target', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+            sessions: {
+                'session-1': {
+                    active: true,
+                    metadata: {
+                        path: '~/repo',
+                        homeDir: '/Users/tester',
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+        machineRpcMock.mockResolvedValue({ success: true, pullRequests: [] });
+
+        const module = await import('./sessionScm');
+        await module.sessionScmPullRequestList('session-1', {
+            cwd: '.',
+            base: 'main',
+            head: 'feature/pr-cache',
+            state: 'open',
+        });
+        await module.sessionScmPullRequestGet('session-1', {
+            cwd: '.',
+            prReference: { number: 42 },
+        });
+        await module.sessionScmPullRequestOpenCompose('session-1', {
+            cwd: '.',
+            base: 'main',
+            head: 'feature/pr-cache',
+        });
+
+        expect(machineRpcMock).toHaveBeenNthCalledWith(
+            1,
+            'machine-1',
+            RPC_METHODS.SCM_PULL_REQUEST_LIST,
+            {
+                cwd: '~/repo',
+                base: 'main',
+                head: 'feature/pr-cache',
+                state: 'open',
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(machineRpcMock).toHaveBeenNthCalledWith(
+            2,
+            'machine-1',
+            RPC_METHODS.SCM_PULL_REQUEST_GET,
+            {
+                cwd: '~/repo',
+                prReference: { number: 42 },
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(machineRpcMock).toHaveBeenNthCalledWith(
+            3,
+            'machine-1',
+            RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
+            {
+                cwd: '~/repo',
+                base: 'main',
+                head: 'feature/pr-cache',
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+    });
 });

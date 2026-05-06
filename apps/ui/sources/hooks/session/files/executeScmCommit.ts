@@ -10,13 +10,15 @@ import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportSessionScmOperation, type ScmOperationTracker, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { storage } from '@/sync/domains/state/storage';
-import { sessionScmCommitCreate } from '@/sync/ops';
+import { sessionScmCommitCreate, sessionScmRepositoryRemoveIndexLock } from '@/sync/ops';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { tryShowDaemonUnavailableAlertForRpcError } from '@/utils/errors/daemonUnavailableAlert';
 import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
 
 export async function executeScmCommit(input: {
     sessionId: string;
+    repoPath: string;
     commitMessage: string;
     scmCommitStrategy: ScmCommitStrategy;
     commitSelectionPaths: string[];
@@ -42,11 +44,20 @@ export async function executeScmCommit(input: {
                 const includePatches = isAtomicCommitStrategy(input.scmCommitStrategy)
                     && input.commitSelectionPatches.length > 0;
                 const requestScope = includePatches ? undefined : scope;
-                const response = await sessionScmCommitCreate(input.sessionId, {
+                const createCommit = () => sessionScmCommitCreate(input.sessionId, {
                     message: input.commitMessage,
                     ...(requestScope ? { scope: requestScope } : {}),
                     ...(includePatches ? { patches: input.commitSelectionPatches } : {}),
                 });
+                let response = await createCommit();
+                if (!response.success) {
+                    response = await runScmOperationWithGitIndexLockRecovery({
+                        cwd: input.repoPath,
+                        failedResponse: response,
+                        removeIndexLock: (request) => sessionScmRepositoryRemoveIndexLock(input.sessionId, request),
+                        retryOriginalOperation: createCommit,
+                    });
+                }
 
                 if (!response.success) {
                     const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({

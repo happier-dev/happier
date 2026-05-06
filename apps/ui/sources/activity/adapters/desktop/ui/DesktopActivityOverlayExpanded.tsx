@@ -2,6 +2,9 @@ import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
+import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
+
 import {
     DesktopActivityOverlayChromeBackdrop,
     createDesktopActivityOverlayChromeStyle,
@@ -42,6 +45,15 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
     const quickReplyServerId = typeof quickReply?.serverId === 'string' ? quickReply.serverId.trim() : '';
     const quickReplyTargetAvailable = Boolean(quickReply && quickReplyServerId.length > 0);
     const [completionAutoDismissPaused, setCompletionAutoDismissPaused] = React.useState(false);
+    const scrollFades = useScrollEdgeFades({
+        enabledEdges: { top: true, bottom: true },
+        overflowThreshold: 2,
+        edgeThreshold: 2,
+    });
+    const scrollMaskStyle = React.useMemo(
+        () => resolveVerticalScrollEdgeMaskStyle(scrollFades.visibility, { fadeSize: 14 }),
+        [scrollFades.visibility],
+    );
     const handleHoverIn = React.useCallback(() => {
         setCompletionAutoDismissPaused(true);
         props.onHoverIn?.();
@@ -89,9 +101,15 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
                 />
             </View>
             <ScrollView
-                style={styles.scroll}
+                testID="desktop-activity-overlay-expanded-scroll"
+                style={[styles.scroll, scrollMaskStyle]}
                 contentContainerStyle={styles.scrollContent}
                 showsVerticalScrollIndicator={false}
+                scrollEventThrottle={16}
+                onLayout={scrollFades.onViewportLayout}
+                onContentSizeChange={scrollFades.onContentSizeChange}
+                onScroll={scrollFades.onScroll}
+                onMomentumScrollEnd={scrollFades.onMomentumScrollEnd}
             >
                 <DesktopActivityOverlayExpandedCards
                     model={props.model}

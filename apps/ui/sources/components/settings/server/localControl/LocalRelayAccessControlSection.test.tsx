@@ -116,6 +116,36 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('LocalRelayAccessControlSection', () => {
+    it('labels relay providers as available to other devices in settings presentation', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+
+        const runner = createSystemTaskRunner({
+            bridge: {
+                async start() {
+                    return 'task_1:relay.access.status.v1';
+                },
+                async subscribe(_taskId, _listenerSet) {
+                    return () => {};
+                },
+                async cancel() {},
+                async respond() {},
+            },
+        });
+
+        const { LocalRelayAccessControlSection } = await import('./LocalRelayAccessControlSection');
+        const screen = await renderScreen(
+            React.createElement(LocalRelayAccessControlSection, {
+                runner,
+                upstreamUrl: 'http://127.0.0.1:3005',
+            }),
+        );
+
+        expect(screen.findByTestId('settings.server.accessEndpoints.outwardScope')).toBeTruthy();
+        expect(screen.findByTestId('settings.server.accessEndpoints.outwardScope')?.props.title).toBe(
+            'settings.accessEndpoints.scope.availableToOtherDevices',
+        );
+    });
+
     it('does not render settings list chrome in wizard presentation', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
 

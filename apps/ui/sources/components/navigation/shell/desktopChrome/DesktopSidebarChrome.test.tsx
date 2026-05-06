@@ -254,6 +254,35 @@ describe('DesktopSidebarChrome', () => {
         expect(desktopWindowBridgeState.startDesktopWindowDragging).toHaveBeenCalledTimes(0);
     });
 
+    it('marks unavailable browser history controls disabled without removing them', async () => {
+        const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
+        const screen = await renderScreen(
+            <DesktopSidebarChrome
+                sidebarWidthPx={600}
+                headerHeightPx={56}
+                onPressHome={vi.fn()}
+                onPressCollapse={vi.fn()}
+                onPressBack={vi.fn()}
+                onPressForward={vi.fn()}
+                canNavigateBack={false}
+                canNavigateForward={true}
+                environmentBadge={null}
+                headerActions={[]}
+                renderHeaderOverflowVisual={() => React.createElement(View, { testID: 'desktop-sidebar-overflow-visual' })}
+                popoverBoundaryRef={{ current: null }}
+                desktopWindowControls={<View testID="injected-desktop-window-controls" />}
+            />,
+        );
+
+        const backButton = requireTestInstance(screen.findByTestId('sidebar-back-button'), 'back button');
+        const forwardButton = requireTestInstance(screen.findByTestId('sidebar-forward-button'), 'forward button');
+
+        expect(backButton.props.disabled).toBe(true);
+        expect(backButton.props.accessibilityState).toEqual({ disabled: true });
+        expect(forwardButton.props.disabled).toBe(false);
+        expect(forwardButton.props.accessibilityState).toEqual({ disabled: false });
+    });
+
     it('keeps the brand identity visible in the compact content row', async () => {
         const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
         const sidebarProps = {

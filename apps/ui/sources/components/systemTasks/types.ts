@@ -1,6 +1,6 @@
 import type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
 
-export type SystemTaskRunnerMode = 'tauri' | 'dev' | 'unavailable';
+export type SystemTaskRunnerMode = 'tauri' | 'native' | 'dev' | 'unavailable';
 
 export type SystemTaskRunStatus =
     | 'running'

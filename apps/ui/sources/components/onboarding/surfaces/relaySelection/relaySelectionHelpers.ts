@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 
+import { classifyAccessEndpointHostedHttpsCompatibility } from '@/sync/domains/accessEndpoints/classifyAccessEndpoint';
 import { isSameServerUrl, normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getOrCreateHappierCloudServerProfile, listServerProfiles } from '@/sync/domains/server/serverProfiles';
@@ -35,13 +36,11 @@ export function resolveTrueLocalRelayRuntimeBindUrl(params: Readonly<{
 
 export function isWebMixedContentBlockedEndpoint(serverUrl: string): boolean {
     if (Platform.OS !== 'web') return false;
-    try {
-        const endpointProtocol = new URL(serverUrl).protocol;
-        const pageProtocol = (globalThis as unknown as { location?: { protocol?: string } }).location?.protocol;
-        return pageProtocol === 'https:' && endpointProtocol === 'http:';
-    } catch {
-        return false;
-    }
+    const pageProtocol = (globalThis as unknown as { location?: { protocol?: string } }).location?.protocol;
+    return classifyAccessEndpointHostedHttpsCompatibility({
+        httpBaseUrl: serverUrl,
+        clientContext: pageProtocol === 'https:' ? 'hosted-https-web' : 'web',
+    }) === 'mixed-content-blocked';
 }
 
 export function resolveCanonicalCloudRelayProfile(): Readonly<{ serverId: string; serverUrl: string }> | null {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from "@happier-dev/protocol";
 import { 
     createAgentRuntimeFacetsV1Schema,
     createAcpConfigOptionOverridesV1Schema,
@@ -418,6 +419,8 @@ export interface Session {
     lastViewedSessionSeq?: number | null,
     pendingPermissionRequestCount?: number,
     pendingUserActionRequestCount?: number,
+    latestTurnStatus?: PrimaryTurnStatusV1 | null,
+    lastRuntimeIssue?: SessionRuntimeIssueV1 | null,
     metadata: Metadata | null,
     metadataVersion: number,
     agentState: AgentState | null,

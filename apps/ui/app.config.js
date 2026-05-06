@@ -118,6 +118,7 @@ const expoAndroidBuildPropertiesPlugin = [
 ];
 const shouldUseAndroidReleaseShrinkerPlugin =
     androidEnableMinifyInReleaseBuilds || androidEnableShrinkResourcesInReleaseBuilds;
+const nativeSshTransportEnabled = readBoolEnv('HAPPIER_ENABLE_NATIVE_SSH', false);
 
 const androidReleaseShrinkerPlugin = shouldUseAndroidReleaseShrinkerPlugin
     ? [
@@ -374,6 +375,17 @@ const baseExpoConfig = {
             output: "single",
             favicon: "./sources/assets/images/favicon.png"
         },
+        autolinking: nativeSshTransportEnabled
+            ? undefined
+            : {
+                exclude: ["@happier-dev/ssh-native"],
+                ios: {
+                    exclude: ["@happier-dev/ssh-native"],
+                },
+                android: {
+                    exclude: ["@happier-dev/ssh-native"],
+                },
+            },
         plugins: [
             expoAndroidBuildPropertiesPlugin,
             require("./plugins/withEinkCompatibility.js"),

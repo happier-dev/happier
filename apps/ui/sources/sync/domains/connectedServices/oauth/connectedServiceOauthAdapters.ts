@@ -3,8 +3,9 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import tweetnacl from 'tweetnacl';
 
 import {
-  buildConnectedServiceCredentialRecord,
+  CONNECTED_ACCOUNT_DESCRIPTORS,
   encodeBase64,
+  type ConnectedAccountDescriptor,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
@@ -12,10 +13,6 @@ import {
 import { exchangeConnectedServiceOauthViaProxy } from '@/sync/api/account/apiConnectedServicesV2';
 
 import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from './connectedServiceOauthProxyBundle';
-
-import { buildClaudeSubscriptionAuthorizationUrl, CLAUDE_SUBSCRIPTION_OAUTH } from './claudeSubscriptionOauth';
-import { buildGeminiAuthorizationUrl, GEMINI_OAUTH } from './geminiOauth';
-import { buildOpenAiCodexAuthorizationUrl, OPENAI_CODEX_OAUTH } from './openAiCodexOauth';
 
 export type ConnectedServiceOauthAddMethod = 'device' | 'paste' | 'browser';
 export type ConnectedServiceOauthMode = 'device' | 'paste' | 'embedded';
@@ -74,68 +71,65 @@ async function exchangeOauthViaProxy(params: Readonly<{
   });
 }
 
-const OPENAI_CODEX_ADAPTER: ConnectedServiceOauthAdapter = Object.freeze({
-  serviceId: 'openai-codex',
-  defaultRedirectUri: OPENAI_CODEX_OAUTH.defaultRedirectUri,
-  buildAuthorizationUrl: ({ redirectUri, state, challenge }) =>
-    buildOpenAiCodexAuthorizationUrl({ redirectUri, state, challenge }),
-  exchangeAuthorizationCodeForRecord: async ({ credentials, profileId, code, verifier, redirectUri, state, now }) => {
-    return await exchangeOauthViaProxy({
-      credentials,
-      serviceId: 'openai-codex',
-      profileId,
-      code,
-      verifier,
-      redirectUri,
-      state,
-      now,
-    });
-  },
-});
+export function buildConnectedAccountAuthorizationUrl(params: Readonly<{
+  descriptor: ConnectedAccountDescriptor;
+  redirectUri: string;
+  state: string;
+  challenge: string;
+}>): string {
+  if (!params.descriptor.oauth) {
+    throw new Error(`Connected account does not support OAuth: ${params.descriptor.id}`);
+  }
+  const authorization = params.descriptor.oauth.authorization;
+  const query = new URLSearchParams({
+    ...authorization.query.extraParams,
+    client_id: params.descriptor.oauth.publicClientId.defaultValue,
+    response_type: authorization.query.responseType,
+    redirect_uri: params.redirectUri,
+    scope: authorization.scopes.join(' '),
+    code_challenge: params.challenge,
+    code_challenge_method: 'S256',
+    state: params.state,
+  });
+  if (authorization.query.accessType) {
+    query.set('access_type', authorization.query.accessType);
+  }
+  if (authorization.query.prompt) {
+    query.set('prompt', authorization.query.prompt);
+  }
+  return `${authorization.endpointUrl}?${query.toString()}`;
+}
 
-const GEMINI_ADAPTER: ConnectedServiceOauthAdapter = Object.freeze({
-  serviceId: 'gemini',
-  defaultRedirectUri: GEMINI_OAUTH.defaultRedirectUri,
-  buildAuthorizationUrl: ({ redirectUri, state, challenge }) =>
-    buildGeminiAuthorizationUrl({ redirectUri, state, challenge }),
-  exchangeAuthorizationCodeForRecord: async ({ credentials, profileId, code, verifier, redirectUri, state, now }) => {
-    return await exchangeOauthViaProxy({
-      credentials,
-      serviceId: 'gemini',
-      profileId,
-      code,
-      verifier,
-      redirectUri,
-      state,
-      now,
-    });
-  },
-});
+function createDescriptorOauthAdapter(descriptor: ConnectedAccountDescriptor): ConnectedServiceOauthAdapter | null {
+  if (!descriptor.oauth) return null;
+  return Object.freeze({
+    serviceId: descriptor.id,
+    defaultRedirectUri: descriptor.oauth.authorization.defaultRedirectUri,
+    buildAuthorizationUrl: ({ redirectUri, state, challenge }) =>
+      buildConnectedAccountAuthorizationUrl({ descriptor, redirectUri, state, challenge }),
+    exchangeAuthorizationCodeForRecord: async ({ credentials, profileId, code, verifier, redirectUri, state, now }) => {
+      return await exchangeOauthViaProxy({
+        credentials,
+        serviceId: descriptor.id,
+        profileId,
+        code,
+        verifier,
+        redirectUri,
+        state,
+        now,
+      });
+    },
+  });
+}
 
-const CLAUDE_SUBSCRIPTION_ADAPTER: ConnectedServiceOauthAdapter = Object.freeze({
-  serviceId: 'claude-subscription',
-  defaultRedirectUri: CLAUDE_SUBSCRIPTION_OAUTH.defaultRedirectUri,
-  buildAuthorizationUrl: ({ redirectUri, state, challenge }) =>
-    buildClaudeSubscriptionAuthorizationUrl({ redirectUri, state, challenge }),
-  exchangeAuthorizationCodeForRecord: async ({ credentials, profileId, code, verifier, redirectUri, state, now }) => {
-    return await exchangeOauthViaProxy({
-      credentials,
-      serviceId: 'claude-subscription',
-      profileId,
-      code,
-      verifier,
-      redirectUri,
-      state,
-      now,
-    });
-  },
-});
-
-const ADAPTERS_BY_SERVICE_ID: Readonly<Partial<Record<ConnectedServiceId, ConnectedServiceOauthAdapter>>> = Object.freeze({
-  'openai-codex': OPENAI_CODEX_ADAPTER,
-  gemini: GEMINI_ADAPTER,
-  'claude-subscription': CLAUDE_SUBSCRIPTION_ADAPTER,
-});
+const ADAPTERS_BY_SERVICE_ID: Readonly<Partial<Record<ConnectedServiceId, ConnectedServiceOauthAdapter>>> = Object.freeze(
+  Object.fromEntries(
+    CONNECTED_ACCOUNT_DESCRIPTORS
+      .map((descriptor) => createDescriptorOauthAdapter(descriptor))
+      .filter((adapter): adapter is ConnectedServiceOauthAdapter => adapter !== null)
+      .map((adapter) => [adapter.serviceId, adapter]),
+  ),
+);
 
 export function getConnectedServiceOauthAdapter(serviceId: ConnectedServiceId): ConnectedServiceOauthAdapter | null {
   return ADAPTERS_BY_SERVICE_ID[serviceId] ?? null;

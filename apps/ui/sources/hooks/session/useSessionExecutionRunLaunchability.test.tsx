@@ -74,7 +74,7 @@ vi.mock('@/sync/domains/executionRuns/canLaunchExecutionRunsForSession', () => (
     canLaunchExecutionRunsForSession: () => true,
 }));
 
-vi.mock('@/sync/domains/session/directSessions/resolveSessionMachineId', () => ({
+vi.mock('@/sync/domains/session/external/resolveSessionMachineId', () => ({
     resolveSessionMachineId: () => 'machine-1',
 }));
 

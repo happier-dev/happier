@@ -57,6 +57,7 @@ import {
 } from './petSettingsCommandEvents';
 import type {
     CodexDetectionState,
+    LocalPetImportDiagnostic,
     LocalDevicePetRow,
     PetImportCandidate,
 } from './petsSettingsScreen/types';
@@ -80,6 +81,7 @@ export function PetsSettingsScreen() {
     const [discoveredPets, setDiscoveredPets] = React.useState<DiscoveredPetPackageV1[]>([]);
     const [importedLocalPets, setImportedLocalPets] = React.useState<ImportedLocalPetPackageV1[]>([]);
     const [importedAccountPets, setImportedAccountPets] = React.useState<AccountPetLibraryEntryV1[]>([]);
+    const [localImportDiagnostic, setLocalImportDiagnostic] = React.useState<LocalPetImportDiagnostic | null>(null);
     const removingLocalPetSourceKeysRef = React.useRef(new Set<string>());
     const forgottenLocalPetSourceKeysRef = React.useRef(new Set<string>());
     const showDesktopOverlaySettings = isTauriDesktop();
@@ -201,6 +203,7 @@ export function PetsSettingsScreen() {
         if (!targetMachineId || !targetServerId) return;
         const payload = buildImportPayload(candidate);
         if (!payload) return;
+        setLocalImportDiagnostic(null);
         try {
             const raw = await machineRpcWithServerScope<unknown, DaemonPetImportLocalPackageRequestV1>({
                 machineId: targetMachineId,
@@ -209,8 +212,17 @@ export function PetsSettingsScreen() {
                 payload,
             });
             const parsed = DaemonPetImportLocalPackageResponseV1Schema.parse(raw);
+            if ('ok' in parsed && parsed.ok === false) {
+                setLocalImportDiagnostic({
+                    code: typeof parsed.errorCode === 'string' ? parsed.errorCode : 'daemon_import_failed',
+                });
+                return;
+            }
             const importedPetResult = ImportedLocalPetPackageV1Schema.safeParse(parsed.importedPet);
-            if (!importedPetResult.success || importedPetResult.data.source.kind !== 'happierManagedLocal') return;
+            if (!importedPetResult.success || importedPetResult.data.source.kind !== 'happierManagedLocal') {
+                setLocalImportDiagnostic({ code: 'invalid_response' });
+                return;
+            }
             const importedPet = importedPetResult.data;
             forgottenLocalPetSourceKeysRef.current.delete(importedPet.sourceKey);
             setImportedLocalPets((pets) => upsertByKey(pets, importedPet, (pet) => pet.sourceKey));
@@ -225,6 +237,7 @@ export function PetsSettingsScreen() {
                 },
             });
         } catch {
+            setLocalImportDiagnostic({ code: 'daemon_import_failed' });
             setImportedLocalPets((pets) => pets);
         }
     }, [applyLocalSettings, targetMachineId, targetServerId]);
@@ -380,6 +393,7 @@ export function PetsSettingsScreen() {
                 localPetRows={localSelectorRows}
                 onDiscoverPets={discoverPets}
                 onSelectBuiltInPet={handleSelectBuiltInPet}
+                importDiagnostic={localImportDiagnostic}
                 selectedBuiltInPetId={selectedBuiltInPetId}
             />
 

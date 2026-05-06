@@ -335,7 +335,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                         .map((option) => {
                                             const isSelected = selectedTileValue === option.value;
                                             const isFavorite = props.favoriteOptions?.values.has(option.value) === true;
-                                            const canToggleFavorite = isSelected
+                                            const canToggleFavorite = (isSelected || isFavorite)
                                                 && Boolean(props.favoriteOptions)
                                                 && (props.favoriteOptions?.isFavoritable?.(option) ?? true);
                                             return (
@@ -355,47 +355,48 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                                         ];
                                                     }}
                                                 >
+                                                    <View
+                                                        testID={isSelected ? `model-picker-overlay-option-selected-indicator:${option.value}` : undefined}
+                                                        pointerEvents="box-none"
+                                                        style={styles.optionCardIndicator}
+                                                    >
+                                                        {isSelected ? (
+                                                            <Ionicons
+                                                                name="checkmark-outline"
+                                                                size={14}
+                                                                color={theme.colors.text}
+                                                                style={styles.optionCardIndicatorIcon}
+                                                            />
+                                                        ) : null}
+                                                        {canToggleFavorite ? (
+                                                            <Pressable
+                                                                testID={`${optionTestIDPrefix}-favorite:${option.value}`}
+                                                                accessibilityRole="button"
+                                                                accessibilityLabel={
+                                                                    props.favoriteOptions?.getAccessibilityLabel?.(option, isFavorite)
+                                                                    ?? (isFavorite
+                                                                        ? t('profiles.actions.removeFromFavorites')
+                                                                        : t('profiles.actions.addToFavorites'))
+                                                                }
+                                                                hitSlop={8}
+                                                                onPress={(event) => {
+                                                                    event?.stopPropagation?.();
+                                                                    props.favoriteOptions?.onToggle(option);
+                                                                }}
+                                                                style={styles.optionFavoriteButton}
+                                                            >
+                                                                <Ionicons
+                                                                    name={isFavorite ? 'star' : 'star-outline'}
+                                                                    size={15}
+                                                                    color={isFavorite ? selectedIndicatorColor : theme.colors.textSecondary}
+                                                                />
+                                                            </Pressable>
+                                                        ) : null}
+                                                    </View>
                                                     <View style={styles.optionCardHeader}>
                                                         <Text style={[styles.optionCardTitle, isSelected ? styles.optionCardTitleSelected : null]}>
                                                             {option.label}
                                                         </Text>
-                                                        <View
-                                                            testID={isSelected ? `model-picker-overlay-option-selected-indicator:${option.value}` : undefined}
-                                                            style={styles.optionCardIndicator}
-                                                        >
-                                                            {isSelected ? (
-                                                                <Ionicons
-                                                                    name="checkmark-outline"
-                                                                    size={14}
-                                                                    color={theme.colors.text}
-                                                                    style={styles.optionCardIndicatorIcon}
-                                                                />
-                                                            ) : null}
-                                                            {canToggleFavorite ? (
-                                                                <Pressable
-                                                                    testID={`${optionTestIDPrefix}-favorite:${option.value}`}
-                                                                    accessibilityRole="button"
-                                                                    accessibilityLabel={
-                                                                        props.favoriteOptions?.getAccessibilityLabel?.(option, isFavorite)
-                                                                        ?? (isFavorite
-                                                                            ? t('profiles.actions.removeFromFavorites')
-                                                                            : t('profiles.actions.addToFavorites'))
-                                                                    }
-                                                                    hitSlop={8}
-                                                                    onPress={(event) => {
-                                                                        event?.stopPropagation?.();
-                                                                        props.favoriteOptions?.onToggle(option);
-                                                                    }}
-                                                                    style={styles.optionFavoriteButton}
-                                                                >
-                                                                    <Ionicons
-                                                                        name={isFavorite ? 'star' : 'star-outline'}
-                                                                        size={15}
-                                                                        color={isFavorite ? selectedIndicatorColor : theme.colors.textSecondary}
-                                                                    />
-                                                                </Pressable>
-                                                            ) : null}
-                                                        </View>
                                                     </View>
                                                     {option.description ? (
                                                         <Text style={styles.optionCardDescription}>
@@ -551,6 +552,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 8,
     },
     optionCard: {
+        position: 'relative',
         borderRadius: 12,
         paddingHorizontal: 7,
         paddingVertical: 7,
@@ -570,6 +572,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'flex-start',
         justifyContent: 'space-between',
         gap: 6,
+        paddingRight: 32,
     },
     optionCardTitle: {
         flex: 1,
@@ -581,6 +584,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text,
     },
     optionCardIndicator: {
+        position: 'absolute',
+        top: 7,
+        right: 7,
+        zIndex: 2,
+        elevation: 2,
         alignItems: 'flex-end',
         justifyContent: 'flex-start',
         gap: 6,
@@ -597,6 +605,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     optionCardDescription: {
         fontSize: 12,
         color: theme.colors.textSecondary,
+        paddingRight: 32,
     },
     inlineSelectedControls: {
         marginTop: 10,

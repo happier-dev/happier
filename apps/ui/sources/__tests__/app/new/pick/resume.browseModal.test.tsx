@@ -84,7 +84,7 @@ vi.mock('@/components/sessions/new/components/NewSessionResumeSelectionContent',
     },
 }));
 
-vi.mock('@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal', () => ({
+vi.mock('@/components/sessions/external/browse/openDirectSessionsResumeIdPickerModal', () => ({
     openDirectSessionsResumeIdPickerModal: (args: unknown) => openDirectSessionsResumeIdPickerModalMock(args),
 }));
 

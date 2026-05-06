@@ -7,7 +7,7 @@ import {
     isClaudeSubagentLauncherResource,
 } from '@/agents/providers/claude/sessionSubagents/createClaudeSubagentLauncherDetailsTab';
 import { SessionClaudeSubagentLauncherView } from '@/agents/providers/claude/sessionSubagents/SessionClaudeSubagentLauncherView';
-import { resolveClaudeBrowseSourceOptions } from '@/agents/providers/claude/directSessions/resolveClaudeBrowseSourceOptions';
+import { resolveClaudeBrowseSourceOptions } from '@/agents/providers/claude/externalSessions/resolveClaudeBrowseSourceOptions';
 import { buildClaudeSessionHandoffProviderPatch } from '@/agents/providers/claude/buildClaudeSessionHandoffProviderPatch';
 
 export const CLAUDE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {

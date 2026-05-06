@@ -1557,6 +1557,25 @@ export const zhHans: TranslationStructure = {
     remoteHostsPrivateKeySavedHint: "私钥已保存。留空以保持不变。",
     remoteHostsSecretMaterialDisabledTitle: "已禁用保存机密",
     remoteHostsSecretMaterialDisabledSubtitle: "此构建不允许保存密码或私钥。",
+    remoteHostsSetupAsMachineTitle: "设置为 Happier 机器",
+    remoteHostsSetupAsMachineFailed: "无法将此主机设置为 Happier 机器。",
+    remoteHostsConnectFromThisDeviceTitle: "从此设备连接",
+    remoteHostsConnectFromThisDeviceSubtitle: "仅限此设备。为此应用会话打开本地 SSH 隧道。",
+    remoteHostsConnectFromThisDeviceFailed: "无法打开本地 SSH 隧道。",
+    remoteHostsSshTunnelGroupTitle: "从此设备访问远程主机",
+    remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `${host} 的 SSH 隧道已启用`,
+    remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `仅限此设备。本地端点：${url}`,
+    remoteHostsSshTunnelStopTitle: "停止本地 SSH 隧道",
+    remoteHostsUseAsRelayHostTitle: "用作 Relay 主机",
+    remoteHostsUseAsRelayHostSubtitle: "在此 SSH 主机上配置 Relay 访问。",
+    remoteHostsConfigureAccessTitle: "配置访问",
+    remoteHostsConfigureAccessSubtitle: "选择此远程主机的访问方式。",
+    remoteHostsOpenDetailsTitle: "主机详情",
+    remoteHostsRelayAccessGroupTitle: "远程访问",
+    remoteHostsRelayAccessActiveTitle: ({ host }: { host: string }) => `正在为 ${host} 配置访问`,
+    remoteHostsRelayAccessActiveSubtitle: "Relay 访问命令会通过 SSH 在远程主机上运行。这不会创建 SSH 隧道。",
+    remoteHostsMissingServerUrl: "设置远程机器前请选择服务器。",
+    remoteHostsRelayAccessIdentityFileRequired: "此主机上的 Relay 访问需要本地 SSH 身份文件。",
     remoteHostsTestConnectionTitle: "测试连接",
     remoteHostsInstallOrUpdateCliTitle: "安装或更新 CLI",
     remoteHostsDaemonServiceInstallOrUpdateTitle: "安装或更新守护进程服务",
@@ -1574,6 +1593,20 @@ export const zhHans: TranslationStructure = {
     remoteHostsPasswordRequiredTitle: "需要 SSH 密码",
     remoteHostsConnectionSucceeded: "连接成功。",
     remoteHostsConnectionFailed: "连接失败。",
+    sshConfiguredHostPickerTitle: "建议的 SSH 主机",
+    sshConfiguredHostPickerSubtitle: "从本地 SSH 配置或 known_hosts 填充。",
+    sshConfiguredHostPickerRefreshingSubtitle: "正在刷新建议；仍显示上次结果。",
+    sshConfiguredHostPickerSourceSshConfig: "SSH 配置",
+    sshConfiguredHostPickerSourceKnownHosts: "known_hosts",
+    sshConfiguredHostPickerUnsupportedTitle: "手动输入 SSH 详细信息",
+    sshConfiguredHostPickerUnsupportedSubtitle: "本地 SSH 发现仅在桌面应用中可用。",
+    sshConfiguredHostPickerLoadingTitle: "正在查找 SSH 主机…",
+    sshConfiguredHostPickerLoadingSubtitle: "正在通过桌面桥检查本地 SSH 配置和 known_hosts。",
+    sshConfiguredHostPickerEmptyTitle: "没有建议的 SSH 主机",
+    sshConfiguredHostPickerEmptySubtitle: "手动输入 SSH 详细信息，或更新 SSH 配置后刷新。",
+    sshConfiguredHostPickerErrorTitle: "无法加载 SSH 建议",
+    sshConfiguredHostPickerRefreshTitle: "刷新 SSH 建议",
+    sshConfiguredHostPickerRefreshingTitle: "正在刷新 SSH 建议",
     features: "功能",
     social: "社交",
     account: "账户",
@@ -1739,6 +1772,41 @@ export const zhHans: TranslationStructure = {
       missingToken: '请输入令牌以继续。',
       webHandoffTitle: '在电脑上运行',
       webHandoffSubtitle: '使用 CLI 配置 relay 访问，然后回到这里并刷新。',
+    },
+    accessEndpoints: {
+      scope: {
+        availableToOtherDevices: 'Available to other devices',
+        thisDeviceOnly: 'This device only',
+      },
+      direction: {
+        makeCurrentServerReachable: 'Make this server reachable',
+        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
+        unknown: 'Access channel',
+      },
+      kind: {
+        'relay-access-provider': 'Relay access',
+        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
+        'ssh-tunnel-native': 'Native SSH tunnel',
+        'server-profile-url': 'Server URL',
+        'peer-mediation': 'Peer mediation',
+        'manual-url': 'Manual URL',
+      },
+      recommendedUse: {
+        'multi-device': 'Best for other devices',
+        'native-this-device': 'Works in this native app',
+        'hosted-web': 'Works from hosted web',
+        'lan-only': 'LAN or private network only',
+        diagnostic: 'Needs attention',
+      },
+      limitation: {
+        'this-device-only': 'This device only',
+        'not-hosted-web-compatible': 'Not available to hosted web',
+        'not-public-share-url': 'Not a public share URL',
+        'session-scoped': 'Session scoped',
+        'foreground-only': 'Requires the app to stay in the foreground',
+        'requires-auth': 'Requires SSH authentication',
+        'requires-host-key-trust': 'Requires host-key trust',
+      },
     },
     systemTaskStepPrepare: "准备任务",
     systemTaskStepInstallRuntime: "安装运行时",
@@ -2170,6 +2238,7 @@ export const zhHans: TranslationStructure = {
       openai: "OpenAI API 密钥",
       anthropic: "Anthropic API 密钥",
       gemini: "Google Gemini（谷歌）",
+      github: "GitHub",
     },
     title: "已连接服务",
     authChip: {
@@ -2288,6 +2357,12 @@ export const zhHans: TranslationStructure = {
       connectApiKeySubtitle: "粘贴 Anthropic 的 API 密钥",
       connectSetupTokenTitle: "通过 setup-token 连接",
       connectSetupTokenSubtitle: "粘贴 Claude 的 setup-token（来自 claude setup-token）",
+      connectPersonalAccessTokenTitle: "连接个人访问令牌",
+      connectPersonalAccessTokenSubtitle: "粘贴细粒度个人访问令牌",
+      openTokenSetupTitle: "打开令牌设置",
+      openTokenSetupSubtitle: "打开提供商设置页面",
+      openPersonalAccessTokenSetupTitle: "创建个人访问令牌",
+      openPersonalAccessTokenSetupSubtitle: "打开 GitHub 细粒度令牌设置",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `断开 ${service}（${profileId}）？`,
       prompts: {
@@ -2299,6 +2374,9 @@ export const zhHans: TranslationStructure = {
         setupTokenTitle: "设置令牌",
         setupTokenBody: "粘贴你的 Claude setup-token（来自 claude setup-token）。",
         setupTokenPlaceholder: "例如 sk-ant-oat01-…",
+        personalAccessTokenTitle: "个人访问令牌",
+        personalAccessTokenBody: "粘贴你的 GitHub 细粒度个人访问令牌。",
+        personalAccessTokenPlaceholder: "github_pat_…",
         profileLabelTitle: "配置标签",
         profileLabelBody: "可选。在认证选择器中显示。",
         profileLabelPlaceholder: "工作账号",
@@ -2732,6 +2810,8 @@ export const zhHans: TranslationStructure = {
     accountLibraryTitle: '账户库',
     accountLibraryFooter: '已同步的宠物可在你登录的设备上使用。',
     accountPetTileSubtitle: '已从你的账户同步。',
+    importToDeviceDaemonErrorTitle: '无法导入宠物',
+    importToDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `daemon 无法导入此宠物。请重新检测 Codex 宠物后再试。(${code})`,
     importToAccountTitle: '导入到账户',
     importToAccountSubtitle: '上传兼容的本地宠物以跨设备使用。',
     desktopOverlayTitle: '桌面悬浮层',
@@ -3780,6 +3860,9 @@ export const zhHans: TranslationStructure = {
       codexAcp: {
         title: "Codex ACP 适配器",
       },
+      gh: {
+        title: "GitHub CLI",
+      },
     },
     ui: {
       notAvailable: "不可用",
@@ -4001,6 +4084,19 @@ export const zhHans: TranslationStructure = {
       reinstallTitle: "重新安装 Codex ACP？",
       description:
         "这将安装一个围绕 Codex 的实验性 ACP 适配器，用于加载/恢复线程。",
+    },
+    ghCliBanner: {
+      title: "GitHub CLI",
+      install: "安装",
+      update: "更新",
+      reinstall: "重新安装",
+    },
+    ghCliInstallModal: {
+      installTitle: "安装 GitHub CLI？",
+      updateTitle: "更新 GitHub CLI？",
+      reinstallTitle: "重新安装 GitHub CLI？",
+      description:
+        "确认后，这将安装 GitHub 源代码控制工作流使用的可选 GitHub CLI 依赖项。",
     },
   },
 
@@ -4349,8 +4445,20 @@ export const zhHans: TranslationStructure = {
   commandPalette: {
     placeholder: "输入命令或搜索...",
     noCommandsFound: "未找到命令",
+    pets: {
+      category: "宠物",
+      wakeTitle: "唤醒宠物",
+      wakeSubtitle: "在此界面显示伙伴。",
+      tuckTitle: "收起宠物",
+      tuckSubtitle: "在此界面隐藏伙伴。",
+      resetPositionTitle: "重置宠物位置",
+      resetPositionSubtitle: "将伙伴移回默认位置。",
+      chooseTitle: "选择宠物",
+      chooseSubtitle: "打开宠物设置。",
+      refreshCodexTitle: "刷新 Codex 宠物",
+      refreshCodexSubtitle: "打开设置并检测本地 Codex 宠物。",
+    },
   },
-
   commandView: {
     completedWithNoOutput: "[命令完成且无输出]",
   },
@@ -4505,7 +4613,6 @@ export const zhHans: TranslationStructure = {
     signedOut: "未登录",
     authStatusUnknown: "认证状态未知",
     switchToServer: "切换到此 Relay",
-    manageRelay: "管理 Relay",
     active: "当前",
     default: "默认",
     addServerTitle: "添加 Relay",
@@ -5286,6 +5393,12 @@ export const zhHans: TranslationStructure = {
       searchFailed: "搜索失败。请重试。",
     },
     detachedHead: "游离 HEAD",
+    indexLockRecovery: {
+      title: "移除过期的 Git index lock？",
+      body: "Happier 可以移除 Git 为此仓库解析出的 index.lock 文件，并且只重试一次失败的源代码控制操作。这不会运行 reset、clean、restore 或任何宽泛修复。",
+      confirm: "移除锁并重试",
+      failed: ({ error }: { error: string }) => `index lock 恢复失败：${error}`,
+    },
     branchSwitchDialog: {
       title: "切换分支",
       body: "你有未提交的更改。你想如何处理？",
@@ -5411,10 +5524,24 @@ export const zhHans: TranslationStructure = {
       `会话归因的变更（${count}）`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `最近一轮变更（${count}）`,
+    agentReportedTurnChanges: ({ count }: { count: number }) =>
+      `代理报告的最近一轮（${count}）`,
+    checkpointTurnChanges: ({ count }: { count: number }) =>
+      `检查点最近一轮（${count}）`,
     selectedForCommitChanges: ({ count }: { count: number }) =>
       `已选择提交（${count}）`,
     latestTurnDescription:
       '来自最近一次已完成轮次的提供方变更。',
+    agentReportedTurnDescription:
+      '代理/runtime 为最近一次已完成轮次报告的文件。',
+    checkpointAttributionExclusive:
+      '检查点内容对该轮次区间是精确的，并且该 worktree 仅此会话使用。',
+    checkpointAttributionShared:
+      '检查点内容对仓库区间是精确的。由于该 worktree 被共享，归因能力有限。',
+    checkpointAttributionUnknown:
+      '检查点内容对仓库区间是精确的。行为者归因未知。',
+    checkpointUnavailable:
+      '此轮次的检查点证据不可用。',
     otherRepositoryChanges: ({ count }: { count: number }) =>
       `其他仓库变更（${count}）`,
     attributionReliabilityHigh:
@@ -5430,6 +5557,10 @@ export const zhHans: TranslationStructure = {
       "当前未检测到会话归因的变更。",
     noLatestTurnChanges:
       "当前未检测到最近一轮的变更。",
+    noAgentReportedTurnChanges:
+      "当前未检测到此轮次的代理报告变更。",
+    noCheckpointTurnChanges:
+      "当前未检测到此轮次的检查点变更。",
     notRepo: "不是版本控制仓库",
     notUnderSourceControl: "此目录不在版本控制下",
     searching: "正在搜索文件...",
@@ -5534,6 +5665,7 @@ export const zhHans: TranslationStructure = {
         cannotDisplayBinary: "无法显示二进制文件内容",
         diff: "差异",
       file: "文件",
+      markdown: "Markdown",
     diffModes: {
       pending: "待处理",
       included: "已包含",
@@ -5563,6 +5695,8 @@ export const zhHans: TranslationStructure = {
       repositoryView: "仓库视图",
       selectedForCommitView: "已选择提交",
       turnView: "轮次视图",
+      agentReportedTurnView: "代理报告轮次",
+      checkpointTurnView: "检查点轮次",
       sessionView: "会话视图",
       view: "视图",
       review: "审阅",

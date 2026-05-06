@@ -55,4 +55,9 @@ describe('parseSessionSlashCommand', () => {
         expect(parseSessionSlashCommand('/h.runs')).toEqual({ kind: 'action', actionId: 'execution.run.list', rest: '' });
         expect(parseSessionSlashCommand(' /h.runs ')).toEqual({ kind: 'action', actionId: 'execution.run.list', rest: '' });
     });
+
+    it('parses /pet and /h.pet as pet chooser actions', () => {
+        expect(parseSessionSlashCommand('/pet')).toEqual({ kind: 'action', actionId: 'ui.pet.choose', rest: '' });
+        expect(parseSessionSlashCommand(' /h.pet  ')).toEqual({ kind: 'action', actionId: 'ui.pet.choose', rest: '' });
+    });
 });

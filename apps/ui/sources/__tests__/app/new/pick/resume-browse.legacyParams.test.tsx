@@ -71,14 +71,14 @@ installPickerCommonModuleMocks({
     unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 });
 
-vi.mock('@/components/sessions/directSessions/browse/DirectSessionsBrowseScreen', () => ({
+vi.mock('@/components/sessions/external/browse/DirectSessionsBrowseScreen', () => ({
     DirectSessionsBrowseScreen: (props: Record<string, unknown>) => {
         browseScreenPropsRef.current = props;
         return null;
     },
 }));
 
-vi.mock('@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption', () => ({
+vi.mock('@/components/sessions/external/browse/resolveDirectBrowseLockedSourceOption', () => ({
     canBrowseDirectSessions: () => true,
     resolveDirectBrowseLockedSource: () => ({ kind: 'test' }),
 }));

@@ -8,7 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ScmProjectInFlightOperation } from '@/sync/runtime/orchestration/projectManager';
 
-export type FileDisplayMode = 'file' | 'diff';
+export type FileDisplayMode = 'file' | 'diff' | 'markdown';
 export type FileDiffMode = 'included' | 'pending' | 'both';
 
 const FILE_ACTION_TOOLBAR_COMPACT_WIDTH = 520;
@@ -22,6 +22,7 @@ type FileActionToolbarProps = {
     onDisplayMode: (mode: FileDisplayMode) => void;
     showDiffToggle?: boolean;
     showFileToggle?: boolean;
+    showMarkdownToggle?: boolean;
     diffMode: FileDiffMode;
     onDiffMode: (mode: FileDiffMode) => void;
     hasPendingDelta: boolean;
@@ -58,6 +59,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         onDisplayMode,
         showDiffToggle,
         showFileToggle,
+        showMarkdownToggle,
         diffMode,
         onDiffMode,
         hasPendingDelta,
@@ -91,7 +93,10 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
     const showFileEditorActions = fileEditorEnabled === true;
     const shouldShowDiffToggle = showDiffToggle !== false;
     const shouldShowFileToggle = showFileToggle !== false;
-    const displayToggleCount = (shouldShowDiffToggle ? 1 : 0) + (shouldShowFileToggle ? 1 : 0);
+    const shouldShowMarkdownToggle = showMarkdownToggle === true;
+    const displayToggleCount = (shouldShowDiffToggle ? 1 : 0)
+        + (shouldShowFileToggle ? 1 : 0)
+        + (shouldShowMarkdownToggle ? 1 : 0);
     const shouldShowDisplayToggles = displayToggleCount > 1;
     const [displayMenuOpen, setDisplayMenuOpen] = React.useState(false);
     const [diffAreaMenuOpen, setDiffAreaMenuOpen] = React.useState(false);
@@ -140,8 +145,15 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                 icon: <Octicons name="file" size={commandIconSize} color={theme.colors.textSecondary} />,
             });
         }
+        if (shouldShowMarkdownToggle) {
+            items.push({
+                id: 'markdown',
+                title: t('files.markdown'),
+                icon: <Octicons name="markdown" size={commandIconSize} color={theme.colors.textSecondary} />,
+            });
+        }
         return items;
-    }, [commandIconSize, shouldShowDiffToggle, shouldShowFileToggle, theme.colors.textSecondary]);
+    }, [commandIconSize, shouldShowDiffToggle, shouldShowFileToggle, shouldShowMarkdownToggle, theme.colors.textSecondary]);
 
     const diffAreaItems = React.useMemo<DropdownMenuItem[]>(() => {
         const items: DropdownMenuItem[] = [];
@@ -169,7 +181,16 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         return items;
     }, [commandIconSize, hasIncludedDelta, hasPendingDelta, theme.colors.textSecondary]);
 
-    const selectedDisplayLabel = displayMode === 'diff' ? t('files.diff') : t('files.file');
+    const selectedDisplayLabel = displayMode === 'diff'
+        ? t('files.diff')
+        : displayMode === 'markdown'
+            ? t('files.markdown')
+            : t('files.file');
+    const selectedDisplayIconName = displayMode === 'diff'
+        ? 'diff'
+        : displayMode === 'markdown'
+            ? 'markdown'
+            : 'file';
     const selectedDiffAreaLabel = diffAreaItems.find((item) => item.id === diffMode)?.title
         ?? (diffMode === 'included'
             ? t('files.diffModes.included')
@@ -249,7 +270,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     items={displayModeItems}
                     selectedId={displayMode}
                     onSelect={(itemId) => {
-                        if (itemId === 'diff' || itemId === 'file') {
+                        if (itemId === 'diff' || itemId === 'file' || itemId === 'markdown') {
                             onDisplayMode(itemId);
                         }
                     }}
@@ -259,7 +280,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     popoverAnchorAlign="start"
                     trigger={({ toggle }) => renderDropdownTrigger({
                         label: selectedDisplayLabel,
-                        icon: <Octicons name={displayMode === 'diff' ? 'diff' : 'file'} size={commandIconSize} color={theme.colors.textSecondary} />,
+                        icon: <Octicons name={selectedDisplayIconName} size={commandIconSize} color={theme.colors.textSecondary} />,
                         selected: true,
                         testID: 'file-details-view-mode-menu',
                         toggle,

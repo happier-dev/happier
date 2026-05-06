@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, StyleSheet as ReactNativeStyleSheet, View } from 'react-native';
 import type { StyleProp, TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
+import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
 
 export type SegmentedTab<T extends string = string> = Readonly<{
     id: T;
@@ -31,7 +32,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     inner: {
         flexDirection: 'row',
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.segmentedControl.trackBackground,
         borderRadius: 9,
         padding: 2,
         width: '100%',
@@ -54,7 +55,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 5,
     },
     tabActive: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.segmentedControl.activeBackground,
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     tabLabel: {
@@ -72,7 +73,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) {
     const styles = stylesheet;
-    useUnistyles();
+    const { theme } = useUnistyles();
     const compact = props.compact;
 
     return (
@@ -92,6 +93,14 @@ function SegmentedTabBarInner<T extends string>(props: SegmentedTabBarProps<T>) 
                             accessibilityRole="tab"
                             accessibilityState={{ selected: active }}
                         >
+                            {active ? (
+                                <GradientSurface
+                                    fallbackColor={theme.colors.segmentedControl.activeBackground}
+                                    gradient={theme.colors.segmentedControl.activeGradient}
+                                    borderRadius={compact ? 5 : 7}
+                                    style={ReactNativeStyleSheet.absoluteFillObject}
+                                />
+                            ) : null}
                             <Text
                                 numberOfLines={1}
                                 ellipsizeMode="tail"

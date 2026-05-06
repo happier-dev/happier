@@ -562,6 +562,13 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                 footer={t('settings.relayAccess.footer')}
             >
                 <Item
+                    testID="settings.server.accessEndpoints.outwardScope"
+                    title={t('settings.accessEndpoints.scope.availableToOtherDevices')}
+                    subtitle={t('settings.accessEndpoints.direction.makeCurrentServerReachable')}
+                    showChevron={false}
+                    mode="info"
+                />
+                <Item
                     testID="settings.server.relayAccess.status"
                     title={t('settings.relayAccess.statusTitle')}
                     subtitle={isUnavailable

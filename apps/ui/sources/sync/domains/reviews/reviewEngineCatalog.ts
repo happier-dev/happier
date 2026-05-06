@@ -1,5 +1,3 @@
-import { listNativeReviewEngines } from '@happier-dev/protocol';
-
 export type ExecutionRunsBackendSnapshotEntry = Readonly<{
   available?: boolean;
   intents?: readonly string[];
@@ -35,16 +33,5 @@ export function buildAvailableReviewEngineOptions(params: Readonly<{
       return { id, label: params.resolveAgentLabel(id), ...(disabled ? { disabled: true as const } : {}) } as any;
     });
 
-  const nativeOptions: ReviewEngineOption[] = listNativeReviewEngines()
-    .map((engine) => {
-      if (!backends) return { id: engine.id, label: engine.title };
-      const entry = backends[engine.id];
-      if (!entry) return { id: engine.id, label: engine.title }; // best-effort (older snapshots)
-      const available = Boolean(entry.available === true);
-      const reviewOk = supportsReviewIntent(entry);
-      const disabled = !(available && reviewOk);
-      return { id: engine.id, label: engine.title, ...(disabled ? { disabled: true as const } : {}) } as any;
-    });
-
-  return [...agentOptions, ...nativeOptions];
+  return agentOptions;
 }

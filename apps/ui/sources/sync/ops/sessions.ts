@@ -70,6 +70,7 @@ export {
     sessionScmRemoteRemove,
     sessionScmRemotePush,
     sessionScmRemoteSetUrl,
+    sessionScmRepositoryRemoveIndexLock,
     sessionScmStatusSnapshot,
     sessionScmStashApply,
     sessionScmStashDrop,

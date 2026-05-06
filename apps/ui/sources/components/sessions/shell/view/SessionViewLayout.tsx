@@ -1,15 +1,21 @@
 import Color from 'color';
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View, type LayoutChangeEvent, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { AgentContentView } from '@/components/sessions/transcript/AgentContentView';
+import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { isRunningOnMac } from '@/utils/platform/platform';
+import {
+    resolveSessionViewContentBottomSpacing,
+    SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX,
+    SESSION_VIEW_DEFAULT_CONTENT_BOTTOM_GAP_PX,
+} from './resolveSessionViewContentBottomSpacing';
 
 export type SessionViewLayoutProps = Readonly<{
     content: React.ReactNode;
@@ -26,10 +32,26 @@ export type SessionViewLayoutProps = Readonly<{
 export function SessionViewLayout(props: SessionViewLayoutProps) {
     const { theme } = useUnistyles();
     const safeArea = useChromeSafeAreaInsets();
+    const { width: windowWidth } = useWindowDimensions();
+    const [measuredContentWidth, setMeasuredContentWidth] = React.useState<number | null>(null);
     const showBackButton = props.isLandscape && props.deviceType === 'phone';
-    const contentPaddingBottom = props.chatBottomSpacing === 'none'
-        ? 0
-        : safeArea.bottom + ((isRunningOnMac() || Platform.OS === 'web') ? 32 : 0);
+    const handleContentLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const nextWidth = Math.trunc(event.nativeEvent.layout.width);
+        if (!Number.isFinite(nextWidth) || nextWidth <= 0) return;
+        setMeasuredContentWidth((currentWidth) => (
+            currentWidth === nextWidth ? currentWidth : nextWidth
+        ));
+    }, []);
+    const contentPaddingBottom = resolveSessionViewContentBottomSpacing({
+        chatBottomSpacing: props.chatBottomSpacing ?? 'default',
+        safeAreaBottomPx: safeArea.bottom,
+        availableWidthPx: measuredContentWidth ?? windowWidth,
+        contentMaxWidthPx: layout.maxWidth,
+        defaultContentBottomGapPx: (isRunningOnMac() || Platform.OS === 'web')
+            ? SESSION_VIEW_DEFAULT_CONTENT_BOTTOM_GAP_PX
+            : 0,
+        inputOuterBottomPaddingPx: SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX,
+    });
 
     return (
         <>
@@ -60,7 +82,10 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                 </Pressable>
             )}
 
-            <View style={{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, paddingBottom: contentPaddingBottom }}>
+            <View
+                onLayout={handleContentLayout}
+                style={{ flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, paddingBottom: contentPaddingBottom }}
+            >
                 <AgentContentView
                     content={props.content}
                     input={props.input}

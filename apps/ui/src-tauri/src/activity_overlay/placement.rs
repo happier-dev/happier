@@ -62,22 +62,58 @@ pub(crate) fn resolve_overlay_anchor_monitor_resolution(
             )
         }
         DesktopActivityOverlayDisplayMode::Focused => first_monitor([
-            (DesktopActivityOverlayMonitorSource::Focused, focused_monitor),
-            (DesktopActivityOverlayMonitorSource::MainWindow, main_window_monitor),
-            (DesktopActivityOverlayMonitorSource::OverlayWindow, overlay_window_monitor),
-            (DesktopActivityOverlayMonitorSource::Primary, primary_monitor),
+            (
+                DesktopActivityOverlayMonitorSource::Focused,
+                focused_monitor,
+            ),
+            (
+                DesktopActivityOverlayMonitorSource::MainWindow,
+                main_window_monitor,
+            ),
+            (
+                DesktopActivityOverlayMonitorSource::OverlayWindow,
+                overlay_window_monitor,
+            ),
+            (
+                DesktopActivityOverlayMonitorSource::Primary,
+                primary_monitor,
+            ),
         ]),
         DesktopActivityOverlayDisplayMode::Main => first_monitor([
-            (DesktopActivityOverlayMonitorSource::MainWindow, main_window_monitor),
-            (DesktopActivityOverlayMonitorSource::Focused, focused_monitor),
-            (DesktopActivityOverlayMonitorSource::OverlayWindow, overlay_window_monitor),
-            (DesktopActivityOverlayMonitorSource::Primary, primary_monitor),
+            (
+                DesktopActivityOverlayMonitorSource::MainWindow,
+                main_window_monitor,
+            ),
+            (
+                DesktopActivityOverlayMonitorSource::Focused,
+                focused_monitor,
+            ),
+            (
+                DesktopActivityOverlayMonitorSource::OverlayWindow,
+                overlay_window_monitor,
+            ),
+            (
+                DesktopActivityOverlayMonitorSource::Primary,
+                primary_monitor,
+            ),
         ]),
         DesktopActivityOverlayDisplayMode::BuiltIn => first_monitor([
-            (DesktopActivityOverlayMonitorSource::BuiltIn, built_in_monitor),
-            (DesktopActivityOverlayMonitorSource::MainWindow, main_window_monitor),
-            (DesktopActivityOverlayMonitorSource::OverlayWindow, overlay_window_monitor),
-            (DesktopActivityOverlayMonitorSource::Primary, primary_monitor),
+            (
+                DesktopActivityOverlayMonitorSource::BuiltIn,
+                built_in_monitor,
+            ),
+            (
+                DesktopActivityOverlayMonitorSource::MainWindow,
+                main_window_monitor,
+            ),
+            (
+                DesktopActivityOverlayMonitorSource::OverlayWindow,
+                overlay_window_monitor,
+            ),
+            (
+                DesktopActivityOverlayMonitorSource::Primary,
+                primary_monitor,
+            ),
         ]),
     }
 }
@@ -539,7 +575,10 @@ mod tests {
         )
         .expect("expected a resolved monitor");
 
-        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::BuiltIn);
+        assert_eq!(
+            resolved.source,
+            DesktopActivityOverlayMonitorSource::BuiltIn
+        );
         assert_eq!(resolved.rect.width, 1512.0);
     }
 
@@ -576,7 +615,10 @@ mod tests {
         )
         .expect("expected a resolved monitor");
 
-        assert_eq!(resolved.source, DesktopActivityOverlayMonitorSource::Focused);
+        assert_eq!(
+            resolved.source,
+            DesktopActivityOverlayMonitorSource::Focused
+        );
         assert_eq!(resolved.rect.x, 3000.0);
     }
 }

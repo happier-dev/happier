@@ -10,7 +10,7 @@ import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecu
 import { useSessionDirectSessionRuntime } from '@/components/sessions/model/useSessionDirectSessionRuntime';
 import { canLaunchExecutionRunsForSession } from '@/sync/domains/executionRuns/canLaunchExecutionRunsForSession';
 import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
-import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSettings } from '@/sync/domains/state/storage';

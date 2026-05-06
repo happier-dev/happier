@@ -36,3 +36,7 @@ export type PetSelectedPetOverride =
     | { kind: 'happierManagedLocal'; sourceKey: string };
 
 export type CodexDetectionState = 'idle' | 'loading' | 'success' | 'empty' | 'error' | 'noTarget' | 'daemonMismatch';
+
+export type LocalPetImportDiagnostic = Readonly<{
+    code: string;
+}>;

@@ -1464,6 +1464,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
     it('applies transcript-stream-segment ephemerals without crashing when session encryption is available through sync.handleEphemeralUpdate', async () => {
         const sessionId = 'direct_session_ephemeral_segment';
+        storage.setState((prev) => ({
+            ...prev,
+            settings: {
+                ...prev.settings,
+                transcriptStreamingCoalesceEnabled: false,
+            },
+        }));
         storage.getState().applySessions([createSession(sessionId)]);
 
         const { sync } = await import('./sync');

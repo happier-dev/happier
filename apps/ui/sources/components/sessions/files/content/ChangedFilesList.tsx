@@ -9,6 +9,7 @@ import { t } from '@/text';
 import { ChangedFilesSectionHeader } from '@/components/workspaces/scm/review/ChangedFilesSectionHeader';
 import { ScmChangeRow, resolveScmChangeStatsColumnWidth } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
+import type { RepositoryCheckpointTurnMetadata } from '@happier-dev/protocol';
 
 type ChangedFilesListProps = {
     theme: any;
@@ -16,6 +17,9 @@ type ChangedFilesListProps = {
     attributionReliability: SessionAttributionReliability;
     allRepositoryChangedFiles: ScmFileStatus[];
     turnAttributedFiles?: SessionAttributedFile[];
+    turnAgentReportedFiles?: SessionAttributedFile[];
+    turnCheckpointFiles?: SessionAttributedFile[];
+    turnCheckpointMetadata?: RepositoryCheckpointTurnMetadata | null;
     turnRepositoryOnlyFiles?: ScmFileStatus[];
     sessionAttributedFiles: SessionAttributedFile[];
     repositoryOnlyFiles: ScmFileStatus[];
@@ -29,12 +33,22 @@ type ChangedFilesListProps = {
     showSectionHeader?: boolean;
 };
 
+function resolveCheckpointAttributionCopy(metadata: RepositoryCheckpointTurnMetadata | null | undefined): string | null {
+    if (!metadata) return null;
+    if (metadata.contentConfidence === 'unavailable') return t('files.checkpointUnavailable');
+    if (metadata.attributionScope === 'shared_worktree') return t('files.checkpointAttributionShared');
+    return t('files.checkpointAttributionUnknown');
+}
+
 export function ChangedFilesList({
     theme,
     changedFilesViewMode,
     attributionReliability,
     allRepositoryChangedFiles,
     turnAttributedFiles = [],
+    turnAgentReportedFiles = [],
+    turnCheckpointFiles = [],
+    turnCheckpointMetadata = null,
     sessionAttributedFiles,
     suppressedInferredCount,
     onFilePress,
@@ -62,6 +76,18 @@ export function ChangedFilesList({
             return !isDirectoryLikeScmFileStatus(entry.file);
         });
     }, [turnAttributedFiles]);
+    const filteredTurnAgentReportedFiles = React.useMemo(() => {
+        return turnAgentReportedFiles.filter((entry) => {
+            if (!entry?.file) return false;
+            return !isDirectoryLikeScmFileStatus(entry.file);
+        });
+    }, [turnAgentReportedFiles]);
+    const filteredTurnCheckpointFiles = React.useMemo(() => {
+        return turnCheckpointFiles.filter((entry) => {
+            if (!entry?.file) return false;
+            return !isDirectoryLikeScmFileStatus(entry.file);
+        });
+    }, [turnCheckpointFiles]);
     const repositoryStatsColumnWidth = React.useMemo(
         () => resolveScmChangeStatsColumnWidth(repositoryChangedFiles),
         [repositoryChangedFiles],
@@ -69,6 +95,14 @@ export function ChangedFilesList({
     const turnStatsColumnWidth = React.useMemo(
         () => resolveScmChangeStatsColumnWidth(filteredTurnAttributedFiles.map((entry) => entry.file)),
         [filteredTurnAttributedFiles],
+    );
+    const agentReportedTurnStatsColumnWidth = React.useMemo(
+        () => resolveScmChangeStatsColumnWidth(filteredTurnAgentReportedFiles.map((entry) => entry.file)),
+        [filteredTurnAgentReportedFiles],
+    );
+    const checkpointTurnStatsColumnWidth = React.useMemo(
+        () => resolveScmChangeStatsColumnWidth(filteredTurnCheckpointFiles.map((entry) => entry.file)),
+        [filteredTurnCheckpointFiles],
     );
     const sessionStatsColumnWidth = React.useMemo(
         () => resolveScmChangeStatsColumnWidth(filteredSessionAttributedFiles.map((entry) => entry.file)),
@@ -132,7 +166,7 @@ export function ChangedFilesList({
                                 ...Typography.default(),
                             }}
                         >
-                            {t('files.latestTurnDescription')}
+                            {resolveCheckpointAttributionCopy(turnCheckpointMetadata) ?? t('files.latestTurnDescription')}
                         </Text>
                     </View>
                 ) : null}
@@ -161,6 +195,76 @@ export function ChangedFilesList({
                     ))
                 )}
 
+            </>
+        );
+    }
+
+    if (changedFilesViewMode === 'turn_agent_reported' || changedFilesViewMode === 'turn_checkpoint') {
+        const isCheckpointMode = changedFilesViewMode === 'turn_checkpoint';
+        const files = isCheckpointMode ? filteredTurnCheckpointFiles : filteredTurnAgentReportedFiles;
+        const statsColumnWidth = isCheckpointMode ? checkpointTurnStatsColumnWidth : agentReportedTurnStatsColumnWidth;
+        const checkpointUnavailable = isCheckpointMode && turnCheckpointMetadata?.contentConfidence === 'unavailable';
+        return (
+            <>
+                {showSectionHeader ? (
+                    <View
+                        style={{
+                            backgroundColor: theme.colors.surfaceHigh,
+                            paddingHorizontal: 16,
+                            paddingVertical: 12,
+                            borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                            borderBottomColor: theme.colors.divider,
+                        }}
+                    >
+                        <Text
+                            style={{
+                                fontSize: 14,
+                                color: theme.colors.text,
+                                ...Typography.default('semiBold'),
+                            }}
+                        >
+                            {isCheckpointMode
+                                ? t('files.checkpointTurnChanges', { count: files.length })
+                                : t('files.agentReportedTurnChanges', { count: files.length })}
+                        </Text>
+                        <Text
+                            style={{
+                                marginTop: 4,
+                                fontSize: 12,
+                                color: theme.colors.textSecondary,
+                                ...Typography.default(),
+                            }}
+                        >
+                            {isCheckpointMode
+                                ? resolveCheckpointAttributionCopy(turnCheckpointMetadata)
+                                : t('files.agentReportedTurnDescription')}
+                        </Text>
+                    </View>
+                ) : null}
+
+                {files.length === 0 && !checkpointUnavailable ? (
+                    <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                            {isCheckpointMode ? t('files.noCheckpointTurnChanges') : t('files.noAgentReportedTurnChanges')}
+                        </Text>
+                    </View>
+                ) : files.length > 0 ? (
+                    files.map((entry, index) => (
+                        <ScmChangeRow
+                            key={`${isCheckpointMode ? 'turn-checkpoint' : 'turn-agent'}-${entry.file.fullPath}-${index}`}
+                            theme={theme}
+                            file={entry.file}
+                            density={rowDensity}
+                            leadingElement={renderFileActions ? renderFileActions(entry.file) : null}
+                            trailingElement={renderFileTrailingActions ? renderFileTrailingActions(entry.file) : null}
+                            onPress={() => onFilePress(entry.file)}
+                            onPressPinned={onFilePressPinned ? () => onFilePressPinned(entry.file) : undefined}
+                            onToggleSelection={onToggleSelectionForFile ? () => onToggleSelectionForFile(entry.file) : undefined}
+                            statsColumnWidth={statsColumnWidth}
+                            showDivider={index < files.length - 1}
+                        />
+                    ))
+                ) : null}
             </>
         );
     }

@@ -629,6 +629,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [initialImplicitProfileId, selectedProfileId, useProfiles]);
     const {
         preflightModels,
+        preflightModelsTargetKey,
         modelOptions,
         modelOptionsProbeState,
         acpSessionModeOptions,
@@ -960,6 +961,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     } = useNewSessionAgentSelectionModelModeReconciliation({
         agentType,
         preflightModels,
+        preflightModelsTargetKey,
         useProfiles,
         selectedProfileId,
         profileMap,

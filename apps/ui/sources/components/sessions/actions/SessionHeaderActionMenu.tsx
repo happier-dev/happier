@@ -36,11 +36,11 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { machineDirectSessionFollowPolicySet } from '@/sync/ops/machineDirectSessions';
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
-import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
 import {
   readDirectSessionFollowPolicy,
   updateMetadataWithDirectSessionFollowPolicy,
-} from '@/sync/domains/session/directSessions/directSessionFollowMetadata';
+} from '@/sync/domains/session/external/directSessionFollowMetadata';
 import { sync } from '@/sync/sync';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';

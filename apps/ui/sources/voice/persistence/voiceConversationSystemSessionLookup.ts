@@ -1,6 +1,6 @@
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol';
 
-import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 
 export const VOICE_CONVERSATION_SYSTEM_SESSION_KEY = 'voice_conversation';

@@ -232,6 +232,29 @@ describe('DesktopActivityOverlayExpanded', () => {
         expect(screen.getTextContent()).toContain('Need your approval');
     });
 
+    it('uses a transparent scroll mask when expanded overlay content overflows', async () => {
+        const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
+
+        const screen = await renderScreen(
+            <DesktopActivityOverlayExpanded
+                visualMode="floating_overlay"
+                model={createModel()}
+                onOpenSession={() => {}}
+            />,
+        );
+        const scroll = screen.findByTestId('desktop-activity-overlay-expanded-scroll');
+
+        await act(async () => {
+            invokeTestInstanceHandler(scroll, 'onLayout', {
+                nativeEvent: { layout: { width: 420, height: 100 } },
+            });
+            scroll?.props.onContentSizeChange(420, 240);
+        });
+
+        expect(String(JSON.stringify(screen.findByTestId('desktop-activity-overlay-expanded-scroll')?.props.style)))
+            .toContain('transparent 100%');
+    });
+
     it('renders the notch-integrated chrome surface when the visual mode is notch integrated', async () => {
         const { DesktopActivityOverlayExpanded } = await import('./DesktopActivityOverlayExpanded');
 

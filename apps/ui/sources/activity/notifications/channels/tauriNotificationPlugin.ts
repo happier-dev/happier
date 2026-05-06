@@ -1,4 +1,10 @@
-type NotificationPermission = 'granted' | 'denied' | 'prompt';
+import {
+    isPermissionGranted as pluginIsPermissionGranted,
+    requestPermission as pluginRequestPermission,
+    sendNotification as pluginSendNotification,
+} from '@tauri-apps/plugin-notification';
+
+type NotificationPermission = Awaited<ReturnType<typeof pluginRequestPermission>>;
 
 type TauriNotificationModule = {
     isPermissionGranted: () => Promise<boolean>;
@@ -6,42 +12,20 @@ type TauriNotificationModule = {
     sendNotification: (payload: { title: string; body: string }) => void;
 };
 
-let cached: TauriNotificationModule | null = null;
-
-async function loadTauriNotificationModule(): Promise<TauriNotificationModule | null> {
-    if (cached) return cached;
-
-    // Keep the module specifier non-literal so TypeScript does not require
-    // this optional dependency in non-Tauri builds.
-    const moduleName: string = '@tauri-apps/plugin-notification';
-    try {
-        const mod = await import(moduleName) as unknown as Partial<TauriNotificationModule>;
-        if (
-            typeof mod.isPermissionGranted === 'function'
-            && typeof mod.requestPermission === 'function'
-            && typeof mod.sendNotification === 'function'
-        ) {
-            cached = mod as TauriNotificationModule;
-            return cached;
-        }
-    } catch {
-        // ignore
-    }
-    return null;
-}
+const plugin: TauriNotificationModule = {
+    isPermissionGranted: pluginIsPermissionGranted,
+    requestPermission: pluginRequestPermission,
+    sendNotification: pluginSendNotification,
+};
 
 export async function isPermissionGranted(): Promise<boolean> {
-    const mod = await loadTauriNotificationModule();
-    return mod ? await mod.isPermissionGranted() : false;
+    return await plugin.isPermissionGranted();
 }
 
 export async function requestPermission(): Promise<NotificationPermission> {
-    const mod = await loadTauriNotificationModule();
-    return mod ? await mod.requestPermission() : 'denied';
+    return await plugin.requestPermission();
 }
 
 export async function sendNotification(payload: { title: string; body: string }): Promise<void> {
-    const mod = await loadTauriNotificationModule();
-    if (!mod) return;
-    mod.sendNotification(payload);
+    plugin.sendNotification(payload);
 }

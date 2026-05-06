@@ -1,6 +1,6 @@
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 
-import type { DirectBrowseCandidate } from '@/components/sessions/directSessions/browse/useDirectBrowseCandidates';
+import type { DirectBrowseCandidate } from '@/components/sessions/external/browse/useDirectBrowseCandidates';
 
 const DEMO_MACHINE_ID = 'm-macbook-pro';
 const DEMO_PROJECT_PATH = '/Users/demo/code/happier';

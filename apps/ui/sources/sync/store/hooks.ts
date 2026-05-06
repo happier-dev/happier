@@ -24,6 +24,7 @@ import type { SessionListIndexItem } from '../domains/sessionList/sessionListInd
 import { deriveSessionListMeaningfulActivityAt } from '../domains/session/listing/deriveSessionListActivity';
 import type { ReviewCommentDraft } from '../domains/input/reviewComments/reviewCommentTypes';
 import type { SessionActionDraft } from '../domains/sessionActions/sessionActionDraftTypes';
+import type { UserProfile } from '../domains/social/friendTypes';
 import { buildSessionMessageRouteId, resolveSessionMessageRouteId } from '../domains/messages/messageRouteIds';
 import { useApplyLocalSettings, useApplySettings } from './settingsWriters';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
@@ -96,6 +97,12 @@ export function useSessionListRenderableWithServerScope(
 export function useSessionListRenderablesById(): Record<string, SessionListRenderableSession> {
   return getStorage()(useShallow((state) => state.sessionListRenderables));
 }
+
+export type SessionListAttentionRow = Readonly<{
+  serverId: string | null;
+  serverName: string | null;
+  session: SessionListRenderableSession;
+}>;
 
 export function useSessionListRowStateByServerId(): SessionsDomainSlice['sessionListRowStateByServerId'] {
   return getStorage()(useShallow((state) => state.sessionListRowStateByServerId));
@@ -494,7 +501,7 @@ export function useAllMachines(): Machine[] {
 export function useMachineRecordValues(): Machine[] {
   return getStorage()(
     useShallow((state) => {
-      if (!state.isDataReady) return [];
+      if (!state.isDataReady) return emptyArray as Machine[];
       return Object.values(state.machines);
     })
   );
@@ -574,19 +581,122 @@ export function useServerScopedMachine(serverId: string | null | undefined, mach
 export function useAllSessions(): Session[] {
   return getStorage()(
     useShallow((state) => {
-      if (!state.isDataReady) return [];
+      if (!state.isDataReady) return emptyArray as Session[];
       return sortValuesByUpdatedAtDescending(state.sessions);
     })
+  );
+}
+
+export function useAllSessionsForAttention(): Session[] {
+  return getStorage()(
+    useShallow((state) => sortValuesByUpdatedAtDescending(state.sessions))
   );
 }
 
 export function useAllSessionListRenderables(): SessionListRenderableSession[] {
   return getStorage()(
     useShallow((state) => {
-      if (!state.isDataReady) return [];
+      if (!state.isDataReady) return emptyArray as SessionListRenderableSession[];
       return sortValuesByUpdatedAtDescending(state.sessionListRenderables);
     })
   );
+}
+
+function normalizeOptionalString(value: string | null | undefined): string | null {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized ? normalized : null;
+}
+
+function appendSessionListAttentionRows(params: Readonly<{
+  rows: SessionListAttentionRow[];
+  seenKeys: Set<string>;
+  serverId: string | null;
+  serverName?: string | null;
+  sessions: Readonly<Record<string, SessionListRenderableSession>> | null | undefined;
+}>): void {
+  const sessions = params.sessions;
+  if (!sessions || typeof sessions !== 'object') return;
+
+  const serverId = normalizeOptionalString(params.serverId);
+  const serverName = normalizeOptionalString(params.serverName);
+  for (const sessionIdRaw in sessions) {
+    const sessionId = normalizeOptionalString(sessionIdRaw);
+    if (!sessionId) continue;
+    const session = sessions[sessionIdRaw];
+    if (!session) continue;
+
+    const key = `${serverId ?? 'local'}:${session.id}`;
+    if (params.seenKeys.has(key)) continue;
+    params.seenKeys.add(key);
+    params.rows.push({ serverId, serverName, session });
+  }
+}
+
+export function useAllSessionListAttentionRows(): SessionListAttentionRow[] {
+  const activeServerId = normalizeOptionalString(useActiveServerSnapshot().serverId);
+  const snapshot = getStorage()(
+    useShallow((state) => ({
+      isDataReady: state.isDataReady,
+      sessionListRenderables: state.sessionListRenderables,
+      sessionListRowStateByServerId: state.sessionListRowStateByServerId,
+      concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+    }))
+  );
+
+  return React.useMemo(() => {
+    const rows: SessionListAttentionRow[] = [];
+    const seenKeys = new Set<string>();
+
+    if (activeServerId) {
+      appendSessionListAttentionRows({
+        rows,
+        seenKeys,
+        serverId: activeServerId,
+        sessions: snapshot.sessionListRenderables,
+      });
+    } else {
+      appendSessionListAttentionRows({
+        rows,
+        seenKeys,
+        serverId: null,
+        sessions: snapshot.sessionListRenderables,
+      });
+    }
+
+    for (const serverIdRaw in snapshot.sessionListRowStateByServerId ?? {}) {
+      const serverId = normalizeOptionalString(serverIdRaw);
+      if (!serverId) continue;
+      appendSessionListAttentionRows({
+        rows,
+        seenKeys,
+        serverId,
+        sessions: snapshot.sessionListRowStateByServerId?.[serverIdRaw],
+      });
+    }
+
+    for (const serverIdRaw in snapshot.concurrentSessionListCacheByServerId ?? {}) {
+      const serverId = normalizeOptionalString(serverIdRaw);
+      if (!serverId) continue;
+      const entry = snapshot.concurrentSessionListCacheByServerId?.[serverIdRaw];
+      appendSessionListAttentionRows({
+        rows,
+        seenKeys,
+        serverId,
+        serverName: entry?.serverName ?? null,
+        sessions: entry?.sessions,
+      });
+    }
+
+    if (rows.length > 1) {
+      rows.sort((left, right) => right.session.updatedAt - left.session.updatedAt);
+    }
+    return rows;
+  }, [
+    activeServerId,
+    snapshot.concurrentSessionListCacheByServerId,
+    snapshot.sessionListRenderables,
+    snapshot.sessionListRowStateByServerId,
+  ]);
 }
 
 export function useLocalSettingMutable<K extends keyof LocalSettings>(
@@ -745,7 +855,7 @@ export function useLocalSetting<K extends keyof LocalSettings>(name: K): LocalSe
 export function useArtifacts(): DecryptedArtifact[] {
   return getStorage()(
     useShallow((state) => {
-      if (!state.isDataReady) return [];
+      if (!state.isDataReady) return emptyArray as DecryptedArtifact[];
       // Filter out draft artifacts from the main list
       return sortValuesByUpdatedAtDescending(state.artifacts).filter((artifact) => !artifact.draft);
     })
@@ -755,7 +865,7 @@ export function useArtifacts(): DecryptedArtifact[] {
 export function useAllArtifacts(): DecryptedArtifact[] {
   return getStorage()(
     useShallow((state) => {
-      if (!state.isDataReady) return [];
+      if (!state.isDataReady) return emptyArray as DecryptedArtifact[];
       // Return all artifacts including drafts
       return sortValuesByUpdatedAtDescending(state.artifacts);
     })
@@ -765,7 +875,7 @@ export function useAllArtifacts(): DecryptedArtifact[] {
 export function useAutomations(): Automation[] {
   return getStorage()(
     useShallow((state) => {
-      if (!state.isDataReady) return [];
+      if (!state.isDataReady) return emptyArray as Automation[];
       return sortValuesByUpdatedAtDescending(state.automations);
     })
   );
@@ -784,7 +894,7 @@ export function useAutomationRuns(automationId: string): AutomationRun[] {
 export function useDraftArtifacts(): DecryptedArtifact[] {
   return getStorage()(
     useShallow((state) => {
-      if (!state.isDataReady) return [];
+      if (!state.isDataReady) return emptyArray as DecryptedArtifact[];
       // Return only draft artifacts
       return sortValuesByUpdatedAtDescending(state.artifacts).filter((artifact) => artifact.draft === true);
     })
@@ -874,7 +984,8 @@ export function useFriendRequests() {
   return getStorage()(
     useShallow((state) => {
       // Filter friends to get pending requests (where status is 'pending')
-      return Object.values(state.friends).filter((friend) => friend.status === 'pending');
+      const requests = Object.values(state.friends).filter((friend) => friend.status === 'pending');
+      return requests.length > 0 ? requests : emptyArray as UserProfile[];
     })
   );
 }
@@ -882,7 +993,8 @@ export function useFriendRequests() {
 export function useAcceptedFriends() {
   return getStorage()(
     useShallow((state) => {
-      return Object.values(state.friends).filter((friend) => friend.status === 'friend');
+      const friends = Object.values(state.friends).filter((friend) => friend.status === 'friend');
+      return friends.length > 0 ? friends : emptyArray as UserProfile[];
     })
   );
 }
@@ -909,7 +1021,8 @@ export function useRequestedFriends() {
   return getStorage()(
     useShallow((state) => {
       // Filter friends to get sent requests (where status is 'requested')
-      return Object.values(state.friends).filter((friend) => friend.status === 'requested');
+      const requests = Object.values(state.friends).filter((friend) => friend.status === 'requested');
+      return requests.length > 0 ? requests : emptyArray as UserProfile[];
     })
   );
 }

@@ -7,6 +7,7 @@ import type { NormalizedMessage } from '../../typesRaw';
 import type { Session } from '../../domains/state/storageTypes';
 import { isToolPotentiallyMutableForScm } from '@/sync/domains/tools/toolMutationClassification';
 import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
+import { buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import type { SessionPending } from './pending';
@@ -69,6 +70,7 @@ export type MessagesDomain = {
 
 type MessagesDomainDependencies = {
     sessions: Record<string, Session>;
+    sessionListRenderables: Record<string, SessionListRenderableSession>;
     sessionPending: Record<string, SessionPending>;
 };
 
@@ -211,6 +213,16 @@ function findLatestThinkingMessageId(params: Readonly<{
         if (message.isThinking === true) return message.id;
     }
     return null;
+}
+
+function deriveLatestCommittedMessageSeq(messages: ReadonlyArray<Message>): number | null {
+    let latest: number | null = null;
+    for (const message of messages) {
+        const seq = normalizeSeq((message as { seq?: unknown }).seq);
+        if (seq === null) continue;
+        latest = latest === null ? seq : Math.max(latest, seq);
+    }
+    return latest;
 }
 
 export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
@@ -596,6 +608,16 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 // IMPORTANT: We extract latestUsage from the mutable reducerState and copy it to the Session object
                 // This ensures latestUsage is available immediately on load, even before messages are fully loaded
                 let updatedSessions = state.sessions;
+                let updatedSessionListRenderables = state.sessionListRenderables;
+                const latestCommittedMessageSeq = deriveLatestCommittedMessageSeq(processedMessages);
+                const currentSessionSeq =
+                    typeof session?.seq === 'number' && Number.isFinite(session.seq)
+                        ? Math.trunc(session.seq)
+                        : 0;
+                const shouldAdvanceSessionSeq =
+                    session != null
+                    && latestCommittedMessageSeq !== null
+                    && latestCommittedMessageSeq > currentSessionSeq;
                 const needsUpdate = (reducerResult.todos !== undefined || existingSession.reducerState.latestUsage) && session;
 
                 const canInferPermissionMode = Boolean(
@@ -615,22 +637,36 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     canInferPermissionMode &&
                     (session!.permissionMode ?? 'default') !== inferredPermissionMode;
 
-                if (needsUpdate || shouldWritePermissionMode) {
+                if (needsUpdate || shouldWritePermissionMode || shouldAdvanceSessionSeq) {
+                    const nextSession: Session = {
+                        ...session,
+                        ...(shouldAdvanceSessionSeq && { seq: latestCommittedMessageSeq }),
+                        ...(reducerResult.todos !== undefined && { todos: reducerResult.todos }),
+                        // Copy latestUsage from reducerState to make it immediately available
+                        latestUsage: existingSession.reducerState.latestUsage ? {
+                            ...existingSession.reducerState.latestUsage
+                        } : session.latestUsage,
+                        ...(shouldWritePermissionMode && {
+                            permissionMode: inferredPermissionMode,
+                            permissionModeUpdatedAt: inferredPermissionModeAt
+                        })
+                    };
+
                     updatedSessions = {
                         ...state.sessions,
-                        [sessionId]: {
-                            ...session,
-                            ...(reducerResult.todos !== undefined && { todos: reducerResult.todos }),
-                            // Copy latestUsage from reducerState to make it immediately available
-                            latestUsage: existingSession.reducerState.latestUsage ? {
-                                ...existingSession.reducerState.latestUsage
-                            } : session.latestUsage,
-                            ...(shouldWritePermissionMode && {
-                                permissionMode: inferredPermissionMode,
-                                permissionModeUpdatedAt: inferredPermissionModeAt
-                            })
-                        }
+                        [sessionId]: nextSession
                     };
+
+                    const previousRenderable = state.sessionListRenderables?.[sessionId];
+                    if (previousRenderable && shouldAdvanceSessionSeq) {
+                        const nextRenderable = buildSessionListRenderableFromSession(nextSession, previousRenderable, processedMessages);
+                        if (nextRenderable !== previousRenderable) {
+                            updatedSessionListRenderables = {
+                                ...state.sessionListRenderables,
+                                [sessionId]: nextRenderable,
+                            };
+                        }
+                    }
 
                     // Persist permission modes (only non-default values to save space)
                     // Note: this includes modes inferred from session messages so they load instantly on app restart.
@@ -651,10 +687,12 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 telemetryFields.agentStateVersionChanged = didApplyNewAgentStateVersion ? 1 : 0;
                 telemetryFields.messageStateChanged = didSessionMessagesChange ? 1 : 0;
                 telemetryFields.sessionChanged = updatedSessions === state.sessions ? 0 : 1;
+                telemetryFields.renderableChanged = updatedSessionListRenderables === state.sessionListRenderables ? 0 : 1;
                 telemetryFields.pendingChanged = updatedSessionPending === state.sessionPending ? 0 : 1;
                 if (
                     !didSessionMessagesChange
                     && updatedSessions === state.sessions
+                    && updatedSessionListRenderables === state.sessionListRenderables
                     && updatedSessionPending === state.sessionPending
                 ) {
                     telemetryFields.noop = 1;
@@ -667,6 +705,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 return {
                     ...state,
                     sessions: updatedSessions,
+                    sessionListRenderables: updatedSessionListRenderables,
                     sessionMessages: {
                         ...state.sessionMessages,
                         [sessionId]: {

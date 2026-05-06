@@ -87,6 +87,33 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
     expect(nextSession.archivedAt).toBe(1_700_000_000_000);
   });
 
+  it('applies primary runtime issue projection from update-session payloads', async () => {
+    const base = createSession({ sessionId: 's1', encryptionMode: 'plain' });
+    const issue = {
+      v: 1,
+      scope: 'primary_session',
+      status: 'failed',
+      code: 'provider_status_error',
+      source: 'provider_status_error',
+      occurredAt: 100,
+      sanitizedPreview: 'Provider reported an error',
+    } as const;
+
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({
+      session: base,
+      updateBody: {
+        latestTurnStatus: 'failed',
+        lastRuntimeIssue: issue,
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(nextSession.latestTurnStatus).toBe('failed');
+    expect(nextSession.lastRuntimeIssue).toEqual(issue);
+  });
+
   it('decrypts encrypted metadata and agent-state socket updates in one batch when available', async () => {
     const base = createSession({ sessionId: 's1', encryptionMode: 'e2ee' });
     syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 1_000_000, flushIntervalMs: 60_000 });

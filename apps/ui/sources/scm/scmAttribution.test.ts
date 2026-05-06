@@ -246,6 +246,38 @@ describe('changed files view mode availability', () => {
             showSessionViewToggle: false,
         })).toEqual(['repository', 'turn']);
     });
+
+    it('adds source-specific turn modes only when their evidence is available', () => {
+        expect(getPreferredChangedFilesViewMode({
+            showTurnViewToggle: true,
+            showTurnAgentReportedViewToggle: true,
+            showTurnCheckpointViewToggle: true,
+            showSessionViewToggle: true,
+        })).toBe('turn');
+
+        expect(getSelectableChangedFilesViewModes({
+            showTurnViewToggle: true,
+            showTurnAgentReportedViewToggle: true,
+            showTurnCheckpointViewToggle: true,
+            showSessionViewToggle: true,
+            showSelectedViewToggle: true,
+        })).toEqual([
+            'repository',
+            'selected',
+            'turn',
+            'turn_agent_reported',
+            'turn_checkpoint',
+            'session',
+        ]);
+
+        expect(resolveChangedFilesViewMode({
+            mode: 'turn_checkpoint',
+            showTurnViewToggle: true,
+            showTurnAgentReportedViewToggle: true,
+            showTurnCheckpointViewToggle: false,
+            showSessionViewToggle: true,
+        })).toBe('turn');
+    });
 });
 
 describe('getSessionAttributionReliability', () => {

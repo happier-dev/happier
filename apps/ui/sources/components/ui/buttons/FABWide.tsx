@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
 
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -15,17 +16,16 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     button: {
         borderRadius: 12,
-        paddingVertical: 12,
-        paddingHorizontal: 20,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
         alignItems: 'center',
         justifyContent: 'center',
     },
-    buttonDefault: {
-        backgroundColor: theme.colors.fab.background,
-    },
-    buttonPressed: {
-        backgroundColor: theme.colors.fab.backgroundPressed,
+    surface: {
+        width: '100%',
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     text: {
         fontSize: 16,
@@ -35,6 +35,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 }));
 
 export const FABWide = React.memo(({ onPress }: { onPress: () => void }) => {
+    const { theme } = useUnistyles();
     const styles = stylesheet;
     const safeArea = useChromeSafeAreaInsets();
     return (
@@ -45,13 +46,19 @@ export const FABWide = React.memo(({ onPress }: { onPress: () => void }) => {
             ]}
         >
             <Pressable
-                style={({ pressed }) => [
-                    styles.button,
-                    pressed ? styles.buttonPressed : styles.buttonDefault
-                ]}
+                style={styles.button}
                 onPress={onPress}
             >
-                <Text style={styles.text}>{t('newSession.title')}</Text>
+                {({ pressed }) => (
+                    <GradientSurface
+                        fallbackColor={pressed ? theme.colors.fab.backgroundPressed : theme.colors.fab.background}
+                        gradient={pressed ? undefined : theme.colors.fab.gradient}
+                        borderRadius={12}
+                        style={styles.surface}
+                    >
+                        <Text style={styles.text}>{t('newSession.title')}</Text>
+                    </GradientSurface>
+                )}
             </Pressable>
         </View>
     )

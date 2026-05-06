@@ -26,7 +26,7 @@ import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { useDerivedSessionChangeSet } from '@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet';
 import {
-    getDefaultChangedFilesViewMode,
+    getPreferredChangedFilesViewMode,
     resolveChangedFilesViewMode,
     type ChangedFilesViewMode,
 } from '@/scm/scmAttribution';
@@ -119,12 +119,16 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         return buildSnapshotSignature(effectiveSnapshot);
     }, [effectiveSnapshot]);
     const getSnapshotSignature = React.useCallback(() => snapshotSignature, [snapshotSignature]);
-    const { latestTurnScopedChangeSet, latestTurnDiffByPath, sessionChangeSet, providerDiffByPath } = useDerivedSessionChangeSet(props.sessionId);
-    const [requestedChangedFilesViewMode, setChangedFilesViewMode] = React.useState<ChangedFilesViewMode>(() => {
-        if (latestTurnScopedChangeSet) return 'turn';
-        if (sessionChangeSet) return 'session';
-        return getDefaultChangedFilesViewMode();
-    });
+    const {
+        latestTurnChangeSet,
+        latestTurnScopedChangeSet,
+        latestTurnDiffByPath,
+        latestTurnAgentReportedDiffByPath,
+        latestTurnCheckpointDiffByPath,
+        sessionChangeSet,
+        providerDiffByPath,
+    } = useDerivedSessionChangeSet(props.sessionId);
+    const [requestedChangedFilesViewMode, setRequestedChangedFilesViewMode] = React.useState<ChangedFilesViewMode | null>(null);
 
     useScmAdaptivePolling({
         enabled: Boolean(props.sessionId) && effectiveSnapshot?.repo.isRepo === true,
@@ -153,20 +157,48 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         searchQuery: '',
         showAllRepositoryFiles: true,
         latestTurnChangeSet: latestTurnScopedChangeSet,
+        latestTurnEvidence: latestTurnChangeSet,
         sessionChangeSet,
     });
 
-    const changedFilesViewMode = React.useMemo(() => resolveChangedFilesViewMode({
-        mode: requestedChangedFilesViewMode,
+    const changedFilesAvailability = React.useMemo(() => ({
         showTurnViewToggle: changed.showTurnViewToggle,
+        showTurnAgentReportedViewToggle: changed.showTurnAgentReportedViewToggle,
+        showTurnCheckpointViewToggle: changed.showTurnCheckpointViewToggle,
         showSessionViewToggle: changed.showSessionViewToggle,
-    }), [changed.showSessionViewToggle, changed.showTurnViewToggle, requestedChangedFilesViewMode]);
+    }), [
+        changed.showSessionViewToggle,
+        changed.showTurnAgentReportedViewToggle,
+        changed.showTurnCheckpointViewToggle,
+        changed.showTurnViewToggle,
+    ]);
+
+    const changedFilesViewMode = React.useMemo(() => {
+        if (requestedChangedFilesViewMode) {
+            return resolveChangedFilesViewMode({
+                mode: requestedChangedFilesViewMode,
+                ...changedFilesAvailability,
+            });
+        }
+        return getPreferredChangedFilesViewMode(changedFilesAvailability);
+    }, [
+        changedFilesAvailability,
+        requestedChangedFilesViewMode,
+    ]);
 
     const reviewProviderDiffByPath = React.useMemo(() => {
         if (changedFilesViewMode === 'turn') return latestTurnDiffByPath;
+        if (changedFilesViewMode === 'turn_agent_reported') return latestTurnAgentReportedDiffByPath;
+        if (changedFilesViewMode === 'turn_checkpoint') return latestTurnCheckpointDiffByPath;
         if (changedFilesViewMode === 'session') return providerDiffByPath;
         return null;
-    }, [changedFilesViewMode, latestTurnDiffByPath, providerDiffByPath]);
+    }, [
+        changedFilesViewMode,
+        latestTurnAgentReportedDiffByPath,
+        latestTurnCheckpointDiffByPath,
+        latestTurnDiffByPath,
+        providerDiffByPath,
+    ]);
 
     const maxFiles = typeof scmReviewMaxFiles === 'number' && Number.isFinite(scmReviewMaxFiles) ? scmReviewMaxFiles : 25;
     const maxChangedLines = typeof scmReviewMaxChangedLines === 'number' && Number.isFinite(scmReviewMaxChangedLines) ? scmReviewMaxChangedLines : 2000;
@@ -223,7 +255,10 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
 
     return (
         <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-            {changed.showTurnViewToggle || changed.showSessionViewToggle ? (
+            {changed.showTurnViewToggle
+            || changed.showTurnAgentReportedViewToggle
+            || changed.showTurnCheckpointViewToggle
+            || changed.showSessionViewToggle ? (
                 <View
                     style={{
                         flexDirection: 'row',
@@ -242,8 +277,10 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                         theme={theme}
                         changedFilesViewMode={changedFilesViewMode}
                         showTurnViewToggle={changed.showTurnViewToggle}
+                        showTurnAgentReportedViewToggle={changed.showTurnAgentReportedViewToggle}
+                        showTurnCheckpointViewToggle={changed.showTurnCheckpointViewToggle}
                         showSessionViewToggle={changed.showSessionViewToggle}
-                        onChangedFilesViewMode={setChangedFilesViewMode}
+                        onChangedFilesViewMode={setRequestedChangedFilesViewMode}
                     />
                 </View>
             ) : null}
@@ -255,6 +292,9 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                 attributionReliability={changed.attributionReliability}
                 allRepositoryChangedFiles={changed.allRepositoryChangedFiles}
                 turnAttributedFiles={changed.turnAttributedFiles}
+                turnAgentReportedFiles={changed.turnAgentReportedFiles}
+                turnCheckpointFiles={changed.turnCheckpointFiles}
+                turnCheckpointMetadata={changed.turnCheckpointMetadata}
                 turnRepositoryOnlyFiles={changed.turnRepositoryOnlyFiles}
                 sessionAttributedFiles={changed.sessionAttributedFiles}
                 repositoryOnlyFiles={changed.repositoryOnlyFiles}

@@ -9,9 +9,12 @@ export type PetCompanionActivityReason = PetCompanionActivityStatus;
 
 export type PetCompanionSessionSignals = Readonly<{
     hasFailure: boolean;
+    hasPendingPermissionRequests?: boolean;
+    hasPendingUserActionRequests?: boolean;
     hasUnreadMessages: boolean;
     latestThinkingActivityAtMs: number | null;
     latestMeaningfulActivityAtMs: number | null;
+    lastMessageSubtitle?: string | null;
     pendingMessageCount: number;
 }>;
 

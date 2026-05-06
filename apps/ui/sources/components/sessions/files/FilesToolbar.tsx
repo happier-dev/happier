@@ -19,6 +19,8 @@ type FilesToolbarProps = {
     changedFilesViewMode: ChangedFilesViewMode;
     changedFilesPresentation: ChangedFilesPresentation;
     showTurnViewToggle?: boolean;
+    showTurnAgentReportedViewToggle?: boolean;
+    showTurnCheckpointViewToggle?: boolean;
     showSessionViewToggle: boolean;
     onChangedFilesViewMode: (mode: ChangedFilesViewMode) => void;
     onChangedFilesPresentationChange: (mode: ChangedFilesPresentation) => void;
@@ -41,6 +43,8 @@ export function FilesToolbar(props: FilesToolbarProps) {
         changedFilesViewMode,
         changedFilesPresentation,
         showTurnViewToggle = false,
+        showTurnAgentReportedViewToggle = false,
+        showTurnCheckpointViewToggle = false,
         showSessionViewToggle,
         onChangedFilesViewMode,
         onChangedFilesPresentationChange,
@@ -50,6 +54,14 @@ export function FilesToolbar(props: FilesToolbarProps) {
         showScmToggle = true,
         showAttributionReliabilityNotice = true,
     } = props;
+    const hasScopedChangedFilesView =
+        showTurnViewToggle
+        || showTurnAgentReportedViewToggle
+        || showTurnCheckpointViewToggle
+        || showSessionViewToggle;
+    const showChangedFilesControls =
+        !showAllRepositoryFiles
+        && (changedFilesCount > 0 || hasScopedChangedFilesView);
 
     const chipStyle = (active: boolean) => ({
         paddingVertical: 8,
@@ -152,12 +164,14 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     onPress={onShowAllRepositoryFiles}
                 />
 
-                {!showAllRepositoryFiles && changedFilesCount > 0 ? (
+                {showChangedFilesControls ? (
                     <>
                         <ChangedFilesViewModeMenu
                             theme={theme}
                             changedFilesViewMode={changedFilesViewMode}
                             showTurnViewToggle={showTurnViewToggle}
+                            showTurnAgentReportedViewToggle={showTurnAgentReportedViewToggle}
+                            showTurnCheckpointViewToggle={showTurnCheckpointViewToggle}
                             showSessionViewToggle={showSessionViewToggle}
                             onChangedFilesViewMode={onChangedFilesViewMode}
                         />
@@ -196,7 +210,10 @@ export function FilesToolbar(props: FilesToolbarProps) {
                 ) : null}
             </View>
 
-            {showAttributionReliabilityNotice && !showAllRepositoryFiles && changedFilesCount > 0 && !showTurnViewToggle && !showSessionViewToggle && (
+            {showAttributionReliabilityNotice
+            && !showAllRepositoryFiles
+            && changedFilesCount > 0
+            && !hasScopedChangedFilesView && (
                 <View
                     style={{
                         marginTop: 10,

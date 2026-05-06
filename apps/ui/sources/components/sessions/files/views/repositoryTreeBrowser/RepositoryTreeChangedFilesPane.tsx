@@ -6,7 +6,7 @@ import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFi
 import { FilesToolbar } from '@/components/sessions/files/FilesToolbar';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
 import {
-    getDefaultChangedFilesViewMode,
+    getPreferredChangedFilesViewMode,
     resolveChangedFilesViewMode,
     type ChangedFilesPresentation,
     type ChangedFilesViewMode,
@@ -51,13 +51,17 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
     const operationLog = useSessionProjectScmOperationLog(props.sessionId);
     const scmReviewMaxFiles = useSetting('scmReviewMaxFiles');
     const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
-    const { latestTurnScopedChangeSet, latestTurnDiffByPath, sessionChangeSet, providerDiffByPath } = useDerivedSessionChangeSet(props.sessionId);
+    const {
+        latestTurnChangeSet,
+        latestTurnScopedChangeSet,
+        latestTurnDiffByPath,
+        latestTurnAgentReportedDiffByPath,
+        latestTurnCheckpointDiffByPath,
+        sessionChangeSet,
+        providerDiffByPath,
+    } = useDerivedSessionChangeSet(props.sessionId);
 
-    const [requestedChangedFilesViewMode, setChangedFilesViewMode] = React.useState<ChangedFilesViewMode>(() => {
-        if (latestTurnScopedChangeSet) return 'turn';
-        if (sessionChangeSet) return 'session';
-        return getDefaultChangedFilesViewMode();
-    });
+    const [requestedChangedFilesViewMode, setRequestedChangedFilesViewMode] = React.useState<ChangedFilesViewMode | null>(null);
     const [changedFilesPresentation, setChangedFilesPresentation] = React.useState<ChangedFilesPresentation>('list');
 
     const changed = useChangedFilesData({
@@ -69,19 +73,41 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
         searchQuery: props.searchQuery,
         showAllRepositoryFiles: false,
         latestTurnChangeSet: latestTurnScopedChangeSet,
+        latestTurnEvidence: latestTurnChangeSet,
         sessionChangeSet,
     });
 
-    const changedFilesViewMode = React.useMemo(() => resolveChangedFilesViewMode({
-        mode: requestedChangedFilesViewMode,
+    const changedFilesAvailability = React.useMemo(() => ({
         showTurnViewToggle: changed.showTurnViewToggle,
+        showTurnAgentReportedViewToggle: changed.showTurnAgentReportedViewToggle,
+        showTurnCheckpointViewToggle: changed.showTurnCheckpointViewToggle,
         showSessionViewToggle: changed.showSessionViewToggle,
-    }), [changed.showSessionViewToggle, changed.showTurnViewToggle, requestedChangedFilesViewMode]);
+    }), [
+        changed.showSessionViewToggle,
+        changed.showTurnAgentReportedViewToggle,
+        changed.showTurnCheckpointViewToggle,
+        changed.showTurnViewToggle,
+    ]);
+
+    const changedFilesViewMode = React.useMemo(() => {
+        if (requestedChangedFilesViewMode) {
+            return resolveChangedFilesViewMode({
+                mode: requestedChangedFilesViewMode,
+                ...changedFilesAvailability,
+            });
+        }
+        return getPreferredChangedFilesViewMode(changedFilesAvailability);
+    }, [
+        changedFilesAvailability,
+        requestedChangedFilesViewMode,
+    ]);
 
     const filteredChanged = React.useMemo(() => {
         return {
             allRepositoryChangedFiles: filterScmFilesByQuery(changed.allRepositoryChangedFiles, props.searchQuery),
             turnAttributedFiles: filterAttributedFilesByQuery(changed.turnAttributedFiles, props.searchQuery),
+            turnAgentReportedFiles: filterAttributedFilesByQuery(changed.turnAgentReportedFiles, props.searchQuery),
+            turnCheckpointFiles: filterAttributedFilesByQuery(changed.turnCheckpointFiles, props.searchQuery),
             turnRepositoryOnlyFiles: filterScmFilesByQuery(changed.turnRepositoryOnlyFiles, props.searchQuery),
             sessionAttributedFiles: filterAttributedFilesByQuery(changed.sessionAttributedFiles, props.searchQuery),
             repositoryOnlyFiles: filterScmFilesByQuery(changed.repositoryOnlyFiles, props.searchQuery),
@@ -90,16 +116,26 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
         changed.allRepositoryChangedFiles,
         changed.repositoryOnlyFiles,
         changed.sessionAttributedFiles,
+        changed.turnAgentReportedFiles,
         changed.turnAttributedFiles,
+        changed.turnCheckpointFiles,
         changed.turnRepositoryOnlyFiles,
         props.searchQuery,
     ]);
 
     const reviewProviderDiffByPath = React.useMemo(() => {
         if (changedFilesViewMode === 'turn') return latestTurnDiffByPath;
+        if (changedFilesViewMode === 'turn_agent_reported') return latestTurnAgentReportedDiffByPath;
+        if (changedFilesViewMode === 'turn_checkpoint') return latestTurnCheckpointDiffByPath;
         if (changedFilesViewMode === 'session') return providerDiffByPath;
         return null;
-    }, [changedFilesViewMode, latestTurnDiffByPath, providerDiffByPath]);
+    }, [
+        changedFilesViewMode,
+        latestTurnAgentReportedDiffByPath,
+        latestTurnCheckpointDiffByPath,
+        latestTurnDiffByPath,
+        providerDiffByPath,
+    ]);
 
     const maxFiles = typeof scmReviewMaxFiles === 'number' && Number.isFinite(scmReviewMaxFiles) ? scmReviewMaxFiles : 25;
     const maxChangedLines = typeof scmReviewMaxChangedLines === 'number' && Number.isFinite(scmReviewMaxChangedLines)
@@ -127,8 +163,10 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
                 changedFilesViewMode={changedFilesViewMode}
                 changedFilesPresentation={changedFilesPresentation}
                 showTurnViewToggle={changed.showTurnViewToggle}
+                showTurnAgentReportedViewToggle={changed.showTurnAgentReportedViewToggle}
+                showTurnCheckpointViewToggle={changed.showTurnCheckpointViewToggle}
                 showSessionViewToggle={changed.showSessionViewToggle}
-                onChangedFilesViewMode={setChangedFilesViewMode}
+                onChangedFilesViewMode={setRequestedChangedFilesViewMode}
                 onChangedFilesPresentationChange={setChangedFilesPresentation}
                 scmPanelExpanded={false}
                 onToggleScmPanel={() => {}}
@@ -144,6 +182,9 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
                     attributionReliability={changed.attributionReliability}
                     allRepositoryChangedFiles={filteredChanged.allRepositoryChangedFiles}
                     turnAttributedFiles={filteredChanged.turnAttributedFiles}
+                    turnAgentReportedFiles={filteredChanged.turnAgentReportedFiles}
+                    turnCheckpointFiles={filteredChanged.turnCheckpointFiles}
+                    turnCheckpointMetadata={changed.turnCheckpointMetadata}
                     turnRepositoryOnlyFiles={filteredChanged.turnRepositoryOnlyFiles}
                     sessionAttributedFiles={filteredChanged.sessionAttributedFiles}
                     repositoryOnlyFiles={filteredChanged.repositoryOnlyFiles}
@@ -162,6 +203,9 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
                     attributionReliability={changed.attributionReliability}
                     allRepositoryChangedFiles={filteredChanged.allRepositoryChangedFiles}
                     turnAttributedFiles={filteredChanged.turnAttributedFiles}
+                    turnAgentReportedFiles={filteredChanged.turnAgentReportedFiles}
+                    turnCheckpointFiles={filteredChanged.turnCheckpointFiles}
+                    turnCheckpointMetadata={changed.turnCheckpointMetadata}
                     turnRepositoryOnlyFiles={filteredChanged.turnRepositoryOnlyFiles}
                     sessionAttributedFiles={filteredChanged.sessionAttributedFiles}
                     repositoryOnlyFiles={filteredChanged.repositoryOnlyFiles}

@@ -127,6 +127,89 @@ installNavigationShellCommonModuleMocks({
                     owner: null,
                 },
             ],
+            useAllSessionsForAttention: () => [
+                {
+                    id: 'session-1',
+                    active: true,
+                    presence: 'online',
+                    metadata: {
+                        name: 'Repo session',
+                        path: '/Users/leeroy/repo',
+                        homeDir: '/Users/leeroy',
+                        machineId: 'machine-stale',
+                    },
+                    agentState: {
+                        requests: {
+                            perm_1: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'pwd' },
+                                createdAt: 1,
+                            },
+                            ask_1: {
+                                tool: 'AskUserQuestion',
+                                kind: 'user_action',
+                                arguments: {
+                                    questions: [{ question: 'Continue?', header: 'Confirm', options: [{ label: 'Yes', description: 'Proceed' }] }],
+                                },
+                                createdAt: 2,
+                            },
+                        },
+                        completedRequests: {},
+                    },
+                    owner: null,
+                },
+            ],
+            useAllSessionListRenderables: () => [
+                {
+                    id: 'session-1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadataVersion: 1,
+                    agentStateVersion: 1,
+                    metadata: {
+                        name: 'Repo session',
+                        path: '/Users/leeroy/repo',
+                        homeDir: '/Users/leeroy',
+                        machineId: 'machine-stale',
+                    },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    hasUnreadMessages: false,
+                },
+            ],
+            useAllSessionListAttentionRows: () => [
+                {
+                    serverId: null,
+                    serverName: null,
+                    session: {
+                        id: 'session-1',
+                        seq: 1,
+                        createdAt: 1,
+                        updatedAt: 1,
+                        active: true,
+                        activeAt: 1,
+                        archivedAt: null,
+                        metadataVersion: 1,
+                        agentStateVersion: 1,
+                        metadata: {
+                            name: 'Repo session',
+                            path: '/Users/leeroy/repo',
+                            homeDir: '/Users/leeroy',
+                            machineId: 'machine-stale',
+                        },
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 'online',
+                        hasUnreadMessages: false,
+                    },
+                },
+            ],
             useMachine: (machineId: string) =>
                 machineId === 'machine-target'
                     ? {
@@ -172,7 +255,7 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, subtitle, testID }: any) => React.createElement('Item', { title, subtitle, testID }),
+    Item: ({ title, subtitle, testID, onPress }: any) => React.createElement('Item', { title, subtitle, testID, onPress }),
 }));
 
 vi.mock('@/components/ui/feedback/UpdateBanner', () => ({
@@ -268,27 +351,6 @@ describe('InboxView session attention', () => {
                 useFriendsLoaded: () => true,
                 useAllSessions: () => [
                     {
-                        id: 'session-unread',
-                        seq: 5,
-                        lastViewedSessionSeq: 2,
-                        updatedAt: 50,
-                        createdAt: 10,
-                        active: false,
-                        activeAt: 10,
-                        thinking: false,
-                        thinkingAt: 0,
-                        presence: 10,
-                        metadata: {
-                            name: 'Unread session',
-                            path: '/Users/leeroy/unread',
-                            homeDir: '/Users/leeroy',
-                        },
-                        metadataVersion: 0,
-                        agentState: null,
-                        agentStateVersion: 0,
-                        owner: null,
-                    },
-                    {
                         id: 'session-shared',
                         seq: 0,
                         lastViewedSessionSeq: 0,
@@ -311,6 +373,55 @@ describe('InboxView session attention', () => {
                         ownerProfile: { username: 'friend', id: 'friend-1', firstName: null, lastName: null, avatar: null },
                     },
                 ],
+                useAllSessionListAttentionRows: () => [
+                    {
+                        serverId: 'server-b',
+                        serverName: 'Server B',
+                        session: {
+                            id: 'session-unread',
+                            seq: 5,
+                            updatedAt: 50,
+                            createdAt: 10,
+                            active: false,
+                            activeAt: 10,
+                            thinking: false,
+                            thinkingAt: 0,
+                            presence: 10,
+                            metadata: {
+                                name: 'Unread session',
+                                path: '/Users/leeroy/unread',
+                                homeDir: '/Users/leeroy',
+                            },
+                            metadataVersion: 0,
+                            agentStateVersion: 0,
+                            hasUnreadMessages: true,
+                        },
+                    },
+                    {
+                        serverId: 'server-b',
+                        serverName: 'Server B',
+                        session: {
+                            id: 'session-shared',
+                            seq: 0,
+                            updatedAt: 40,
+                            createdAt: 9,
+                            active: false,
+                            activeAt: 9,
+                            thinking: false,
+                            thinkingAt: 0,
+                            presence: 9,
+                            metadata: {
+                                name: 'Shared session',
+                                path: '/Users/leeroy/shared',
+                                homeDir: '/Users/leeroy',
+                            },
+                            metadataVersion: 0,
+                            agentStateVersion: 0,
+                            owner: 'friend-1',
+                            hasUnreadMessages: false,
+                        },
+                    },
+                ],
                 useMachine: () => null,
                 storage: {
                     getState: () => storageState,
@@ -325,7 +436,12 @@ describe('InboxView session attention', () => {
         tree = (await renderScreen(<InboxView />)).tree;
 
         const items = tree!.findAllByType('Item');
-        expect(items.some((item) => item.props.title === 'Unread session')).toBe(true);
+        const unreadItem = items.find((item) => item.props.title === 'Unread session');
+        expect(unreadItem).toBeTruthy();
         expect(items.some((item) => item.props.title === 'Shared session')).toBe(false);
+
+        unreadItem?.props.onPress();
+
+        expect(pushSpy).toHaveBeenCalledWith('/session/session-unread?serverId=server-b');
     });
 });

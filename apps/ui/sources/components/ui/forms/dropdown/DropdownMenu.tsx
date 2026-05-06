@@ -76,6 +76,7 @@ export type DropdownMenuItemTriggerConfig = Readonly<{
 }>;
 
 export type DropdownMenuProps = Readonly<{
+    testID?: string;
     /**
      * The trigger element.
      * Prefer the render-prop form so DropdownMenu can provide a consistent `toggle()` helper.
@@ -395,6 +396,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     return (
         <View
             ref={anchorRef}
+            testID={props.testID}
             // Ensure this wrapper exists in the native hierarchy so `measureInWindow` is reliable.
             // Without this, RN can "collapse" the View and measurement can return 0x0, causing
             // dropdowns to overlap their trigger (notably on iOS).

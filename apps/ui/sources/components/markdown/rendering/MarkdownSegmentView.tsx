@@ -31,6 +31,7 @@ export const MarkdownSegmentView = React.memo((props: MarkdownSegmentViewProps) 
                 streamingAnimated={props.streamingReveal}
                 streamingRevealPreset={props.streamingRevealPreset}
                 testID="markdown-enriched-run"
+                suppressLeadingTopMargin={props.segment.first}
             />
         );
     }

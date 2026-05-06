@@ -18,6 +18,10 @@ const upsertWorkspaceReviewCommentDraftSpy = vi.fn();
 const deleteWorkspaceReviewCommentDraftSpy = vi.fn();
 let lastInlineRendererConfig: any = null;
 
+type CommitBackoutResult =
+    | { success: true }
+    | { success: false; errorCode?: string; error?: string };
+
 const sessionScmDiffCommitSpy = vi.fn(async (_sessionId: string, _request: { commit: string }) => ({
     success: true,
     diff: [
@@ -33,7 +37,13 @@ const sessionScmDiffCommitSpy = vi.fn(async (_sessionId: string, _request: { com
     error: null,
 }));
 
-const sessionScmCommitBackoutSpy = vi.fn(async () => ({ success: true }));
+const sessionScmCommitBackoutSpy = vi.fn<() => Promise<CommitBackoutResult>>(async () => ({ success: true }));
+const sessionScmRepositoryRemoveIndexLockSpy = vi.fn(async () => ({
+    success: true,
+    removed: true,
+    lockPath: '/repo/.git/index.lock',
+}));
+const modalConfirmSpy = vi.fn(async () => false);
 
 let reviewCommentsEnabled = false;
 let sessionsMock: Session[] | null = [];
@@ -138,7 +148,7 @@ installSessionFilesViewCommonModuleMocks({
         return createModalModuleMock({
             spies: {
                 alert: vi.fn(),
-                confirm: vi.fn(async () => false),
+                confirm: modalConfirmSpy,
             },
         }).module;
     },
@@ -188,10 +198,14 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffCommit: (...args: Parameters<typeof sessionScmDiffCommitSpy>) => sessionScmDiffCommitSpy(...args),
     sessionScmCommitBackout: (...args: Parameters<typeof sessionScmCommitBackoutSpy>) => sessionScmCommitBackoutSpy(...args),
+    sessionScmRepositoryRemoveIndexLock: (...args: Parameters<typeof sessionScmRepositoryRemoveIndexLockSpy>) =>
+        sessionScmRepositoryRemoveIndexLockSpy(...args),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => (featureId === 'files.reviewComments' ? reviewCommentsEnabled : false),
+    useFeatureEnabled: (featureId: string) => (
+        featureId === 'files.reviewComments' ? reviewCommentsEnabled : featureId === 'scm.writeOperations'
+    ),
 }));
 
 vi.mock('@/track', () => ({
@@ -212,7 +226,8 @@ vi.mock('@/scm/core/operationPolicy', () => ({
     evaluateScmOperationPreflight: () => ({ allowed: true, message: '' }),
 }));
 
-vi.mock('@/scm/operations/userFacingErrors', () => ({
+vi.mock('@/scm/operations/userFacingErrors', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/scm/operations/userFacingErrors')>()),
     getScmUserFacingError: ({ fallback }: { fallback: string }) => fallback,
 }));
 
@@ -275,6 +290,9 @@ describe('SessionCommitDetailsView', () => {
         reviewCommentsEnabled = false;
         sessionScmDiffCommitSpy.mockClear();
         sessionScmCommitBackoutSpy.mockClear();
+        sessionScmRepositoryRemoveIndexLockSpy.mockClear();
+        modalConfirmSpy.mockReset();
+        modalConfirmSpy.mockResolvedValue(false);
         diffFilesListSpy.mockClear();
         upsertSessionReviewCommentDraftSpy.mockClear();
         deleteSessionReviewCommentDraftSpy.mockClear();
@@ -384,6 +402,36 @@ describe('SessionCommitDetailsView', () => {
 
         expect(sessionScmDiffCommitSpy).toHaveBeenCalledTimes(1);
         expect(tree.findAllByType('DiffPresentationStyleToggleButton' as any)).toHaveLength(1);
+    });
+
+    it('confirms stale index-lock recovery and retries commit revert once', async () => {
+        modalConfirmSpy
+            .mockResolvedValueOnce(true)
+            .mockResolvedValueOnce(true);
+        sessionScmCommitBackoutSpy
+            .mockResolvedValueOnce({
+                success: false,
+                errorCode: 'COMMAND_FAILED',
+                error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+            })
+            .mockResolvedValueOnce({ success: true });
+
+        const tree = await renderCommitDetailsView();
+        const revertButton = tree.root.findByProps({ testID: 'scm-commit-details-revert' });
+
+        await act(async () => {
+            await revertButton.props.onPress();
+        });
+        await settleCommitDetailsView();
+
+        expect(modalConfirmSpy).toHaveBeenCalledTimes(2);
+        expect(sessionScmCommitBackoutSpy).toHaveBeenCalledTimes(2);
+        expect(sessionScmRepositoryRemoveIndexLockSpy).toHaveBeenCalledWith(commitSessionId, {
+            cwd: '/repo',
+            confirmed: true,
+            confirmationToken: expect.any(String),
+        });
+        expect(sessionScmCommitBackoutSpy).toHaveBeenCalledTimes(2);
     });
 
     it('does not refetch the diff when sessions storage readiness toggles after the diff loads', async () => {

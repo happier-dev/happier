@@ -61,13 +61,13 @@ describe('FileMentionSuggestion', () => {
         tree = (await renderScreen(
             <FileMentionSuggestion
                 fileName="jsonlForwardReader.ts"
-                filePath="apps/cli/src/api/directSessions/filePaging"
+                filePath="apps/cli/src/api/session/external/filePaging"
             />
         )).tree;
 
         const textNodes = tree!.findAllByType('Text' as any);
         const pathWrapper = textNodes.find((node) => flattenStyle(node.props.style).writingDirection === 'rtl')!;
-        const pathContent = textNodes.find((node) => node.props.children === 'apps/cli/src/api/directSessions/filePaging/')!;
+        const pathContent = textNodes.find((node) => node.props.children === 'apps/cli/src/api/session/external/filePaging/')!;
 
         expect(pathWrapper.props.ellipsizeMode).toBeUndefined();
         expect(flattenStyle(pathWrapper.props.style).textAlign).toBe('right');

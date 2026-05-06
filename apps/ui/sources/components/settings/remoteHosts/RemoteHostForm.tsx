@@ -15,7 +15,11 @@ import { parseSshTarget, buildSshTarget } from '@happier-dev/protocol';
 
 import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
 import { SshCredentialsFields, type SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
-import { createDefaultSshCredentialsDraft, parseSshPortNumber } from '@/components/ssh/sshCredentialsDraft';
+import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDraft, parseSshPortNumber } from '@/components/ssh/sshCredentialsDraft';
+import { SshConfiguredHostPicker } from '@/components/ssh/SshConfiguredHostPicker';
+import { filterConfiguredSshHostSuggestions, type SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
+import { useConfiguredSshHostSuggestions } from '@/components/ssh/useConfiguredSshHostSuggestions';
+import type { SystemTaskRunner } from '@/components/systemTasks/types';
 
 import type { RemoteHost, RemoteHostAuthMode } from '@/sync/domains/remoteHosts/remoteHostModel';
 import type { RemoteHostLocalOverrides } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
@@ -48,6 +52,8 @@ function normalizeRemoteHostAuthMode(value: SshCredentialsDraft['authMode']): Re
 export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomModalInjectedProps & Readonly<{
     remoteHost: RemoteHost | null;
     localOverrides: RemoteHostLocalOverrides | null;
+    savedRemoteHosts?: readonly RemoteHost[];
+    systemTaskRunner?: SystemTaskRunner;
     secretMaterialAllowed: boolean;
     onSave: (payload: Readonly<{ remoteHost: RemoteHost; localOverrides: RemoteHostLocalOverrides | null }>) => void;
     onDelete: (remoteHostId: string) => void;
@@ -60,9 +66,17 @@ export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomMo
     const existingIdentityPrivateKeyEnc = existing?.ssh.identityPrivateKeyEnc ?? null;
     const [name, setName] = React.useState(() => existing?.name ?? '');
     const [sshDraft, setSshDraft] = React.useState<SshCredentialsDraft>(() => toSshDraft(existing ?? null, props.localOverrides));
+    const [sshConfigFilePath, setSshConfigFilePath] = React.useState(() => props.localOverrides?.sshConfigFilePath ?? '');
     const [savePassword, setSavePassword] = React.useState(() => Boolean(existingPasswordEnc));
     const [savePrivateKeyMaterial, setSavePrivateKeyMaterial] = React.useState(() => Boolean(existingIdentityPrivateKeyEnc));
     const [privateKeyMaterialDraft, setPrivateKeyMaterialDraft] = React.useState('');
+    const configuredHostSuggestions = useConfiguredSshHostSuggestions({
+        ...(props.systemTaskRunner ? { runner: props.systemTaskRunner } : {}),
+    });
+    const filteredConfiguredHostSuggestions = React.useMemo(() => filterConfiguredSshHostSuggestions({
+        suggestions: configuredHostSuggestions.suggestions,
+        remoteHosts: (props.savedRemoteHosts ?? []).filter((host) => host.id !== existing?.id),
+    }), [configuredHostSuggestions.suggestions, existing?.id, props.savedRemoteHosts]);
 
     const effectiveSecretMaterialAllowed = props.secretMaterialAllowed === true;
 
@@ -127,9 +141,13 @@ export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomMo
         };
 
         const identityFilePath = String(sshDraft.identityFilePath ?? '').trim();
-        const localOverrides: RemoteHostLocalOverrides | null = identityFilePath
-            ? { ...(props.localOverrides?.sshConfigFilePath ? { sshConfigFilePath: props.localOverrides.sshConfigFilePath } : {}), identityFilePath }
-            : (props.localOverrides?.sshConfigFilePath ? { sshConfigFilePath: props.localOverrides.sshConfigFilePath } : null);
+        const nextSshConfigFilePath = String(sshConfigFilePath ?? '').trim();
+        const localOverrides: RemoteHostLocalOverrides | null = identityFilePath || nextSshConfigFilePath
+            ? {
+                ...(nextSshConfigFilePath ? { sshConfigFilePath: nextSshConfigFilePath } : {}),
+                ...(identityFilePath ? { identityFilePath } : {}),
+            }
+            : null;
 
         props.onSave({ remoteHost, localOverrides });
         props.onClose();
@@ -144,6 +162,7 @@ export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomMo
         savePassword,
         savePrivateKeyMaterial,
         sshDraft,
+        sshConfigFilePath,
     ]);
 
     const handleTestConnection = React.useCallback(() => {
@@ -151,6 +170,13 @@ export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomMo
         props.onTestConnection(existing);
         props.onClose();
     }, [existing, props]);
+
+    const handleSelectConfiguredHost = React.useCallback((suggestion: SshConfiguredHostSuggestion) => {
+        setSshDraft((current) => applyConfiguredSshHostSuggestionToDraft(current, suggestion));
+        if (suggestion.source === 'ssh-config' && suggestion.sourcePath) {
+            setSshConfigFilePath(suggestion.sourcePath);
+        }
+    }, []);
 
     const showSecretControls = effectiveSecretMaterialAllowed;
     const showStoredPasswordHint = showSecretControls && savePassword && existingPasswordEnc != null;
@@ -172,6 +198,16 @@ export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomMo
             </ItemGroup>
 
             <ItemGroup title={t('settings.remoteHostsSshGroupTitle')}>
+                <SshConfiguredHostPicker
+                    testID="remote-host-form-configured-host-picker"
+                    suggestions={filteredConfiguredHostSuggestions}
+                    loading={configuredHostSuggestions.loading}
+                    refreshing={configuredHostSuggestions.refreshing}
+                    unsupported={configuredHostSuggestions.unsupported}
+                    error={configuredHostSuggestions.error}
+                    onRefresh={configuredHostSuggestions.refresh}
+                    onSelectSuggestion={handleSelectConfiguredHost}
+                />
                 <SshCredentialsFields
                     testIDPrefix="remote-host-form-ssh"
                     value={sshDraft}

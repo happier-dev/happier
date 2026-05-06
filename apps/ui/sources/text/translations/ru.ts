@@ -1607,6 +1607,25 @@ export const ru: TranslationStructure = {
     remoteHostsPrivateKeySavedHint: "Приватный ключ уже сохранён. Оставьте пустым, чтобы не менять.",
     remoteHostsSecretMaterialDisabledTitle: "Сохранение секретов отключено",
     remoteHostsSecretMaterialDisabledSubtitle: "Эта сборка не позволяет хранить пароли или приватные ключи.",
+    remoteHostsSetupAsMachineTitle: "Настроить как машину Happier",
+    remoteHostsSetupAsMachineFailed: "Не удалось настроить этот хост как машину Happier.",
+    remoteHostsConnectFromThisDeviceTitle: "Подключиться с этого устройства",
+    remoteHostsConnectFromThisDeviceSubtitle: "Только это устройство. Открывает локальный SSH-туннель для этой сессии приложения.",
+    remoteHostsConnectFromThisDeviceFailed: "Не удалось открыть локальный SSH-туннель.",
+    remoteHostsSshTunnelGroupTitle: "Доступ к удаленному хосту с этого устройства",
+    remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `SSH-туннель активен для ${host}`,
+    remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `Только это устройство. Локальная конечная точка: ${url}`,
+    remoteHostsSshTunnelStopTitle: "Остановить локальный SSH-туннель",
+    remoteHostsUseAsRelayHostTitle: "Использовать как хост Relay",
+    remoteHostsUseAsRelayHostSubtitle: "Настройте доступ Relay на этом SSH-хосте.",
+    remoteHostsConfigureAccessTitle: "Настроить доступ",
+    remoteHostsConfigureAccessSubtitle: "Выберите, как этот удалённый хост будет доступен.",
+    remoteHostsOpenDetailsTitle: "Сведения о хосте",
+    remoteHostsRelayAccessGroupTitle: "Удалённый доступ",
+    remoteHostsRelayAccessActiveTitle: ({ host }: { host: string }) => `Настройка доступа для ${host}`,
+    remoteHostsRelayAccessActiveSubtitle: "Команды доступа Relay выполняются на удалённом хосте через SSH. Это не создаёт SSH-туннель.",
+    remoteHostsMissingServerUrl: "Выберите сервер перед настройкой удалённой машины.",
+    remoteHostsRelayAccessIdentityFileRequired: "Для доступа Relay на этом хосте нужен локальный файл идентификации SSH.",
     remoteHostsTestConnectionTitle: "Проверить соединение",
     remoteHostsInstallOrUpdateCliTitle: "Установить или обновить CLI",
     remoteHostsDaemonServiceInstallOrUpdateTitle: "Установить или обновить службу демона",
@@ -1624,6 +1643,20 @@ export const ru: TranslationStructure = {
     remoteHostsPasswordRequiredTitle: "Требуется пароль SSH",
     remoteHostsConnectionSucceeded: "Соединение успешно.",
     remoteHostsConnectionFailed: "Не удалось подключиться.",
+    sshConfiguredHostPickerTitle: "Предложенные SSH-хосты",
+    sshConfiguredHostPickerSubtitle: "Заполните из локальной конфигурации SSH или known_hosts.",
+    sshConfiguredHostPickerRefreshingSubtitle: "Обновляем предложения; показываем последние результаты.",
+    sshConfiguredHostPickerSourceSshConfig: "Конфигурация SSH",
+    sshConfiguredHostPickerSourceKnownHosts: "known_hosts",
+    sshConfiguredHostPickerUnsupportedTitle: "Введите данные SSH вручную",
+    sshConfiguredHostPickerUnsupportedSubtitle: "Локальное обнаружение SSH доступно только в настольном приложении.",
+    sshConfiguredHostPickerLoadingTitle: "Поиск SSH-хостов…",
+    sshConfiguredHostPickerLoadingSubtitle: "Проверяем локальную конфигурацию SSH и known_hosts через настольный мост.",
+    sshConfiguredHostPickerEmptyTitle: "Нет предложенных SSH-хостов",
+    sshConfiguredHostPickerEmptySubtitle: "Введите данные SSH вручную или обновите после изменения конфигурации SSH.",
+    sshConfiguredHostPickerErrorTitle: "Не удалось загрузить SSH-предложения",
+    sshConfiguredHostPickerRefreshTitle: "Обновить SSH-предложения",
+    sshConfiguredHostPickerRefreshingTitle: "Обновляем SSH-предложения",
     features: "Функции",
     social: "Социальное",
     account: "Аккаунт",
@@ -1789,6 +1822,41 @@ export const ru: TranslationStructure = {
       missingToken: "Введите токен, чтобы продолжить.",
       webHandoffTitle: "Запустите на компьютере",
       webHandoffSubtitle: "Используйте CLI для настройки доступа к Relay, затем вернитесь сюда и обновите.",
+    },
+    accessEndpoints: {
+      scope: {
+        availableToOtherDevices: 'Available to other devices',
+        thisDeviceOnly: 'This device only',
+      },
+      direction: {
+        makeCurrentServerReachable: 'Make this server reachable',
+        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
+        unknown: 'Access channel',
+      },
+      kind: {
+        'relay-access-provider': 'Relay access',
+        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
+        'ssh-tunnel-native': 'Native SSH tunnel',
+        'server-profile-url': 'Server URL',
+        'peer-mediation': 'Peer mediation',
+        'manual-url': 'Manual URL',
+      },
+      recommendedUse: {
+        'multi-device': 'Best for other devices',
+        'native-this-device': 'Works in this native app',
+        'hosted-web': 'Works from hosted web',
+        'lan-only': 'LAN or private network only',
+        diagnostic: 'Needs attention',
+      },
+      limitation: {
+        'this-device-only': 'This device only',
+        'not-hosted-web-compatible': 'Not available to hosted web',
+        'not-public-share-url': 'Not a public share URL',
+        'session-scoped': 'Session scoped',
+        'foreground-only': 'Requires the app to stay in the foreground',
+        'requires-auth': 'Requires SSH authentication',
+        'requires-host-key-trust': 'Requires host-key trust',
+      },
     },
     systemTaskStepPrepare: "Подготовить задачу",
     systemTaskStepInstallRuntime: "Установить среду выполнения",
@@ -2222,6 +2290,7 @@ export const ru: TranslationStructure = {
       openai: "Ключ API OpenAI",
       anthropic: "Ключ API Anthropic",
       gemini: "Gemini от Google",
+      github: "GitHub",
     },
     title: "Подключённые сервисы",
     authChip: {
@@ -2343,6 +2412,12 @@ export const ru: TranslationStructure = {
       connectApiKeySubtitle: "Вставьте API-ключ Anthropic",
       connectSetupTokenTitle: "Подключить setup-token",
       connectSetupTokenSubtitle: "Вставьте setup-token Claude (из claude setup-token)",
+      connectPersonalAccessTokenTitle: "Подключить personal access token",
+      connectPersonalAccessTokenSubtitle: "Вставьте fine-grained personal access token",
+      openTokenSetupTitle: "Открыть настройку токена",
+      openTokenSetupSubtitle: "Открыть страницу настройки провайдера",
+      openPersonalAccessTokenSetupTitle: "Создать personal access token",
+      openPersonalAccessTokenSetupSubtitle: "Открыть настройку fine-grained токена GitHub",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `Отключить ${service} (${profileId})?`,
       prompts: {
@@ -2354,6 +2429,9 @@ export const ru: TranslationStructure = {
         setupTokenTitle: "Токен настройки",
         setupTokenBody: "Вставьте ваш setup-token Claude (из claude setup-token).",
         setupTokenPlaceholder: "например, sk-ant-oat01-…",
+        personalAccessTokenTitle: "Personal access token",
+        personalAccessTokenBody: "Вставьте fine-grained personal access token GitHub.",
+        personalAccessTokenPlaceholder: "github_pat_…",
         profileLabelTitle: "Метка профиля",
         profileLabelBody: "Необязательно. Показывается в списках авторизации.",
         profileLabelPlaceholder: "Рабочий аккаунт",
@@ -2810,6 +2888,8 @@ export const ru: TranslationStructure = {
     accountLibraryTitle: 'Библиотека аккаунта',
     accountLibraryFooter: 'Синхронизированные питомцы доступны на ваших устройствах с входом в аккаунт.',
     accountPetTileSubtitle: 'Синхронизировано из вашего аккаунта.',
+    importToDeviceDaemonErrorTitle: 'Не удалось импортировать питомца',
+    importToDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `Демон не смог импортировать этого питомца. Снова обнаружьте питомцев Codex и повторите попытку. (${code})`,
     importToAccountTitle: 'Импортировать в аккаунт',
     importToAccountSubtitle: 'Загрузите совместимого локального питомца для использования на разных устройствах.',
     desktopOverlayTitle: 'Оверлей рабочего стола',
@@ -3898,6 +3978,9 @@ export const ru: TranslationStructure = {
       codexAcp: {
         title: "Адаптер Codex ACP",
       },
+      gh: {
+        title: "GitHub CLI",
+      },
     },
     ui: {
       notAvailable: "Недоступно",
@@ -4136,6 +4219,19 @@ export const ru: TranslationStructure = {
       description:
         "Это установит экспериментальный ACP-адаптер для Codex, который поддерживает загрузку/возобновление тредов.",
     },
+    ghCliBanner: {
+      title: "GitHub CLI",
+      install: "Установить",
+      update: "Обновить",
+      reinstall: "Переустановить",
+    },
+    ghCliInstallModal: {
+      installTitle: "Установить GitHub CLI?",
+      updateTitle: "Обновить GitHub CLI?",
+      reinstallTitle: "Переустановить GitHub CLI?",
+      description:
+        "Это установит необязательную зависимость GitHub CLI, используемую рабочими процессами GitHub для контроля исходного кода, после вашего подтверждения.",
+    },
   },
 
   sessionHistory: {
@@ -4192,7 +4288,6 @@ export const ru: TranslationStructure = {
     signedOut: "Не авторизован",
     authStatusUnknown: "Статус авторизации неизвестен",
     switchToServer: "Переключиться на этот Relay",
-    manageRelay: "Управлять Relay",
     active: "Активный",
     default: "По умолчанию",
     addServerTitle: "Добавить Relay",
@@ -4939,8 +5034,20 @@ export const ru: TranslationStructure = {
   commandPalette: {
     placeholder: "Введите команду или поиск...",
     noCommandsFound: "Команды не найдены",
+    pets: {
+      category: "Питомцы",
+      wakeTitle: "Разбудить питомца",
+      wakeSubtitle: "Показать компаньона на этой поверхности.",
+      tuckTitle: "Убрать питомца",
+      tuckSubtitle: "Скрыть компаньона на этой поверхности.",
+      resetPositionTitle: "Сбросить позицию питомца",
+      resetPositionSubtitle: "Вернуть компаньона в место по умолчанию.",
+      chooseTitle: "Выбрать питомца",
+      chooseSubtitle: "Открыть настройки питомцев.",
+      refreshCodexTitle: "Обновить питомцев Codex",
+      refreshCodexSubtitle: "Открыть настройки и найти локальных питомцев Codex.",
+    },
   },
-
   commandView: {
     completedWithNoOutput: "[Команда завершена без вывода]",
   },
@@ -5493,6 +5600,12 @@ export const ru: TranslationStructure = {
       searchFailed: "Поиск не удался. Попробуйте ещё раз.",
     },
     detachedHead: "отделённый HEAD",
+    indexLockRecovery: {
+      title: "Удалить устаревшую блокировку индекса Git?",
+      body: "Happier может удалить файл index.lock, разрешённый Git для этого репозитория, и один раз повторить неудачную операцию с контролем кода. Это не выполняет reset, clean, restore или широкое восстановление.",
+      confirm: "Удалить блокировку и повторить",
+      failed: ({ error }: { error: string }) => `Не удалось восстановить блокировку индекса: ${error}`,
+    },
     branchSwitchDialog: {
       title: "Переключить ветку",
       body: "У вас есть незакоммиченные изменения. Как вы хотите поступить?",
@@ -5622,10 +5735,24 @@ export const ru: TranslationStructure = {
       `Изменения, привязанные к сессии (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `Изменения последнего хода (${count})`,
+    agentReportedTurnChanges: ({ count }: { count: number }) =>
+      `Последний ход по отчёту агента (${count})`,
+    checkpointTurnChanges: ({ count }: { count: number }) =>
+      `Последний ход по checkpoint (${count})`,
     selectedForCommitChanges: ({ count }: { count: number }) =>
       `Выбрано для коммита (${count})`,
     latestTurnDescription:
       'Изменения от провайдера из последнего завершённого хода.',
+    agentReportedTurnDescription:
+      'Файлы, о которых сообщил агент/runtime для последнего завершённого хода.',
+    checkpointAttributionExclusive:
+      'Содержимое checkpoint точно для этого интервала хода, и worktree был эксклюзивен для этой сессии.',
+    checkpointAttributionShared:
+      'Содержимое checkpoint точно для интервала репозитория. Атрибуция ограничена, потому что этот worktree был общим.',
+    checkpointAttributionUnknown:
+      'Содержимое checkpoint точно для интервала репозитория. Автор изменений неизвестен.',
+    checkpointUnavailable:
+      'Доказательства checkpoint недоступны для этого хода.',
     otherRepositoryChanges: ({ count }: { count: number }) =>
       `Прочие изменения репозитория (${count})`,
     attributionReliabilityHigh:
@@ -5641,6 +5768,10 @@ export const ru: TranslationStructure = {
       "Изменения, привязанные к сессии, не обнаружены.",
     noLatestTurnChanges:
       "Изменения последнего хода пока не обнаружены.",
+    noAgentReportedTurnChanges:
+      "Для этого хода не обнаружены изменения, о которых сообщил агент.",
+    noCheckpointTurnChanges:
+      "Для этого хода не обнаружены изменения checkpoint.",
     notRepo: "Не является репозиторием системы контроля версий",
     notUnderSourceControl: "Эта папка не находится под управлением системы контроля версий",
     searching: "Поиск файлов...",
@@ -5749,6 +5880,7 @@ export const ru: TranslationStructure = {
         cannotDisplayBinary: "Невозможно отобразить содержимое бинарного файла",
         diff: "Различия",
       file: "Файл",
+      markdown: "Markdown",
     diffModes: {
       pending: "Ожидает",
       included: "Включено",
@@ -5779,6 +5911,8 @@ export const ru: TranslationStructure = {
       repositoryView: "Вид репозитория",
       selectedForCommitView: "Выбрано для коммита",
       turnView: "Вид хода",
+      agentReportedTurnView: "Ход по отчёту агента",
+      checkpointTurnView: "Ход checkpoint",
       sessionView: "Вид сессии",
       view: "Вид",
       review: "Ревью",

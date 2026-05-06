@@ -111,7 +111,10 @@ mod tests {
         };
 
         let plan = build_repost_left_click_plan(
-            DesktopActivityOverlayNativeMousePoint { x: 700.0, y: 1040.0 },
+            DesktopActivityOverlayNativeMousePoint {
+                x: 700.0,
+                y: 1040.0,
+            },
             display_context,
             NSPoint::new(444.0, 555.0),
         );

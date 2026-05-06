@@ -136,9 +136,9 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
                 title: t('tabs.inbox'),
                 inlineTestID: 'sidebar-inbox-button',
                 icon: (
-                    <View style={styles.notificationButton}>
+                    <View style={styles.topNotificationButton}>
                         <Octicons name="inbox" size={15} color={theme.colors.header.tint} />
-                        {inboxHasContent ? <View style={styles.indicatorDot} /> : null}
+                        {inboxHasContent ? <View style={styles.topIndicatorDot} /> : null}
                     </View>
                 ),
                 onPress: () => navigate('/(app)/inbox', 'SidebarView.nav.inbox'),
@@ -158,8 +158,8 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
         inboxEnabled,
         inboxHasContent,
         navigate,
-        styles.indicatorDot,
-        styles.notificationButton,
+        styles.topIndicatorDot,
+        styles.topNotificationButton,
         theme.colors.header.tint,
     ]);
 

@@ -6,7 +6,7 @@ import {
     resolveSessionMachineRpcTarget,
     type MachineResolutionContext,
 } from '@/sync/domains/session/resolveSessionReachableMachineId';
-import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 
 import {

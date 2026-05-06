@@ -882,6 +882,60 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         );
     });
 
+    it('projects read cursors into first-usable session list renderables', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_read',
+                        seq: 4,
+                        lastViewedSessionSeq: 4,
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/repo/read', host: 'dev' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                    buildSessionRow({
+                        id: 's_unread',
+                        seq: 5,
+                        lastViewedSessionSeq: 4,
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/repo/unread', host: 'dev' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: () => {},
+            applySessionListRenderables,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessionListRenderables).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_read',
+                lastViewedSessionSeq: 4,
+                hasUnreadMessages: false,
+            }),
+            expect.objectContaining({
+                id: 's_unread',
+                lastViewedSessionSeq: 4,
+                hasUnreadMessages: true,
+            }),
+        ], { replace: true });
+    });
+
     it('reuses warm cache list data when metadata and agentState versions match and the canonical session already exists', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
@@ -2875,6 +2929,84 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             }),
         ]);
         expect(currentRenderables.s_unopenable_key?.metadataUnavailable).toBe(true);
+    });
+
+    it('settles unavailable metadata when empty warm-cache metadata cannot open its data key', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_empty_cached_identity',
+                        dataEncryptionKey: 'unopenable-envelope',
+                        metadata: 'encrypted-unopenable-metadata',
+                        metadataVersion: 4,
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+        const { encryption, decryptEncryptionKeys, getSessionEncryption } = createEncryptionHarness();
+        decryptEncryptionKeys.mockResolvedValueOnce([null]);
+        getSessionEncryption.mockReturnValue(null);
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        let currentRenderables: Record<string, SessionListRenderableSession> = {};
+        const applySessionListRenderables = vi.fn((sessions: SessionListRenderableSession[]) => {
+            currentRenderables = Object.fromEntries(sessions.map((session) => [session.id, session]));
+        });
+        const applySessionListRenderablePatches = vi.fn((patches: readonly {
+            sessionId: string;
+            patch: Partial<SessionListRenderableSession> & { metadataUnavailable?: boolean };
+        }[]) => {
+            for (const { sessionId, patch } of patches) {
+                currentRenderables[sessionId] = {
+                    ...currentRenderables[sessionId],
+                    ...patch,
+                } as SessionListRenderableSession;
+            }
+        });
+
+        try {
+            await fetchAndApplySessions({
+                credentials: { token: 't', secret: 's' },
+                encryption,
+                sessionDataKeys: new Map<string, Uint8Array>(),
+                request: requestSpy,
+                applySessions: vi.fn(),
+                applySessionListRenderables,
+                applySessionListRenderablePatches,
+                getCurrentSessionListRenderable: (sessionId) => currentRenderables[sessionId],
+                cachedSessionListEntries: {
+                    s_empty_cached_identity: {
+                        sessionId: 's_empty_cached_identity',
+                        metadataVersion: 4,
+                        agentStateVersion: 0,
+                        updatedAt: 1,
+                        createdAt: 1,
+                        active: true,
+                        activeAt: 1,
+                        archivedAt: null,
+                        path: '',
+                    },
+                } satisfies NonNullable<FetchAndApplySessionsParams['cachedSessionListEntries']>,
+                sessionListBackgroundHydrationYield: async () => {},
+                repairInvalidReadStateV1: async () => {},
+                log: { log: () => {} },
+            });
+
+            await expect.poll(() => applySessionListRenderablePatches.mock.calls.length).toBe(1);
+        } finally {
+            consoleError.mockRestore();
+        }
+
+        expect(applySessionListRenderablePatches).toHaveBeenCalledWith([
+            expect.objectContaining({
+                sessionId: 's_empty_cached_identity',
+                patch: expect.objectContaining({ metadataUnavailable: true }),
+            }),
+        ]);
+        expect(currentRenderables.s_empty_cached_identity?.metadata).toBeNull();
+        expect(currentRenderables.s_empty_cached_identity?.metadataUnavailable).toBe(true);
     });
 
     it('clears runtime session encryption when an encrypted session no longer has a data-key envelope', async () => {

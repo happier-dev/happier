@@ -22,6 +22,12 @@ import type {
     ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmPullRequestGetRequest,
+    ScmPullRequestGetResponse,
+    ScmPullRequestListRequest,
+    ScmPullRequestListResponse,
+    ScmPullRequestOpenComposeRequest,
+    ScmPullRequestOpenComposeResponse,
     ScmRemoteAddRequest,
     ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
@@ -30,6 +36,8 @@ import type {
     ScmRemoteRequest,
     ScmRemoteResponse,
     ScmRemoteSetUrlRequest,
+    ScmRepositoryRemoveIndexLockRequest,
+    ScmRepositoryRemoveIndexLockResponse,
     ScmStashApplyRequest,
     ScmStashApplyResponse,
     ScmStashDropRequest,
@@ -329,6 +337,50 @@ export async function sessionScmRemoteRemove(
     return await callScmPreferMachine<ScmRemoteManagementResponse, ScmRemoteRemoveRequest>(
         sessionId,
         RPC_METHODS.SCM_REMOTE_REMOVE,
+        request
+    );
+}
+
+export async function sessionScmPullRequestList(
+    sessionId: string,
+    request: ScmPullRequestListRequest
+): Promise<ScmPullRequestListResponse> {
+    return await callScmPreferMachine<ScmPullRequestListResponse, ScmPullRequestListRequest>(
+        sessionId,
+        RPC_METHODS.SCM_PULL_REQUEST_LIST,
+        request
+    );
+}
+
+export async function sessionScmPullRequestGet(
+    sessionId: string,
+    request: ScmPullRequestGetRequest
+): Promise<ScmPullRequestGetResponse> {
+    return await callScmPreferMachine<ScmPullRequestGetResponse, ScmPullRequestGetRequest>(
+        sessionId,
+        RPC_METHODS.SCM_PULL_REQUEST_GET,
+        request
+    );
+}
+
+export async function sessionScmPullRequestOpenCompose(
+    sessionId: string,
+    request: ScmPullRequestOpenComposeRequest
+): Promise<ScmPullRequestOpenComposeResponse> {
+    return await callScmPreferMachine<ScmPullRequestOpenComposeResponse, ScmPullRequestOpenComposeRequest>(
+        sessionId,
+        RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
+        request
+    );
+}
+
+export async function sessionScmRepositoryRemoveIndexLock(
+    sessionId: string,
+    request: ScmRepositoryRemoveIndexLockRequest
+): Promise<ScmRepositoryRemoveIndexLockResponse> {
+    return await callScmPreferMachine<ScmRepositoryRemoveIndexLockResponse, ScmRepositoryRemoveIndexLockRequest>(
+        sessionId,
+        RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK,
         request
     );
 }

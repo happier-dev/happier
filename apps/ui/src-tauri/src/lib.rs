@@ -83,6 +83,7 @@ pub fn run() {
                 activity_overlay::desktop_activity_overlay_set_input_locked,
                 activity_overlay::desktop_activity_overlay_apply_drag_delta,
                 activity_overlay::desktop_activity_overlay_release_drag_velocity,
+                activity_overlay::desktop_activity_overlay_apply_momentum_delta,
                 activity_overlay::desktop_activity_overlay_reset_position,
                 activity_overlay::desktop_activity_overlay_emit_interaction,
                 activity_overlay::desktop_activity_overlay_emit_interaction_result,
@@ -113,8 +114,32 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            #[cfg(desktop)]
+            match event {
+                tauri::RunEvent::Ready => {
+                    window_chrome::present_main_window_for_lifecycle_event(
+                        app_handle,
+                        window_chrome::DesktopMainWindowLifecycleEvent::AppReady,
+                    );
+                }
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen {
+                    has_visible_windows,
+                    ..
+                } => {
+                    window_chrome::present_main_window_for_lifecycle_event(
+                        app_handle,
+                        window_chrome::DesktopMainWindowLifecycleEvent::MacOsReopen {
+                            has_visible_windows,
+                        },
+                    );
+                }
+                _ => {}
+            }
+        });
 }
 
 #[cfg(desktop)]

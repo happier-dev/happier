@@ -1,5 +1,9 @@
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it } from 'vitest';
+import {
+    REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
+    SCM_OPERATION_ERROR_CODES,
+} from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
 import {
     installSourceControlBranchMenuCommonModuleMocks,
@@ -196,6 +200,57 @@ describe('SourceControlBranchMenu', () => {
             name: 'feature/test',
             strategy: 'bring_changes',
         });
+    });
+
+    it('offers stale Git index-lock recovery and retries branch checkout once', async () => {
+        sourceControlBranchMenuModuleState.useSettingMock.mockImplementation((key: string) => {
+            if (key === 'scmUncommittedChangesStrategy') return 'always_bring';
+            if (key === 'scmAskBeforeOverwritingBranchStash') return true;
+            return undefined;
+        });
+        sourceControlBranchMenuModuleState.modalConfirmSpy.mockResolvedValue(true);
+        sourceControlBranchMenuModuleState.fetchBranchesForSessionMock.mockResolvedValue([
+            { name: 'main', type: 'local', isCurrent: true, upstream: null },
+            { name: 'feature/test', type: 'local', isCurrent: false, upstream: null },
+        ]);
+        sourceControlBranchMenuModuleState.sessionScmBranchCheckoutMock
+            .mockResolvedValueOnce({
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+            })
+            .mockResolvedValueOnce({ success: true });
+
+        const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
+
+        const screen = await renderScreen(<SourceControlBranchMenu
+                    sessionId="s1"
+                    currentBranch="main"
+                    snapshot={{
+                        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+                        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                        capabilities: { readBranches: true, writeBranchCheckout: true, writeRemotePublish: true },
+                        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+                        fetchedAt: Date.now(),
+                        projectKey: 'p1',
+                        hasConflicts: false,
+                        entries: [],
+                        stashCount: 0,
+                    } as any}
+                    disabled={false}
+                />);
+
+        await openSourceControlBranchMenu(screen);
+        await selectSourceControlBranchMenuItem(screen, 'branch:feature/test');
+
+        expect(sourceControlBranchMenuModuleState.modalConfirmSpy).toHaveBeenCalledTimes(1);
+        expect(sourceControlBranchMenuModuleState.sessionScmRepositoryRemoveIndexLockMock).toHaveBeenCalledWith('s1', {
+            cwd: '/repo',
+            confirmed: true,
+            confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
+        });
+        expect(sourceControlBranchMenuModuleState.sessionScmBranchCheckoutMock).toHaveBeenCalledTimes(2);
+        expect(sourceControlBranchMenuModuleState.modalAlertSpy).not.toHaveBeenCalled();
     });
 
 });

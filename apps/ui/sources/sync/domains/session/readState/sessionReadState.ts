@@ -1,6 +1,6 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
-import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/directSessions/readDirectSessionAttention';
-import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/external/readDirectSessionAttention';
+import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
 import {
     resolveLastViewedSessionSeq,
     type LastViewedSessionSeqInput,

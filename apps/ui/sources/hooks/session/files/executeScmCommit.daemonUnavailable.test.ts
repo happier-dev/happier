@@ -1,9 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import {
+  REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
+  SCM_OPERATION_ERROR_CODES,
+} from '@happier-dev/protocol';
 import { installSessionFilesHookCommonModuleMocks } from './sessionFilesHookTestHelpers';
 
 const modalAlert = vi.hoisted(() => vi.fn());
+const modalConfirm = vi.hoisted(() => vi.fn(async () => true));
 const sessionScmCommitCreate = vi.hoisted(() => vi.fn());
+const sessionScmRepositoryRemoveIndexLock = vi.hoisted(() => vi.fn(async () => ({
+  success: true,
+  removed: true,
+  lockPath: '/repo/.git/index.lock',
+})));
 const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: any) => {
   await input.run();
   return { started: true, message: '' };
@@ -12,11 +21,12 @@ const withSessionProjectScmOperationLock = vi.hoisted(() => vi.fn(async (input: 
 installSessionFilesHookCommonModuleMocks({
   modal: async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({
-      spies: {
-        alert: modalAlert,
-      },
-    }).module;
+        return createModalModuleMock({
+          spies: {
+            alert: modalAlert,
+            confirm: modalConfirm,
+          },
+        }).module;
   },
   storage: async (importOriginal) => importOriginal(),
 });
@@ -27,6 +37,7 @@ vi.mock('@/scm/operations/withOperationLock', () => ({
 
 vi.mock('@/sync/ops', () => ({
   sessionScmCommitCreate,
+  sessionScmRepositoryRemoveIndexLock,
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({
@@ -38,7 +49,9 @@ vi.mock('@/scm/scmStatusSync', () => ({
 describe('executeScmCommit (daemon unavailable)', () => {
   it('shows daemon-unavailable alert with Retry when commit RPC backend is unavailable', async () => {
     modalAlert.mockReset();
+    modalConfirm.mockReset();
     sessionScmCommitCreate.mockReset();
+    sessionScmRepositoryRemoveIndexLock.mockClear();
 
     sessionScmCommitCreate.mockResolvedValueOnce({
       success: false,
@@ -50,6 +63,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     const result = await executeScmCommit({
       sessionId: 's1',
+      repoPath: '/repo',
       commitMessage: 'feat: test',
       scmCommitStrategy: 'git_staging',
       commitSelectionPaths: [],
@@ -72,7 +86,9 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
   it('does not retry when caller indicates it is unmounted', async () => {
     modalAlert.mockReset();
+    modalConfirm.mockReset();
     sessionScmCommitCreate.mockReset();
+    sessionScmRepositoryRemoveIndexLock.mockClear();
 
     sessionScmCommitCreate.mockResolvedValueOnce({
       success: false,
@@ -84,6 +100,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     const result = await executeScmCommit({
       sessionId: 's1',
+      repoPath: '/repo',
       commitMessage: 'feat: test',
       scmCommitStrategy: 'git_staging',
       commitSelectionPaths: [],
@@ -109,7 +126,9 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
   it('omits a broader commit scope when atomic line-selection patches are present', async () => {
     modalAlert.mockReset();
+    modalConfirm.mockReset();
     sessionScmCommitCreate.mockReset();
+    sessionScmRepositoryRemoveIndexLock.mockClear();
 
     sessionScmCommitCreate.mockResolvedValueOnce({
       success: true,
@@ -120,6 +139,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
 
     const result = await executeScmCommit({
       sessionId: 's1',
+      repoPath: '/repo',
       commitMessage: 'feat: test',
       scmCommitStrategy: 'atomic',
       commitSelectionPaths: ['a.txt'],
@@ -155,5 +175,52 @@ describe('executeScmCommit (daemon unavailable)', () => {
       }),
     );
     expect(sessionScmCommitCreate.mock.calls[0]?.[1]).not.toHaveProperty('scope');
+  });
+
+  it('offers stale Git index-lock recovery and retries commit creation once', async () => {
+    modalAlert.mockReset();
+    modalConfirm.mockReset();
+    sessionScmCommitCreate.mockReset();
+    sessionScmRepositoryRemoveIndexLock.mockClear();
+
+    sessionScmCommitCreate
+      .mockResolvedValueOnce({
+        success: false,
+        errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+        error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        commitSha: 'abc123',
+      });
+
+    const refreshScmData = vi.fn(async () => {});
+    const loadCommitHistory = vi.fn(async () => {});
+    const { executeScmCommit } = await import('./executeScmCommit');
+
+    const result = await executeScmCommit({
+      sessionId: 's1',
+      repoPath: '/repo',
+      commitMessage: 'feat: test',
+      scmCommitStrategy: 'git_staging',
+      commitSelectionPaths: [],
+      commitSelectionPatches: [],
+      refreshScmData,
+      loadCommitHistory,
+      setScmOperationBusy: vi.fn(),
+      setScmOperationStatus: vi.fn(),
+      tracking: null,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(modalConfirm).toHaveBeenCalledTimes(1);
+    expect(sessionScmRepositoryRemoveIndexLock).toHaveBeenCalledWith('s1', {
+      cwd: '/repo',
+      confirmed: true,
+      confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
+    });
+    expect(sessionScmCommitCreate).toHaveBeenCalledTimes(2);
+    expect(refreshScmData).toHaveBeenCalledTimes(1);
+    expect(loadCommitHistory).toHaveBeenCalledWith({ reset: true });
   });
 });

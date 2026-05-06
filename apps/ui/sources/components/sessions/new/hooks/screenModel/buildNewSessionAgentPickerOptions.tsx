@@ -29,10 +29,17 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     selectedPath: string | null;
     selectedBackendTargetKey: string;
     selectedModelId: string;
+    selectedConfigOverrides?: Readonly<Record<string, string>>;
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     onSelectFavoriteModel?: (entry: ResolvedBackendCatalogEntry, modelId: string) => void;
+    onSelectFavoriteModelOptionValue?: (
+        entry: ResolvedBackendCatalogEntry,
+        modelId: string,
+        configId: string,
+        valueId: string,
+    ) => void;
     onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
 }>;
@@ -89,12 +96,14 @@ export function buildNewSessionAgentPickerOptions(
             compatibleBackendTargetKeys,
             selectedBackendTargetKey: params.selectedBackendTargetKey,
             selectedModelId: params.selectedModelId,
+            selectedConfigOverrides: params.selectedConfigOverrides,
             selectedMachineId: params.selectedMachineId,
             capabilityServerId: params.capabilityServerId,
             selectedPath: params.selectedPath,
             settings: params.settings,
             refreshProbe: params.refreshProbe,
             onSelectFavoriteModel: params.onSelectFavoriteModel,
+            onSelectFavoriteModelOptionValue: params.onSelectFavoriteModelOptionValue,
             onToggleFavoriteModel: params.onToggleFavoriteModel,
             onRemoveFavoriteModelSelection: params.onRemoveFavoriteModelSelection,
         })

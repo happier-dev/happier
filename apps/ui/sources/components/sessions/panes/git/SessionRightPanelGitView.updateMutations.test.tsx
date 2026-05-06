@@ -6,11 +6,17 @@ import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPa
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+type ScmMutationResult =
+    | { success: true; stdout?: string }
+    | { success: false; errorCode?: string; error?: string };
+
 const beginSessionProjectScmOperationMock = vi.hoisted(() => vi.fn());
 const finishSessionProjectScmOperationMock = vi.hoisted(() => vi.fn(() => true));
 const appendSessionProjectScmOperationMock = vi.hoisted(() => vi.fn());
-const sessionScmRemoteAddMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true })));
-const sessionScmBranchMergeMock = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ success: true, stdout: 'merged' })));
+const sessionScmRemoteAddMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<ScmMutationResult>>(async () => ({ success: true })));
+const sessionScmBranchMergeMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<ScmMutationResult>>(async () => ({ success: true, stdout: 'merged' })));
+const sessionScmRepositoryRemoveIndexLockMock = vi.hoisted(() => vi.fn());
+const modalConfirmMock = vi.hoisted(() => vi.fn());
 
 let activeGitSubTab: 'commit' | 'update' | 'history' = 'update';
 let sessionSnapshotMock: any = null;
@@ -137,6 +143,15 @@ vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => (
     resolveSessionMachineReachability: () => true,
 }));
 
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: modalConfirmMock,
+        },
+    }).module;
+});
+
 vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
 }));
@@ -195,6 +210,7 @@ vi.mock('@/sync/ops/sessions', () => ({
     sessionScmBranchRebase: vi.fn(async () => ({ success: true })),
     sessionScmBranchOperationContinue: vi.fn(async () => ({ success: true })),
     sessionScmBranchOperationAbort: vi.fn(async () => ({ success: true })),
+    sessionScmRepositoryRemoveIndexLock: (...args: any[]) => sessionScmRepositoryRemoveIndexLockMock(...args),
 }));
 
 function createSnapshot() {
@@ -248,6 +264,8 @@ describe('SessionRightPanelGitView update mutations', () => {
         appendSessionProjectScmOperationMock.mockClear();
         sessionScmRemoteAddMock.mockClear();
         sessionScmBranchMergeMock.mockClear();
+        sessionScmRepositoryRemoveIndexLockMock.mockReset();
+        modalConfirmMock.mockReset();
     });
 
     it('routes remote add through the session SCM operation lock before invoking the RPC', async () => {
@@ -302,5 +320,47 @@ describe('SessionRightPanelGitView update mutations', () => {
         }));
         expect(finishSessionProjectScmOperationMock).toHaveBeenCalledWith('session-1', 'lock-2');
         expect(response).toEqual({ success: true, stdout: 'merged' });
+    });
+
+    it('confirms stale index-lock recovery and retries update-tab mutations once', async () => {
+        beginSessionProjectScmOperationMock.mockReturnValue({
+            started: true,
+            operation: {
+                id: 'lock-3',
+                startedAt: 3,
+                sessionId: 'session-1',
+                operation: 'remote_add',
+            },
+        });
+        modalConfirmMock.mockResolvedValueOnce(true);
+        sessionScmRemoteAddMock
+            .mockResolvedValueOnce({
+                success: false,
+                errorCode: 'COMMAND_FAILED',
+                error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+            })
+            .mockResolvedValueOnce({ success: true });
+        sessionScmRepositoryRemoveIndexLockMock.mockResolvedValueOnce({
+            success: true,
+            removed: true,
+            lockPath: '/repo/.git/index.lock',
+        });
+
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+        await renderScreen(<SessionRightPanelGitView sessionId="session-1" scopeId="session:1" />);
+
+        const response = await capturedRemotesProps.onAddRemote({
+            name: 'origin',
+            fetchUrl: 'git@example.com:repo.git',
+        });
+
+        expect(modalConfirmMock).toHaveBeenCalledTimes(1);
+        expect(sessionScmRepositoryRemoveIndexLockMock).toHaveBeenCalledWith('session-1', {
+            cwd: '/repo',
+            confirmed: true,
+            confirmationToken: expect.any(String),
+        });
+        expect(sessionScmRemoteAddMock).toHaveBeenCalledTimes(2);
+        expect(response).toEqual({ success: true });
     });
 });

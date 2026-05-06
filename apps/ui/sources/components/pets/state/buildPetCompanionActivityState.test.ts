@@ -62,6 +62,89 @@ describe('buildPetCompanionActivityState', () => {
         });
     });
 
+    it('maps recent session thinking timestamps to running activity without transcript signals', () => {
+        const session = createSessionFixture({
+            id: 'recent-thinking-session',
+            active: true,
+            thinking: false,
+            thinkingAt: 10_000,
+            updatedAt: 10_000,
+            activeAt: 10_000,
+        });
+
+        expect(buildPetCompanionActivityState({
+            sessions: [session],
+            selectedSessionId: session.id,
+            nowMs: 10_001,
+            signalsBySessionId: {
+                [session.id]: {
+                    hasFailure: false,
+                    hasUnreadMessages: false,
+                    latestThinkingActivityAtMs: null,
+                    latestMeaningfulActivityAtMs: null,
+                    pendingMessageCount: 0,
+                },
+            },
+        })).toMatchObject({
+            state: 'running',
+            reason: 'running',
+            sessionId: session.id,
+            trayItems: [
+                expect.objectContaining({
+                    sessionId: session.id,
+                    status: 'running',
+                }),
+            ],
+        });
+    });
+
+    it('maps optimistic thinking and active thinking grace to running activity', () => {
+        const optimisticSession = createSessionFixture({
+            id: 'optimistic-thinking-session',
+            active: true,
+            thinking: false,
+            optimisticThinkingAt: 20_000,
+            updatedAt: 20_000,
+            activeAt: 20_000,
+        });
+        const graceSession = createSessionFixture({
+            id: 'thinking-grace-session',
+            active: false,
+            thinking: false,
+            thinkingGraceUntil: 35_000,
+            updatedAt: 30_000,
+            activeAt: 30_000,
+        });
+
+        const model = buildPetCompanionActivityState({
+            sessions: [optimisticSession, graceSession],
+            selectedSessionId: optimisticSession.id,
+            nowMs: 30_001,
+            signalsBySessionId: {
+                [optimisticSession.id]: {
+                    hasFailure: false,
+                    hasUnreadMessages: false,
+                    latestThinkingActivityAtMs: null,
+                    latestMeaningfulActivityAtMs: null,
+                    pendingMessageCount: 0,
+                },
+                [graceSession.id]: {
+                    hasFailure: false,
+                    hasUnreadMessages: false,
+                    latestThinkingActivityAtMs: null,
+                    latestMeaningfulActivityAtMs: null,
+                    pendingMessageCount: 0,
+                },
+            },
+        });
+
+        expect(model.trayItems.map((item) => item.sessionId).sort()).toEqual([
+            graceSession.id,
+            optimisticSession.id,
+        ].sort());
+        expect(model.trayItems.every((item) => item.status === 'running')).toBe(true);
+    });
+
     it('prioritizes failed session state over review and running activity', () => {
         const session = createSessionFixture({
             id: 'failed-session',

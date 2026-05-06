@@ -5,6 +5,7 @@ import { renderHook } from '@/dev/testkit';
 
 const desktopWindowBridgeState = vi.hoisted(() => ({
     startDesktopWindowDragging: vi.fn(),
+    toggleDesktopWindowMaximize: vi.fn(),
 }));
 
 vi.mock('react-native', async () => {
@@ -18,11 +19,13 @@ vi.mock('react-native', async () => {
 
 vi.mock('@/utils/platform/desktopWindowBridge', () => ({
     startDesktopWindowDragging: () => desktopWindowBridgeState.startDesktopWindowDragging(),
+    toggleDesktopWindowMaximize: () => desktopWindowBridgeState.toggleDesktopWindowMaximize(),
 }));
 
 describe('useDesktopWindowDragMouseProps', () => {
     beforeEach(() => {
         desktopWindowBridgeState.startDesktopWindowDragging.mockReset();
+        desktopWindowBridgeState.toggleDesktopWindowMaximize.mockReset();
         vi.resetModules();
     });
 
@@ -49,6 +52,28 @@ describe('useDesktopWindowDragMouseProps', () => {
         expect(dragProps['data-tauri-drag-region']).toBe(true);
         expect(preventDefault).toHaveBeenCalledTimes(1);
         expect(desktopWindowBridgeState.startDesktopWindowDragging).toHaveBeenCalledTimes(1);
+        expect(desktopWindowBridgeState.toggleDesktopWindowMaximize).not.toHaveBeenCalled();
+    });
+
+    it('toggles maximize from double-click titlebar mouse down without starting a drag', async () => {
+        const { useDesktopWindowDragMouseProps } = await import('./DesktopWindowDragRegion');
+        const hook = await renderHook(() => useDesktopWindowDragMouseProps(), {
+            flushOptions: { cycles: 1, turns: 1 },
+        });
+        const dragProps = hook.getCurrent();
+        const preventDefault = vi.fn();
+        const draggableTarget = { closest: vi.fn(() => null) };
+
+        dragProps.onMouseDown?.({
+            buttons: 1,
+            detail: 2,
+            preventDefault,
+            target: draggableTarget,
+        });
+
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(desktopWindowBridgeState.toggleDesktopWindowMaximize).toHaveBeenCalledTimes(1);
+        expect(desktopWindowBridgeState.startDesktopWindowDragging).not.toHaveBeenCalled();
     });
 
     it('does not start dragging from nested interactive controls', async () => {
@@ -68,5 +93,6 @@ describe('useDesktopWindowDragMouseProps', () => {
 
         expect(preventDefault).toHaveBeenCalledTimes(0);
         expect(desktopWindowBridgeState.startDesktopWindowDragging).toHaveBeenCalledTimes(0);
+        expect(desktopWindowBridgeState.toggleDesktopWindowMaximize).toHaveBeenCalledTimes(0);
     });
 });

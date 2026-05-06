@@ -47,12 +47,19 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
     compatibleBackendTargetKeys: ReadonlySet<string>;
     selectedBackendTargetKey: string;
     selectedModelId: string;
+    selectedConfigOverrides?: Readonly<Record<string, string>>;
     selectedMachineId: string | null;
     capabilityServerId: string;
     selectedPath: string | null;
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
     onSelectFavoriteModel: (entry: ResolvedBackendCatalogEntry, modelId: string) => void;
+    onSelectFavoriteModelOptionValue?: (
+        entry: ResolvedBackendCatalogEntry,
+        modelId: string,
+        configId: string,
+        valueId: string,
+    ) => void;
     onToggleFavoriteModel: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
 }>): AgentInputChipPickerOption | null {
@@ -78,6 +85,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
         label: t('profiles.groups.favorites'),
         icon: <FavoriteModelsPickerIcon />,
         closeOnSelectImmediate: false,
+        preserveFocusOnExternalSelectionChange: true,
         onSelectImmediate: () => {},
         renderDetailContent: () => (
             <NewSessionFavoriteModelsDetail
@@ -85,12 +93,14 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
                 resolvedBackendEntries={compatibleResolvedBackendEntries}
                 selectedBackendTargetKey={params.selectedBackendTargetKey}
                 selectedModelId={params.selectedModelId}
+                selectedConfigOverrides={params.selectedConfigOverrides}
                 selectedMachineId={params.selectedMachineId}
                 capabilityServerId={params.capabilityServerId}
                 cwd={params.selectedPath}
                 settings={params.settings}
                 refreshProbe={params.refreshProbe ?? null}
                 onSelectFavoriteModel={params.onSelectFavoriteModel}
+                onSelectFavoriteModelOptionValue={params.onSelectFavoriteModelOptionValue}
                 onToggleFavoriteModel={params.onToggleFavoriteModel}
                 onRemoveFavoriteModelSelection={params.onRemoveFavoriteModelSelection}
             />

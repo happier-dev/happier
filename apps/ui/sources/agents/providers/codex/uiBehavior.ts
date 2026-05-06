@@ -2,9 +2,9 @@ import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilitie
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
 import { normalizeCodexBackendMode } from '@happier-dev/protocol';
 import { resolveCodexSpawnExtrasFromSettings, resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
-import { resolveCodexBrowseSourceOptions } from '@/agents/providers/codex/directSessions/resolveCodexBrowseSourceOptions';
-import { resolveCodexLinkEnsureRequestExtras } from '@/agents/providers/codex/directSessions/resolveCodexLinkEnsureRequestExtras';
-import { resolveCodexLockedBrowseSourceOption } from '@/agents/providers/codex/directSessions/resolveCodexLockedBrowseSourceOption';
+import { resolveCodexBrowseSourceOptions } from '@/agents/providers/codex/externalSessions/resolveCodexBrowseSourceOptions';
+import { resolveCodexLinkEnsureRequestExtras } from '@/agents/providers/codex/externalSessions/resolveCodexLinkEnsureRequestExtras';
+import { resolveCodexLockedBrowseSourceOption } from '@/agents/providers/codex/externalSessions/resolveCodexLockedBrowseSourceOption';
 import { buildCodexSessionHandoffProviderPatch } from '@/agents/providers/codex/buildCodexSessionHandoffProviderPatch';
 
 import type {

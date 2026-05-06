@@ -1,7 +1,7 @@
-import { isHiddenSystemSession } from '@happier-dev/protocol';
 import { resolveBestMachineDisplayRenderableForHost, type MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import type { SessionListRenderableSession } from './sessionListRenderable';
+import { isUserFacingSession } from './isUserFacingSession';
 import { resolveSessionProjectGroupingKeyPartsWithMachineMetadata } from './sessionListProjectGroupingKeys';
 import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 import { normalizeSessionListServerScope } from './normalizeSessionListServerScope';
@@ -447,7 +447,7 @@ export function buildSessionListViewData(
 
         const session = sessions[sessionIdRaw];
         // Hide system sessions from user-facing lists by default.
-        if (session.metadata?.hiddenSystemSession === true || isHiddenSystemSession({ metadata: session.metadata as never })) {
+        if (!isUserFacingSession(session)) {
             continue;
         }
         visibleSessionCount += 1;

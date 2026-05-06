@@ -2,7 +2,8 @@ import * as React from 'react';
 import { View, ScrollView, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
-    useAllSessions,
+    useAllSessionListAttentionRows,
+    useAllSessionsForAttention,
     useArtifacts,
     useFeedItems,
     useFeedLoaded,
@@ -30,6 +31,7 @@ import { ApprovalInboxCard } from '@/components/inbox/cards/ApprovalInboxCard';
 import { InboxSessionAttentionGroupCard } from '@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard';
 import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { buildInboxSessionState } from '@/hooks/inbox/buildInboxSessionState';
+import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -91,8 +93,12 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
     const friendsEnabled = useFriendsEnabled();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
-    const sessions = useAllSessions();
-    const { unreadSessions, sessionsNeedingAttention } = React.useMemo(() => buildInboxSessionState(sessions), [sessions]);
+    const sessions = useAllSessionsForAttention();
+    const sessionRows = useAllSessionListAttentionRows();
+    const { unreadSessions, sessionsNeedingAttention } = React.useMemo(
+        () => buildInboxSessionState({ sessions, sessionRows }),
+        [sessionRows, sessions],
+    );
 
     const openApprovals = React.useMemo(() => {
         return artifacts.filter((a) => a.header?.kind === 'approval_request.v1' && a.header?.approvalStatus === 'open');
@@ -206,12 +212,12 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
 
                 {unreadSessions.length > 0 && (
                     <ItemGroup title={t('inbox.unreadSessions')}>
-                        {unreadSessions.map((session) => (
+                        {unreadSessions.map((row) => (
                             <Item
-                                key={session.id}
-                                title={getSessionName(session)}
-                                subtitle={getSessionSubtitle(session)}
-                                onPress={() => router.push(`/session/${session.id}`)}
+                                key={`${row.serverId ?? 'local'}:${row.session.id}`}
+                                title={getSessionName(row.session)}
+                                subtitle={getSessionSubtitle(row.session)}
+                                onPress={() => router.push(createActivitySurfaceSessionRoute(row.session.id, row.serverId))}
                             />
                         ))}
                     </ItemGroup>

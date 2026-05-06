@@ -55,7 +55,10 @@ pub(crate) fn resolve_notch_integrated_window_dimensions(
         width: clamp(
             target_width,
             physical_notch_size.width,
-            display_context.screen_frame.width.max(physical_notch_size.width),
+            display_context
+                .screen_frame
+                .width
+                .max(physical_notch_size.width),
         ),
         height: clamp(physical_notch_size.height, 1.0, window.collapsed.height),
     }
@@ -70,8 +73,16 @@ fn clamp_dimensions_to_display(
     };
 
     DesktopActivityOverlayDimensionsPayload {
-        width: clamp(dimensions.width, 1.0, display_context.visible_frame.width.max(1.0)),
-        height: clamp(dimensions.height, 1.0, display_context.visible_frame.height.max(1.0)),
+        width: clamp(
+            dimensions.width,
+            1.0,
+            display_context.visible_frame.width.max(1.0),
+        ),
+        height: clamp(
+            dimensions.height,
+            1.0,
+            display_context.visible_frame.height.max(1.0),
+        ),
     }
 }
 

@@ -7,7 +7,7 @@ import { ScmCommitSelectionToggleButton } from '@/components/sessions/sourceCont
 import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import {
-    getDefaultChangedFilesViewMode,
+    getPreferredChangedFilesViewMode,
     resolveChangedFilesViewMode,
     type ChangedFilesViewMode,
 } from '@/scm/scmAttribution';
@@ -62,13 +62,9 @@ export type SessionRightPanelGitCommitTabContentProps = Readonly<{
 
 export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRightPanelGitCommitTabContentProps) => {
     const commitSelectionUiEnabled = props.commitSelectionUiEnabled === true;
-    const { latestTurnScopedChangeSet, sessionChangeSet } = useDerivedSessionChangeSet(props.sessionId);
+    const { latestTurnChangeSet, latestTurnScopedChangeSet, sessionChangeSet } = useDerivedSessionChangeSet(props.sessionId);
 
-    const [requestedChangedFilesViewMode, setChangedFilesViewMode] = React.useState<ChangedFilesViewMode>(() => {
-        if (latestTurnScopedChangeSet) return 'turn' as const;
-        if (sessionChangeSet) return 'session' as const;
-        return getDefaultChangedFilesViewMode();
-    });
+    const [requestedChangedFilesViewMode, setRequestedChangedFilesViewMode] = React.useState<ChangedFilesViewMode | null>(null);
 
     const changed = useChangedFilesData({
         sessionId: props.sessionId,
@@ -79,6 +75,7 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
         searchQuery: '',
         showAllRepositoryFiles: false,
         latestTurnChangeSet: latestTurnScopedChangeSet,
+        latestTurnEvidence: latestTurnChangeSet,
         sessionChangeSet,
     });
 
@@ -108,17 +105,43 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
 
     const showSelectedViewToggle = selectedRepositoryChangedFiles.length > 0;
 
-    const scopedChangedFilesViewMode = React.useMemo(() => resolveChangedFilesViewMode({
-        mode: requestedChangedFilesViewMode,
+    const changedFilesAvailability = React.useMemo(() => ({
         showTurnViewToggle: changed.showTurnViewToggle,
+        showTurnAgentReportedViewToggle: changed.showTurnAgentReportedViewToggle,
+        showTurnCheckpointViewToggle: changed.showTurnCheckpointViewToggle,
         showSessionViewToggle: changed.showSessionViewToggle,
         showSelectedViewToggle,
-    }), [changed.showSessionViewToggle, changed.showTurnViewToggle, requestedChangedFilesViewMode, showSelectedViewToggle]);
+    }), [
+        changed.showSessionViewToggle,
+        changed.showTurnAgentReportedViewToggle,
+        changed.showTurnCheckpointViewToggle,
+        changed.showTurnViewToggle,
+        showSelectedViewToggle,
+    ]);
+
+    const scopedChangedFilesViewMode = React.useMemo(() => {
+        if (requestedChangedFilesViewMode) {
+            return resolveChangedFilesViewMode({
+                mode: requestedChangedFilesViewMode,
+                ...changedFilesAvailability,
+            });
+        }
+        return getPreferredChangedFilesViewMode(changedFilesAvailability);
+    }, [
+        changedFilesAvailability,
+        requestedChangedFilesViewMode,
+    ]);
 
     const currentScopeChangedFiles = React.useMemo<readonly ScmFileStatus[]>(() => {
         if (scopedChangedFilesViewMode === 'selected') return selectedRepositoryChangedFiles;
         if (scopedChangedFilesViewMode === 'turn') {
             return changed.turnAttributedFiles.map((entry) => entry.file);
+        }
+        if (scopedChangedFilesViewMode === 'turn_agent_reported') {
+            return changed.turnAgentReportedFiles.map((entry) => entry.file);
+        }
+        if (scopedChangedFilesViewMode === 'turn_checkpoint') {
+            return changed.turnCheckpointFiles.map((entry) => entry.file);
         }
         if (scopedChangedFilesViewMode === 'session') {
             return changed.sessionAttributedFiles.map((entry) => entry.file);
@@ -127,7 +150,9 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
     }, [
         changed.allRepositoryChangedFiles,
         changed.sessionAttributedFiles,
+        changed.turnAgentReportedFiles,
         changed.turnAttributedFiles,
+        changed.turnCheckpointFiles,
         scopedChangedFilesViewMode,
         selectedRepositoryChangedFiles,
     ]);
@@ -224,14 +249,19 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             allRepositoryChangedFiles={changed.allRepositoryChangedFiles}
             selectedRepositoryChangedFiles={selectedRepositoryChangedFiles}
             turnAttributedFiles={changed.turnAttributedFiles}
+            turnAgentReportedFiles={changed.turnAgentReportedFiles}
+            turnCheckpointFiles={changed.turnCheckpointFiles}
+            turnCheckpointMetadata={changed.turnCheckpointMetadata}
             turnRepositoryOnlyFiles={changed.turnRepositoryOnlyFiles}
             sessionAttributedFiles={changed.sessionAttributedFiles}
             repositoryOnlyFiles={changed.repositoryOnlyFiles}
             suppressedInferredCount={changed.suppressedInferredCount}
             showTurnViewToggle={changed.showTurnViewToggle}
+            showTurnAgentReportedViewToggle={changed.showTurnAgentReportedViewToggle}
+            showTurnCheckpointViewToggle={changed.showTurnCheckpointViewToggle}
             showSessionViewToggle={changed.showSessionViewToggle}
             showSelectedViewToggle={showSelectedViewToggle}
-            onChangedFilesViewMode={setChangedFilesViewMode}
+            onChangedFilesViewMode={setRequestedChangedFilesViewMode}
             repositorySelectedCount={repositorySelectedCount}
             onSelectAll={commitSelectionUiEnabled ? bulkSelectCurrentScope : noop}
             onSelectNone={commitSelectionUiEnabled ? bulkSelectNone : noop}

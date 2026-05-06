@@ -147,4 +147,35 @@ describe('buildSessionActivityAttention', () => {
             lastTurnCompletedAt: 1_000,
         });
     });
+
+    it('surfaces failed primary-session runtime issues through activity attention', () => {
+        const attention = buildSessionActivityAttention({
+            session: Object.assign(createSessionFixture({
+                id: 'session-runtime-failed',
+                active: false,
+                presence: 'online',
+                seq: 5,
+                lastViewedSessionSeq: 5,
+                metadata: createMetadata(),
+            }), {
+                latestTurnStatus: 'failed',
+                lastRuntimeIssue: {
+                    v: 1,
+                    scope: 'primary_session',
+                    status: 'failed',
+                    code: 'provider_status_error',
+                    source: 'provider_status_error',
+                    occurredAt: 100,
+                    sanitizedPreview: 'Provider reported an error',
+                },
+            }),
+        });
+
+        expect(attention).toMatchObject({
+            sessionId: 'session-runtime-failed',
+            attentionState: 'failed',
+            hasAttention: true,
+        });
+        expect(attention.priority).toBeGreaterThan(0);
+    });
 });

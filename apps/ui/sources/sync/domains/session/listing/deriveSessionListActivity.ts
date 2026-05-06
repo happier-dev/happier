@@ -1,8 +1,11 @@
 import type { SessionState } from '@/utils/sessions/sessionUtils';
+import { deriveSessionAttentionState } from '@/sync/domains/session/attention/deriveSessionAttentionState';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 export type SessionListSecondaryLineMode = 'status' | 'path';
 export type SessionListAttentionState =
     | 'quiet'
+    | 'failed'
     | 'unread'
     | 'pending'
     | 'thinking'
@@ -44,7 +47,13 @@ export function deriveSessionListAttentionState(input: Readonly<{
     hasUnreadMessages: boolean;
     pendingCount: number;
     sessionState: SessionState;
+    latestTurnStatus?: PrimaryTurnStatusV1 | null;
+    lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
 }>): SessionListAttentionState {
+    if (deriveSessionAttentionState({
+        latestTurnStatus: input.latestTurnStatus,
+        lastRuntimeIssue: input.lastRuntimeIssue,
+    }) === 'failed') return 'failed';
     if (input.sessionState === 'permission_required') return 'permission_required';
     if (input.sessionState === 'action_required') return 'action_required';
     if (input.sessionState === 'thinking') return 'thinking';

@@ -1,16 +1,16 @@
 #[cfg(desktop)]
 use serde::{Deserialize, Serialize};
 
-#[cfg(desktop)]
-use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(target_os = "macos")]
-use std::{ffi::c_void, sync::mpsc};
+#[cfg(desktop)]
+use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 #[cfg(desktop)]
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "macos")]
+use std::{ffi::c_void, sync::mpsc};
 
 #[cfg(target_os = "macos")]
 use objc2_app_kit::NSEvent;
@@ -93,10 +93,10 @@ use self::placement::{
 #[cfg(desktop)]
 use self::storage::{
     clear_persisted_drag_offsets_for_display, migrate_persisted_drag_offsets_for_display_paths,
-    persist_drag_offsets_for_display, read_persisted_drag_offsets, resolve_drag_offsets_path,
-    resolve_drag_offsets_legacy_storage_keys_for_display, resolve_drag_offsets_path_for_display,
-    resolve_drag_offsets_path_for_storage_key, sanitize_drag_offsets,
-    PersistedOverlayDragOffsets,
+    persist_drag_offsets_for_display, read_persisted_drag_offsets,
+    resolve_drag_offsets_legacy_storage_keys_for_display, resolve_drag_offsets_path,
+    resolve_drag_offsets_path_for_display, resolve_drag_offsets_path_for_storage_key,
+    sanitize_drag_offsets, PersistedOverlayDragOffsets,
 };
 #[cfg(desktop)]
 use self::window_lifecycle::{
@@ -116,10 +116,8 @@ const OVERLAY_INTERACTION_EVENT: &str = "activityOverlay://interaction";
 #[cfg(desktop)]
 const OVERLAY_INTERACTION_RESULT_EVENT: &str = "activityOverlay://interaction-result";
 #[cfg(desktop)]
-const OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS: &[&str] = &[
-    OVERLAY_WINDOW_LABEL,
-    MAIN_WINDOW_LABEL,
-];
+const OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS: &[&str] =
+    &[OVERLAY_WINDOW_LABEL, MAIN_WINDOW_LABEL];
 #[cfg(desktop)]
 const OVERLAY_SAFE_PADDING_PX: f64 = 12.0;
 #[cfg(desktop)]
@@ -219,6 +217,33 @@ pub struct DesktopActivityOverlayDragVelocityPayload {
     pub vx: f64,
     pub vy: f64,
     pub sample_window_ms: f64,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopActivityOverlayMomentumDeltaPayload {
+    pub generation: u64,
+    pub delta_x: f64,
+    pub delta_y: f64,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopActivityOverlayScheduledMomentumDeltaPayload {
+    pub delta_x: f64,
+    pub delta_y: f64,
+    pub delay_ms: u64,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopActivityOverlayMomentumPlanPayload {
+    pub generation: u64,
+    pub tick_ms: u64,
+    pub deltas: Vec<DesktopActivityOverlayScheduledMomentumDeltaPayload>,
 }
 
 #[cfg(desktop)]
@@ -531,7 +556,9 @@ fn run_native_display_change_listener<R: Runtime + 'static>(
     while rx.recv().is_ok() {
         let _ = record_native_display_change(&app, &state);
         loop {
-            match rx.recv_timeout(Duration::from_millis(NATIVE_DISPLAY_CHANGE_POLL_INTERVAL_MS)) {
+            match rx.recv_timeout(Duration::from_millis(
+                NATIVE_DISPLAY_CHANGE_POLL_INTERVAL_MS,
+            )) {
                 Ok(()) => {
                     let _ = record_native_display_change(&app, &state);
                 }
@@ -620,10 +647,7 @@ fn apply_native_display_change_action<R: Runtime>(
             DesktopActivityOverlayInteractionPayload {
                 request_id: None,
                 action_identifier: "overlay-set-expanded".to_string(),
-                data: build_display_changed_set_expanded_interaction_data(
-                    true,
-                    action.open_reason,
-                ),
+                data: build_display_changed_set_expanded_interaction_data(true, action.open_reason),
             },
         )
         .map_err(|error| error.to_string())?;
@@ -855,9 +879,7 @@ fn native_mouse_effect_reason(effect: DesktopActivityOverlayNativeMouseEffect) -
         DesktopActivityOverlayNativeMouseEffect::None => "none",
         DesktopActivityOverlayNativeMouseEffect::ExpandFromClick => "click",
         DesktopActivityOverlayNativeMouseEffect::ExpandFromHover => "hover",
-        DesktopActivityOverlayNativeMouseEffect::CollapseFromOutsideClick => {
-            "outside_click"
-        }
+        DesktopActivityOverlayNativeMouseEffect::CollapseFromOutsideClick => "outside_click",
     }
 }
 
@@ -910,16 +932,12 @@ fn apply_input_lock_to_runtime_state(
 }
 
 #[cfg(desktop)]
-fn is_overlay_input_lock_active(
-    state: &ActivityOverlayRuntimeState,
-    now_ms: u64,
-) -> bool {
+fn is_overlay_input_lock_active(state: &ActivityOverlayRuntimeState, now_ms: u64) -> bool {
     state
         .input_lock_updated_at_epoch_ms
         .map(|updated_at_ms| {
             state.input_locked
-                && now_ms.saturating_sub(updated_at_ms)
-                    <= OVERLAY_INPUT_LOCK_HEARTBEAT_TIMEOUT_MS
+                && now_ms.saturating_sub(updated_at_ms) <= OVERLAY_INPUT_LOCK_HEARTBEAT_TIMEOUT_MS
         })
         .unwrap_or(false)
 }
@@ -1105,17 +1123,48 @@ fn apply_activity_overlay_momentum_delta<R: Runtime>(
 }
 
 #[cfg(desktop)]
-fn apply_activity_overlay_momentum<R: Runtime>(
-    app: &AppHandle<R>,
-    state: &ActivityOverlayState,
+fn resolve_activity_overlay_momentum_plan(
     generation: u64,
     velocity: (f64, f64),
-) -> Result<(), String> {
-    for (delta_x, delta_y) in resolve_activity_overlay_momentum_deltas(velocity.0, velocity.1) {
-        if !apply_activity_overlay_momentum_delta(app, state, generation, delta_x, delta_y)? {
-            break;
-        }
+) -> DesktopActivityOverlayMomentumPlanPayload {
+    DesktopActivityOverlayMomentumPlanPayload {
+        generation,
+        tick_ms: PET_MOMENTUM_TICK_MS,
+        deltas: resolve_activity_overlay_momentum_deltas(velocity.0, velocity.1)
+            .into_iter()
+            .map(|(delta_x, delta_y)| DesktopActivityOverlayScheduledMomentumDeltaPayload {
+                delta_x,
+                delta_y,
+                delay_ms: PET_MOMENTUM_TICK_MS,
+            })
+            .collect(),
     }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub fn desktop_activity_overlay_apply_momentum_delta<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, ActivityOverlayState>,
+    payload: DesktopActivityOverlayMomentumDeltaPayload,
+    caller_window: WebviewWindow<R>,
+) -> Result<(), String> {
+    ensure_overlay_command_caller(
+        "desktop_activity_overlay_apply_momentum_delta",
+        &caller_window,
+        &[OVERLAY_WINDOW_LABEL],
+    )?;
+    if !payload.delta_x.is_finite() || !payload.delta_y.is_finite() {
+        return Err("Desktop activity overlay momentum delta must be finite".to_string());
+    }
+
+    apply_activity_overlay_momentum_delta(
+        &app,
+        state.inner(),
+        payload.generation,
+        payload.delta_x,
+        payload.delta_y,
+    )?;
     Ok(())
 }
 
@@ -1126,7 +1175,7 @@ pub fn desktop_activity_overlay_release_drag_velocity<R: Runtime>(
     state: State<'_, ActivityOverlayState>,
     payload: DesktopActivityOverlayDragVelocityPayload,
     caller_window: WebviewWindow<R>,
-) -> Result<(), String> {
+) -> Result<DesktopActivityOverlayMomentumPlanPayload, String> {
     ensure_overlay_command_caller(
         "desktop_activity_overlay_release_drag_velocity",
         &caller_window,
@@ -1149,7 +1198,11 @@ pub fn desktop_activity_overlay_release_drag_velocity<R: Runtime>(
             .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
         ensure_drag_offsets_loaded(&app, &mut guard);
         if !activity_overlay_allows_drag(&guard) {
-            return Ok(());
+            return Ok(DesktopActivityOverlayMomentumPlanPayload {
+                generation: guard.momentum_generation,
+                tick_ms: PET_MOMENTUM_TICK_MS,
+                deltas: Vec::new(),
+            });
         }
         guard.momentum_generation = guard.momentum_generation.wrapping_add(1);
         (
@@ -1158,7 +1211,7 @@ pub fn desktop_activity_overlay_release_drag_velocity<R: Runtime>(
         )
     };
 
-    apply_activity_overlay_momentum(&app, state.inner(), generation, velocity)
+    Ok(resolve_activity_overlay_momentum_plan(generation, velocity))
 }
 
 #[cfg(desktop)]
@@ -1232,8 +1285,12 @@ pub fn desktop_activity_overlay_emit_interaction_result<R: Runtime>(
         &[MAIN_WINDOW_LABEL],
     )?;
 
-    app.emit_to(OVERLAY_WINDOW_LABEL, OVERLAY_INTERACTION_RESULT_EVENT, payload)
-        .map_err(|error| error.to_string())
+    app.emit_to(
+        OVERLAY_WINDOW_LABEL,
+        OVERLAY_INTERACTION_RESULT_EVENT,
+        payload,
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(desktop)]
@@ -1286,13 +1343,12 @@ fn apply_overlay_state<R: Runtime>(
         guard.last_window_state = Some(window_state);
         return Ok(());
     }
-    let monitor_resolution =
-        resolve_anchor_monitor_resolution(
-            app,
-            &window,
-            payload.policy.placement_mode,
-            payload.policy.display_mode,
-        )?;
+    let monitor_resolution = resolve_anchor_monitor_resolution(
+        app,
+        &window,
+        payload.policy.placement_mode,
+        payload.policy.display_mode,
+    )?;
     let monitor = monitor_resolution.rect;
     let display_context = resolve_effective_overlay_display_context(
         resolve_overlay_display_context_for_monitor(app, monitor),
@@ -1684,31 +1740,32 @@ fn ensure_drag_offsets_loaded_for_display<R: Runtime>(
         return;
     }
 
-    let offsets = if let Ok(display_path) =
-        resolve_drag_offsets_path_for_display(app, display_identity)
-    {
-        let mut legacy_path_bufs: Vec<std::path::PathBuf> =
-            resolve_drag_offsets_legacy_storage_keys_for_display(display_identity)
-                .into_iter()
-                .filter_map(|storage_key| {
-                    resolve_drag_offsets_path_for_storage_key(app, &storage_key).ok()
-                })
-                .filter(|path| path != &display_path)
-                .collect();
-        if let Ok(legacy_path) = resolve_drag_offsets_path(app) {
-            if legacy_path != display_path {
-                legacy_path_bufs.push(legacy_path);
+    let offsets =
+        if let Ok(display_path) = resolve_drag_offsets_path_for_display(app, display_identity) {
+            let mut legacy_path_bufs: Vec<std::path::PathBuf> =
+                resolve_drag_offsets_legacy_storage_keys_for_display(display_identity)
+                    .into_iter()
+                    .filter_map(|storage_key| {
+                        resolve_drag_offsets_path_for_storage_key(app, &storage_key).ok()
+                    })
+                    .filter(|path| path != &display_path)
+                    .collect();
+            if let Ok(legacy_path) = resolve_drag_offsets_path(app) {
+                if legacy_path != display_path {
+                    legacy_path_bufs.push(legacy_path);
+                }
             }
-        }
-        let legacy_paths: Vec<&std::path::Path> =
-            legacy_path_bufs.iter().map(std::path::PathBuf::as_path).collect();
-        migrate_persisted_drag_offsets_for_display_paths(&display_path, &legacy_paths)
-            .offsets
-            .unwrap_or_default()
-    } else {
-        read_persisted_drag_offsets(resolve_drag_offsets_path(app).ok().as_deref())
-            .unwrap_or_default()
-    };
+            let legacy_paths: Vec<&std::path::Path> = legacy_path_bufs
+                .iter()
+                .map(std::path::PathBuf::as_path)
+                .collect();
+            migrate_persisted_drag_offsets_for_display_paths(&display_path, &legacy_paths)
+                .offsets
+                .unwrap_or_default()
+        } else {
+            read_persisted_drag_offsets(resolve_drag_offsets_path(app).ok().as_deref())
+                .unwrap_or_default()
+        };
 
     state.drag_offsets = sanitize_drag_offsets(offsets);
     state.drag_offsets_loaded = true;
@@ -1826,10 +1883,12 @@ mod tests {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("capabilities")
             .join(name);
-        let content = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("failed to read capability {}: {error}", path.display()));
-        serde_json::from_str(&content)
-            .unwrap_or_else(|error| panic!("failed to parse capability {}: {error}", path.display()))
+        let content = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("failed to read capability {}: {error}", path.display())
+        });
+        serde_json::from_str(&content).unwrap_or_else(|error| {
+            panic!("failed to parse capability {}: {error}", path.display())
+        })
     }
 
     fn read_generated_acl_manifest_file() -> Value {
@@ -1850,10 +1909,24 @@ mod tests {
 
     fn read_tauri_config_file(name: &str) -> Value {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name);
-        let content = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("failed to read tauri config {}: {error}", path.display()));
-        serde_json::from_str(&content)
-            .unwrap_or_else(|error| panic!("failed to parse tauri config {}: {error}", path.display()))
+        let content = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("failed to read tauri config {}: {error}", path.display())
+        });
+        serde_json::from_str(&content).unwrap_or_else(|error| {
+            panic!("failed to parse tauri config {}: {error}", path.display())
+        })
+    }
+
+    fn read_activity_overlay_source_file() -> String {
+        let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("activity_overlay.rs");
+        fs::read_to_string(&source_path).unwrap_or_else(|error| {
+            panic!(
+                "failed to read activity overlay source {}: {error}",
+                source_path.display()
+            )
+        })
     }
 
     #[test]
@@ -1868,52 +1941,69 @@ mod tests {
     #[test]
     fn overlay_interaction_command_can_sync_from_overlay_or_main_window() {
         let command_name = "desktop_activity_overlay_emit_interaction";
-        assert!(
-            validate_overlay_command_caller(
-                command_name,
-                OVERLAY_WINDOW_LABEL,
-                OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS,
-            )
-            .is_ok()
-        );
-        assert!(
-            validate_overlay_command_caller(
-                command_name,
-                MAIN_WINDOW_LABEL,
-                OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS,
-            )
-            .is_ok()
-        );
+        assert!(validate_overlay_command_caller(
+            command_name,
+            OVERLAY_WINDOW_LABEL,
+            OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS,
+        )
+        .is_ok());
+        assert!(validate_overlay_command_caller(
+            command_name,
+            MAIN_WINDOW_LABEL,
+            OVERLAY_INTERACTION_COMMAND_ALLOWED_LABELS,
+        )
+        .is_ok());
     }
 
     #[test]
     fn overlay_interaction_result_command_can_only_sync_from_main_window() {
         let command_name = "desktop_activity_overlay_emit_interaction_result";
-        assert!(
-            validate_overlay_command_caller(command_name, MAIN_WINDOW_LABEL, &[MAIN_WINDOW_LABEL])
-                .is_ok()
-        );
-        assert!(
-            validate_overlay_command_caller(
-                command_name,
-                OVERLAY_WINDOW_LABEL,
-                &[MAIN_WINDOW_LABEL],
-            )
-            .is_err()
-        );
+        assert!(validate_overlay_command_caller(
+            command_name,
+            MAIN_WINDOW_LABEL,
+            &[MAIN_WINDOW_LABEL]
+        )
+        .is_ok());
+        assert!(validate_overlay_command_caller(
+            command_name,
+            OVERLAY_WINDOW_LABEL,
+            &[MAIN_WINDOW_LABEL],
+        )
+        .is_err());
     }
 
     #[test]
     fn release_drag_velocity_command_can_only_sync_from_overlay_window() {
         let command_name = "desktop_activity_overlay_release_drag_velocity";
-        assert!(
-            validate_overlay_command_caller(command_name, OVERLAY_WINDOW_LABEL, &[OVERLAY_WINDOW_LABEL])
-                .is_ok()
-        );
-        assert!(
-            validate_overlay_command_caller(command_name, MAIN_WINDOW_LABEL, &[OVERLAY_WINDOW_LABEL])
-                .is_err()
-        );
+        assert!(validate_overlay_command_caller(
+            command_name,
+            OVERLAY_WINDOW_LABEL,
+            &[OVERLAY_WINDOW_LABEL]
+        )
+        .is_ok());
+        assert!(validate_overlay_command_caller(
+            command_name,
+            MAIN_WINDOW_LABEL,
+            &[OVERLAY_WINDOW_LABEL]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn apply_momentum_delta_command_can_only_sync_from_overlay_window() {
+        let command_name = "desktop_activity_overlay_apply_momentum_delta";
+        assert!(validate_overlay_command_caller(
+            command_name,
+            OVERLAY_WINDOW_LABEL,
+            &[OVERLAY_WINDOW_LABEL]
+        )
+        .is_ok());
+        assert!(validate_overlay_command_caller(
+            command_name,
+            MAIN_WINDOW_LABEL,
+            &[OVERLAY_WINDOW_LABEL]
+        )
+        .is_err());
     }
 
     #[test]
@@ -1936,6 +2026,7 @@ mod tests {
             "allow-desktop-activity-overlay-set-input-locked",
             "allow-desktop-activity-overlay-apply-drag-delta",
             "allow-desktop-activity-overlay-release-drag-velocity",
+            "allow-desktop-activity-overlay-apply-momentum-delta",
             "allow-desktop-activity-overlay-emit-interaction",
         ] {
             assert!(
@@ -2026,6 +2117,7 @@ mod tests {
             "allow-desktop-activity-overlay-set-input-locked",
             "allow-desktop-activity-overlay-apply-drag-delta",
             "allow-desktop-activity-overlay-release-drag-velocity",
+            "allow-desktop-activity-overlay-apply-momentum-delta",
             "allow-desktop-activity-overlay-reset-position",
             "allow-desktop-activity-overlay-emit-interaction",
             "allow-desktop-activity-overlay-emit-interaction-result",
@@ -2048,7 +2140,9 @@ mod tests {
 
             let capabilities = config["app"]["security"]["capabilities"]
                 .as_array()
-                .unwrap_or_else(|| panic!("{config_name} should declare app.security.capabilities"));
+                .unwrap_or_else(|| {
+                    panic!("{config_name} should declare app.security.capabilities")
+                });
 
             assert!(
                 capabilities.contains(&Value::String("default".to_string())),
@@ -2081,9 +2175,40 @@ mod tests {
             PET_VELOCITY_MAX_MAGNITUDE_PX_PER_S * (PET_MOMENTUM_TICK_MS as f64 / 1_000.0),
         );
         assert_eq!(deltas[0].1, 0.0);
-        assert!(deltas.windows(2).all(|window| {
-            window[1].0 <= (window[0].0 * PET_MOMENTUM_FRICTION) + 0.000_001
-        }));
+        assert!(deltas
+            .windows(2)
+            .all(|window| { window[1].0 <= (window[0].0 * PET_MOMENTUM_FRICTION) + 0.000_001 }));
+    }
+
+    #[test]
+    fn resolves_activity_overlay_momentum_plan_from_the_native_constants() {
+        let plan = resolve_activity_overlay_momentum_plan(17, (3_200.0, 0.0));
+
+        assert_eq!(plan.generation, 17);
+        assert_eq!(plan.tick_ms, PET_MOMENTUM_TICK_MS);
+        assert!(!plan.deltas.is_empty());
+        assert!(plan
+            .deltas
+            .iter()
+            .all(|delta| delta.delay_ms == PET_MOMENTUM_TICK_MS));
+    }
+
+    #[test]
+    fn release_velocity_returns_momentum_plan_instead_of_applying_all_ticks_synchronously() {
+        let source = read_activity_overlay_source_file();
+        let production_source = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("activity overlay source should contain production code before tests");
+
+        assert!(
+            production_source.contains("resolve_activity_overlay_momentum_plan(generation, velocity)"),
+            "release velocity should return a scheduled momentum plan",
+        );
+        assert!(
+            !production_source.contains("apply_activity_overlay_momentum(&app, state.inner(), generation, velocity)"),
+            "release velocity must not apply every momentum tick before returning",
+        );
     }
 
     #[test]
@@ -3217,16 +3342,19 @@ mod tests {
             momentum_generation: 0,
         };
 
-        let pinned = apply_qa_sync_pin_override(&mut state, build_payload("idle", Some(2_000)), 1_000);
+        let pinned =
+            apply_qa_sync_pin_override(&mut state, build_payload("idle", Some(2_000)), 1_000);
         assert_eq!(pinned.model["kind"], "idle");
         assert_eq!(pinned.expanded, true);
         assert_eq!(state.desired_expanded, None);
 
-        let live_before_expiry = apply_qa_sync_pin_override(&mut state, build_payload("live", None), 1_100);
+        let live_before_expiry =
+            apply_qa_sync_pin_override(&mut state, build_payload("live", None), 1_100);
         assert_eq!(live_before_expiry.model["kind"], "idle");
         assert_eq!(live_before_expiry.expanded, true);
 
-        let live_after_expiry = apply_qa_sync_pin_override(&mut state, build_payload("live", None), 2_001);
+        let live_after_expiry =
+            apply_qa_sync_pin_override(&mut state, build_payload("live", None), 2_001);
         assert_eq!(live_after_expiry.model["kind"], "live");
         assert_eq!(live_after_expiry.expanded, false);
     }

@@ -39,6 +39,13 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
     },
 }));
 
+vi.mock('@/components/markdown/MarkdownView', () => ({
+    MarkdownView: (props: any) => {
+        markdownViewPropsState.current = props;
+        return React.createElement('MarkdownView', props);
+    },
+}));
+
 let thresholds = { lineThreshold: 50_000, byteThreshold: 120_000 };
 vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () => ({
     useInlineDiffVirtualizationThresholds: () => thresholds,
@@ -52,6 +59,7 @@ vi.mock('@/constants/Typography', () => ({
 
 const diffViewerPropsState: { current: any | null } = { current: null };
 const codeLinesViewPropsState: { current: any | null } = { current: null };
+const markdownViewPropsState: { current: any | null } = { current: null };
 
 describe('FileContentPanel', () => {
     const theme = {
@@ -102,6 +110,29 @@ describe('FileContentPanel', () => {
                 />)).tree;
 
         expect(codeLinesViewPropsState.current).toBeTruthy();
+    });
+
+    it('renders markdown content when markdown mode is selected', async () => {
+        const { FileContentPanel } = await import('./FileContentPanel');
+
+        markdownViewPropsState.current = null;
+
+        await renderScreen(<FileContentPanel
+                    theme={theme as any}
+                    displayMode={'markdown' as any}
+                    sessionId="s1"
+                    filePath="README.md"
+                    diffContent={null}
+                    fileContent={'# Title\n\nHello **world**.'}
+                    language="markdown"
+                    selectedLineKeys={new Set()}
+                    lineSelectionEnabled={false}
+                    onToggleLine={vi.fn()}
+                />);
+
+        expect(markdownViewPropsState.current?.markdown).toBe('# Title\n\nHello **world**.');
+        expect(markdownViewPropsState.current?.profile).toBe('default');
+        expect(markdownViewPropsState.current?.streamingMode).toBe('static');
     });
 
     it('uses a gesture-handler ScrollView for no-wrap file content on Android', async () => {

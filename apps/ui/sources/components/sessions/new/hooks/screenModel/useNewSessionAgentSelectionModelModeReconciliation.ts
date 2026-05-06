@@ -12,6 +12,7 @@ export function useNewSessionAgentSelectionModelModeReconciliation(
     params: Readonly<AgentPickerControlsParams & {
         agentType: AgentId;
         preflightModels: PreflightModelList | null;
+        preflightModelsTargetKey: string | null;
     }>,
 ): ReturnType<typeof useNewSessionAgentPickerControls> {
     React.useEffect(() => {
@@ -22,18 +23,28 @@ export function useNewSessionAgentSelectionModelModeReconciliation(
                 defaultMode: core.model.defaultMode,
                 allowedModes: core.model.allowedModes,
                 supportsFreeform: core.model.supportsFreeform,
+                dynamicProbe: core.model.dynamicProbe ?? 'auto',
             },
             preflight: params.preflightModels
                 ? {
                     availableModels: params.preflightModels.availableModels.map((m) => ({ id: m.id })),
                     supportsFreeform: params.preflightModels.supportsFreeform === true,
+                    targetKey: params.preflightModelsTargetKey,
                 }
                 : null,
+            currentTargetKey: params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey,
         });
         if (next !== params.modelMode) {
             params.setModelMode(next as ModelMode);
         }
-    }, [params.agentType, params.modelMode, params.preflightModels]);
+    }, [
+        params.agentType,
+        params.modelMode,
+        params.preflightModels,
+        params.preflightModelsTargetKey,
+        params.selectedBackendEntry?.backendTargetKey,
+        params.selectedBackendTargetKey,
+    ]);
 
     return useNewSessionAgentPickerControls(params);
 }

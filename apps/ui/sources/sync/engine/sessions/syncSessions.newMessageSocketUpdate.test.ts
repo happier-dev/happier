@@ -199,6 +199,81 @@ describe('handleNewMessageSocketUpdate', () => {
         }
     });
 
+    it('projects task_started lifecycle messages as an in-progress primary turn', async () => {
+        const { params, applySessions } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                content: {
+                    t: 'plain',
+                    v: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp',
+                            data: { type: 'task_started', id: 'turn-1' },
+                        },
+                    },
+                },
+            }),
+            getSession: () => ({
+                ...buildSession('s1'),
+                encryptionMode: 'plain',
+                latestTurnStatus: 'failed',
+                lastRuntimeIssue: {
+                    v: 1,
+                    scope: 'primary_session',
+                    status: 'failed',
+                    code: 'provider_status_error',
+                    source: 'provider_status_error',
+                    occurredAt: 100,
+                    sanitizedPreview: 'Provider reported an error',
+                },
+            } as Session),
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(applySessions.mock.calls[0]?.[0]?.[0]).toMatchObject({
+            id: 's1',
+            latestTurnStatus: 'in_progress',
+            lastRuntimeIssue: expect.objectContaining({ source: 'provider_status_error' }),
+            thinking: true,
+        });
+    });
+
+    it.each([
+        ['turn_failed', 'failed'],
+        ['turn_cancelled', 'cancelled'],
+    ] as const)('projects %s lifecycle messages to latest turn status %s', async (type, latestTurnStatus) => {
+        const { params, applySessions } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                content: {
+                    t: 'plain',
+                    v: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp',
+                            data: { type, id: 'turn-1' },
+                        },
+                    },
+                },
+            }),
+            getSession: () => ({ ...buildSession('s1'), encryptionMode: 'plain', thinking: true } as Session),
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(applySessions.mock.calls[0]?.[0]?.[0]).toMatchObject({
+            id: 's1',
+            latestTurnStatus,
+            thinking: false,
+        });
+    });
+
     it('triggers catch-up when a gap is detected for a loaded transcript', async () => {
         const { params, fetchSessions, applyMessages, onMessageGapDetected, markSessionMaterializedMaxSeq } = buildHarness({
             updateData: buildUpdate({ sid: 's1', messageId: 'm5', messageSeq: 5 }),

@@ -3,7 +3,7 @@ import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionW
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
-import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 
 function normalizeNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') {

@@ -45,11 +45,16 @@ export type SessionRightPanelGitCommitTabProps = Readonly<{
     allRepositoryChangedFiles: ScmFileStatus[];
     selectedRepositoryChangedFiles?: ScmFileStatus[];
     turnAttributedFiles?: SessionAttributedFile[];
+    turnAgentReportedFiles?: SessionAttributedFile[];
+    turnCheckpointFiles?: SessionAttributedFile[];
+    turnCheckpointMetadata?: React.ComponentProps<typeof ChangedFilesList>['turnCheckpointMetadata'];
     turnRepositoryOnlyFiles?: ScmFileStatus[];
     sessionAttributedFiles: SessionAttributedFile[];
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
     showTurnViewToggle?: boolean;
+    showTurnAgentReportedViewToggle?: boolean;
+    showTurnCheckpointViewToggle?: boolean;
     showSessionViewToggle?: boolean;
     showSelectedViewToggle?: boolean;
     onChangedFilesViewMode?: (mode: ChangedFilesViewMode) => void;
@@ -103,11 +108,16 @@ export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPane
                 allRepositoryChangedFiles={props.allRepositoryChangedFiles}
                 selectedRepositoryChangedFiles={props.selectedRepositoryChangedFiles}
                 turnAttributedFiles={props.turnAttributedFiles}
+                turnAgentReportedFiles={props.turnAgentReportedFiles}
+                turnCheckpointFiles={props.turnCheckpointFiles}
+                turnCheckpointMetadata={props.turnCheckpointMetadata}
                 turnRepositoryOnlyFiles={props.turnRepositoryOnlyFiles}
                 sessionAttributedFiles={props.sessionAttributedFiles}
                 repositoryOnlyFiles={props.repositoryOnlyFiles}
                 suppressedInferredCount={props.suppressedInferredCount}
                 showTurnViewToggle={props.showTurnViewToggle}
+                showTurnAgentReportedViewToggle={props.showTurnAgentReportedViewToggle}
+                showTurnCheckpointViewToggle={props.showTurnCheckpointViewToggle}
                 showSessionViewToggle={props.showSessionViewToggle}
                 showSelectedViewToggle={props.showSelectedViewToggle}
                 onChangedFilesViewMode={props.onChangedFilesViewMode}
@@ -247,11 +257,16 @@ type CommitChangesSurfaceProps = Readonly<{
     allRepositoryChangedFiles: ScmFileStatus[];
     selectedRepositoryChangedFiles?: ScmFileStatus[];
     turnAttributedFiles?: SessionAttributedFile[];
+    turnAgentReportedFiles?: SessionAttributedFile[];
+    turnCheckpointFiles?: SessionAttributedFile[];
+    turnCheckpointMetadata?: React.ComponentProps<typeof ChangedFilesList>['turnCheckpointMetadata'];
     turnRepositoryOnlyFiles?: ScmFileStatus[];
     sessionAttributedFiles: SessionAttributedFile[];
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
     showTurnViewToggle?: boolean;
+    showTurnAgentReportedViewToggle?: boolean;
+    showTurnCheckpointViewToggle?: boolean;
     showSessionViewToggle?: boolean;
     showSelectedViewToggle?: boolean;
     onChangedFilesViewMode?: (mode: ChangedFilesViewMode) => void;
@@ -288,6 +303,12 @@ function resolveChangedFilesScopeTitle(params: Readonly<{
     if (params.changedFilesViewMode === 'turn') {
         return t('files.latestTurnChanges', { count: params.turnCount });
     }
+    if (params.changedFilesViewMode === 'turn_agent_reported') {
+        return t('files.agentReportedTurnChanges', { count: params.turnCount });
+    }
+    if (params.changedFilesViewMode === 'turn_checkpoint') {
+        return t('files.checkpointTurnChanges', { count: params.turnCount });
+    }
     if (params.changedFilesViewMode === 'session') {
         return t('files.sessionAttributedChanges', { count: params.sessionCount });
     }
@@ -298,9 +319,22 @@ function resolveChangedFilesScopeDescriptions(params: Readonly<{
     changedFilesViewMode: ChangedFilesViewMode;
     attributionReliability: SessionAttributionReliability;
     suppressedInferredCount: number;
+    turnCheckpointMetadata: React.ComponentProps<typeof ChangedFilesList>['turnCheckpointMetadata'];
 }>): string[] {
     if (params.changedFilesViewMode === 'turn') {
         return [t('files.latestTurnDescription')];
+    }
+    if (params.changedFilesViewMode === 'turn_agent_reported') {
+        return [t('files.agentReportedTurnDescription')];
+    }
+    if (params.changedFilesViewMode === 'turn_checkpoint') {
+        if (params.turnCheckpointMetadata?.contentConfidence === 'unavailable') {
+            return [t('files.checkpointUnavailable')];
+        }
+        if (params.turnCheckpointMetadata?.attributionScope === 'shared_worktree') {
+            return [t('files.checkpointAttributionShared')];
+        }
+        return [t('files.checkpointAttributionUnknown')];
     }
     if (params.changedFilesViewMode !== 'session') {
         return [];
@@ -338,11 +372,24 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
     );
     const showSelectedViewToggle = props.showSelectedViewToggle === true || selectedChangedFiles.length > 0;
     const hasChangedFilesViewSelector = props.showTurnViewToggle === true
+        || props.showTurnAgentReportedViewToggle === true
+        || props.showTurnCheckpointViewToggle === true
         || props.showSessionViewToggle === true
         || showSelectedViewToggle;
     const turnChangedFilesCount = React.useMemo(() => {
+        if (props.changedFilesViewMode === 'turn_agent_reported') {
+            return countVisibleAttributedFiles(props.turnAgentReportedFiles);
+        }
+        if (props.changedFilesViewMode === 'turn_checkpoint') {
+            return countVisibleAttributedFiles(props.turnCheckpointFiles);
+        }
         return countVisibleAttributedFiles(props.turnAttributedFiles);
-    }, [props.turnAttributedFiles]);
+    }, [
+        props.changedFilesViewMode,
+        props.turnAgentReportedFiles,
+        props.turnAttributedFiles,
+        props.turnCheckpointFiles,
+    ]);
     const sessionChangedFilesCount = React.useMemo(() => {
         return countVisibleAttributedFiles(props.sessionAttributedFiles);
     }, [props.sessionAttributedFiles]);
@@ -366,11 +413,13 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
             changedFilesViewMode: props.changedFilesViewMode,
             attributionReliability: props.attributionReliability,
             suppressedInferredCount: props.suppressedInferredCount,
+            turnCheckpointMetadata: props.turnCheckpointMetadata ?? null,
         });
     }, [
         props.attributionReliability,
         props.changedFilesViewMode,
         props.suppressedInferredCount,
+        props.turnCheckpointMetadata,
     ]);
 
     const scrollFades = useScrollEdgeFades({
@@ -478,6 +527,8 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                                     changedFilesViewMode={props.changedFilesViewMode}
                                     showSelectedViewToggle={showSelectedViewToggle}
                                     showTurnViewToggle={props.showTurnViewToggle}
+                                    showTurnAgentReportedViewToggle={props.showTurnAgentReportedViewToggle}
+                                    showTurnCheckpointViewToggle={props.showTurnCheckpointViewToggle}
                                     showSessionViewToggle={props.showSessionViewToggle}
                                     onChangedFilesViewMode={props.onChangedFilesViewMode}
                                     testID="session-rightpanel-git-view-mode-menu"
@@ -564,6 +615,8 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         props.sessionId,
         props.showSessionViewToggle,
         showSelectedViewToggle,
+        props.showTurnAgentReportedViewToggle,
+        props.showTurnCheckpointViewToggle,
         props.showTurnViewToggle,
         props.theme,
         scopedChangedFilesDescriptions,
@@ -640,6 +693,9 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
                         attributionReliability={props.attributionReliability}
                         allRepositoryChangedFiles={props.allRepositoryChangedFiles}
                         turnAttributedFiles={props.turnAttributedFiles}
+                        turnAgentReportedFiles={props.turnAgentReportedFiles}
+                        turnCheckpointFiles={props.turnCheckpointFiles}
+                        turnCheckpointMetadata={props.turnCheckpointMetadata}
                         turnRepositoryOnlyFiles={props.turnRepositoryOnlyFiles}
                         sessionAttributedFiles={props.sessionAttributedFiles}
                         repositoryOnlyFiles={props.repositoryOnlyFiles}

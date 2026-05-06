@@ -1,7 +1,7 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
-import type { SessionChangeSet } from '@happier-dev/protocol';
+import type { SessionChangeSet, TurnChangeSet } from '@happier-dev/protocol';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
@@ -78,6 +78,52 @@ function makeProviderChangeSet(filePath: string): SessionChangeSet {
             source: 'provider_native',
             confidence: 'exact',
         },
+    };
+}
+
+function makeMixedTurnChangeSet(): TurnChangeSet {
+    return {
+        sessionId: 's1',
+        turnId: 'turn_2',
+        seqRange: {
+            startSeqInclusive: 1,
+            endSeqInclusive: 3,
+        },
+        status: 'completed',
+        provider: 'codex',
+        derivedAt: 2,
+        repositoryCheckpoint: {
+            version: 1,
+            scopeId: 's1:/repo',
+            startRef: 'refs/happier/checkpoints/scope/turn-start/turn_2',
+            finalRef: 'refs/happier/checkpoints/scope/turn-final/turn_2',
+            baseRefSource: 'turn_start',
+            contentConfidence: 'exact',
+            attributionScope: 'shared_worktree',
+            receipts: [{ id: 'checkpoint.diff_computed' }],
+        },
+        files: [
+            {
+                filePath: 'src/a.ts',
+                changeKind: 'modified',
+                oldText: 'a\n',
+                newText: 'b\n',
+                unifiedDiff: 'provider diff',
+                source: 'provider_native',
+                confidence: 'strong',
+                provider: 'codex',
+            },
+            {
+                filePath: 'src/a.ts',
+                changeKind: 'modified',
+                oldText: 'a\n',
+                newText: 'b\n',
+                unifiedDiff: 'checkpoint diff',
+                source: 'scm_checkpoint',
+                confidence: 'exact',
+                provider: 'scm:git',
+            },
+        ],
     };
 }
 
@@ -405,6 +451,201 @@ describe('useChangedFilesData', () => {
         expect(result.sessionAttributedFiles.map((entry) => entry.file.fullPath)).toEqual(['src/a.ts']);
         act(() => {
             root!.unmount();
+        });
+    });
+
+    it('derives agent-reported and checkpoint turn scopes from raw turn evidence', async () => {
+        let latest: UseChangedFilesDataResult | null = null;
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                latestTurnChangeSet: makeProviderChangeSet('src/a.ts'),
+                latestTurnEvidence: makeMixedTurnChangeSet(),
+            });
+            return null;
+        }
+
+        const root = (await renderScreen(<Test />)).tree;
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.showTurnViewToggle).toBe(true);
+        expect(result.showTurnAgentReportedViewToggle).toBe(true);
+        expect(result.showTurnCheckpointViewToggle).toBe(true);
+        expect(result.turnAgentReportedFiles.map((entry) => entry.file.fullPath)).toEqual(['src/a.ts']);
+        expect(result.turnCheckpointFiles.map((entry) => entry.file.fullPath)).toEqual(['src/a.ts']);
+        expect(result.turnCheckpointMetadata?.attributionScope).toBe('shared_worktree');
+
+        act(() => {
+            root.unmount();
+        });
+    });
+
+    it('keeps source-specific turn evidence visible when it is not present in the current snapshot', async () => {
+        let latest: UseChangedFilesDataResult | null = null;
+        const turnEvidence: TurnChangeSet = {
+            ...makeMixedTurnChangeSet(),
+            files: [
+                {
+                    filePath: 'src/agent-only.ts',
+                    changeKind: 'modified',
+                    source: 'provider_tool',
+                    confidence: 'strong',
+                    provider: 'codex',
+                    unifiedDiff: 'agent-only diff',
+                },
+                {
+                    filePath: 'src/checkpoint-only.ts',
+                    changeKind: 'added',
+                    source: 'scm_checkpoint',
+                    confidence: 'exact',
+                    provider: 'scm:git',
+                    unifiedDiff: 'checkpoint-only diff',
+                },
+            ],
+        };
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                latestTurnChangeSet: null,
+                latestTurnEvidence: turnEvidence,
+            });
+            return null;
+        }
+
+        const root = (await renderScreen(<Test />)).tree;
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.showTurnViewToggle).toBe(true);
+        expect(result.showTurnAgentReportedViewToggle).toBe(true);
+        expect(result.showTurnCheckpointViewToggle).toBe(true);
+        expect(result.turnAgentReportedFiles.map((entry) => entry.file.fullPath)).toEqual(['src/agent-only.ts']);
+        expect(result.turnCheckpointFiles.map((entry) => entry.file.fullPath)).toEqual(['src/checkpoint-only.ts']);
+        expect(result.turnCheckpointFiles[0]?.file.status).toBe('added');
+
+        act(() => {
+            root.unmount();
+        });
+    });
+
+    it('keeps unmatched raw turn evidence visible in the reconciled latest-turn scope', async () => {
+        let latest: UseChangedFilesDataResult | null = null;
+        const latestTurnChangeSet: SessionChangeSet = {
+            ...makeProviderChangeSet('src/agent-only.ts'),
+            files: [{
+                filePath: 'src/agent-only.ts',
+                changeKind: 'modified',
+                oldText: null,
+                newText: null,
+                source: 'provider_tool',
+                confidence: 'strong',
+                provider: 'codex',
+                turns: ['turn_2'],
+                unifiedDiff: 'agent-only diff',
+            }],
+        };
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                latestTurnChangeSet,
+                latestTurnEvidence: {
+                    ...makeMixedTurnChangeSet(),
+                    files: latestTurnChangeSet.files,
+                },
+            });
+            return null;
+        }
+
+        const root = (await renderScreen(<Test />)).tree;
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.showTurnViewToggle).toBe(true);
+        expect(result.turnAttributedFiles.map((entry) => entry.file.fullPath)).toEqual(['src/agent-only.ts']);
+
+        act(() => {
+            root.unmount();
+        });
+    });
+
+    it('can expose checkpoint mode as unavailable metadata without checkpoint files', async () => {
+        let latest: UseChangedFilesDataResult | null = null;
+        const unavailableTurn: TurnChangeSet = {
+            ...makeMixedTurnChangeSet(),
+            repositoryCheckpoint: {
+                version: 1,
+                scopeId: 's1:/repo',
+                baseRefSource: 'unavailable',
+                contentConfidence: 'unavailable',
+                attributionScope: 'unknown',
+                receipts: [],
+                unavailableReason: 'refs missing',
+            },
+            files: [
+                {
+                    filePath: 'src/a.ts',
+                    changeKind: 'modified',
+                    source: 'provider_native',
+                    confidence: 'strong',
+                    provider: 'codex',
+                    unifiedDiff: 'provider diff',
+                },
+            ],
+        };
+
+        function Test() {
+            latest = useChangedFilesData({
+                sessionId: 's1',
+                scmSnapshot: makeSnapshot(),
+                touchedPaths: [],
+                operationLog: [],
+                projectSessionIds: ['s1'],
+                searchQuery: '',
+                showAllRepositoryFiles: false,
+                latestTurnChangeSet: makeProviderChangeSet('src/a.ts'),
+                latestTurnEvidence: unavailableTurn,
+            });
+            return null;
+        }
+
+        const root = (await renderScreen(<Test />)).tree;
+
+        expect(latest).not.toBeNull();
+        if (!latest) throw new Error('Expected hook result');
+        const result: UseChangedFilesDataResult = latest;
+        expect(result.showTurnAgentReportedViewToggle).toBe(true);
+        expect(result.showTurnCheckpointViewToggle).toBe(true);
+        expect(result.turnCheckpointFiles).toHaveLength(0);
+        expect(result.turnCheckpointMetadata?.contentConfidence).toBe('unavailable');
+        expect(result.turnCheckpointMetadata?.unavailableReason).toBe('refs missing');
+
+        act(() => {
+            root.unmount();
         });
     });
 });

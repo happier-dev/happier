@@ -2,7 +2,11 @@ import * as React from 'react';
 import { View, ActivityIndicator, Platform, Pressable } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { sessionScmCommitBackout, sessionScmDiffCommit } from '@/sync/ops';
+import {
+    sessionScmCommitBackout,
+    sessionScmDiffCommit,
+    sessionScmRepositoryRemoveIndexLock,
+} from '@/sync/ops';
 import {
     storage,
     useSession,
@@ -21,6 +25,7 @@ import { scmStatusSync } from '@/scm/scmStatusSync';
 import { canRevertFromSnapshot } from '@/scm/operations/safety';
 import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
+import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
 import { buildRevertConfirmBody } from '@/scm/operations/revertFeedback';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
@@ -232,9 +237,19 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
             run: async () => {
                 setIsReverting(true);
                 try {
-                    const response = await sessionScmCommitBackout(sessionId, {
+                    const runBackout = async () => await sessionScmCommitBackout(sessionId, {
                         commit: sha,
                     });
+                    let response = await runBackout();
+
+                    if (!response.success) {
+                        response = await runScmOperationWithGitIndexLockRecovery({
+                            cwd,
+                            failedResponse: response,
+                            removeIndexLock: (request) => sessionScmRepositoryRemoveIndexLock(sessionId, request),
+                            retryOriginalOperation: runBackout,
+                        });
+                    }
 
                     if (!response.success) {
                         const errorMessage = getScmUserFacingError({

@@ -2,6 +2,7 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import {
     sessionScmChangeExclude,
     sessionScmChangeInclude,
+    sessionScmRepositoryRemoveIndexLock,
 } from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
@@ -10,6 +11,7 @@ import { scmStatusSync } from '@/scm/scmStatusSync';
 import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import { isAtomicCommitStrategy, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
+import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
@@ -95,9 +97,21 @@ export async function applyFileStageAction(input: Readonly<{
         sessionId,
         operation: stage ? 'stage' : 'unstage',
         run: async () => {
-            const response = stage
+            const runScmOperation = async () => stage
                 ? await sessionScmChangeInclude(sessionId, { paths: [filePath] })
                 : await sessionScmChangeExclude(sessionId, { paths: [filePath] });
+            let response = await runScmOperation();
+
+            if (!response.success) {
+                if (sessionPath) {
+                    response = await runScmOperationWithGitIndexLockRecovery({
+                        cwd: sessionPath,
+                        failedResponse: response,
+                        removeIndexLock: (request) => sessionScmRepositoryRemoveIndexLock(sessionId, request),
+                        retryOriginalOperation: runScmOperation,
+                    });
+                }
+            }
 
             if (!response.success) {
                 const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({

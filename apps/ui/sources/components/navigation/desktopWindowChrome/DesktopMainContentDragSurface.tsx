@@ -1,12 +1,10 @@
 import * as React from 'react';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import {
-    shouldStartDesktopWindowDraggingFromMouseEvent,
+    handleDesktopWindowTitlebarMouseAction,
     type DesktopWindowPointerLikeEvent,
 } from './DesktopWindowDragRegion';
 import { DESKTOP_MAIN_CONTENT_DRAG_HEIGHT_PX } from '@/components/navigation/shell/desktopChrome/desktopChromeMetrics';
-import { startDesktopWindowDragging } from '@/utils/platform/desktopWindowBridge';
-import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type DesktopMainContentDragSurfaceProps = Readonly<{
     children: React.ReactNode;
@@ -57,13 +55,10 @@ export const DesktopMainContentDragSurface = React.memo((props: DesktopMainConte
         if (!isInsideMainContentTitlebarStrip(event, props.leftOffsetPx, heightPx)) {
             return false;
         }
-        if (!shouldStartDesktopWindowDraggingFromMouseEvent(event)) {
-            return false;
-        }
-
-        event.preventDefault?.();
-        fireAndForget(startDesktopWindowDragging(), { tag: 'DesktopMainContentDragSurface.startDragging' });
-        return true;
+        return handleDesktopWindowTitlebarMouseAction(
+            event,
+            'DesktopMainContentDragSurface.mouseDown',
+        ) !== 'none';
     }, [heightPx, props.enabled, props.leftOffsetPx]);
 
     React.useEffect(() => {

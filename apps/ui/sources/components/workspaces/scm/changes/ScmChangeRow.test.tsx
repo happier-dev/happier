@@ -179,8 +179,8 @@ describe('ScmChangeRow', () => {
           theme={theme}
           file={{
             fileName: 'jsonlForwardReader.ts',
-            filePath: 'apps/cli/src/api/directSessions/filePaging',
-            fullPath: 'apps/cli/src/api/directSessions/filePaging/jsonlForwardReader.ts',
+            filePath: 'apps/cli/src/api/session/external/filePaging',
+            fullPath: 'apps/cli/src/api/session/external/filePaging/jsonlForwardReader.ts',
             status: 'modified',
             isIncluded: false,
             linesAdded: 0,
@@ -191,9 +191,9 @@ describe('ScmChangeRow', () => {
 
     const labels = tree.findAllByType('Text' as any);
     const pathLabel = labels.find((node) => {
-      return labels.some((candidate) => candidate.props.children === 'apps/cli/src/api/directSessions/filePaging/' && candidate.parent === node);
+      return labels.some((candidate) => candidate.props.children === 'apps/cli/src/api/session/external/filePaging/' && candidate.parent === node);
     })!;
-    const pathText = labels.find((node) => node.props.children === 'apps/cli/src/api/directSessions/filePaging/')!;
+    const pathText = labels.find((node) => node.props.children === 'apps/cli/src/api/session/external/filePaging/')!;
 
     expect(pathLabel.props.ellipsizeMode).toBeUndefined();
     expect(flattenStyle(pathLabel.props.style)).toMatchObject({

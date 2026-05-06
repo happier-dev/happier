@@ -33,6 +33,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     probeContext?: NewSessionCapabilityProbeContext | null;
 }>): Readonly<{
     preflightModels: PreflightModelList | null;
+    preflightModelsTargetKey: string | null;
     modelOptions: ReturnType<typeof getModelOptionsForAgentTypeOrPreflight>;
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
@@ -41,6 +42,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     }>;
 }> {
     const [preflightModels, setPreflightModels] = React.useState<PreflightModelList | null>(null);
+    const [preflightModelsTargetKey, setPreflightModelsTargetKey] = React.useState<string | null>(null);
     const [probePhase, setProbePhase] = React.useState<'idle' | 'loading' | 'refreshing'>('idle');
     const [refreshedAt, setRefreshedAt] = React.useState<number | null>(null);
     const [refreshNonce, setRefreshNonce] = React.useState(0);
@@ -129,6 +131,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     React.useEffect(() => {
         if (!preflightModelsKey) {
             setPreflightModels(null);
+            setPreflightModelsTargetKey(null);
             setProbePhase('idle');
             setRefreshedAt(null);
             lastScopeKeyRef.current = probeScopeKey;
@@ -137,6 +140,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
         if (!agentType) {
             setPreflightModels(null);
+            setPreflightModelsTargetKey(null);
             setProbePhase('idle');
             setRefreshedAt(null);
             return;
@@ -149,6 +153,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             lastScopeKeyRef.current = probeScopeKey;
             if (preflightModelsRef.current !== null) {
                 setPreflightModels(null);
+                setPreflightModelsTargetKey(null);
                 preflightModelsRef.current = null;
             }
             if (refreshedAtRef.current !== null) {
@@ -171,10 +176,14 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         lastScopeKeyRef.current = probeScopeKey;
         if (cached) {
             setPreflightModels(cached);
+            setPreflightModelsTargetKey(backendTargetKey);
             setRefreshedAt(cacheEntry?.updatedAt ?? null);
         } else if (!scopeStable) {
             // Engine/machine/server scope changed: clear any previous list to avoid showing the wrong provider's models.
             setPreflightModels(null);
+            setPreflightModelsTargetKey(null);
+            preflightModelsRef.current = null;
+            refreshedAtRef.current = null;
             setRefreshedAt(null);
         }
 
@@ -242,6 +251,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 staticFallbackRetryRef.current = { scopeKey: probeScopeKey, attempts: 0 };
                 writeDynamicModelProbeCacheSuccess(preflightModelsKey, list, commitNowMs);
                 setPreflightModels(list);
+                setPreflightModelsTargetKey(backendTargetKey);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
                 return;
@@ -250,6 +260,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 // Show the list (useful fallback) but retry soon; do not persist across app restarts.
                 writeDynamicModelProbeCacheError(preflightModelsKey, commitNowMs);
                 setPreflightModels(list);
+                setPreflightModelsTargetKey(backendTargetKey);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
                 const state = staticFallbackRetryRef.current;
@@ -270,6 +281,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 // Keep stale-but-usable model lists sticky if a refresh probe fails.
                 writeDynamicModelProbeCacheSuccess(preflightModelsKey, cached, commitNowMs);
                 setPreflightModels(cached);
+                setPreflightModelsTargetKey(backendTargetKey);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
                 return;
@@ -281,6 +293,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 // When switching cwd/worktree, keep the last usable list on screen even if the new probe fails.
                 writeDynamicModelProbeCacheSuccess(preflightModelsKey, stale, commitNowMs);
                 setPreflightModels(stale);
+                setPreflightModelsTargetKey(backendTargetKey);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
                 return;
@@ -298,7 +311,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTargetForProbe, preflightModelsKey, probeScopeKey, refreshNonce, probeContextCapabilityParams]);
+    }, [agentType, backendTargetForProbe, backendTargetKey, preflightModelsKey, probeScopeKey, refreshNonce, probeContextCapabilityParams]);
 
     const modelOptions = React.useMemo(
         () => {
@@ -312,6 +325,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
     return {
         preflightModels,
+        preflightModelsTargetKey,
         modelOptions,
         probe: {
             phase: probePhase,

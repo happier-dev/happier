@@ -1,9 +1,9 @@
+#[cfg(target_os = "macos")]
+use super::macos_display_context::resolve_overlay_display_context_for_monitor;
 use super::placement::{
     resolve_overlay_anchor_monitor_resolution, DesktopActivityOverlayDisplayMode, Rect,
     ResolvedOverlayAnchorMonitorRect,
 };
-#[cfg(target_os = "macos")]
-use super::macos_display_context::resolve_overlay_display_context_for_monitor;
 use super::{DesktopActivityOverlayPlacementMode, MAIN_WINDOW_LABEL};
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow};
 
