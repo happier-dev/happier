@@ -212,7 +212,7 @@ test('validateRpcActionCoverage rejects rpc ActionSpecs omitted from generic reg
   const result = validateRpcActionCoverage({
     rpcMethods: { DEMO_ACTION: 'demo.action' },
     sessionRpcMethods: {},
-    genericActionSpecRpcMethods: [],
+    genericActionSpecRpcMethods: ['sessions.subagents.list'],
     actionSpecRpcExceptions: [],
     actionSpecs: [
       {
