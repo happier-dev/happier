@@ -135,7 +135,7 @@ function shouldScanFile(filePath: string): boolean {
   if (normalizedPath.startsWith('apps/cli/src/agent/permissions/')) {
     return true;
   }
-  return /^packages\/plugins\/[^/]+\/src\/agent\/permissions\//.test(normalizedPath);
+  return normalizedPath.startsWith('packages/plugins/');
 }
 
 function dedupeFiles(files: readonly PermissionTtlValidatorFile[]): PermissionTtlValidatorFile[] {
@@ -172,7 +172,7 @@ function validateTimers(file: PermissionTtlValidatorFile): string[] {
     if (!match) {
       continue;
     }
-    if (!isPermissionTimerCandidate(lines, index)) {
+    if (!isPermissionOwnedPath(file.filePath) && !isPermissionTimerCandidate(lines, index)) {
       continue;
     }
     if (isAcceptedAllowlistPath(file.filePath) && hasAllowlistMarkerWithinThreeLines(lines, index)) {
@@ -200,10 +200,18 @@ function validateWallClockExpiration(file: PermissionTtlValidatorFile): string[]
     }
 
     const context = contextLines(lines, index, 3).join('\n');
-    if (!PERMISSION_CONTEXT_PATTERN.test(context)) {
+    const pathIsPermissionOwned = isPermissionOwnedPath(file.filePath);
+    if (!pathIsPermissionOwned && !PERMISSION_CONTEXT_PATTERN.test(context)) {
       continue;
     }
     if (!isWallClockExpirationContext(context)) {
+      const splitClockExpiration = findSplitClockExpiration(lines, index);
+      if (!splitClockExpiration) {
+        continue;
+      }
+      errors.push(
+        `${formatLocation(file.filePath, index)}: forbidden Date.now/performance.now split-clock permission expiration logic using ${splitClockExpiration.fieldName}.`,
+      );
       continue;
     }
     errors.push(
@@ -222,6 +230,57 @@ function isWallClockExpirationContext(context: string): boolean {
     return false;
   }
   return CLOCK_ARITHMETIC_PATTERN.test(context) || (CLOCK_PATTERN.test(context) && EXPIRATION_DEADLINE_PATTERN.test(context));
+}
+
+function findSplitClockExpiration(
+  lines: readonly string[],
+  clockLineIndex: number,
+): Readonly<{ fieldName: string }> | null {
+  const clockLine = lines[clockLineIndex] ?? '';
+  const clockVariable = extractAssignedVariable(clockLine, CLOCK_PATTERN);
+  if (!clockVariable) {
+    return null;
+  }
+
+  const forwardContext = lines.slice(clockLineIndex, Math.min(lines.length, clockLineIndex + 12)).join('\n');
+  const clockVariablePattern = escapeRegExp(clockVariable);
+  const directAgeComparisonPattern = new RegExp(
+    `\\b${clockVariablePattern}\\b\\s*-\\s*[^;\\n]*(createdAt|timestamp|requestedAt|startedAt)\\b[^;\\n]*(?:[<>]=?)`,
+    'i',
+  );
+  const directMatch = forwardContext.match(directAgeComparisonPattern);
+  if (directMatch?.[1]) {
+    return { fieldName: directMatch[1] };
+  }
+
+  const ageVariablePattern = new RegExp(
+    `\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*\\b${clockVariablePattern}\\b\\s*-\\s*[^;\\n]*(createdAt|timestamp|requestedAt|startedAt)\\b`,
+    'i',
+  );
+  const ageVariableMatch = forwardContext.match(ageVariablePattern);
+  const ageVariable = ageVariableMatch?.[1];
+  const fieldName = ageVariableMatch?.[2];
+  if (!ageVariable || !fieldName) {
+    return null;
+  }
+
+  const ageComparisonPattern = new RegExp(
+    `\\b${escapeRegExp(ageVariable)}\\b\\s*(?:[<>]=?)\\s*[^;\\n]*(?:TTL|TIMEOUT|MAX_AGE|MAX_PERMISSION_AGE|\\d)`,
+    'i',
+  );
+  if (!ageComparisonPattern.test(forwardContext)) {
+    return null;
+  }
+  return { fieldName };
+}
+
+function extractAssignedVariable(line: string, valuePattern: RegExp): string | null {
+  const match = line.match(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
+  if (!match?.[1] || !valuePattern.test(line)) {
+    return null;
+  }
+  valuePattern.lastIndex = 0;
+  return match[1];
 }
 
 function isPermissionTimerCandidate(lines: readonly string[], index: number): boolean {
@@ -244,7 +303,7 @@ function formatLocation(filePath: string, lineIndex: number): string {
 function summarizeContext(lines: readonly string[], index: number): string {
   const context = contextLines(lines, index, 2).join(' ');
   const match = context.match(
-    /lateDecisions|cachedDecisions|pendingRequests|PermissionRequestCoordinator|permission|request|waiter|agentState/i,
+    /createdAt|timestamp|lateDecisions|cachedDecisions|pendingRequests|PermissionRequestCoordinator|permission|request|waiter|agentState/i,
   );
   return match?.[0] ?? 'permission state';
 }
@@ -257,6 +316,18 @@ function isAcceptedAllowlistPath(filePath: string): boolean {
   return ACCEPTED_ALLOWLIST_PATHS.includes(normalizeRepoPath(filePath) as (typeof ACCEPTED_ALLOWLIST_PATHS)[number]);
 }
 
+function isPermissionOwnedPath(filePath: string): boolean {
+  const normalizedPath = normalizeRepoPath(filePath).toLowerCase();
+  if (normalizedPath.startsWith('apps/cli/src/agent/permissions/')) {
+    return true;
+  }
+  return normalizedPath.includes('/permissions/') || normalizedPath.includes('permission');
+}
+
 function normalizeRepoPath(filePath: string): string {
   return filePath.split('\\').join('/');
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
