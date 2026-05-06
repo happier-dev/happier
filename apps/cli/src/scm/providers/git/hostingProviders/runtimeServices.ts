@@ -12,6 +12,7 @@ import { ApiClient } from '@/api/api';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import { getAzDepStatus } from '@/capabilities/deps/az';
 import { getGhDepStatus } from '@/capabilities/deps/gh';
+import { BITBUCKET_CONNECTED_ACCOUNT_SERVICE_ID } from '@/daemon/connectedServices/descriptors/bitbucket';
 import { readCredentials, type Credentials } from '@/persistence';
 import {
     resolveScmHostingBasicAuthMaterialization,
@@ -19,7 +20,6 @@ import {
 } from '@/scm/hostingProviders/auth';
 
 const GITHUB_CONNECTED_ACCOUNT_SERVICE_ID = 'github';
-const BITBUCKET_CONNECTED_ACCOUNT_SERVICE_ID = 'bitbucket';
 const DEFAULT_CONNECTED_SERVICE_PROFILE_ID = 'default';
 
 type ConnectedServicesCredentialApi = Pick<
