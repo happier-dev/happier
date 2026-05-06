@@ -1,8 +1,31 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveSessionAttentionFlags } from './sessionAttention';
+import { deriveSessionAttentionFlags, hasSessionAttention } from './sessionAttention';
 
 describe('sessionAttention (direct sessions)', () => {
+    it('treats failed primary runtime issues as session attention', () => {
+        expect(hasSessionAttention({
+            id: 's1',
+            seq: 0,
+            createdAt: 0,
+            updatedAt: 0,
+            active: true,
+            activeAt: 0,
+            metadata: {},
+            agentState: null,
+            pendingCount: 0,
+            latestTurnStatus: 'failed',
+            lastRuntimeIssue: {
+                v: 1,
+                scope: 'primary_session',
+                status: 'failed',
+                source: 'provider_status_error',
+                code: 'provider_status_error',
+                occurredAt: 1,
+            },
+        } as any)).toBe(true);
+    });
+
     it('treats linked direct sessions with a newer observed token as unread', () => {
         const flags = deriveSessionAttentionFlags({
             id: 's1',
