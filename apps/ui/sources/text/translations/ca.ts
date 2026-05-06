@@ -5806,6 +5806,11 @@ settingsSession: {
                 title: 'Entrada',
                 footer: 'Configura l’aspecte i el comportament de la barra d’entrada de l’agent.',
             },
+            inputBehavior: {
+                title: 'Comportament de l’entrada',
+                footer: 'Configura Enviar amb Retorn i el comportament de l’historial de missatges.',
+                enterToSendEnabledNativeSubtitle: 'Prem Retorn per enviar',
+            },
             windows: {
                 title: 'Windows',
                 defaultModeTitle: 'Mode remot de Windows per defecte',

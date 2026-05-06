@@ -6497,6 +6497,11 @@ settingsSession: {
         title: '入力',
         footer: 'エージェント入力バーの表示と動作を設定します。',
     },
+    inputBehavior: {
+        title: '入力の動作',
+        footer: 'Enterで送信とメッセージ履歴の動作を設定します。',
+        enterToSendEnabledNativeSubtitle: 'Enterで送信',
+    },
     windows: {
         title: 'Windows',
         defaultModeTitle: 'Windows リモートセッションの既定モード',

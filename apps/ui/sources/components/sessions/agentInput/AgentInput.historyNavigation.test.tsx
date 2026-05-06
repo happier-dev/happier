@@ -204,6 +204,34 @@ describe('AgentInput (history navigation)', () => {
     vi.clearAllMocks();
   });
 
+  it('sends on Enter when there are sendable attachments (web enter-to-send)', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      <AgentInput
+        value=""
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompletePrefixes={[]}
+        autocompleteSuggestions={async () => []}
+        isSendDisabled={false}
+        disabled={false}
+        showAbortButton={false}
+        hasSendableAttachments={true}
+      />
+    );
+
+    const input = findMultiTextInput(screen);
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+    });
+
+    expect(handled).toBe(true);
+    expect(mocks.onSend).toHaveBeenCalledTimes(1);
+  });
+
   it('does not send on Enter when sending is disabled', async () => {
     const { AgentInput } = await import('./AgentInput');
     const screen = await renderScreen(<AgentInput

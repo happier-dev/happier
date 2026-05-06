@@ -77,6 +77,11 @@ export default React.memo(function SessionSettingsScreen() {
     const [openWindowsRemoteSessionLaunchModeMenu, setOpenWindowsRemoteSessionLaunchModeMenu] = React.useState(false);
     const enterToSendEnabled = Platform.OS === 'web' ? agentInputEnterToSend : agentInputEnterToSendNative;
     const setEnterToSendEnabled = Platform.OS === 'web' ? setAgentInputEnterToSend : setAgentInputEnterToSendNative;
+    const enterToSendSubtitle = enterToSendEnabled
+        ? Platform.OS === 'web'
+            ? t('settingsFeatures.enterToSendEnabled')
+            : t('settingsSession.inputBehavior.enterToSendEnabledNativeSubtitle')
+        : t('settingsFeatures.enterToSendDisabled');
 
     const groupingMenuItems = React.useMemo(() => [
         {
@@ -403,7 +408,7 @@ export default React.memo(function SessionSettingsScreen() {
                 >
                     <Item
                         title={t('settingsFeatures.enterToSend')}
-                        subtitle={enterToSendEnabled ? t('settingsFeatures.enterToSendEnabled') : t('settingsFeatures.enterToSendDisabled')}
+                        subtitle={enterToSendSubtitle}
                         icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.blue} />}
                         rightElement={<Switch value={enterToSendEnabled} onValueChange={setEnterToSendEnabled} />}
                         showChevron={false}
@@ -448,7 +453,7 @@ export default React.memo(function SessionSettingsScreen() {
                 {Platform.OS !== 'web' ? (
                     <Item
                         title={t('settingsFeatures.enterToSend')}
-                        subtitle={enterToSendEnabled ? t('settingsFeatures.enterToSendEnabled') : t('settingsFeatures.enterToSendDisabled')}
+                        subtitle={enterToSendSubtitle}
                         icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.blue} />}
                         rightElement={<Switch value={enterToSendEnabled} onValueChange={setEnterToSendEnabled} />}
                         showChevron={false}

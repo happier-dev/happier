@@ -6253,6 +6253,11 @@ settingsSession: {
           title: 'Wprowadzanie',
           footer: 'Skonfiguruj wygląd i działanie paska wprowadzania agenta.',
       },
+      inputBehavior: {
+          title: 'Zachowanie wprowadzania',
+          footer: 'Skonfiguruj wysyłanie klawiszem Enter i zachowanie historii wiadomości.',
+          enterToSendEnabledNativeSubtitle: 'Naciśnij Enter, aby wysłać',
+      },
       windows: {
           title: 'Windows',
           defaultModeTitle: 'Domyślny tryb zdalnej sesji Windows',

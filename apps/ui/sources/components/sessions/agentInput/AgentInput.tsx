@@ -1699,7 +1699,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             }
 
             if (enterToSendEnabled && event.key === 'Enter' && !event.shiftKey) {
-                if (!sendActionDisabled && props.value.trim()) {
+                const hasSendableInput = Boolean(props.value.trim()) || props.hasSendableAttachments === true;
+                if (!sendActionDisabled && hasSendableInput) {
                     handleSend();
                     return true; // Key was handled
                 }
@@ -1718,7 +1719,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
         }
         return false; // Key was not handled
-            }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, enterToSendEnabled, props.value, handleSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText, sendActionDisabled]);
+            }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, enterToSendEnabled, props.value, props.hasSendableAttachments, handleSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode, messageHistory, props.onChangeText, sendActionDisabled]);
 
     const handleSubmitEditing = React.useCallback(() => {
         if (Platform.OS === 'web') return;

@@ -6246,6 +6246,11 @@ settingsSession: {
           title: 'Entrada',
           footer: 'Configura la apariencia y el comportamiento de la barra de entrada del agente.',
       },
+      inputBehavior: {
+          title: 'Comportamiento de la entrada',
+          footer: 'Configura Enviar con Intro y el comportamiento del historial de mensajes.',
+          enterToSendEnabledNativeSubtitle: 'Pulsa Intro para enviar',
+      },
       windows: {
           title: 'Windows',
           defaultModeTitle: 'Modo remoto predeterminado de Windows',

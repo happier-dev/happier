@@ -5815,6 +5815,11 @@ settingsSession: {
               title: 'Input',
               footer: 'Configure the agent input bar appearance and behavior.',
           },
+          inputBehavior: {
+              title: 'Input behavior',
+              footer: 'Configure Enter-to-send and message history behavior.',
+              enterToSendEnabledNativeSubtitle: 'Press Enter to send',
+          },
           advanced: {
               title: 'Advanced',
           },

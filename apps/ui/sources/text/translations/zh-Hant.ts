@@ -872,6 +872,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             anthropic: 'Anthropic API 金鑰',
             gemini: 'Google Gemini（Google）',
             github: 'GitHub',
+            bitbucket: 'Bitbucket',
         },
         title: '已連線服務',
         oauthPaste: {
@@ -970,6 +971,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             connectSetupTokenSubtitle: '貼上 Claude 的 setup-token（來自 claude setup-token）',
             connectPersonalAccessTokenTitle: '連線個人存取權杖',
             connectPersonalAccessTokenSubtitle: '貼上細粒度個人存取權杖',
+            connectApiTokenTitle: '連線 API 權杖',
+            connectApiTokenSubtitle: '貼上提供者 API 權杖或 app 密碼',
             openTokenSetupTitle: '開啟權杖設定',
             openTokenSetupSubtitle: '開啟提供者設定頁面',
             openPersonalAccessTokenSetupTitle: '建立個人存取權杖',
@@ -984,6 +987,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 personalAccessTokenTitle: '個人存取權杖',
                 personalAccessTokenBody: '貼上你的 GitHub 細粒度個人存取權杖。',
                 personalAccessTokenPlaceholder: 'github_pat_…',
+                apiTokenTitle: 'API 權杖',
+                apiTokenBody: '貼上提供者 API 權杖或 app 密碼。',
+                apiTokenPlaceholder: 'API 權杖',
             },
         },
         profile: {
@@ -5063,6 +5069,11 @@ settingsSession: {
         input: {
             title: '輸入',
             footer: '設定代理輸入列的外觀與行為。',
+        },
+        inputBehavior: {
+            title: '輸入行為',
+            footer: '設定按 Enter 傳送與訊息歷史行為。',
+            enterToSendEnabledNativeSubtitle: '按 Enter 傳送',
         },
         advanced: {
             title: '進階',

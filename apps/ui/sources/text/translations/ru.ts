@@ -6239,6 +6239,11 @@ settingsSession: {
         title: 'Ввод',
         footer: 'Настройте внешний вид и поведение панели ввода агента.',
     },
+    inputBehavior: {
+        title: 'Поведение ввода',
+        footer: 'Настройте отправку по Enter и поведение истории сообщений.',
+        enterToSendEnabledNativeSubtitle: 'Нажмите Enter, чтобы отправить',
+    },
     windows: {
         title: 'Windows',
         defaultModeTitle: 'Режим удалённой сессии Windows по умолчанию',

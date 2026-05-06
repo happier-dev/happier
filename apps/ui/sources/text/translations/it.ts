@@ -6584,6 +6584,11 @@ settingsSession: {
           title: 'Immissione',
           footer: "Configura aspetto e comportamento della barra di input dell'agente.",
       },
+      inputBehavior: {
+          title: 'Comportamento dell\'immissione',
+          footer: 'Configura Invio con Enter e il comportamento della cronologia dei messaggi.',
+          enterToSendEnabledNativeSubtitle: 'Premi Invio per inviare',
+      },
       windows: {
           title: 'Windows',
           defaultModeTitle: 'Modalità remota predefinita di Windows',

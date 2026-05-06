@@ -2239,6 +2239,7 @@ export const zhHans: TranslationStructure = {
       anthropic: "Anthropic API 密钥",
       gemini: "Google Gemini（谷歌）",
       github: "GitHub",
+      bitbucket: "Bitbucket",
     },
     title: "已连接服务",
     authChip: {
@@ -2359,6 +2360,8 @@ export const zhHans: TranslationStructure = {
       connectSetupTokenSubtitle: "粘贴 Claude 的 setup-token（来自 claude setup-token）",
       connectPersonalAccessTokenTitle: "连接个人访问令牌",
       connectPersonalAccessTokenSubtitle: "粘贴细粒度个人访问令牌",
+      connectApiTokenTitle: "连接 API 令牌",
+      connectApiTokenSubtitle: "粘贴提供商 API 令牌或应用密码",
       openTokenSetupTitle: "打开令牌设置",
       openTokenSetupSubtitle: "打开提供商设置页面",
       openPersonalAccessTokenSetupTitle: "创建个人访问令牌",
@@ -2377,6 +2380,9 @@ export const zhHans: TranslationStructure = {
         personalAccessTokenTitle: "个人访问令牌",
         personalAccessTokenBody: "粘贴你的 GitHub 细粒度个人访问令牌。",
         personalAccessTokenPlaceholder: "github_pat_…",
+        apiTokenTitle: "API 令牌",
+        apiTokenBody: "粘贴提供商 API 令牌或应用密码。",
+        apiTokenPlaceholder: "API 令牌",
         profileLabelTitle: "配置标签",
         profileLabelBody: "可选。在认证选择器中显示。",
         profileLabelPlaceholder: "工作账号",
@@ -6010,6 +6016,11 @@ settingsSession: {
     input: {
         title: '输入',
         footer: '配置代理输入栏的外观和行为。',
+    },
+    inputBehavior: {
+        title: '输入行为',
+        footer: '设置按 Enter 发送以及消息历史行为。',
+        enterToSendEnabledNativeSubtitle: '按 Enter 发送',
     },
     windows: {
         title: 'Windows',
