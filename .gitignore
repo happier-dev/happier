@@ -91,6 +91,8 @@ notes/
 
 # Android build artifacts
 packages/*/android/build/
+packages/*/ios/vendor/
+packages/*/rust/*/target/
 /.tmp
 /packages/tests/playwright-report/
 /packages/tests/test-results/

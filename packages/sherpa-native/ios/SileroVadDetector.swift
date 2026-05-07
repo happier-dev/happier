@@ -5,16 +5,12 @@ final class SileroVadDetector: VadDetector {
   private var inner: HappierSherpaSileroVadDetector?
 
   init(modelPath: String, sampleRate: Int32, minSpeechSec: Float, minSilenceSec: Float) throws {
-    var err: NSError?
-    guard let d = HappierSherpaSileroVadDetector(
+    let d = try HappierSherpaSileroVadDetector(
       modelPath: modelPath,
       sampleRate: sampleRate,
       minSpeechSec: minSpeechSec,
-      minSilenceSec: minSilenceSec,
-      error: &err
-    ) else {
-      throw err ?? NSError(domain: "HappierSherpaNative", code: 412, userInfo: [NSLocalizedDescriptionKey: "Failed to create SileroVadDetector"])
-    }
+      minSilenceSec: minSilenceSec
+    )
     inner = d
   }
 

@@ -51,12 +51,12 @@ public class HappierSherpaNativeModule: Module {
     }
 
     var err: NSError?
-    if let engine = HappierSherpaOfflineTtsEngine(assetsDir: assetsDir, error: &err) {
-      engines[assetsDir] = engine
-      return engine
+    let engine = HappierSherpaOfflineTtsEngine(assetsDir: assetsDir, error: &err)
+    if let err {
+      throw err
     }
-
-    throw err ?? NSError(domain: "HappierSherpaNative", code: 100, userInfo: [NSLocalizedDescriptionKey: "Failed to initialize engine"])
+    engines[assetsDir] = engine
+    return engine
   }
 
   private func getAsrEngine(assetsDir: String, language: String?) throws -> HappierSherpaOnlineAsrEngine {
@@ -65,12 +65,12 @@ public class HappierSherpaNativeModule: Module {
     if let cached = asrEngines[key] { return cached }
 
     var err: NSError?
-    if let engine = HappierSherpaOnlineAsrEngine(assetsDir: assetsDir, sampleRate: 16000, language: langKey.isEmpty ? nil : langKey, error: &err) {
-      asrEngines[key] = engine
-      return engine
+    let engine = HappierSherpaOnlineAsrEngine(assetsDir: assetsDir, sampleRate: 16000, language: langKey.isEmpty ? nil : langKey, error: &err)
+    if let err {
+      throw err
     }
-
-    throw err ?? NSError(domain: "HappierSherpaNative", code: 300, userInfo: [NSLocalizedDescriptionKey: "Failed to initialize ASR engine"])
+    asrEngines[key] = engine
+    return engine
   }
 
   public func definition() -> ModuleDefinition {
@@ -125,11 +125,7 @@ public class HappierSherpaNativeModule: Module {
 
       return try self.queue.sync {
         let engine = try self.getEngine(assetsDir: assetsDir)
-        var err: NSError?
-        let ok = engine.synthesizeToWavFile(atPath: outWavPath, text: text, sid: Int32(sid), speed: Float(speed), jobId: jobId, error: &err)
-        if !ok {
-          throw err ?? NSError(domain: "HappierSherpaNative", code: 107, userInfo: [NSLocalizedDescriptionKey: "Synthesis failed"])
-        }
+        try engine.synthesizeToWavFile(atPath: outWavPath, text: text, sid: Int32(sid), speed: Float(speed), jobId: jobId)
         return [
           "wavPath": outWavPath,
           "sampleRate": Int(engine.sampleRate()),
@@ -161,10 +157,7 @@ public class HappierSherpaNativeModule: Module {
 
       try self.queue.sync {
         let engine = try self.getAsrEngine(assetsDir: assetsDir, language: language)
-        var err: NSError?
-        guard let stream = engine.createStreamWithError(&err) else {
-          throw err ?? NSError(domain: "HappierSherpaNative", code: 303, userInfo: [NSLocalizedDescriptionKey: "Failed to create ASR stream"])
-        }
+        let stream = try engine.createStream()
         self.asrStreams[jobId] = stream
       }
     }

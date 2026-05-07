@@ -1,6 +1,7 @@
 #import "HappierSherpaOnlineAsrEngine.h"
 
 #include <cmath>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -36,9 +37,12 @@ bool Exists(const std::string &path) {
 
 @interface HappierSherpaOnlineAsrStream () {
   const SherpaOnnxOnlineRecognizer *_recognizer;
-  SherpaOnnxOnlineStream *_stream;
+  const SherpaOnnxOnlineStream *_stream;
   std::mutex _mutex;
 }
+
+- (instancetype)initWithRecognizer:(const SherpaOnnxOnlineRecognizer *)recognizer
+                             stream:(const SherpaOnnxOnlineStream *)stream;
 @end
 
 @implementation HappierSherpaOnlineAsrEngine
@@ -90,20 +94,14 @@ bool Exists(const std::string &path) {
   config.model_config.transducer.decoder = _decoderPath.c_str();
   config.model_config.transducer.joiner = _joinerPath.c_str();
 
-  config.decoder_config.decoding_method = "greedy_search";
-  config.decoder_config.num_active_paths = 4;
-  config.decoder_config.enable_endpoint = 1;
+  config.decoding_method = "greedy_search";
+  config.max_active_paths = 4;
+  config.enable_endpoint = 1;
 
   // Default endpointing tuned for streaming turn-taking. Units are seconds.
-  config.endpoint_config.rule1.must_contain_nonsilence = 1;
-  config.endpoint_config.rule1.min_trailing_silence = 1.2f;
-  config.endpoint_config.rule1.min_utterance_length = 0.0f;
-  config.endpoint_config.rule2.must_contain_nonsilence = 1;
-  config.endpoint_config.rule2.min_trailing_silence = 0.6f;
-  config.endpoint_config.rule2.min_utterance_length = 2.0f;
-  config.endpoint_config.rule3.must_contain_nonsilence = 0;
-  config.endpoint_config.rule3.min_trailing_silence = 0.0f;
-  config.endpoint_config.rule3.min_utterance_length = 15.0f;
+  config.rule1_min_trailing_silence = 1.2f;
+  config.rule2_min_trailing_silence = 0.6f;
+  config.rule3_min_utterance_length = 15.0f;
 
   const SherpaOnnxOnlineRecognizer *recognizer = SherpaOnnxCreateOnlineRecognizer(&config);
   if (!recognizer) {
@@ -128,20 +126,27 @@ bool Exists(const std::string &path) {
     if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:203 userInfo:@{NSLocalizedDescriptionKey: @"ASR recognizer not initialized"}];
     return nil;
   }
-  SherpaOnnxOnlineStream *stream = SherpaOnnxCreateOnlineStream(_recognizer);
+  const SherpaOnnxOnlineStream *stream = SherpaOnnxCreateOnlineStream(_recognizer);
   if (!stream) {
     if (error) *error = [NSError errorWithDomain:@"HappierSherpaNative" code:204 userInfo:@{NSLocalizedDescriptionKey: @"Failed to create ASR stream"}];
     return nil;
   }
-  HappierSherpaOnlineAsrStream *wrapper = [HappierSherpaOnlineAsrStream new];
-  wrapper->_recognizer = _recognizer;
-  wrapper->_stream = stream;
-  return wrapper;
+  return [[HappierSherpaOnlineAsrStream alloc] initWithRecognizer:_recognizer stream:stream];
 }
 
 @end
 
 @implementation HappierSherpaOnlineAsrStream
+
+- (instancetype)initWithRecognizer:(const SherpaOnnxOnlineRecognizer *)recognizer
+                             stream:(const SherpaOnnxOnlineStream *)stream {
+  self = [super init];
+  if (!self) return nil;
+
+  _recognizer = recognizer;
+  _stream = stream;
+  return self;
+}
 
 - (NSDictionary *)pushPcm16Data:(NSData *)pcm16le
                      sampleRate:(int32_t)sampleRate
