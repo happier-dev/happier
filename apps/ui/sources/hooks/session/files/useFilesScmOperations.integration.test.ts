@@ -223,10 +223,10 @@ describe('useFilesScmOperations integration', () => {
         });
 
         expect(git(workspace, ['rev-parse', `origin/${branch}`])).toBe(localHeadAfterCommit);
-        expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(2);
+        expect(refreshScmData).toHaveBeenCalledTimes(1);
+        expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
         expect(loadCommitHistory).toHaveBeenNthCalledWith(1, { reset: true });
         expect(loadCommitHistory).toHaveBeenNthCalledWith(2, { reset: true });
-        expect(refreshScmData).not.toHaveBeenCalled();
         expect(modalConfirm).toHaveBeenCalledTimes(1);
         expect(modalAlert).not.toHaveBeenCalled();
 
@@ -280,7 +280,8 @@ describe('useFilesScmOperations integration', () => {
         expect(git(workspace, ['log', '-1', '--pretty=%s'])).toBe('feat: draft commit');
         expect(showScmCommitMessageEditorModal).not.toHaveBeenCalled();
         expect(modalAlert).not.toHaveBeenCalled();
-        expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
+        expect(refreshScmData).toHaveBeenCalledTimes(1);
+        expect(invalidateFromMutationAndAwait).not.toHaveBeenCalled();
         expect(loadCommitHistory).toHaveBeenCalledWith({ reset: true });
 
         await hook.unmount();
@@ -551,14 +552,16 @@ describe('useFilesScmOperations integration', () => {
         }
 
         storage.getState().markSessionProjectScmCommitSelectionPaths(sessionId, ['a.txt']);
-        invalidateFromMutationAndAwait.mockRejectedValueOnce(new Error('refresh failed'));
+        const refreshScmData = vi.fn(async () => {
+            throw new Error('refresh failed');
+        });
 
         const hook = await mountHook({
             sessionId,
             sessionPath: workspace,
             scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
             scmWriteEnabled: true,
-            refreshScmData: vi.fn(async () => {}),
+            refreshScmData,
             loadCommitHistory: vi.fn(async () => {}),
             scmCommitStrategy: 'atomic',
             scmRemoteConfirmPolicy: 'always',
@@ -938,6 +941,56 @@ describe('useFilesScmOperations integration', () => {
         await hook.unmount();
     });
 
+    it('skips push confirmation when the caller already confirmed the operation', async () => {
+        const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-skip-confirm-remote-'));
+        initBareRemote(remote);
+
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-skip-confirm-workspace-'));
+        initRepo(workspace);
+        writeFileSync(join(workspace, 'a.txt'), 'base\n');
+        git(workspace, ['add', 'a.txt']);
+        git(workspace, ['commit', '-m', 'base']);
+        git(workspace, ['remote', 'add', 'origin', remote]);
+        const branch = git(workspace, ['rev-parse', '--abbrev-ref', 'HEAD']);
+        git(workspace, ['push', '-u', 'origin', branch]);
+
+        writeFileSync(join(workspace, 'ahead.txt'), 'ahead\n');
+        git(workspace, ['add', 'ahead.txt']);
+        git(workspace, ['commit', '-m', 'ahead']);
+        const localHead = git(workspace, ['rev-parse', 'HEAD']);
+
+        const sessionId = 'session-hook-skip-confirm';
+        storage.getState().applySessions([createSession(sessionId, workspace) as any]);
+        mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
+
+        const snapshotResponse = await sessionScmStatusSnapshot(sessionId, {});
+        expect(snapshotResponse.success).toBe(true);
+        if (!snapshotResponse.success || !snapshotResponse.snapshot) {
+            throw new Error('expected git snapshot');
+        }
+
+        const hook = await mountHook({
+            sessionId,
+            sessionPath: workspace,
+            scmSnapshot: normalizeWorkingSnapshotForUi(snapshotResponse.snapshot, `local:${workspace}`),
+            scmWriteEnabled: true,
+            scmCommitStrategy: 'git_staging',
+            scmRemoteConfirmPolicy: 'always',
+            scmPushRejectPolicy: 'prompt_fetch',
+            refreshScmData: vi.fn(async () => {}),
+            loadCommitHistory: vi.fn(async () => {}),
+        });
+
+        await act(async () => {
+            await hook.getCurrent().runRemoteOperation('push', { skipConfirmation: true });
+        });
+
+        expect(modalConfirm).not.toHaveBeenCalled();
+        expect(git(workspace, ['rev-parse', `origin/${branch}`])).toBe(localHead);
+
+        await hook.unmount();
+    });
+
     it('auto-fetches after push rejection when push reject policy is auto_fetch', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-auto-fetch-remote-'));
         initBareRemote(remote);
@@ -1034,9 +1087,9 @@ describe('useFilesScmOperations integration', () => {
         });
 
         expect(runSapling(workspace, ['status', '--root-relative'])).toBe('');
-        expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
+        expect(refreshScmData).toHaveBeenCalledTimes(1);
+        expect(invalidateFromMutationAndAwait).not.toHaveBeenCalled();
         expect(loadCommitHistory).toHaveBeenCalledWith({ reset: true });
-        expect(refreshScmData).not.toHaveBeenCalled();
         expect(modalAlert).not.toHaveBeenCalled();
 
         const operationLog = storage.getState().getSessionProjectScmOperationLog(sessionId);

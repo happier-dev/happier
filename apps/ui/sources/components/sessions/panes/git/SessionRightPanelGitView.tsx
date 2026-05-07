@@ -19,6 +19,9 @@ import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
+import { resolveCommitAdjacentPushActionState } from '@/scm/operations/commitAdjacentPushAction';
+import { confirmCommitAdjacentPush } from '@/scm/operations/commitAdjacentPushConfirmation';
+import { formatRemoteTargetForDisplay } from '@/scm/operations/remoteFeedback';
 import {
     useProjectForSession,
     useProjectSessions,
@@ -31,6 +34,7 @@ import {
     useSessionProjectScmSnapshotError,
     useSessionProjectScmTouchedPaths,
     useSetting,
+    useSettingMutable,
 } from '@/sync/domains/state/storage';
 import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
@@ -42,10 +46,20 @@ import { SessionRightPanelGitUpdateTab } from './SessionRightPanelGitUpdateTab';
 import { useSessionRightPanelGitTabState } from './useSessionRightPanelGitTabState';
 import { useSessionRightPanelGitOpenDetails } from './useSessionRightPanelGitOpenDetails';
 import type { SourceControlRemoteAction } from '@/components/sessions/sourceControl/remoteActions/SourceControlRemoteActionsRail';
+import type { ScmCommitAdjacentPushAction } from '@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCard';
+import {
+    createSessionScmReviewDetailsTab,
+    createSessionScmStashDetailsTab,
+} from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 export type SessionRightPanelGitViewProps = Readonly<{
     sessionId: string;
     scopeId: string;
+    onOpenFile?: (fullPath: string) => void;
+    onOpenFilePinned?: (fullPath: string) => void;
+    onOpenCommit?: (sha: string) => void;
+    onOpenReviewAllChanges?: () => void;
+    onOpenStashDetails?: () => void;
 }>;
 
 export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitViewProps) => {
@@ -53,7 +67,10 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const pane = useAppPaneScope(props.scopeId);
     const resumeSession = useSessionResumeAction();
     const { activeGitSubTab, commitDraftMessage, setCommitDraftMessage, setActiveGitSubTab } = useSessionRightPanelGitTabState(pane);
-    const { openFileInDetails, openFileInDetailsPinned, openCommitInDetails } = useSessionRightPanelGitOpenDetails(pane);
+    const defaultOpenDetails = useSessionRightPanelGitOpenDetails(pane);
+    const openFileInDetails = props.onOpenFile ?? defaultOpenDetails.openFileInDetails;
+    const openFileInDetailsPinned = props.onOpenFilePinned ?? defaultOpenDetails.openFileInDetailsPinned;
+    const openCommitInDetails = props.onOpenCommit ?? defaultOpenDetails.openCommitInDetails;
 
     const session = useSession(props.sessionId);
     const scmSnapshot = useSessionProjectScmSnapshot(props.sessionId);
@@ -72,7 +89,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             ? (scmCommitStrategySetting as ScmCommitStrategy)
             : 'atomic';
     }, [scmCommitStrategySetting]);
-    const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
+    const [scmRemoteConfirmPolicy, setScmRemoteConfirmPolicy] = useSettingMutable('scmRemoteConfirmPolicy');
     const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
     const autoRefreshIntervalSetting = useSetting('scmFilesAutoRefreshIntervalMs');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
@@ -172,6 +189,13 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             effectiveScmSnapshot?.capabilities?.writeRemoteFetch === true
             || effectiveScmSnapshot?.capabilities?.writeRemotePull === true
             || effectiveScmSnapshot?.capabilities?.writeRemotePush === true
+            || effectiveScmSnapshot?.capabilities?.writeRemotePublish === true
+            || effectiveScmSnapshot?.capabilities?.writeRemoteAdd === true
+            || effectiveScmSnapshot?.capabilities?.writeRemoteSetUrl === true
+            || effectiveScmSnapshot?.capabilities?.writeRemoteRemove === true
+            || effectiveScmSnapshot?.capabilities?.writeBranchMerge === true
+            || effectiveScmSnapshot?.capabilities?.writeBranchRebase === true
+            || effectiveScmSnapshot?.capabilities?.writeBranchOperationControl === true
         )
         && pullPreflightReason !== 'write_disabled'
         && pushPreflightReason !== 'write_disabled';
@@ -234,29 +258,15 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         pane.setRightTab('files');
     }, [pane.openRight, pane.setRightTab]);
 
-    const onOpenReviewAllChanges = React.useCallback(() => {
-        pane.openDetailsTab(
-            {
-                key: 'scmReview:working',
-                kind: 'scmReview',
-                title: t('files.toolbar.review'),
-                resource: { kind: 'scmReview', scope: 'working' },
-            },
-            { intent: 'pinned' },
-        );
+    const defaultOpenReviewAllChanges = React.useCallback(() => {
+        pane.openDetailsTab(createSessionScmReviewDetailsTab(), { intent: 'pinned' });
     }, [pane.openDetailsTab]);
 
-    const onOpenStashDetails = React.useCallback(() => {
-        pane.openDetailsTab(
-            {
-                key: 'scmStash',
-                kind: 'scmStash',
-                title: t('files.stash.detailsTitle'),
-                resource: { kind: 'scmStash' },
-            },
-            { intent: 'pinned' },
-        );
+    const defaultOpenStashDetails = React.useCallback(() => {
+        pane.openDetailsTab(createSessionScmStashDetailsTab(), { intent: 'pinned' });
     }, [pane.openDetailsTab]);
+    const onOpenReviewAllChanges = props.onOpenReviewAllChanges ?? defaultOpenReviewAllChanges;
+    const onOpenStashDetails = props.onOpenStashDetails ?? defaultOpenStashDetails;
 
     const scmStatusFilesSummary: ScmStatusFiles | null = React.useMemo(() => {
         if (!effectiveScmSnapshot?.repo.isRepo) return null;
@@ -296,7 +306,13 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             && Boolean(sessionPath)
             && caps != null
             && !(pullPreflight.allowed === false && pullPreflight.reason === 'write_disabled')
-            && !(pushPreflight.allowed === false && pushPreflight.reason === 'write_disabled');
+            && !(pushPreflight.allowed === false && pushPreflight.reason === 'write_disabled')
+            && (
+                caps.writeRemoteFetch === true
+                || caps.writeRemotePull === true
+                || caps.writeRemotePush === true
+                || caps.writeRemotePublish === true
+            );
 
         if (!remoteWriteEnabled) return actions;
 
@@ -305,6 +321,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 key: 'fetch',
                 iconName: 'sync',
                 label: t('files.sourceControlOperations.actions.fetch'),
+                testID: 'scm-update-remote-action-fetch',
                 disabled: busy,
                 onPress: onFetch,
             });
@@ -318,6 +335,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 key: 'pull',
                 iconName: 'arrow-down',
                 label: t('files.sourceControlOperations.actions.pull'),
+                testID: 'scm-update-remote-action-pull',
                 disabled: busy || !pullPreflight.allowed,
                 onPress: onPull,
             });
@@ -331,6 +349,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 key: 'push',
                 iconName: 'arrow-up',
                 label: t('files.sourceControlOperations.actions.push'),
+                testID: 'scm-update-remote-action-push',
                 disabled: busy || !pushPreflight.allowed,
                 onPress: onPush,
             });
@@ -341,6 +360,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 key: 'publish',
                 iconName: 'upload',
                 label: t('files.branchMenu.publish.title'),
+                testID: 'scm-update-publish-branch',
                 disabled: busy,
                 onPress: () => {
                     void publishBranch();
@@ -379,6 +399,58 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         return null;
     }, [pullPreflight.allowed, pullPreflightMessage, pullPreflightReason, pushPreflight.allowed, pushPreflightMessage, pushPreflightReason, remoteActions.length]);
 
+    const commitAdjacentPushState = React.useMemo(() => {
+        return resolveCommitAdjacentPushActionState({
+            snapshot: effectiveScmSnapshot,
+            pushPreflight,
+            scmWriteEnabled,
+            sessionPath,
+            scmOperationBusy,
+            hasGlobalOperationInFlight,
+            isLockedByOtherSession,
+        });
+    }, [
+        effectiveScmSnapshot,
+        hasGlobalOperationInFlight,
+        isLockedByOtherSession,
+        pushPreflight,
+        scmOperationBusy,
+        scmWriteEnabled,
+        sessionPath,
+    ]);
+    const onCommitAdjacentPush = React.useCallback(() => {
+        if (!commitAdjacentPushState.visible) return;
+        void (async () => {
+            const confirmed = await confirmCommitAdjacentPush({
+                target: commitAdjacentPushState.target,
+                policy: scmRemoteConfirmPolicy,
+                setRemoteConfirmPolicy: setScmRemoteConfirmPolicy,
+                detachedHeadLabel: t('files.detachedHead'),
+            });
+            if (!confirmed) return;
+            await runRemoteOperation('push', { skipConfirmation: true });
+        })();
+    }, [
+        commitAdjacentPushState,
+        runRemoteOperation,
+        scmRemoteConfirmPolicy,
+        setScmRemoteConfirmPolicy,
+    ]);
+    const commitAdjacentPushAction = React.useMemo<ScmCommitAdjacentPushAction | undefined>(() => {
+        if (!commitAdjacentPushState.visible) return undefined;
+        const displayTarget = formatRemoteTargetForDisplay(
+            commitAdjacentPushState.target,
+            t('files.detachedHead'),
+        );
+        return {
+            visible: true,
+            disabled: commitAdjacentPushState.disabled,
+            busy: commitAdjacentPushState.busy,
+            accessibilityLabel: t('files.commitAdjacentPush.accessibilityLabel', { target: displayTarget }),
+            onPress: onCommitAdjacentPush,
+        };
+    }, [commitAdjacentPushState, onCommitAdjacentPush]);
+
     if (!effectiveScmSnapshot && scmSnapshotError) {
         if (isSessionInactive && !machineRpcTargetAvailable) {
             return (
@@ -413,7 +485,13 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     }
 
     if (!effectiveScmSnapshot.repo.isRepo) {
-        return <NotSourceControlRepositoryState />;
+        return (
+            <NotSourceControlRepositoryState
+                sessionId={props.sessionId}
+                canInitializeRepository={effectiveScmSnapshot.capabilities?.writeRepositoryInit === true}
+                onInitialized={refreshScmData}
+            />
+        );
     }
 
     const scmUiPlugin = scmUiBackendRegistry.getPluginForSnapshot(effectiveScmSnapshot);
@@ -464,6 +542,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             onCommitFromMessage={onCommitFromMessage}
             commitMessageGeneratorEnabled={commitMessageGeneratorEnabled}
             onGenerateCommitMessageSuggestion={onGenerateCommitMessageSuggestion}
+            commitAdjacentPushAction={commitAdjacentPushAction}
             onOpenFilesSidebar={onOpenFilesSidebar}
             onOpenReviewAllChanges={onOpenReviewAllChanges}
             onOpenStashDetails={onOpenStashDetails}

@@ -14,9 +14,13 @@ function sortVisibleMachines(a: Machine, b: Machine): number {
 
 export function resolveVisibleMachinesForActiveServerFromState(state: any): Machine[] {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    const activeServerMachines = activeServerId ? state?.machineListByServerId?.[activeServerId] : null;
-    const sourceMachines = Array.isArray(activeServerMachines) && activeServerMachines.length > 0
-        ? activeServerMachines
+    const machineListByServerId = state?.machineListByServerId ?? {};
+    const hasActiveServerMachineList = activeServerId
+        ? Object.prototype.hasOwnProperty.call(machineListByServerId, activeServerId)
+        : false;
+    const activeServerMachines = activeServerId ? machineListByServerId[activeServerId] : null;
+    const sourceMachines = activeServerId && hasActiveServerMachineList
+        ? (Array.isArray(activeServerMachines) ? activeServerMachines : [])
         : Object.values(state?.machines ?? {});
 
     return sourceMachines
@@ -28,9 +32,5 @@ export function resolveVisibleMachinesForActiveServerFromState(state: any): Mach
 export function resolveMachineForActiveServerFromState(state: any, machineIdRaw: unknown): Machine | null {
     const machineId = typeof machineIdRaw === 'string' ? machineIdRaw.trim() : '';
     if (!machineId) return null;
-    const directMachine = state?.machines?.[machineId];
-    if (directMachine && typeof directMachine === 'object' && typeof directMachine.id === 'string') {
-        return directMachine as Machine;
-    }
     return resolveVisibleMachinesForActiveServerFromState(state).find((machine) => machine.id === machineId) ?? null;
 }

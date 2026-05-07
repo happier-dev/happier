@@ -5,12 +5,17 @@ import { basename, dirname, join } from 'node:path';
 import chalk from 'chalk';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { inferPublicReleaseRingIdFromEnvAndArgv } from '@/cli/runtime/publicReleaseChannel';
 import { configuration, reloadConfiguration } from '@/configuration';
+import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
+import {
+  collectCurrentMachineReachableServerUrlCandidates,
+  listCurrentMachineNetworkAddressCandidates,
+} from '@/server/reachability/currentMachineReachableServerUrlCandidates';
 import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
 
 import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
+  resolveManagedCliReleaseChannelSync,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { createRelayHostEngine } from '@happier-dev/cli-common/relayHost';
 import {
@@ -203,12 +208,12 @@ function normalizeChannel(raw: unknown): 'stable' | 'preview' | 'dev' {
     if (!normalized) return 'stable';
     return getReleaseRingPublicLabel(normalized);
   }
-  const inferred = inferPublicReleaseRingIdFromEnvAndArgv({
-    env: process.env,
+  const inferred = resolveManagedCliReleaseChannelSync({
+    processEnv: process.env,
     argv: process.argv,
     argv0: process.argv0,
     execPath: process.execPath,
-  });
+  }).ringId;
   return getReleaseRingPublicLabel(inferred);
 }
 
@@ -490,7 +495,7 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   const json = wantsJson(args);
   const op = String(args[0] ?? '').trim();
   if (!op) {
-    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--server-binary <path>] [--preserve-active-server] [--yes] [--json]');
+    throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--server-binary <path>] [--lan | --expose | --host <ip>] [--preserve-active-server] [--yes] [--json]');
   }
 
   let rest = args.slice(1);
@@ -518,6 +523,12 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   rest = port.rest;
   const preserveActiveServerFlag = takeFlag(rest, '--preserve-active-server');
   rest = preserveActiveServerFlag.rest;
+  const lanFlag = takeFlag(rest, '--lan');
+  rest = lanFlag.rest;
+  const exposeFlag = takeFlag(rest, '--expose');
+  rest = exposeFlag.rest;
+  const hostFlag = takeFlagValue(rest, '--host');
+  rest = hostFlag.rest;
   const yesFlag = takeFlag(rest, '--yes');
   rest = yesFlag.rest;
   const jsonFlag = takeFlag(rest, '--json');
@@ -525,6 +536,17 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
 
   if (rest.length > 0) {
     throw createInvalidArgumentsError(`Unknown relay host arguments: ${rest.join(' ')}`);
+  }
+
+  const bindFlagCount = [lanFlag.present, exposeFlag.present, hostFlag.value !== null].filter(Boolean).length;
+  if (bindFlagCount > 1) {
+    throw createInvalidArgumentsError('--lan, --expose, and --host are mutually exclusive.');
+  }
+  if (bindFlagCount > 0 && sshFlag.value) {
+    throw createInvalidArgumentsError('--lan, --expose, and --host cannot be used with --ssh (applies to local installs only).');
+  }
+  if (bindFlagCount > 0 && op !== 'install') {
+    throw createInvalidArgumentsError('--lan, --expose, and --host can only be used with the install subcommand.');
   }
 
   const channel = normalizeChannel(channelFlag.value);
@@ -608,12 +630,47 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
   }
 
   if (op === 'install') {
+    let bindHost: string | null = null;
+    if (exposeFlag.present || hostFlag.value?.trim() === '0.0.0.0') {
+      bindHost = '0.0.0.0';
+    } else if (lanFlag.present) {
+      const entries = listCurrentMachineNetworkAddressCandidates().filter((entry) => entry.family === 4);
+      if (entries.length === 0) {
+        throw new Error('No LAN/Tailscale network interfaces detected. Use --host <ip> to specify a bind address explicitly.');
+      }
+      if (entries.length === 1) {
+        bindHost = entries[0].address;
+        console.log(chalk.gray(`→ Binding to ${entries[0].label} ${entries[0].address}`));
+      } else if (isInteractiveTerminal()) {
+        console.log('Multiple network interfaces found. Which one should the relay listen on?\n');
+        for (let i = 0; i < entries.length; i++) {
+          console.log(`  ${i + 1}) ${entries[i].label}   ${entries[i].address}`);
+        }
+        console.log('');
+        const answer = await promptInput(`Enter a number (1–${entries.length}): `);
+        const index = Number(answer.trim()) - 1;
+        if (!Number.isInteger(index) || index < 0 || index >= entries.length) {
+          throw new Error(`Invalid selection. Expected a number between 1 and ${entries.length}.`);
+        }
+        bindHost = entries[index].address;
+        console.log(chalk.gray(`→ Binding to ${entries[index].label} ${bindHost}`));
+      } else {
+        const list = entries.map((e, i) => `  ${i + 1}) ${e.label}   ${e.address}`).join('\n');
+        throw new Error(`Multiple LAN/Tailscale interfaces detected:\n${list}\nUse --host <ip> to specify one explicitly.`);
+      }
+    } else if (hostFlag.value) {
+      bindHost = hostFlag.value.trim();
+    }
+
+    const bindEnv: Record<string, string> = bindHost ? { HAPPIER_SERVER_HOST: bindHost } : {};
+    const mergedEnv = (env !== null || Object.keys(bindEnv).length > 0) ? { ...(env ?? {}), ...bindEnv } : null;
+
     const localServerPayloadOverride = selfHostRelayBinaryOverride
       ? resolveLocalServerPayloadOverrideFromBinaryPath(selfHostRelayBinaryOverride)
       : null;
     const installParams: RelayRuntimeTaskParams = {
       ...taskParams,
-      ...(env ? { env } : {}),
+      ...(mergedEnv ? { env: mergedEnv } : {}),
       ...(!ssh && selfHostRelayBinaryOverride ? { selfHostRelayBinaryOverride } : {}),
     };
     const result = ssh
@@ -672,16 +729,26 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
         })()
       : (async () => {
           const override = resolveTestFirstPartyPayloadOverride();
-          const prepared = override
-            ? {
+          const prepared = await (async () => {
+            if (localServerPayloadOverride) {
+              return {
+                payloadRoot: localServerPayloadOverride.payloadRoot,
+                versionId: localServerPayloadOverride.versionId,
+                cleanup: async () => undefined,
+              };
+            }
+            if (override) {
+              return {
                 payloadRoot: override.payloadRoot,
                 versionId: override.versionId,
                 cleanup: async () => undefined,
-              }
-            : await prepareFirstPartyComponentPayloadFromGitHubRelease({
-                componentId: 'happier-server',
-                channel: channel === 'dev' ? 'publicdev' : channel,
-              });
+              };
+            }
+            return await prepareFirstPartyComponentPayloadFromGitHubRelease({
+              componentId: 'happier-server',
+              channel: channel === 'dev' ? 'publicdev' : channel,
+            });
+          })();
           try {
             const serverBinaryPath = selfHostRelayBinaryOverride || resolveLocalServerBinaryFromPayloadRoot(prepared.payloadRoot);
             if (!serverBinaryPath) {
@@ -729,6 +796,17 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
 
     console.log(chalk.green('✓ Relay host installed'));
     console.log(chalk.gray(`  ${payload.relayUrl}`));
+    if (bindHost === '0.0.0.0') {
+      const reachableCandidates = await collectCurrentMachineReachableServerUrlCandidates({
+        localServerUrl: payload.relayUrl,
+      });
+      if (reachableCandidates.length > 0) {
+        console.log(chalk.gray('  Exposed on all interfaces - other machines can connect via:'));
+        for (const candidate of reachableCandidates) {
+          console.log(chalk.gray(`    ${candidate.url} (${candidate.label})`));
+        }
+      }
+    }
     return;
   }
 
@@ -760,7 +838,20 @@ export async function runRelayHostSubcommand(args: string[]): Promise<void> {
       return;
     }
 
-    console.log(chalk.green(`✓ Relay host ${op} requested`));
+    // All ops finished synchronously at the service-manager level:
+    //  - uninstall: service deregistered + files removed before control() returns.
+    //  - start/stop/restart: launchctl/systemctl has accepted the request; the
+    //    bootstrap retry + kickstart path (in apply.ts) ensures the service
+    //    is in the domain and the program started before this line is reached.
+    // Past tense reflects what `launchctl list` / `systemctl status` will
+    // report immediately after.
+    const verbPastTense: Record<string, string> = {
+      uninstall: 'uninstalled',
+      start: 'started',
+      stop: 'stopped',
+      restart: 'restarted',
+    };
+    console.log(chalk.green(`✓ Relay host ${verbPastTense[op] ?? `${op}ed`}`));
     return;
   }
 

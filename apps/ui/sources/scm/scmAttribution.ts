@@ -2,7 +2,7 @@ import type { ScmFileStatus } from './scmStatusFiles';
 import type { ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 
 export type SessionAttributionConfidence = 'high' | 'inferred';
-export type ChangedFilesViewMode = 'repository' | 'turn' | 'session';
+export type ChangedFilesViewMode = 'repository' | 'selected' | 'turn' | 'session';
 export type ChangedFilesPresentation = 'list' | 'review';
 export type SessionAttributionReliability = 'high' | 'limited';
 
@@ -11,33 +11,57 @@ export type SessionAttributedFile = {
     confidence: SessionAttributionConfidence;
 };
 
-function resolveOperationDetailPath(detail: string, knownPaths: ReadonlySet<string>): string | null {
-    const trimmed = detail.trim();
-    if (!trimmed) return null;
-    if (knownPaths.has(trimmed)) return trimmed;
-
-    const separators = [' (', ' [', ' {', '\t', ' |'];
-    for (const separator of separators) {
-        const index = trimmed.indexOf(separator);
-        if (index <= 0) continue;
-        const candidate = trimmed.slice(0, index).trim();
-        if (candidate && knownPaths.has(candidate)) {
-            return candidate;
-        }
-    }
-
-    if (trimmed.startsWith('path=')) {
-        const candidate = trimmed.slice('path='.length).trim();
-        if (candidate && knownPaths.has(candidate)) {
-            return candidate;
-        }
-    }
-
-    return null;
-}
-
 export function getDefaultChangedFilesViewMode(): ChangedFilesViewMode {
     return 'repository';
+}
+
+export function getPreferredChangedFilesViewMode(input: {
+    showTurnViewToggle: boolean;
+    showSessionViewToggle: boolean;
+    showSelectedViewToggle?: boolean;
+}): ChangedFilesViewMode {
+    if (input.showTurnViewToggle) return 'turn';
+    if (input.showSessionViewToggle) return 'session';
+    if (input.showSelectedViewToggle === true) return 'selected';
+    return getDefaultChangedFilesViewMode();
+}
+
+export function isChangedFilesViewModeAvailable(input: {
+    mode: ChangedFilesViewMode;
+    showTurnViewToggle: boolean;
+    showSessionViewToggle: boolean;
+    showSelectedViewToggle?: boolean;
+}): boolean {
+    if (input.mode === 'repository') return true;
+    if (input.mode === 'selected') return input.showSelectedViewToggle === true;
+    if (input.mode === 'turn') return input.showTurnViewToggle;
+    return input.showSessionViewToggle;
+}
+
+export function resolveChangedFilesViewMode(input: {
+    mode: ChangedFilesViewMode;
+    showTurnViewToggle: boolean;
+    showSessionViewToggle: boolean;
+    showSelectedViewToggle?: boolean;
+}): ChangedFilesViewMode {
+    if (isChangedFilesViewModeAvailable(input)) return input.mode;
+    return getPreferredChangedFilesViewMode(input);
+}
+
+export function getSelectableChangedFilesViewModes(input: {
+    showTurnViewToggle: boolean;
+    showSessionViewToggle: boolean;
+    showSelectedViewToggle?: boolean;
+}): ChangedFilesViewMode[] {
+    if (!input.showTurnViewToggle && !input.showSessionViewToggle && input.showSelectedViewToggle !== true) {
+        return [];
+    }
+    return [
+        'repository',
+        ...(input.showSelectedViewToggle === true ? ['selected' as const] : []),
+        ...(input.showTurnViewToggle ? ['turn' as const] : []),
+        ...(input.showSessionViewToggle ? ['session' as const] : []),
+    ];
 }
 
 export function getSessionAttributionReliability(input: {
@@ -68,38 +92,12 @@ export function buildChangedFilesAttribution(input: {
 } {
     const includeInferred = input.includeInferred ?? true;
     const touchedSet = new Set(input.touchedPaths);
-    const directPathSet = new Set<string>();
-    const knownPaths = new Set(input.allChangedFiles.map((file) => file.fullPath));
-
-    for (const entry of input.operationLog) {
-        if (entry.status !== 'success') continue;
-        if (entry.operation !== 'stage' && entry.operation !== 'unstage') continue;
-        if (entry.path && knownPaths.has(entry.path)) {
-            directPathSet.add(entry.path);
-            continue;
-        }
-        const detail = entry.detail?.trim();
-        if (!detail) continue;
-        const path = resolveOperationDetailPath(detail, knownPaths);
-        if (path) {
-            directPathSet.add(path);
-            continue;
-        }
-        // Backward compatibility: accept old plain path-like details when they still match a changed path.
-        if ((detail.includes('/') || detail.includes('.')) && knownPaths.has(detail)) {
-            directPathSet.add(detail);
-        }
-    }
 
     const sessionAttributedFiles: SessionAttributedFile[] = [];
     const repositoryOnlyFiles: ScmFileStatus[] = [];
     let suppressedInferredCount = 0;
 
     for (const file of input.allChangedFiles) {
-        if (directPathSet.has(file.fullPath)) {
-            sessionAttributedFiles.push({ file, confidence: 'high' });
-            continue;
-        }
         if (touchedSet.has(file.fullPath)) {
             if (includeInferred) {
                 sessionAttributedFiles.push({ file, confidence: 'inferred' });

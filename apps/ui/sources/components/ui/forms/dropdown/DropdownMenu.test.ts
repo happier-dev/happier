@@ -253,7 +253,7 @@ describe('DropdownMenu', () => {
         }));
 
         const popover = screen.findByType('Popover' as any);
-        expect(popover?.props?.placement).toBe('bottom');
+        expect(popover?.props?.placement).toBe('auto-vertical');
 
         const selectableResults = screen.findByType('SelectableMenuResults' as any);
         expect(selectableResults?.props?.showCategoryTitles).toBe(false);
@@ -276,6 +276,29 @@ describe('DropdownMenu', () => {
 
         const popover = screen.findByType('Popover' as any);
         expect(popover?.props?.anchorRef).toBe(externalAnchorRef);
+    });
+
+    it('connects top-placed menus to the trigger on the bottom edge', async () => {
+        const { StyleSheet } = await import('react-native');
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'a', title: 'A' }],
+            onSelect: () => {},
+            trigger: React.createElement('View'),
+            placement: 'top',
+            connectToTrigger: true,
+        }));
+
+        const overlay = screen.findByType('FloatingOverlay' as any);
+        const style = StyleSheet.flatten(overlay?.props?.containerStyle);
+
+        expect(style?.borderBottomLeftRadius).toBe(0);
+        expect(style?.borderBottomRightRadius).toBe(0);
+        expect(style?.marginBottom).toBe(-1);
+        expect(style?.borderBottomWidth).toBe(0);
     });
 
     it('defaults showCategoryTitles to false', async () => {

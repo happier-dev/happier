@@ -10,8 +10,19 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 const mocks = vi.hoisted(() => ({
     onChangeText: vi.fn(),
     onSend: vi.fn(),
+    inputBlur: vi.fn(),
     suggestionMoveUp: vi.fn(),
     suggestionMoveDown: vi.fn(),
+}));
+
+const settingState = vi.hoisted(() => ({
+    webEnterToSend: true,
+    nativeEnterToSend: true,
+}));
+
+const hardwareShiftEnterState = vi.hoisted(() => ({
+    listener: null as null | (() => void),
+    remove: vi.fn(),
 }));
 
 installAgentInputCommonModuleMocks({
@@ -50,8 +61,8 @@ installAgentInputCommonModuleMocks({
         return createStorageModuleStub({
             useSetting: (key: string) => {
                 if (key === 'profiles') return [];
-                if (key === 'agentInputEnterToSend') return true;
-                if (key === 'agentInputEnterToSendNative') return true;
+                if (key === 'agentInputEnterToSend') return settingState.webEnterToSend;
+                if (key === 'agentInputEnterToSendNative') return settingState.nativeEnterToSend;
                 if (key === 'agentInputActionBarLayout') return 'wrap';
                 if (key === 'agentInputChipDensity') return 'labels';
                 if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
@@ -59,8 +70,8 @@ installAgentInputCommonModuleMocks({
             },
             useSettings: () => ({
                 profiles: [],
-                agentInputEnterToSend: true,
-                agentInputEnterToSendNative: true,
+                agentInputEnterToSend: settingState.webEnterToSend,
+                agentInputEnterToSendNative: settingState.nativeEnterToSend,
                 agentInputActionBarLayout: 'wrap',
                 agentInputChipDensity: 'labels',
                 sessionPermissionModeApplyTiming: 'immediate',
@@ -91,6 +102,11 @@ vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
+    getAgentBehavior: (agentId: string) => ({
+        sessionUsage: {
+            supportsExactContextUsageBadge: agentId !== 'codex' && agentId !== 'gemini',
+        },
+    }),
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
@@ -121,7 +137,7 @@ vi.mock('@/components/ui/forms/MultiTextInput', () => ({
                 props.onStateChange?.({ text, selection });
             },
             focus: () => {},
-            blur: () => {},
+            blur: mocks.inputBlur,
         }));
         return React.createElement('MultiTextInput', props, null);
     }),
@@ -190,6 +206,15 @@ vi.mock('@/components/sessions/sourceControl/status', () => ({
     useHasMeaningfulScmStatus: () => false,
 }));
 
+vi.mock('./subscribeToIosHardwareShiftEnter', () => ({
+    subscribeToIosHardwareShiftEnter: (listener: () => void) => {
+        hardwareShiftEnterState.listener = listener;
+        return {
+            remove: hardwareShiftEnterState.remove,
+        };
+    },
+}));
+
 function findMultiTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
     const nodes = screen.findAll((node) => (node.type as any) === 'MultiTextInput');
     expect(nodes.length).toBe(1);
@@ -198,13 +223,17 @@ function findMultiTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
 
 describe('AgentInput (enter to send on native)', () => {
     afterEach(() => {
+        settingState.webEnterToSend = true;
+        settingState.nativeEnterToSend = true;
+        hardwareShiftEnterState.listener = null;
         vi.clearAllMocks();
     });
 
-    it('sends on Enter when native enter-to-send is enabled', async () => {
+    it('sends and blurs on Enter for existing sessions when native enter-to-send is enabled', async () => {
         const { AgentInput } = await import('./AgentInput');
         const screen = await renderScreen(
             <AgentInput
+                sessionId="session-1"
                 value="hello"
                 onChangeText={mocks.onChangeText}
                 placeholder="p"
@@ -226,5 +255,45 @@ describe('AgentInput (enter to send on native)', () => {
         });
 
         expect(mocks.onSend).toHaveBeenCalledTimes(1);
+        expect(mocks.inputBlur).toHaveBeenCalledTimes(1);
+    });
+
+    it('inserts a newline for focused hardware Shift+Enter when native enter-to-send is enabled', async () => {
+        settingState.webEnterToSend = false;
+        settingState.nativeEnterToSend = true;
+
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                value="hello"
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={[]}
+                autocompleteSuggestions={async () => []}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />
+        );
+
+        const input = findMultiTextInput(screen);
+
+        await act(async () => {
+            input.props.onStateChange?.({
+                text: 'hello',
+                selection: { start: 5, end: 5 },
+            });
+            input.props.onFocus?.();
+        });
+
+        expect(hardwareShiftEnterState.listener).toBeTypeOf('function');
+
+        await act(async () => {
+            hardwareShiftEnterState.listener?.();
+        });
+
+        expect(mocks.onChangeText).toHaveBeenCalledWith('hello\n');
+        expect(mocks.onSend).not.toHaveBeenCalled();
     });
 });

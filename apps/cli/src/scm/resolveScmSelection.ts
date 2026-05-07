@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { ScmBackendPreference } from '@happier-dev/protocol';
 
 import type { ScmBackendSelection } from './registry';
-import type { ScmBackendContext } from './types';
+import type { ScmBackendContext, ScmConnectedAccountCredentialResolver } from './types';
 import type { ScmBackendRegistry } from './registry';
 
 export type ResolvedScmSelection = Readonly<{
@@ -16,6 +16,7 @@ export async function resolveScmSelection(input: Readonly<{
     cwd: string;
     backendPreference?: ScmBackendPreference;
     registry: ScmBackendRegistry;
+    connectedAccounts?: ScmConnectedAccountCredentialResolver;
 }>): Promise<ResolvedScmSelection | null> {
     const selection = await input.registry.selectBackend({
         cwd: input.cwd,
@@ -32,6 +33,7 @@ export async function resolveScmSelection(input: Readonly<{
             cwd: input.cwd,
             projectKey: `${resolve(input.workingDirectory)}:${input.cwd}`,
             detection: selection.detection,
+            ...(input.connectedAccounts ? { connectedAccounts: input.connectedAccounts } : {}),
         } satisfies ScmBackendContext,
     };
 }

@@ -11,7 +11,6 @@ let lastProps: any = null;
 let mockedWindowWidthPx = 835;
 let mockedSettings: Record<string, any> = {
     uiMultiPanePanelsEnabled: true,
-    editorFocusModeEnabled: false,
     rightPaneWidthPx: 520,
     rightPaneWidthBasisPx: 835,
     detailsPaneWidthPx: 520,
@@ -60,7 +59,6 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         mockedWindowWidthPx = 835;
         mockedSettings = {
             uiMultiPanePanelsEnabled: true,
-            editorFocusModeEnabled: false,
             rightPaneWidthPx: 520,
             rightPaneWidthBasisPx: 835,
             detailsPaneWidthPx: 520,
@@ -91,7 +89,6 @@ describe('AppPaneScopeHost (docked max widths)', () => {
         mockedWindowWidthPx = 1800;
         mockedSettings = {
             uiMultiPanePanelsEnabled: true,
-            editorFocusModeEnabled: false,
             rightPaneWidthPx: 520,
             rightPaneWidthBasisPx: 1800,
             detailsPaneWidthPx: 520,

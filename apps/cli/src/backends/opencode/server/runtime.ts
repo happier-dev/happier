@@ -7,7 +7,6 @@ import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import { configuration } from '@/configuration';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
-import { buildChangeTitleInstruction, shouldAppendChangeTitleInstruction } from '@/agent/runtime/changeTitleInstruction';
 import { isChangeTitleToolNameAlias } from '@happier-dev/protocol';
 import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
@@ -23,11 +22,7 @@ import { createOpenCodeTranscriptStreamBridge } from './openCodeTranscriptStream
 import { asRecord, normalizeString, normalizeStringArray } from './openCodeParsing';
 import { extractOpenCodeErrorText } from './openCodeErrorText';
 import { extractOpenCodeSessionMessageId, parseOpenCodeToolPart } from './openCodeMessageParsing';
-import {
-  canonicalizeOpenCodeConfiguredMcpToolName,
-  resolveOpenCodeChangeTitleToolNameForMcpClient,
-  resolveOpenCodeSessionTitleSetToolNameForMcpClient,
-} from './openCodeMcpToolNames';
+import { canonicalizeOpenCodeConfiguredMcpToolName } from './openCodeMcpToolNames';
 import { parseOpenCodeModelId, resolveOpenCodeDefaultProviderIdFromModelId } from './openCodeModelParsing';
 import { parsePermissionRequest } from './openCodePermissionParsing';
 import { readOpenCodeUsageTelemetryFromMessageInfo } from './openCodeUsageTelemetry';
@@ -146,7 +141,6 @@ export function createOpenCodeServerRuntime(params: {
   let selectedModel: OpenCodeModelRef | null = null;
   const configOverrides: Record<string, unknown> = {};
   let omitCustomMessageIdForResumedSession = false;
-  let didSendChangeTitleInstructionForSession = false;
   let ensuredMcpServersForDirectory = false;
   const ensuredMcpServerNames = new Set<string>();
 
@@ -157,8 +151,10 @@ export function createOpenCodeServerRuntime(params: {
   let turnUserMessageId: string | null = null;
   let turnPromptLocalId: string | null = null;
   let turnPromptTextForBackfill = '';
+  let turnPromptEffectiveTextForBackfill = '';
   let turnPrePromptMessageIdsAll: ReadonlySet<string> | null = null;
   let turnPreexistingMessageIds: ReadonlySet<string> | null = null;
+  const turnUserMessageIds = new Set<string>();
   const turnAssistantMessageIds = new Set<string>();
   const turnStreamedAssistantMessageIds = new Set<string>();
   const turnBackfilledAssistantMessageIds = new Set<string>();
@@ -178,6 +174,7 @@ export function createOpenCodeServerRuntime(params: {
   let userMessageIdCounter = 0;
   const observedRemoteTextMessageIds = new Set<string>();
   let liveHistorySyncPromise: Promise<void> | null = null;
+  let suppressSessionErrorAbortNotificationForSessionId: string | null = null;
   let queuedLiveHistorySyncAllowAssistantReplies = false;
   const turnChangeCollector = new TurnChangeSetCollector({
     provider,
@@ -519,8 +516,10 @@ export function createOpenCodeServerRuntime(params: {
     turnUserMessageId = null;
     turnPromptLocalId = null;
     turnPromptTextForBackfill = '';
+    turnPromptEffectiveTextForBackfill = '';
     turnPrePromptMessageIdsAll = null;
     turnPreexistingMessageIds = null;
+    turnUserMessageIds.clear();
     turnAssistantMessageIds.clear();
     turnStreamedAssistantMessageIds.clear();
     turnBackfilledAssistantMessageIds.clear();
@@ -833,6 +832,7 @@ export function createOpenCodeServerRuntime(params: {
     if (!turnPromptActive) return false;
     if (!messageID) return false;
     if (turnAssistantMessageIds.has(messageID)) return true;
+    if (turnUserMessageIds.has(messageID)) return false;
     if (turnUserMessageId && messageID === turnUserMessageId) return false;
     if (turnPreexistingMessageIds && turnPreexistingMessageIds.has(messageID)) return false;
     if (turnBackfilledAssistantMessageIds.has(messageID)) return false;
@@ -841,6 +841,23 @@ export function createOpenCodeServerRuntime(params: {
 
   const shouldTreatInlineSnapshotMessageIdAsTurnActivity = (messageID: string): boolean => {
     return shouldTreatMessageIdAsTurnActivity(messageID);
+  };
+
+  const noteUserMessageIdForActiveTurn = (messageID: string): void => {
+    if (!turnPromptActive) return;
+    if (!messageID) return;
+    turnUserMessageIds.add(messageID);
+    observedRemoteTextMessageIds.add(messageID);
+  };
+
+  const inlineTextMatchesCurrentPromptForActiveTurn = (text: string): boolean => {
+    if (!turnPromptActive) return false;
+    if (turnUserMessageId) return false;
+    const normalized = text.trim();
+    if (!normalized) return false;
+    const rawPrompt = turnPromptTextForBackfill.trim();
+    const effectivePrompt = turnPromptEffectiveTextForBackfill.trim();
+    return normalized === rawPrompt || (effectivePrompt.length > 0 && normalized === effectivePrompt);
   };
 
   const noteAssistantMessageIdForActiveTurn = (messageID: string): void => {
@@ -1039,6 +1056,7 @@ export function createOpenCodeServerRuntime(params: {
         turnUserMessageId = await backfillVendorAssignedUserMessageIdBestEffort({
           localIdRaw: turnPromptLocalId,
           promptText: turnPromptTextForBackfill,
+          promptTextAlternates: [turnPromptEffectiveTextForBackfill],
           prePromptMessageIds: turnPrePromptMessageIdsAll,
         });
       }
@@ -1116,6 +1134,7 @@ export function createOpenCodeServerRuntime(params: {
   const backfillVendorAssignedUserMessageIdBestEffort = async (paramsForBackfill: {
     localIdRaw: string | null | undefined;
     promptText: string;
+    promptTextAlternates?: readonly string[];
     prePromptMessageIds: ReadonlySet<string> | null;
   }): Promise<string | null> => {
     const localId = typeof paramsForBackfill.localIdRaw === 'string' ? paramsForBackfill.localIdRaw.trim() : '';
@@ -1141,11 +1160,15 @@ export function createOpenCodeServerRuntime(params: {
     });
     if (unseenUserItems.length === 0) return null;
 
-    const normalizedPromptText = paramsForBackfill.promptText.trim();
+    const normalizedPromptTexts = new Set(
+      [paramsForBackfill.promptText, ...(paramsForBackfill.promptTextAlternates ?? [])]
+        .map((text) => text.trim())
+        .filter((text) => text.length > 0),
+    );
     let candidateMessageId: string | null = null;
     for (let index = unseenUserItems.length - 1; index >= 0; index -= 1) {
       const item = unseenUserItems[index]!;
-      if (item.text.trim() === normalizedPromptText) {
+      if (normalizedPromptTexts.has(item.text.trim())) {
         candidateMessageId = item.messageId;
         break;
       }
@@ -1875,6 +1898,9 @@ export function createOpenCodeServerRuntime(params: {
       if (!infoSessionId || infoSessionId !== sessionId) return;
       const infoRole = normalizeString(info.role).trim().toLowerCase();
       const infoMessageId = normalizeString(info.id);
+      if (infoRole === 'user' && infoMessageId) {
+        noteUserMessageIdForActiveTurn(infoMessageId);
+      }
       if (infoRole === 'assistant' && infoMessageId) {
         noteAssistantMessageIdForActiveTurn(infoMessageId);
         if (flushPendingInlineSnapshotsForMessage({ remoteSessionId: infoSessionId, messageID: infoMessageId }) && idleSignalSeen) {
@@ -1930,6 +1956,16 @@ export function createOpenCodeServerRuntime(params: {
       }
       const inlineText = extractOpenCodeRuntimeRenderableTextFromPart(part);
       const messageID = normalizeString(part.messageID);
+      if (
+        turnPromptActive
+        && inlineText
+        && messageID
+        && sessionID === sessionId
+        && (turnUserMessageIds.has(messageID) || inlineTextMatchesCurrentPromptForActiveTurn(inlineText))
+      ) {
+        noteUserMessageIdForActiveTurn(messageID);
+        return;
+      }
       if (turnPromptActive && inlineText && messageID) {
         if (sessionID === sessionId) {
           if (!shouldTreatInlineSnapshotMessageIdAsTurnActivity(messageID)) {
@@ -2089,12 +2125,15 @@ export function createOpenCodeServerRuntime(params: {
       if (!rec) return;
       const sessionID = normalizeString(rec.sessionID);
       if (!sessionID || sessionID !== sessionId) return;
+      const isExpectedExplicitCancelError = suppressSessionErrorAbortNotificationForSessionId === sessionID;
       setThinking(false);
       void flushAndClearStreamWriters({ reason: 'abort', interruptedReason: 'session_error' }).finally(() => {
-        params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
+        if (!isExpectedExplicitCancelError) {
+          params.session.sendAgentMessage(provider, { type: 'turn_aborted', id: randomUUID() });
+        }
       });
       const detail = extractOpenCodeErrorText(rec.error);
-      if (shouldSurfaceOpenCodeErrorDetail(detail)) {
+      if (!isExpectedExplicitCancelError && shouldSurfaceOpenCodeErrorDetail(detail)) {
         params.session.sendAgentMessage(provider, { type: 'message', message: detail });
       }
       rejectTurn(detail ? new Error(detail) : rec.error ?? new Error('OpenCode session error'));
@@ -2147,15 +2186,14 @@ export function createOpenCodeServerRuntime(params: {
   };
 
   const preferredOpenCodeChangeTitleToolName = resolvePreferredChangeTitleToolNameForProvider('opencode');
-  const changeTitleInstruction = buildChangeTitleInstruction({ preferredToolName: preferredOpenCodeChangeTitleToolName });
-
   return {
     getSessionId: () => sessionId,
-    shouldResumeAfterPermissionModeChange: () => false,
+    shouldResumeAfterPermissionModeChange: () => true,
     supportsInFlightSteer: () => false,
     isTurnInFlight: () => turnInFlight,
 
     beginTurn(): void {
+      suppressSessionErrorAbortNotificationForSessionId = null;
       turnInFlight = true;
       pendingTurnToolForwardingWork = new Set<Promise<void>>();
       turnPromptActive = false;
@@ -2168,7 +2206,6 @@ export function createOpenCodeServerRuntime(params: {
     },
 
     async startOrLoad(opts: { resumeId?: string | null } = {}): Promise<string> {
-      didSendChangeTitleInstructionForSession = false;
       ensuredMcpServersForDirectory = false;
       await attachSubscriptionIfNeeded();
       const c = await ensureClient();
@@ -2190,6 +2227,7 @@ export function createOpenCodeServerRuntime(params: {
           ensuredMcpServersForDirectory = false;
           await ensureMcpServersForCurrentDirectoryBestEffort();
         }
+        await c.sessionUpdate({ sessionId: sessionId!, permission: [...resolveSessionPermissionRuleset()] as unknown[] });
         publishDynamicSessionOptionsBestEffort();
         const snapshot = params.session.getMetadataSnapshot();
         const existingVendorSessionId = readOpenCodeSessionRuntimeHandleFromMetadata(snapshot).vendorSessionId ?? '';
@@ -2266,29 +2304,7 @@ export function createOpenCodeServerRuntime(params: {
       if (!sessionId) throw new Error('OpenCode server session was not started');
       const c = await ensureClient();
 
-      const effectiveText = (() => {
-        const raw = typeof paramsWithMeta.text === 'string' ? paramsWithMeta.text : '';
-        if (!raw.trim()) return raw;
-        if (didSendChangeTitleInstructionForSession) return raw;
-        const lower = raw.toLowerCase();
-        const alreadyMentionsChangeTitle = (() => {
-          if (lower.includes(preferredOpenCodeChangeTitleToolName.toLowerCase())) return true;
-
-          const configuredServers = Object.keys(params.mcpServers ?? {});
-          for (const serverName of configuredServers) {
-            if (lower.includes(resolveOpenCodeChangeTitleToolNameForMcpClient(serverName).toLowerCase())) return true;
-            if (lower.includes(resolveOpenCodeSessionTitleSetToolNameForMcpClient(serverName).toLowerCase())) return true;
-          }
-          return false;
-        })();
-        if (alreadyMentionsChangeTitle) {
-          didSendChangeTitleInstructionForSession = true;
-          return raw;
-        }
-        if (!shouldAppendChangeTitleInstruction(raw)) return raw;
-        didSendChangeTitleInstructionForSession = true;
-        return `${raw}\n\n${changeTitleInstruction}`;
-      })();
+      const effectiveText = typeof paramsWithMeta.text === 'string' ? paramsWithMeta.text : '';
 
       const shouldOmitCustomMessageId = omitCustomMessageIdForResumedSession === true;
       const messageID = shouldOmitCustomMessageId
@@ -2310,6 +2326,7 @@ export function createOpenCodeServerRuntime(params: {
       turnUserMessageId = messageID ?? null;
       turnPromptLocalId = typeof paramsWithMeta.localId === 'string' ? paramsWithMeta.localId.trim() : null;
       turnPromptTextForBackfill = paramsWithMeta.text;
+      turnPromptEffectiveTextForBackfill = effectiveText;
       turnPrePromptMessageIdsAll = null;
       turnPreexistingMessageIds = null;
       handledPermissionIds = new Set<string>();
@@ -2451,6 +2468,7 @@ export function createOpenCodeServerRuntime(params: {
           await backfillVendorAssignedUserMessageIdBestEffort({
             localIdRaw: paramsWithMeta.localId ?? null,
             promptText: paramsWithMeta.text,
+            promptTextAlternates: [effectiveText],
             prePromptMessageIds: prePromptMessageIdsForBackfill,
           });
         }
@@ -2472,6 +2490,7 @@ export function createOpenCodeServerRuntime(params: {
     async cancel(): Promise<void> {
       if (!sessionId) return;
       const c = await ensureClient();
+      suppressSessionErrorAbortNotificationForSessionId = sessionId;
       const abortPromise = c.sessionAbort({ sessionId });
 
       const outcome = await Promise.race([
@@ -2500,6 +2519,7 @@ export function createOpenCodeServerRuntime(params: {
       selectedModel = null;
       currentContextWindowTokens = null;
       omitCustomMessageIdForResumedSession = false;
+      suppressSessionErrorAbortNotificationForSessionId = null;
       for (const key of Object.keys(configOverrides)) delete configOverrides[key];
       ensuredMcpServersForDirectory = false;
       if (ensuredMcpServerNames.size > 0) {

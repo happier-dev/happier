@@ -21,6 +21,7 @@ export function AgentInputSelectionSimpleList(props: AgentInputSelectionSimpleLi
 
             {props.options.map((option) => {
                 const isSelected = option.id === props.selectedOptionId;
+                const isDisabled = option.disabled === true;
                 const testID = `agent-input-simple-option:${option.id}`;
                 return (
                     <Pressable
@@ -28,11 +29,19 @@ export function AgentInputSelectionSimpleList(props: AgentInputSelectionSimpleLi
                         testID={testID}
                         accessibilityRole="button"
                         accessibilityLabel={option.label}
-                        onPress={() => props.onSelect(option.id)}
+                        accessibilityState={{
+                            selected: isSelected,
+                            disabled: isDisabled,
+                        }}
+                        disabled={isDisabled}
+                        onPress={() => {
+                            if (!isDisabled) props.onSelect(option.id);
+                        }}
                         style={({ pressed }) => [
                             styles.optionRow,
                             isSelected ? styles.optionRowSelected : null,
-                            pressed ? styles.optionRowPressed : null,
+                            isDisabled ? styles.optionRowDisabled : null,
+                            pressed && !isDisabled ? styles.optionRowPressed : null,
                         ]}
                     >
                         <View style={styles.optionTextWrap}>
@@ -90,6 +99,9 @@ const styles = StyleSheet.create((theme) => ({
     },
     optionRowPressed: {
         opacity: 0.82,
+    },
+    optionRowDisabled: {
+        opacity: 0.48,
     },
     optionTextWrap: {
         flex: 1,

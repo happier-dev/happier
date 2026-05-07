@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { buildUpdatedSessionFromSocketUpdate } from './syncSessions';
 
 function createSession(params: { sessionId: string; encryptionMode: 'plain' | 'e2ee' }): Session {
@@ -24,7 +25,23 @@ function createSession(params: { sessionId: string; encryptionMode: 'plain' | 'e
   };
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
+  afterEach(() => {
+    syncPerformanceTelemetry.configure({ enabled: false });
+    syncPerformanceTelemetry.reset();
+  });
+
   it('parses plaintext metadata and agentState when session encryptionMode is plain', async () => {
     const base = createSession({ sessionId: 's1', encryptionMode: 'plain' });
 
@@ -54,5 +71,63 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
     expect(nextSession.agentStateVersion).toBe(3);
     const agentState = nextSession.agentState as unknown as { controlledByUser?: unknown };
     expect(agentState.controlledByUser).toBe(true);
+  });
+
+  it('applies archivedAt from update-session payloads', async () => {
+    const base = createSession({ sessionId: 's1', encryptionMode: 'plain' });
+
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({
+      session: base,
+      updateBody: {
+        archivedAt: 123,
+      },
+      updateSeq: 10,
+      updateCreatedAt: 456,
+      sessionEncryption: null,
+    });
+
+    expect(nextSession.archivedAt).toBe(123);
+    expect(nextSession.updatedAt).toBe(456);
+  });
+
+  it('decrypts encrypted metadata and agent-state socket updates in one batch when available', async () => {
+    const base = createSession({ sessionId: 's1', encryptionMode: 'e2ee' });
+    syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 1_000_000, flushIntervalMs: 60_000 });
+    syncPerformanceTelemetry.reset();
+    const decryptMetadata = vi.fn(async () => ({ path: '/fallback', host: 'fallback' }));
+    const decryptAgentState = vi.fn(async () => ({ controlledByUser: false }));
+    const decryptSessionSnapshotState = vi.fn(async () => ({
+      metadata: { path: '/work', host: 'devbox' },
+      agentState: { controlledByUser: true },
+    }));
+
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({
+      session: base,
+      updateBody: {
+        metadata: { version: 2, value: 'enc-meta' },
+        agentState: { version: 3, value: 'enc-state' },
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: { decryptMetadata, decryptAgentState, decryptSessionSnapshotState },
+    });
+
+    expect(decryptSessionSnapshotState).toHaveBeenCalledWith(2, 'enc-meta', 3, 'enc-state');
+    expect(decryptMetadata).not.toHaveBeenCalled();
+    expect(decryptAgentState).not.toHaveBeenCalled();
+    expect(nextSession.metadataVersion).toBe(2);
+    expect(nextSession.agentStateVersion).toBe(3);
+    expect(nextSession.metadata).toEqual({ path: '/work', host: 'devbox' });
+    expect(nextSession.agentState).toEqual({ controlledByUser: true });
+    expect(syncPerformanceTelemetry.snapshot().events).toContainEqual(expect.objectContaining({
+      name: 'sync.sessions.socket.updateSession.decryptState',
+      count: 1,
+      fields: expect.objectContaining({
+        encrypted: 1,
+        metadata: 1,
+        agentState: 1,
+        batched: 1,
+      }),
+    }));
   });
 });

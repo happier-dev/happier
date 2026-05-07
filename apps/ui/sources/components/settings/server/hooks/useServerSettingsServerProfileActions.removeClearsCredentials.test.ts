@@ -20,9 +20,20 @@ installServerSettingsHooksCommonModuleMocks({
 });
 
 const promptSignedOutServerSwitchConfirmationMock = vi.hoisted(() => vi.fn(async () => true));
+const pendingTerminalConnectMock = vi.hoisted(() => ({
+    current: null as { publicKeyB64Url: string; serverUrl: string } | null,
+    set: vi.fn((value: { publicKeyB64Url: string; serverUrl: string }) => {
+        pendingTerminalConnectMock.current = value;
+    }),
+}));
 
 vi.mock('@/components/settings/server/modals/ServerSwitchAuthPrompt', () => ({
     promptSignedOutServerSwitchConfirmation: promptSignedOutServerSwitchConfirmationMock,
+}));
+
+vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
+    getPendingTerminalConnect: () => pendingTerminalConnectMock.current,
+    setPendingTerminalConnect: pendingTerminalConnectMock.set,
 }));
 
 vi.mock('expo-secure-store', () => ({}));
@@ -49,6 +60,7 @@ async function renderHook<T>(useValue: () => T): Promise<T> {
 
 afterEach(() => {
     vi.unstubAllGlobals();
+    pendingTerminalConnectMock.current = null;
     vi.clearAllMocks();
     vi.resetModules();
 });
@@ -89,8 +101,6 @@ describe('useServerSettingsServerProfileActions (remove server)', () => {
                 onSwitchServerById: vi.fn(async () => {}),
                 onAfterSignedOutSwitch: vi.fn(),
                 setRevision: setRevision as any,
-                setServerSelectionActiveTargetKind: vi.fn(),
-                setServerSelectionActiveTargetId: vi.fn(),
             }),
         );
 
@@ -102,5 +112,40 @@ describe('useServerSettingsServerProfileActions (remove server)', () => {
         await expect(TokenStorage.getCredentialsForServerUrl(profile.serverUrl)).resolves.toBeNull();
 
         localStorageHandle.restore();
+    });
+
+    it('retargets a pending terminal connect when the user manually switches relays', async () => {
+        pendingTerminalConnectMock.current = {
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'https://wrong.example.test',
+        };
+        const onSwitchServerById = vi.fn(async () => {});
+        const setRevision = vi.fn();
+        const profile = {
+            id: 'server-correct',
+            name: 'Correct',
+            serverUrl: 'https://correct.example.test',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+        };
+
+        const { useServerSettingsServerProfileActions } = await import('./useServerSettingsServerProfileActions');
+        const actions = await renderHook(() =>
+            useServerSettingsServerProfileActions({
+                authStatusByServerId: { 'server-correct': 'signedIn' },
+                onSwitchServerById,
+                onAfterSignedOutSwitch: vi.fn(),
+                setRevision: setRevision as any,
+            }),
+        );
+
+        await actions.onSwitchServer(profile);
+
+        expect(pendingTerminalConnectMock.set).toHaveBeenCalledWith({
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'https://correct.example.test',
+        });
+        expect(onSwitchServerById).toHaveBeenCalledWith('server-correct');
     });
 });

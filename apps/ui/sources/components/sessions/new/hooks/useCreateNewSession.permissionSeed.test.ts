@@ -29,6 +29,7 @@ type SpawnPayloadCapture = {
     resume?: string;
     transcriptStorage?: 'persisted' | 'direct';
     windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console';
+    windowsTerminalWindowName?: string;
 } | null;
 
 type AutomationCreateCapture = {
@@ -1972,6 +1973,7 @@ describe('useCreateNewSession permission seeding', () => {
         const settings = {
             experiments: false,
             sessionWindowsRemoteSessionLaunchMode: 'hidden',
+            sessionWindowsTerminalWindowName: 'happier-qa',
         } as unknown as Settings;
         const machineEnvPresence: UseMachineEnvPresenceResult = {
             isPreviewEnvSupported: false,
@@ -2022,5 +2024,6 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(captured.value?.windowsRemoteSessionLaunchMode).toBe('windows_terminal');
+        expect(captured.value?.windowsTerminalWindowName).toBe('happier-qa');
     });
 });

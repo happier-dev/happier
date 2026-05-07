@@ -49,7 +49,7 @@ export const AcpCatalogSettingsSections = React.memo(function AcpCatalogSettings
             title={t('settings.acpCatalogAddBackend')}
             subtitle={t('settings.acpCatalogAddBackendSubtitle')}
             icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.success} />}
-            onPress={() => router.push('/(app)/settings/acp-backend')}
+            onPress={() => router.push('/settings/acp-backend')}
         />
     );
 
@@ -84,7 +84,7 @@ export const AcpCatalogSettingsSections = React.memo(function AcpCatalogSettings
                         title={backend.title || backend.name}
                         subtitle={formatBackendSubtitle(backend.command, backend.args)}
                         icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.indigo} />}
-                        onPress={() => router.push({ pathname: '/(app)/settings/acp-backend', params: { backendId: backend.id } } as any)}
+                        onPress={() => router.push({ pathname: '/settings/acp-backend', params: { backendId: backend.id } } as any)}
                         onLongPress={() => { void handleDeleteBackend(backend.id); }}
                     />
                 ))}

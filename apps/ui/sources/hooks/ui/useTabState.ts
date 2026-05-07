@@ -13,7 +13,8 @@ type TabState = Readonly<{
 }>;
 
 function normalizeStoredTab(value: unknown): TabType | null {
-  if (value === 'sessions' || value === 'inbox' || value === 'friends' || value === 'settings') return value;
+  if (value === 'sessions' || value === 'inbox' || value === 'friends') return value;
+  if (value === 'settings') return 'sessions';
   // Zen is a legacy value; it is no longer rendered in the tab bar.
   if (value === 'zen') return 'sessions';
   return null;
@@ -65,12 +66,13 @@ export function useTabState(): {
 
   const setActiveTab = React.useCallback(
     async (tab: TabType) => {
-      setState((prev) => ({ ...prev, activeTab: tab }));
+      const normalizedTab = normalizeStoredTab(tab) ?? DEFAULT_TAB;
+      setState((prev) => ({ ...prev, activeTab: normalizedTab }));
 
       if (!credentials) return;
 
       try {
-        const newVersion = await kvSet(credentials, TAB_STATE_KEY, tab, versionRef.current);
+        const newVersion = await kvSet(credentials, TAB_STATE_KEY, normalizedTab, versionRef.current);
         setState((prev) => ({ ...prev, version: newVersion }));
       } catch (error) {
         console.warn('[useTabState] Failed to save tab state:', error);

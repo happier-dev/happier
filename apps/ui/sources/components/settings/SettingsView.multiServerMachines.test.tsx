@@ -263,6 +263,6 @@ describe('SettingsView (multi-server machines)', () => {
             await pressTestInstanceAsync(machinesEntry!);
         });
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/machines');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/machines');
     });
 });

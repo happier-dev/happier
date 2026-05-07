@@ -1,5 +1,13 @@
 export type MobileE2ePlatform = 'android' | 'ios';
 
+function stripTrailingSlash(value: string): string {
+  return value.replace(/\/$/, '');
+}
+
+function escapeRegexFragment(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function resolveDeviceHostOverride(env: NodeJS.ProcessEnv): string {
   const raw = (env.HAPPIER_E2E_MOBILE_DEVICE_HOST ?? '').trim();
   return raw;
@@ -22,12 +30,22 @@ export function resolveDeviceVisibleBaseUrl(params: Readonly<{
 
   if (override) {
     url.hostname = override;
-    return url.toString().replace(/\/$/, '');
+    return stripTrailingSlash(url.toString());
   }
 
   if (params.platform === 'android') {
     url.hostname = resolveAndroidEmulatorHostAlias({ host: url.hostname });
   }
 
-  return url.toString().replace(/\/$/, '');
+  return stripTrailingSlash(url.toString());
+}
+
+export function resolveDeviceVisibleHostPattern(params: Readonly<{
+  platform: MobileE2ePlatform;
+  baseUrl: string;
+  env?: NodeJS.ProcessEnv;
+}>): string {
+  const visibleBaseUrl = resolveDeviceVisibleBaseUrl(params);
+  const visibleUrl = new URL(visibleBaseUrl);
+  return escapeRegexFragment(visibleUrl.hostname);
 }

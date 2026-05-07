@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import {
     View,
     TouchableWithoutFeedback,
@@ -6,12 +6,20 @@ import {
     KeyboardAvoidingView,
     Platform
 } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { requireRadixDialog, requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { t } from '@/text';
+import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import {
+    OverlayMotionFrame,
+    resolveOverlayMotionPreset,
+    useOverlayMotionAnimation,
+    useOverlayPresence,
+} from '@/components/ui/overlays/motion/overlayMotion';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 // On web, stop events from propagating to expo-router's modal overlay
 // which intercepts clicks when it applies pointer-events: none to body
@@ -156,8 +164,21 @@ export function BaseModal({
     zIndexBase,
     webPortalTarget = null,
 }: BaseModalProps) {
-    const fadeAnim = useRef(new Animated.Value(0)).current;
+    const { theme } = useUnistyles();
     const baseZ = zIndexBase ?? 100000;
+    const modalMotionPreset = React.useMemo(
+        () => resolveOverlayMotionPreset({ kind: 'modal' }),
+        [],
+    );
+    const modalMotion = useOverlayMotionAnimation({
+        visible,
+        preset: modalMotionPreset,
+    });
+    const modalPresence = useOverlayPresence(visible, modalMotion.exitMs);
+    const backdropOpacity = modalMotion.progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, motionTokens.overlay.modal.backdropMaxOpacity],
+    });
     const modalPortalTargetRef = React.useRef<HTMLElement | null>(null);
     if (modalPortalTargetRef.current == null) {
         modalPortalTargetRef.current = createWebModalPortalTarget();
@@ -188,23 +209,6 @@ export function BaseModal({
     }, []);
 
     useEffect(() => {
-        const useNativeDriver = Platform.OS !== 'web';
-        if (visible) {
-            Animated.timing(fadeAnim, {
-                toValue: 1,
-                duration: 200,
-                useNativeDriver,
-            }).start();
-        } else {
-            Animated.timing(fadeAnim, {
-                toValue: 0,
-                duration: 200,
-                useNativeDriver,
-            }).start();
-        }
-    }, [visible, fadeAnim]);
-
-    useEffect(() => {
         if (Platform.OS !== 'web') return;
         if (!visible) return;
 
@@ -218,7 +222,7 @@ export function BaseModal({
     };
 
     if (Platform.OS === 'web') {
-        if (!visible) return null;
+        if (!modalPresence.present) return null;
 
         // IMPORTANT:
         // Use the CJS entrypoints (`require`) so Radix singletons (DismissableLayer / FocusScope stacks)
@@ -230,8 +234,16 @@ export function BaseModal({
         const overlayStyle: React.CSSProperties = {
             position: 'fixed',
             inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
             zIndex: baseZ,
+            transition: [
+                `background-color ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+                `backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+                `-webkit-backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+            ].join(', '),
+            ...createBackdropWebStyle({
+                backgroundColor: visible ? (theme.colors.overlay.scrimWizard ?? theme.colors.overlay.scrim) : 'transparent',
+                blurPx: visible ? 2 : 0,
+            }),
         };
 
         const contentStyle: React.CSSProperties = {
@@ -271,9 +283,9 @@ export function BaseModal({
 
         return (
             <Dialog.Root
-                open={visible}
+                open={modalPresence.present}
                 onOpenChange={(open) => {
-                    if (!open && onClose) onClose();
+                    if (!open && visible && onClose) onClose();
                 }}
               >
                   <Dialog.Portal container={(webPortalTarget ?? undefined) as any}>
@@ -324,15 +336,7 @@ export function BaseModal({
                                             pointerEvents="auto"
                                             style={[
                                                 styles.content,
-                                                {
-                                                    opacity: fadeAnim,
-                                                    transform: [{
-                                                        scale: fadeAnim.interpolate({
-                                                            inputRange: [0, 1],
-                                                            outputRange: [0.9, 1]
-                                                        })
-                                                    }]
-                                                }
+                                                modalMotion.style,
                                             ]}
                                         >
                                             <div
@@ -356,10 +360,10 @@ export function BaseModal({
     // On iOS, stacking native modals (expo-router / react-navigation modal screens + RN <Modal>)
     // can lead to the RN modal rendering behind the navigation modal, while still blocking touches.
     // To avoid this, we render "portal style" overlays on native (no RN <Modal>).
-      if (!visible) return null;
+      if (!modalPresence.present) return null;
 
       return (
-          <View style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]} pointerEvents="auto">
+          <View style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]} pointerEvents={visible ? 'auto' : 'none'}>
               <KeyboardAvoidingView
                   style={styles.container}
                   behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -371,29 +375,22 @@ export function BaseModal({
                             style={[
                                 styles.backdrop,
                                 {
-                                    opacity: fadeAnim.interpolate({
-                                        inputRange: [0, 1],
-                                        outputRange: [0, 0.5]
-                                    })
+                                    ...createBackdropNativeStyle({
+                                        backgroundColor: theme.colors.overlay.scrimWizard ?? theme.colors.overlay.scrim,
+                                    }),
+                                    opacity: backdropOpacity,
                                 }
                             ]}
                         />
                     </TouchableWithoutFeedback>
                 ) : null}
 
-                <Animated.View
+                <OverlayMotionFrame
+                    visible={visible}
+                    kind="modal"
                     pointerEvents="box-none"
                     style={[
                         styles.content,
-                        {
-                            opacity: fadeAnim,
-                            transform: [{
-                                scale: fadeAnim.interpolate({
-                                    inputRange: [0, 1],
-                                    outputRange: [0.9, 1]
-                                })
-                            }]
-                        }
                     ]}
                 >
                     <ModalBoundaryProvider>
@@ -401,7 +398,7 @@ export function BaseModal({
                             {children}
                         </View>
                     </ModalBoundaryProvider>
-                </Animated.View>
+                </OverlayMotionFrame>
             </KeyboardAvoidingView>
         </View>
     );
@@ -422,7 +419,7 @@ const styles = StyleSheet.create(() => ({
       },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'black'
+        backgroundColor: 'transparent',
     },
     content: {
         zIndex: 1,

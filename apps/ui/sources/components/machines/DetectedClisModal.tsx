@@ -66,6 +66,7 @@ export function DetectedClisModal({ onClose, setChrome, machineId, isOnline, ser
         closeButtonTestID: 'detected-clis:close',
         actions: headerActions,
         footer,
+        layout: 'fill' as const,
         dimensions: { width: 360, maxHeightRatio: 0.85 },
     }), [footer, headerActions, title]);
 

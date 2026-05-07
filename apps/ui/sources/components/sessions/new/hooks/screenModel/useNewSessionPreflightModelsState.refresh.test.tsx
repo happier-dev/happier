@@ -155,6 +155,49 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         await hook.unmount();
     });
 
+    it('does not expose a previous backend model list after the backend target changes', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        machineCapabilitiesInvokeMock.mockImplementationOnce(async () => ({
+            supported: true as const,
+            response: {
+                ok: true as const,
+                result: { availableModels: [{ id: 'gpt-5.5', name: 'GPT 5.5' }], supportsFreeform: false },
+            },
+        }));
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            (props: { backendTarget: { kind: 'builtInAgent'; agentId: 'codex' | 'claude' } }) =>
+                useNewSessionPreflightModelsState({
+                    backendTarget: props.backendTarget,
+                    selectedMachineId: 'machine-1',
+                    capabilityServerId: 'server-1',
+                    cwd: '/repo',
+                }),
+            { initialProps: { backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } },
+        );
+
+        expect(hook.getCurrent().preflightModels?.availableModels.map((model) => model.id)).toEqual(['gpt-5.5']);
+        expect(hook.getCurrent().preflightModelsTargetKey).toBe('agent:codex');
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.5')).toBe(true);
+
+        await hook.rerender({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' } });
+
+        expect(hook.getCurrent().preflightModels).toBeNull();
+        expect(hook.getCurrent().preflightModelsTargetKey).toBeNull();
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.5')).toBe(false);
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'claude-opus-4-6')).toBe(true);
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+
+        await hook.unmount();
+    });
+
     it('retries after an error cooldown elapses so transient capability errors do not permanently hide model options', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);

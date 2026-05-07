@@ -48,6 +48,7 @@ export type UntranslatedString = Readonly<{
 
 const ALLOW_SAME_STRING_VALUES = new Set<string>([
     'OK',
+    'Git',
     'GitHub',
     'OAuth',
     'API',
@@ -73,6 +74,7 @@ const ALLOW_SAME_STRING_VALUES = new Set<string>([
     'Windows',
     'Windows Terminal',
     'Happier Voice',
+    'happier',
     // Technical ids that should remain unchanged across locales.
     'Xenova/all-MiniLM-L6-v2',
 ]);

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
@@ -17,6 +17,56 @@ const createEditorSpy = vi.fn(() => ({
     onDidBlurEditorText: () => ({ dispose: () => {} }),
     updateOptions: () => {},
     dispose: () => {},
+}));
+const defineThemeSpy = vi.fn();
+const setThemeSpy = vi.fn();
+
+const darkEditorTheme = {
+    dark: true,
+    colors: {
+        divider: '#303030',
+        text: '#f8f8f2',
+        textSecondary: '#cfcfcf',
+        textTertiary: '#8a8a8a',
+        surface: '#151515',
+        surfaceHigh: '#1f1f1f',
+        surfaceHighest: '#101010',
+        surfaceSelected: '#2a2a2a',
+        accent: { blue: '#58a6ff' },
+        syntaxDefault: '#f8f8f2',
+        syntaxKeyword: '#ff79c6',
+        syntaxString: '#50fa7b',
+        syntaxComment: '#6272a4',
+        syntaxNumber: '#bd93f9',
+        syntaxFunction: '#8be9fd',
+    },
+};
+
+const lightEditorTheme = {
+    dark: false,
+    colors: {
+        divider: '#d0d7de',
+        text: '#24292f',
+        textSecondary: '#57606a',
+        textTertiary: '#6e7781',
+        surface: '#ffffff',
+        surfaceHigh: '#f6f8fa',
+        surfaceHighest: '#ffffff',
+        surfaceSelected: '#ddf4ff',
+        accent: { blue: '#0969da' },
+        syntaxDefault: '#24292f',
+        syntaxKeyword: '#cf222e',
+        syntaxString: '#0a3069',
+        syntaxComment: '#6e7781',
+        syntaxNumber: '#0550ae',
+        syntaxFunction: '#8250df',
+    },
+};
+
+type EditorThemeFixture = typeof darkEditorTheme | typeof lightEditorTheme;
+
+const unistylesState = vi.hoisted(() => ({
+    currentTheme: null as unknown as EditorThemeFixture,
 }));
 
 function assertCallable(value: unknown, label: string): (...args: unknown[]) => unknown {
@@ -35,9 +85,19 @@ function setupMonacoGlobals() {
         editor: {
             createModel: createModelSpy,
             create: createEditorSpy,
+            defineTheme: defineThemeSpy,
+            setTheme: setThemeSpy,
         },
     };
 }
+
+beforeEach(() => {
+    createModelSpy.mockClear();
+    createEditorSpy.mockClear();
+    defineThemeSpy.mockClear();
+    setThemeSpy.mockClear();
+    unistylesState.currentTheme = darkEditorTheme;
+});
 
 vi.mock('react-native', async () => {
     const React = await import('react');
@@ -53,15 +113,12 @@ vi.mock('react-native', async () => {
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                divider: '#000',
-                text: '#000',
-                surfaceHighest: '#fff',
-            },
-        },
-    });
+    const base = await createUnistylesMock();
+    const baseRuntime = base.useUnistyles().rt;
+    return {
+        ...base,
+        useUnistyles: () => ({ theme: unistylesState.currentTheme, rt: baseRuntime }),
+    };
 });
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -94,6 +151,78 @@ describe('MonacoEditorSurface (web)', () => {
 
         expect(createModelSpy).toHaveBeenCalledTimes(1);
         expect(createEditorSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('boots Monaco with a theme derived from app theme tokens', async () => {
+        setupMonacoGlobals();
+
+        await renderScreen(React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: 'const message = "hello";',
+                    language: 'typescript',
+                    onChange: vi.fn(),
+                }));
+
+        expect(defineThemeSpy).toHaveBeenCalledWith(
+            'happier-editor-dark',
+            expect.objectContaining({
+                base: 'vs-dark',
+                inherit: true,
+                colors: expect.objectContaining({
+                    'editor.background': '#101010',
+                    'editor.foreground': '#f8f8f2',
+                    'editorLineNumber.foreground': '#8a8a8a',
+                }),
+                rules: expect.arrayContaining([
+                    expect.objectContaining({ token: 'keyword', foreground: 'ff79c6' }),
+                    expect.objectContaining({ token: 'string', foreground: '50fa7b' }),
+                    expect.objectContaining({ token: 'comment', foreground: '6272a4' }),
+                ]),
+            }),
+        );
+        expect(setThemeSpy).toHaveBeenLastCalledWith('happier-editor-dark');
+        expect(createEditorSpy).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ theme: 'happier-editor-dark' }),
+        );
+    });
+
+    it('updates the Monaco theme when the app theme changes after mount', async () => {
+        setupMonacoGlobals();
+
+        const result = await renderScreen(React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: 'const message = "hello";',
+                    language: 'typescript',
+                    onChange: vi.fn(),
+                }));
+
+        expect(setThemeSpy).toHaveBeenLastCalledWith('happier-editor-dark');
+
+        unistylesState.currentTheme = lightEditorTheme;
+        await act(async () => {
+            result.tree.update(
+                React.createElement(MonacoEditorSurface, {
+                    resetKey: '1',
+                    value: 'const message = "hello";',
+                    language: 'typescript',
+                    onChange: vi.fn(),
+                }),
+            );
+            await flushHookEffects();
+        });
+
+        expect(defineThemeSpy).toHaveBeenLastCalledWith(
+            'happier-editor-light',
+            expect.objectContaining({
+                base: 'vs',
+                colors: expect.objectContaining({
+                    'editor.background': '#ffffff',
+                    'editor.foreground': '#24292f',
+                }),
+            }),
+        );
+        expect(setThemeSpy).toHaveBeenLastCalledWith('happier-editor-light');
     });
 
     it('debounces onChange when changeDebounceMs is set', async () => {

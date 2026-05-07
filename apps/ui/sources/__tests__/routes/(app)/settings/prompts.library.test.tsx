@@ -15,6 +15,6 @@ describe('legacy prompts library route', () => {
         const screen = await renderScreen(React.createElement(module.default));
         const redirect = screen.findByType('Redirect' as any);
 
-        expect(redirect.props.href).toBe('/(app)/settings/prompts');
+        expect(redirect.props.href).toBe('/settings/prompts');
     });
 });

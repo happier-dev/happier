@@ -1,16 +1,7 @@
 import * as React from "react";
 import { Image } from "expo-image";
-
-// Copy hashCode function for consistency with Avatar.tsx
-function hashCode(str: string): number {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash;
-    }
-    return Math.abs(hash);
-}
+import { useUnistyles } from 'react-native-unistyles';
+import { hashStringToPositiveInt } from './avatarHash';
 
 // Array of all 100 gradient images
 const gradientImages = [
@@ -126,9 +117,9 @@ interface AvatarGradientProps {
 
 export const AvatarGradient = React.memo((props: AvatarGradientProps) => {
     const { id, square, size = 48, monochrome } = props;
+    const { theme } = useUnistyles();
     
-    // Use hashCode to get consistent gradient index
-    const imageIndex = hashCode(id) % 100;
+    const imageIndex = hashStringToPositiveInt(id) % 100;
     const gradientImage = gradientImages[imageIndex];
     
     return (
@@ -140,8 +131,7 @@ export const AvatarGradient = React.memo((props: AvatarGradientProps) => {
                 borderRadius: square ? 0 : size / 2,
             }}
             contentFit="cover"
-            // Apply grayscale tint for monochrome mode
-            // tintColor={monochrome ? '#808080' : undefined}
+            tintColor={monochrome ? theme.colors.textSecondary : undefined}
         />
     );
 });

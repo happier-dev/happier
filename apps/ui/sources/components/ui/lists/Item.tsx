@@ -67,6 +67,7 @@ export interface ItemProps {
     onMouseDownCapture?: (event: unknown) => void;
     onContextMenu?: (event: unknown) => void;
     accessibilityRole?: AccessibilityRole;
+    webRole?: React.AriaRole;
     disabled?: boolean;
     loading?: boolean;
     selected?: boolean;
@@ -259,6 +260,7 @@ export const Item = React.memo<ItemProps>((props) => {
         onMouseDownCapture,
         onContextMenu,
         accessibilityRole,
+        webRole,
         disabled,
         loading,
         selected,
@@ -665,6 +667,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
                 onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                 onContextMenu={isWeb ? (onContextMenu as any) : undefined}
+                {...(isWeb && webRole ? { role: webRole } : undefined)}
                 accessibilityRole={accessibilityRole ?? 'button'}
                 disabled={disabled || loading}
                 style={({ pressed }) => resolveInteractiveRowStyle(pressed)}

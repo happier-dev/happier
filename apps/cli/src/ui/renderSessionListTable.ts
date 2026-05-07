@@ -1,4 +1,5 @@
 import type { CliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
+import { padLeft, padRight, truncateEnd } from '@/ui/sessionTableLayout';
 import { formatSessionUpdatedAtForCli, shortenSessionIdForCli } from '@/ui/sessionListFormatting';
 
 type TableColumn = Readonly<{
@@ -42,23 +43,6 @@ function buildTitleCell(row: CliSessionRowModel): string {
     return `${title} system:${row.systemPurpose}`.trim();
   }
   return title;
-}
-
-function padRight(value: string, width: number): string {
-  if (value.length >= width) return value;
-  return value + ' '.repeat(width - value.length);
-}
-
-function padLeft(value: string, width: number): string {
-  if (value.length >= width) return value;
-  return ' '.repeat(width - value.length) + value;
-}
-
-function truncate(value: string, width: number): string {
-  if (width <= 0) return '';
-  if (value.length <= width) return value;
-  if (width <= 1) return value.slice(0, width);
-  return value.slice(0, width - 1) + '…';
 }
 
 export function renderSessionListTable(params: Readonly<{
@@ -126,7 +110,7 @@ export function renderSessionListTable(params: Readonly<{
     const parts: string[] = [];
     for (let i = 0; i < resolved.length; i += 1) {
       const col = resolved[i]!;
-      const cell = truncate(cells[i] ?? '', col.minWidth);
+      const cell = truncateEnd(cells[i] ?? '', col.minWidth);
       const padded = col.align === 'right' ? padLeft(cell, col.minWidth) : padRight(cell, col.minWidth);
       parts.push(padded);
     }

@@ -1,5 +1,10 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import {
+    DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME,
+    buildSettingArtifacts,
+    defineSettingDefinitions,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
+import { AvatarStyleIdSchema, DEFAULT_AVATAR_STYLE_ID } from './avatarStyleSetting';
 
 export const SessionListDensitySchema = z.preprocess((raw) => {
     if (raw === 'compact') return 'cozy';
@@ -72,6 +77,12 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Default Windows remote session host mode for new sessions',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionWindowsTerminalWindowName: {
+        schema: z.string(),
+        default: DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME,
+        description: 'Named Windows Terminal window used for Windows remote sessions',
+        storageScope: 'account',
     },
     useMachinePickerSearch: {
         schema: z.boolean(),
@@ -165,8 +176,8 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
     avatarStyle: {
-        schema: z.enum(['pixelated', 'gradient', 'brutalist']),
-        default: 'brutalist',
+        schema: AvatarStyleIdSchema,
+        default: DEFAULT_AVATAR_STYLE_ID,
         description: 'Avatar display style',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },

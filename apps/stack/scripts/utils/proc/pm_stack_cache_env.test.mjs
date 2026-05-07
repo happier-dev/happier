@@ -659,6 +659,64 @@ test('ensureDepsInstalled refreshes monorepo dependencies when root yarn.lock ch
   assert.match(out, /\binstall\b/);
 });
 
+test('ensureDepsInstalled refreshes monorepo dependencies when a workspace package manifest changes', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-happy-monorepo-workspace-manifest-refresh-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await mkdir(join(root, 'packages', 'protocol'), { recursive: true });
+  await writeFile(join(root, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'packages', 'protocol', 'package.json'), '{ "name": "@happier-dev/protocol", "dependencies": { "zod": "4.3.6" } }\n', 'utf-8');
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      name: 'monorepo',
+      private: true,
+      workspaces: {
+        packages: ['apps/ui', 'apps/cli', 'apps/server', 'packages/protocol'],
+      },
+    }) + '\n',
+    'utf-8',
+  );
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await writeFile(join(root, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+
+  const base = Date.now();
+  const older = new Date(base - 10_000);
+  const newer = new Date(base);
+  await Promise.all([
+    utimes(join(root, 'package.json'), older, older),
+    utimes(join(root, 'yarn.lock'), older, older),
+    utimes(join(root, 'apps', 'ui', 'package.json'), older, older),
+    utimes(join(root, 'apps', 'cli', 'package.json'), older, older),
+    utimes(join(root, 'apps', 'server', 'package.json'), older, older),
+    utimes(join(root, 'node_modules', '.yarn-integrity'), older, older),
+    utimes(join(root, 'packages', 'protocol', 'package.json'), newer, newer),
+  ]);
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnArgDumpStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureDepsInstalled(join(root, 'apps', 'ui'), 'happier-ui', { quiet: true });
+  const out = await readFile(outputPath, 'utf-8');
+  assert.match(out, /\binstall\b/);
+});
+
 test('ensureDepsInstalled skips monorepo refresh when node_modules is newer even without root yarn integrity', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-happy-monorepo-missing-integrity-'));
   t.after(async () => {
@@ -685,6 +743,8 @@ test('ensureDepsInstalled skips monorepo refresh when node_modules is newer even
     utimes(join(root, 'package.json'), older, older),
     utimes(join(root, 'yarn.lock'), older, older),
     utimes(join(root, 'apps', 'ui', 'package.json'), older, older),
+    utimes(join(root, 'apps', 'cli', 'package.json'), older, older),
+    utimes(join(root, 'apps', 'server', 'package.json'), older, older),
     utimes(join(root, 'node_modules'), newer, newer),
   ]);
 

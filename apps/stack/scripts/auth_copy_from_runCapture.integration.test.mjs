@@ -9,6 +9,7 @@ import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs'
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 import { buildLightMigrationBaseEnv, resolveDbProviderForLightFromEnv } from './auth.mjs';
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 
 test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not defined', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -682,16 +683,23 @@ test('hstack stack auth copy-from reads source light sqlite db from the source s
 
   const migrateSqlite = async (dataDir) => {
     const { spawnSync } = await import('node:child_process');
-    const res = spawnSync('yarn', ['-s', 'migrate:sqlite:deploy'], {
+    const env = {
+      ...process.env,
+      HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
+      HAPPIER_SERVER_LIGHT_FILES_DIR: join(dataDir, 'files'),
+      HAPPIER_SERVER_LIGHT_DB_DIR: join(dataDir, 'pglite'),
+      HAPPIER_DB_PROVIDER: 'sqlite',
+    };
+    const invocation = resolveYarnCommandInvocation(['-s', 'migrate:sqlite:deploy'], {
+      npmExecPath: env.npm_execpath,
+    });
+    const res = spawnSync(invocation.command, invocation.args, {
       cwd: serverDir,
-      env: {
-        ...process.env,
-        HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
-        HAPPIER_SERVER_LIGHT_FILES_DIR: join(dataDir, 'files'),
-        HAPPIER_SERVER_LIGHT_DB_DIR: join(dataDir, 'pglite'),
-        HAPPIER_DB_PROVIDER: 'sqlite',
-      },
+      env,
       encoding: 'utf-8',
+      ...(invocation.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : {}),
     });
     assert.equal(res.status, 0, `expected sqlite migrations to succeed\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   };
@@ -848,16 +856,23 @@ test('hstack stack auth copy-from does not require source sqlite migrations when
 
   const migrateSqlite = async (dataDir) => {
     const { spawnSync } = await import('node:child_process');
-    const res = spawnSync('yarn', ['-s', 'migrate:sqlite:deploy'], {
+    const env = {
+      ...process.env,
+      HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
+      HAPPIER_SERVER_LIGHT_FILES_DIR: join(dataDir, 'files'),
+      HAPPIER_SERVER_LIGHT_DB_DIR: join(dataDir, 'pglite'),
+      HAPPIER_DB_PROVIDER: 'sqlite',
+    };
+    const invocation = resolveYarnCommandInvocation(['-s', 'migrate:sqlite:deploy'], {
+      npmExecPath: env.npm_execpath,
+    });
+    const res = spawnSync(invocation.command, invocation.args, {
       cwd: serverDir,
-      env: {
-        ...process.env,
-        HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
-        HAPPIER_SERVER_LIGHT_FILES_DIR: join(dataDir, 'files'),
-        HAPPIER_SERVER_LIGHT_DB_DIR: join(dataDir, 'pglite'),
-        HAPPIER_DB_PROVIDER: 'sqlite',
-      },
+      env,
       encoding: 'utf-8',
+      ...(invocation.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : {}),
     });
     assert.equal(res.status, 0, `expected sqlite migrations to succeed\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   };

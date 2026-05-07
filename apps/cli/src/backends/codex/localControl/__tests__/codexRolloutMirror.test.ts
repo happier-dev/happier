@@ -44,6 +44,55 @@ afterEach(async () => {
 });
 
 describe('CodexRolloutMirror', () => {
+  it('emits main rollout lifecycle events without turning them into transcript output', async () => {
+    const lifecycleEvents: unknown[] = [];
+    const codexBodies: CodexBody[] = [];
+    const sessionEvents: SessionEvent[] = [];
+
+    const mirror = new CodexRolloutMirror({
+      filePath: '/tmp/codex-rollout-mirror-unused.jsonl',
+      debug: true,
+      onCodexSessionId: () => {},
+      onTurnLifecycleEvent: (event) => {
+        lifecycleEvents.push(event);
+      },
+      session: {
+        sendUserTextMessage: () => {},
+        sendCodexMessage: (body: unknown) => codexBodies.push(body as CodexBody),
+        sendSessionEvent: (event: unknown) => sessionEvents.push(event as SessionEvent),
+      } as any,
+    });
+
+    await (mirror as any).onJson({
+      type: 'event_msg',
+      payload: { type: 'task_started', turn_id: 'turn_1' },
+    });
+    await (mirror as any).onJson({
+      type: 'event_msg',
+      payload: { type: 'task_complete', turn_id: 'turn_1' },
+    });
+    await (mirror as any).onSubagentJson('child-thread', {
+      type: 'event_msg',
+      payload: { type: 'turn_aborted', turn_id: 'child_turn', reason: 'interrupted' },
+    });
+
+    expect(lifecycleEvents).toEqual([
+      {
+        type: 'turn_started',
+        providerTurnId: 'turn_1',
+        source: 'codex_rollout_task_started',
+      },
+      {
+        type: 'turn_terminal',
+        providerTurnId: 'turn_1',
+        reason: 'completed',
+        source: 'codex_rollout_task_complete',
+      },
+    ]);
+    expect(codexBodies).toEqual([]);
+    expect(sessionEvents).toEqual([]);
+  });
+
   it('emits user + assistant messages and tool calls/results', async () => {
     const userTexts: string[] = [];
     const codexBodies: CodexBody[] = [];

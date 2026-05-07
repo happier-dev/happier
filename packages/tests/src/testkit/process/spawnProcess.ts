@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 
+import { resolveYarnCommandInvocation, type CommandInvocation } from './commands';
 import { collectDescendantPids, terminateProcessTreeByPid } from './processTree';
 
 export type SpawnedProcess = {
@@ -83,6 +84,14 @@ function waitForStreamDrain(stream: NodeJS.WritableStream, timeoutMs = 10_000): 
   });
 }
 
+function resolveSpawnCommandInvocation(command: string, args: readonly string[], env?: NodeJS.ProcessEnv): CommandInvocation {
+  const normalized = command.trim().toLowerCase();
+  if (normalized === 'yarn' || normalized === 'yarn.cmd') {
+    return resolveYarnCommandInvocation(args, { npmExecPath: env?.npm_execpath });
+  }
+  return { command, args: [...args] };
+}
+
 export async function runLoggedCommand(params: {
   command: string;
   args: string[];
@@ -92,11 +101,15 @@ export async function runLoggedCommand(params: {
   stderrPath: string;
   timeoutMs?: number;
 }): Promise<void> {
-  const child = spawn(params.command, params.args, {
+  const invocation = resolveSpawnCommandInvocation(params.command, params.args, params.env);
+  const child = spawn(invocation.command, invocation.args, {
     cwd: params.cwd,
     env: params.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
   });
 
   const stdout = createWriteStream(params.stdoutPath, { flags: 'w' });
@@ -171,11 +184,15 @@ export function spawnLoggedProcess(params: {
   stderrPath: string;
   cleanupDescendantsOnExit?: boolean;
 }): SpawnedProcess {
-  const child = spawn(params.command, params.args, {
+  const invocation = resolveSpawnCommandInvocation(params.command, params.args, params.env);
+  const child = spawn(invocation.command, invocation.args, {
     cwd: params.cwd,
     env: params.env,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
   });
 
   const stdout = createWriteStream(params.stdoutPath, { flags: 'w' });

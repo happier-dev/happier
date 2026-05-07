@@ -38,6 +38,13 @@ function clearRealtimeLeaseTimers(): void {
     }
 }
 
+function resetRealtimeUiState(): void {
+    const state = storage.getState();
+    state.setRealtimeStatus('disconnected');
+    state.setRealtimeMode('idle', true);
+    state.clearRealtimeModeDebounce();
+}
+
 function formatVoiceLeaseDurationShort(ms: number): string {
     const bounded = Math.max(0, Math.floor(ms));
     if (bounded < 90_000) {
@@ -330,6 +337,7 @@ export async function startRealtimeSession(
 
 export async function stopRealtimeSession() {
     if (!voiceSession) {
+        resetRealtimeUiState();
         return;
     }
     
@@ -348,23 +356,23 @@ export async function stopRealtimeSession() {
         }
         await voiceSession.endSession();
 
-	        if (currentBilledMode === 'happier' && currentLeaseId && currentProviderConversationId) {
-	            const credentials = await TokenStorage.getCredentials();
-	            if (credentials) {
-	                try {
-	                    await completeHappierVoiceSession(credentials, {
-	                        leaseId: currentLeaseId,
-	                        providerConversationId: currentProviderConversationId,
-	                    });
-	                } catch (error) {
-	                    console.warn('Failed to complete Happier voice session:', {
-	                        leaseId: currentLeaseId,
-	                        providerConversationId: currentProviderConversationId,
-	                        error,
-	                    });
-	                }
-	            }
-	        }
+        if (currentBilledMode === 'happier' && currentLeaseId && currentProviderConversationId) {
+            const credentials = await TokenStorage.getCredentials();
+            if (credentials) {
+                try {
+                    await completeHappierVoiceSession(credentials, {
+                        leaseId: currentLeaseId,
+                        providerConversationId: currentProviderConversationId,
+                    });
+                } catch (error) {
+                    console.warn('Failed to complete Happier voice session:', {
+                        leaseId: currentLeaseId,
+                        providerConversationId: currentProviderConversationId,
+                        error,
+                    });
+                }
+            }
+        }
 
         voiceSessionStarted = false;
         latestRequestedTargetSessionId = null;
@@ -376,6 +384,7 @@ export async function stopRealtimeSession() {
     } catch (error) {
         console.error('Failed to stop realtime session:', error);
     } finally {
+        resetRealtimeUiState();
         await disableVoiceBackgroundCallAudioMode();
     }
 }

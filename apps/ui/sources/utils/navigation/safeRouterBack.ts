@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 type RouterLike = Readonly<{
     back: () => void;
     replace: (href: string) => void;
@@ -38,10 +40,11 @@ export function safeRouterBack(params: { router: RouterLike; navigation?: Naviga
     }
 
     try {
-        const startHref = typeof (globalThis as any)?.location?.href === 'string'
+        const isWeb = Platform.OS === 'web';
+        const startHref = isWeb && typeof (globalThis as any)?.location?.href === 'string'
             ? String((globalThis as any).location.href)
             : null;
-        const historyBack = typeof (globalThis as any)?.history?.back === 'function'
+        const historyBack = isWeb && typeof (globalThis as any)?.history?.back === 'function'
             ? (globalThis as any).history.back.bind((globalThis as any).history)
             : null;
         if (typeof params.navigation?.goBack === 'function' && (navigationCanGoBack === true || navigationStateCanGoBack === true)) {

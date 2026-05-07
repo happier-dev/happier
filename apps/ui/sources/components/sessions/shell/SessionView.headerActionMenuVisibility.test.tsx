@@ -19,10 +19,14 @@ const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
 const responsiveState = vi.hoisted(() => ({ deviceType: 'phone' as 'phone' | 'tablet', isLandscape: false }));
 const windowDimensionsState = vi.hoisted(() => ({ width: 800, height: 600 }));
 const executionRunsFeatureState = vi.hoisted(() => ({ enabled: false }));
-const sessionExecutionRunsSupportedState = vi.hoisted(() => ({ supported: false }));
+const sessionExecutionRunsSupportedState = vi.hoisted(() => ({ supported: false, serverId: null as string | null }));
 const executionRunsBackendsState = vi.hoisted(() => ({ backends: null as Record<string, unknown> | null }));
 const sessionMessagesState = vi.hoisted(() => ({ messages: [] as any[] }));
-const automationsSupportState = vi.hoisted(() => ({ enabled: false }));
+const automationsSupportState = vi.hoisted(() => ({ enabled: false, serverId: null as string | null }));
+const mobileWorkspaceExperienceState = vi.hoisted(() => ({
+  value: undefined as 'classic' | 'cockpit' | undefined,
+  setValue: vi.fn(),
+}));
 const sessionState = vi.hoisted(() => ({
   session: {
     id: 's1',
@@ -103,13 +107,18 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => executionRunsFeatureState.enabled,
 }));
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
-  useSessionExecutionRunsSupported: () => sessionExecutionRunsSupportedState.supported,
+  useSessionExecutionRunsSupported: (_sessionId: string, scope?: { serverId?: string | null }) =>
+    sessionExecutionRunsSupportedState.supported
+    && (sessionExecutionRunsSupportedState.serverId == null || scope?.serverId === sessionExecutionRunsSupportedState.serverId),
 }));
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
   useExecutionRunsBackendsForSession: () => executionRunsBackendsState.backends,
 }));
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
-  useAutomationsSupport: () => ({ enabled: automationsSupportState.enabled }),
+  useAutomationsSupport: (scope?: { serverId?: string | null }) => ({
+    enabled: automationsSupportState.enabled
+      && (automationsSupportState.serverId == null || scope?.serverId === automationsSupportState.serverId),
+  }),
 }));
 vi.mock('@/utils/platform/navigateWithBlurOnWeb', () => ({
   navigateWithBlurOnWeb: navigateWithBlurOnWebSpy,
@@ -266,8 +275,22 @@ installSessionShellCommonModuleMocks({
         if (key === 'detailsPaneWidthBasisPx') return 1200;
         return {};
       },
-      useLocalSettingMutable: () => [null, vi.fn()],
-      useSetting: () => null,
+      useLocalSettingMutable: (key: string) => {
+        if (key === 'mobileWorkspaceExperienceV1') {
+          throw new Error('mobileWorkspaceExperienceV1 must use synced account settings');
+        }
+        return [null, vi.fn()];
+      },
+      useSetting: (key: string) => {
+        if (key === 'mobileWorkspaceExperienceV1') return mobileWorkspaceExperienceState.value;
+        return null;
+      },
+      useSettingMutable: (key: string) => {
+        if (key === 'mobileWorkspaceExperienceV1') {
+          return [mobileWorkspaceExperienceState.value ?? null, mobileWorkspaceExperienceState.setValue];
+        }
+        return [null, vi.fn()];
+      },
       useSettings: () => ({ experiments: true, featureToggles: {} }),
       useAutomations: () => [],
     });
@@ -298,13 +321,23 @@ function findPressableByAccessibilityLabel(screen: RenderScreenResult, label: st
   return screen.findAll((node) => (node.type as unknown) === 'Pressable' && node.props?.accessibilityLabel === label)[0];
 }
 
-async function renderSessionView() {
+async function renderSessionView(routeServerId?: string) {
   return renderScreen(
-    <SessionView id="s1" />,
+    <SessionView id="s1" routeServerId={routeServerId} />,
     {
       wrapper: AppPaneProviderWrapper,
     },
   );
+}
+
+function getLastHeaderActionMenuProps(): any {
+  const call = headerActionMenuSpy.mock.calls.at(-1);
+  if (!call) throw new Error('Expected SessionHeaderActionMenu to render');
+  return call[0];
+}
+
+function getHeaderExtraItemIds(props: any): string[] {
+  return (props?.extraItems ?? []).map((item: any) => item?.id).filter(Boolean);
 }
 
 describe('SessionView header action menu visibility', () => {
@@ -322,9 +355,13 @@ describe('SessionView header action menu visibility', () => {
     responsiveState.isLandscape = false;
     executionRunsFeatureState.enabled = false;
     sessionExecutionRunsSupportedState.supported = false;
+    sessionExecutionRunsSupportedState.serverId = null;
     executionRunsBackendsState.backends = null;
     sessionMessagesState.messages = [];
     automationsSupportState.enabled = false;
+    automationsSupportState.serverId = null;
+    mobileWorkspaceExperienceState.value = undefined;
+    mobileWorkspaceExperienceState.setValue.mockReset();
     headerActionMenuSpy.mockClear();
     routerPushSpy.mockReset();
     routerBackSpy.mockReset();
@@ -351,6 +388,23 @@ describe('SessionView header action menu visibility', () => {
     expect(openRunsButton).toBeUndefined();
   });
 
+  it('shows the open runs button when the viewed session server supports execution runs', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = true;
+    sessionExecutionRunsSupportedState.serverId = 'server-2';
+    executionRunsBackendsState.backends = {
+      codex: { available: true },
+    };
+
+    const screen = await renderSessionView('server-2');
+    const openRunsButton = findPressableByAccessibilityLabel(screen, 'session.openRuns');
+
+    expect(openRunsButton).toBeDefined();
+  });
+
   it('routes to session automations through blur-safe navigation', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
@@ -374,6 +428,23 @@ describe('SessionView header action menu visibility', () => {
     expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations?serverId=server-1');
   });
 
+  it('shows automations for the viewed session server even when the active server differs', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    executionRunsFeatureState.enabled = false;
+    sessionExecutionRunsSupportedState.supported = false;
+    executionRunsBackendsState.backends = null;
+    sessionMessagesState.messages = [];
+    automationsSupportState.enabled = true;
+    automationsSupportState.serverId = 'server-2';
+
+    const screen = await renderSessionView('server-2');
+    const openAutomationsButton = findPressableByAccessibilityLabel(screen, 'session.openAutomations');
+
+    expect(openAutomationsButton).toBeDefined();
+  });
+
   it('folds runs and automations buttons into the header action menu when the header is narrow', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
@@ -395,11 +466,56 @@ describe('SessionView header action menu visibility', () => {
 
     expect(headerActionMenuSpy).toHaveBeenCalled();
     const props = headerActionMenuSpy.mock.calls.at(0)?.[0] as any;
-    const extraItems = props?.extraItems ?? [];
-    const extraIds = extraItems.map((it: any) => it?.id).filter(Boolean);
+    const extraIds = getHeaderExtraItemIds(props);
     expect(extraIds).toContain('header.openRuns');
     expect(extraIds).toContain('header.openAutomations');
     expect(extraIds).toContain('header.openSubagents');
+  });
+
+  it('offers switching from default cockpit to classic on phones', async () => {
+    responsiveState.deviceType = 'phone';
+    mobileWorkspaceExperienceState.value = undefined;
+
+    await renderSessionView();
+
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).toContain('header.openMobileWorkspaceClassic');
+  });
+
+  it('offers switching from explicit classic to cockpit on phones', async () => {
+    responsiveState.deviceType = 'phone';
+    mobileWorkspaceExperienceState.value = 'classic';
+
+    await renderSessionView();
+
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).toContain('header.openMobileWorkspaceCockpit');
+  });
+
+  it('does not offer the mobile cockpit toggle on tablets', async () => {
+    responsiveState.deviceType = 'tablet';
+    mobileWorkspaceExperienceState.value = undefined;
+
+    await renderSessionView();
+
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).not.toContain('header.openMobileWorkspaceClassic');
+    expect(getHeaderExtraItemIds(getLastHeaderActionMenuProps())).not.toContain('header.openMobileWorkspaceCockpit');
+  });
+
+  it('updates the mobile workspace experience when the header toggle is selected', async () => {
+    responsiveState.deviceType = 'phone';
+    mobileWorkspaceExperienceState.value = undefined;
+    await renderSessionView();
+
+    expect(getLastHeaderActionMenuProps().onSelectExtraItem('header.openMobileWorkspaceClassic')).toBe(true);
+    expect(mobileWorkspaceExperienceState.setValue).toHaveBeenCalledWith('classic');
+
+    standardCleanup();
+    headerActionMenuSpy.mockClear();
+    mobileWorkspaceExperienceState.setValue.mockReset();
+    mobileWorkspaceExperienceState.value = 'classic';
+    await renderSessionView();
+
+    expect(getLastHeaderActionMenuProps().onSelectExtraItem('header.openMobileWorkspaceCockpit')).toBe(true);
+    expect(mobileWorkspaceExperienceState.setValue).toHaveBeenCalledWith('cockpit');
   });
 
   it('keeps the open runs button visible when the transcript already contains execution-run signals', async () => {

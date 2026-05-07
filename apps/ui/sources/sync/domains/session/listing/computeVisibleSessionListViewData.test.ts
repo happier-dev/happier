@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type { SessionListViewItem } from './sessionListViewData';
 import { computeVisibleSessionListViewData } from './computeVisibleSessionListViewData';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 type AnySession = any;
 
@@ -15,6 +16,67 @@ function makeSession(id: string, partial?: Partial<AnySession>): AnySession {
 }
 
 describe('computeVisibleSessionListViewData', () => {
+    afterEach(() => {
+        syncPerformanceTelemetry.configure({ enabled: false });
+        syncPerformanceTelemetry.reset();
+    });
+
+    it('returns the source reference when no visibility, ordering, pinning, or presentation changes apply', () => {
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: 'server:s1:day:2026-05-04' },
+            { type: 'session', session: makeSession('a'), serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-05-04', groupKind: 'date' },
+        ];
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+        });
+
+        expect(result).toBe(source);
+    });
+
+    it('records numeric aggregate telemetry for fast-path visible list computation', () => {
+        const source: SessionListViewItem[] = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: 'server:s1:day:2026-05-04' },
+            { type: 'session', session: makeSession('a'), serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-05-04', groupKind: 'date' },
+        ];
+
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+
+        const result = computeVisibleSessionListViewData({
+            source,
+            hideInactiveSessions: false,
+            pinnedSessionKeysV1: [],
+            sessionListGroupOrderV1: {},
+            presentation: { enabled: false, presentation: 'grouped', selectedServerIds: [] },
+        });
+
+        expect(result).toBe(source);
+        const event = syncPerformanceTelemetry
+            .snapshot()
+            .events.find((candidate) => candidate.name === 'sync.sessions.list.visible.compute');
+        expect(event?.count).toBe(1);
+        expect(event?.fields).toMatchObject({
+            items: 2,
+            sessions: 1,
+            headers: 1,
+            fastPath: 1,
+            hideInactive: 0,
+            pins: 0,
+            customOrder: 0,
+            presentationEnabled: 0,
+            storageFilter: 0,
+        });
+    });
+
     it('keeps pinned sessions in their existing list order and normalizes pinned variants to default', () => {
         const source: SessionListViewItem[] = [
             { type: 'header', headerKind: 'project', title: '~/repo', serverId: 's1', groupKey: 'server:s1:project:m1:/repo' },

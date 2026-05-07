@@ -7,7 +7,9 @@ export class InvalidateSync {
     private _stopped = false;
     private _command: () => Promise<void>;
     private _hasStartedCommandThisCycle = false;
-    private _pendings: (() => void)[] = [];
+    private _cyclePendings: (() => void)[] = [];
+    private _nextCyclePendings: (() => void)[] = [];
+    private _queuePendings: (() => void)[] = [];
     private _onError?: (e: any) => void;
     private _onSuccess?: () => void;
     private _onRetry?: (info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => void;
@@ -94,19 +96,23 @@ export class InvalidateSync {
             return;
         }
         await new Promise<void>(resolve => {
-            this._pendings.push(resolve);
+            if (this._invalidated && this._hasStartedCommandThisCycle) {
+                this._nextCyclePendings.push(resolve);
+            } else {
+                this._cyclePendings.push(resolve);
+            }
             this.invalidate();
         });
     }
 
     async awaitQueue(opts?: { timeoutMs?: number }) {
-        if (this._stopped || (!this._invalidated && this._pendings.length === 0)) {
+        if (this._stopped || (!this._invalidated && this._queuePendings.length === 0)) {
             return;
         }
         const timeoutMs = opts?.timeoutMs;
         if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
             await new Promise<void>(resolve => {
-                this._pendings.push(resolve);
+                this._queuePendings.push(resolve);
             });
             return;
         }
@@ -121,11 +127,11 @@ export class InvalidateSync {
                 resolve();
             };
 
-            this._pendings.push(pending);
+            this._queuePendings.push(pending);
             timer = setTimeout(() => {
                 if (settled) return;
                 settled = true;
-                this._pendings = this._pendings.filter((entry) => entry !== pending);
+                this._queuePendings = this._queuePendings.filter((entry) => entry !== pending);
                 resolve();
             }, timeoutMs);
         });
@@ -140,10 +146,40 @@ export class InvalidateSync {
     }
 
     private _notifyPendings = () => {
-        for (let pending of this._pendings) {
+        for (let pending of this._cyclePendings) {
             pending();
         }
-        this._pendings = [];
+        for (let pending of this._nextCyclePendings) {
+            pending();
+        }
+        for (let pending of this._queuePendings) {
+            pending();
+        }
+        this._cyclePendings = [];
+        this._nextCyclePendings = [];
+        this._queuePendings = [];
+    }
+
+    private _notifyCyclePendings = () => {
+        for (let pending of this._cyclePendings) {
+            pending();
+        }
+        this._cyclePendings = [];
+    }
+
+    private _promoteNextCyclePendings = () => {
+        if (this._nextCyclePendings.length === 0) {
+            return;
+        }
+        this._cyclePendings.push(...this._nextCyclePendings);
+        this._nextCyclePendings = [];
+    }
+
+    private _notifyQueuePendings = () => {
+        for (let pending of this._queuePendings) {
+            pending();
+        }
+        this._queuePendings = [];
     }
 
     private _runWithBackoff = async (): Promise<void> => {
@@ -202,12 +238,17 @@ export class InvalidateSync {
             this._notifyPendings();
             return;
         }
+        this._notifyCyclePendings();
         if (this._invalidatedDouble) {
             this._invalidatedDouble = false;
+            this._promoteNextCyclePendings();
+            this._doSync();
+        } else if (this._nextCyclePendings.length > 0) {
+            this._promoteNextCyclePendings();
             this._doSync();
         } else {
             this._invalidated = false;
-            this._notifyPendings();
+            this._notifyQueuePendings();
         }
     }
 }

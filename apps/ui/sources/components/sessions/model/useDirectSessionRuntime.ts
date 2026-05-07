@@ -1,9 +1,9 @@
 import * as React from 'react';
 import type { DirectSessionStatusGetResponse } from '@happier-dev/protocol';
 
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { machineDirectSessionStatusGet } from '@/sync/ops/machineDirectSessions';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { sync } from '@/sync/sync';
@@ -51,7 +51,7 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
         () => readDirectSessionLink(params.metadata),
         [params.metadata],
     );
-    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
+    const activeServerSnapshot = useActiveServerSnapshot();
     const [status, setStatus] = React.useState<DirectSessionRuntimeStatus | null>(null);
     const statusRef = React.useRef<DirectSessionRuntimeStatus | null>(null);
     const inFlightRefreshRef = React.useRef<Promise<DirectSessionRuntimeStatus | null> | null>(null);
@@ -62,10 +62,6 @@ export function useDirectSessionRuntime(params: UseDirectSessionRuntimeParams): 
         () => resolvePreferredServerIdForSessionId(params.sessionId) ?? activeServerId,
         [activeServerId, params.sessionId],
     );
-
-    React.useEffect(() => {
-        return subscribeActiveServer(setActiveServerSnapshot);
-    }, []);
 
     React.useEffect(() => {
         statusRef.current = status;

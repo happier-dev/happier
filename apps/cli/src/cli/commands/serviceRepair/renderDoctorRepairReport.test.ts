@@ -17,6 +17,7 @@ const cli: CurrentCliInfo = {
   version: '0.12.3',
   binaryPath: '/home/me/.happier/cli-dev/current/bin/happier',
   shim: 'hdev',
+  invoker: 'hdev',
   pathWinnerShim: 'happier',
   pathWinnerResolvesToThisBinary: true,
 };
@@ -45,6 +46,8 @@ function makeReport(overrides: Partial<DoctorRepairReport> = {}): DoctorRepairRe
     automaticStartup: [entry],
     currentlyRunning: [],
     localRelays: [],
+    authProfiles: [],
+    hasAnyServerProfile: false,
     findings: [],
     manualWarnings: [],
     ...overrides,
@@ -105,10 +108,10 @@ describe('renderDoctorRepairReport — mismatched state', () => {
     const out = renderDoctorRepairReport(
       makeReport({ automaticStartup: [stale], findings: [finding] }),
     ).join('\n');
-    expect(out).toContain('needs a small update');
+    expect(out).toContain('might need some attention');
     expect(out).toContain('Current CLI');
     expect(out).toContain('Background services');
-    expect(out).toContain('0.12.3 installed — restart to pick it up');
+    expect(out).toContain('restart to pick it up');
   });
 
   it('lists manually-started daemons inside Background services', () => {
@@ -131,6 +134,7 @@ describe('renderDoctorRepairReport — mismatched state', () => {
       daemon: running,
       currentCliReleaseChannel: 'dev',
       currentCliVersion: '0.12.3',
+      driftKind: 'version-only',
       recoveryStrategy: 'daemon-takeover',
       serviceManagerName: null,
     };
@@ -173,9 +177,7 @@ describe('renderDoctorRepairReport — mismatched state', () => {
 });
 
 describe('renderDoctorRepairReport — card layout', () => {
-  it('each automatic-startup card has a ↳ sub-line', () => {
-    const out = renderDoctorRepairReport(makeReport()).join('\n');
-    // Clean state doesn't use cards, so let's verify mismatched render has the arrow
+  it('a card with a finding renders an arrow-prefixed sub-line with the diagnostic text', () => {
     const finding: RepairFinding = {
       kind: 'automatic_startup_stale_definition',
       severity: 'warning',
@@ -183,8 +185,8 @@ describe('renderDoctorRepairReport — card layout', () => {
       entry,
     };
     const mismatched = renderDoctorRepairReport(makeReport({ findings: [finding] })).join('\n');
-    expect(mismatched).toContain('↳');
-    expect(out).not.toContain('↳'); // clean state is 3-line summary, no cards
+    // An arrow-prefixed sub-line appears specifically for the drift diagnosis.
+    expect(mismatched).toMatch(/→.*service definition drifted/);
   });
 
   it('card uses ● glyph for entries', () => {

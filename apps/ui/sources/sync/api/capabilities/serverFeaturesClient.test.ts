@@ -116,6 +116,54 @@ describe('serverFeaturesClient', () => {
         expect(b.status).toBe('ready');
     });
 
+    it('probes active-server features without waiting behind reachability supervision', async () => {
+        const payload = {
+            features: {
+                sharing: { session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true } },
+                voice: { enabled: false, configured: false, provider: null },
+                social: { friends: { enabled: true, allowUsername: false, requiredIdentityProviderId: 'github' } },
+                oauth: { providers: {} },
+                auth: {
+                    signup: { methods: [] },
+                    login: { requiredProviders: [] },
+                    recovery: { providerReset: { enabled: false, providers: [] } },
+                    ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                    providers: {},
+                    misconfig: [],
+                },
+            },
+        };
+        globalThis.fetch = vi.fn(async (...args: any[]) => {
+            const url = String(args[0] ?? '');
+            if (url.endsWith('/v1/auth/ping') || url.endsWith('/health')) {
+                const signal = (args[1] as RequestInit | undefined)?.signal;
+                return await new Promise<Response>((_resolve, reject) => {
+                    const abort = () => {
+                        const error = new Error('aborted');
+                        error.name = 'AbortError';
+                        reject(error);
+                    };
+                    if (signal?.aborted) {
+                        abort();
+                        return;
+                    }
+                    signal?.addEventListener('abort', abort, { once: true });
+                });
+            }
+            return await featuresFetchMock(...args);
+        }) as unknown as typeof fetch;
+        featuresFetchMock.mockResolvedValueOnce(createResponse(200, payload));
+
+        const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('./serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        const result = await getServerFeaturesSnapshot({ force: true, timeoutMs: 50 });
+
+        expect(result.status).toBe('ready');
+        expect(featuresFetchMock).toHaveBeenCalledTimes(1);
+        expect(String(featuresFetchMock.mock.calls[0]?.[0] ?? '')).toBe('https://active.example.test/v1/features');
+    });
+
     it('classifies 404 features endpoint as unsupported', async () => {
         featuresFetchMock.mockResolvedValueOnce(createResponse(404, {}));
 

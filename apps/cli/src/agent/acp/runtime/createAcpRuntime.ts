@@ -22,6 +22,7 @@ import { readAuthenticationStatus } from '@/api/client/httpStatusError';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import type { TurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 
 const DEFAULT_SESSION_CONTROL_TIMEOUT_MS = 15_000;
 
@@ -276,6 +277,7 @@ export function createAcpRuntime(params: {
     enabled?: boolean;
     machineId?: string | null;
   };
+  turnAssistantPreviewTracker?: TurnAssistantPreviewTracker;
 }): AcpRuntime {
   let backend: AcpRuntimeBackend | null = null;
   let backendPromise: Promise<AcpRuntimeBackend> | null = null;
@@ -470,6 +472,7 @@ export function createAcpRuntime(params: {
     isResponseInProgress = false;
     taskStartedSent = false;
     turnAborted = false;
+    params.turnAssistantPreviewTracker?.reset();
   };
 
   const publishSessionId = () => {
@@ -532,6 +535,7 @@ export function createAcpRuntime(params: {
             setIsResponseInProgress: (value) => { isResponseInProgress = value; },
             appendToAccumulatedResponse: (delta) => { accumulatedResponse += delta; },
           });
+          params.turnAssistantPreviewTracker?.replace(accumulatedResponse);
 
           if (deltaRaw) {
             streamedTranscriptWriter.appendAssistantDelta(deltaRaw);

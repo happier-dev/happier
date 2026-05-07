@@ -12,6 +12,7 @@ import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
+import type { TurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
 import { GeminiDiffProcessor } from '../utils/diffProcessor';
@@ -24,6 +25,7 @@ export function createGeminiBackendMessageHandler(params: {
   state: GeminiTurnMessageState;
   diffProcessor: GeminiDiffProcessor;
   transcriptStream?: Pick<StreamedTranscriptWriter, 'appendThinkingDelta' | 'flushAll'>;
+  turnAssistantPreviewTracker?: TurnAssistantPreviewTracker;
 }): (msg: AgentMessage) => void {
   const forwarder = createAcpAgentMessageForwarder({
     sendAcp: (provider, body) => params.session.sendAgentMessage(provider, body),
@@ -51,6 +53,7 @@ export function createGeminiBackendMessageHandler(params: {
           } else {
             logger.debug(`[gemini] Updated response, chunk length: ${delta.length}, total accumulated: ${params.state.accumulatedResponse.length}`);
           }
+          params.turnAssistantPreviewTracker?.replace(params.state.accumulatedResponse);
         }
         break;
 

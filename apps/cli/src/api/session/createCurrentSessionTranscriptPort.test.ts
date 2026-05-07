@@ -14,7 +14,7 @@ describe('createCurrentSessionTranscriptPort', () => {
     };
 
     let currentSession = firstSession;
-    const port = createCurrentSessionTranscriptPort(() => currentSession as any);
+    const port = createCurrentSessionTranscriptPort(() => currentSession);
 
     currentSession = secondSession;
 
@@ -30,5 +30,48 @@ describe('createCurrentSessionTranscriptPort', () => {
       { type: 'thinking', text: 'final' },
       { localId: 'commit_1' },
     );
+  });
+
+  it('routes ephemeral stream segment writes through the latest swapped session', () => {
+    const firstSession = {
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageEphemeral: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+    };
+    const secondSession = {
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageEphemeral: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+    };
+
+    let currentSession = firstSession;
+    const port = createCurrentSessionTranscriptPort(() => currentSession as any);
+
+    currentSession = secondSession;
+
+    expect(port.sendAgentMessageEphemeral).toBeTypeOf('function');
+    port.sendAgentMessageEphemeral?.(
+      'codex',
+      { type: 'message', message: 'live' },
+      { localId: 'segment-1', createdAt: 1_000, updatedAt: 1_025 },
+    );
+
+    expect(firstSession.sendAgentMessageEphemeral).not.toHaveBeenCalled();
+    expect(secondSession.sendAgentMessageEphemeral).toHaveBeenCalledWith(
+      'codex',
+      { type: 'message', message: 'live' },
+      { localId: 'segment-1', createdAt: 1_000, updatedAt: 1_025 },
+    );
+  });
+
+  it('does not advertise ephemeral stream segment writes when the current session lacks support', () => {
+    const session = {
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+    };
+
+    const port = createCurrentSessionTranscriptPort(() => session);
+
+    expect(port.sendAgentMessageEphemeral).toBeUndefined();
   });
 });

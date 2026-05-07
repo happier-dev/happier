@@ -5,8 +5,6 @@ import {
 } from '@happier-dev/protocol';
 import type { CodexBackendMode } from '@happier-dev/agents';
 
-import type { Metadata } from '@/sync/domains/state/storageTypes';
-
 const DirectSessionLinkSchema = z.object({
     directSessionV1: z.object({
         v: z.literal(1),
@@ -23,7 +21,7 @@ export type DirectSessionLink = z.infer<typeof DirectSessionLinkSchema>['directS
     codexBackendMode?: CodexBackendMode;
 };
 
-export function readDirectSessionLink(metadata: Metadata | null | undefined): DirectSessionLink | null {
+export function readDirectSessionLink(metadata: unknown): DirectSessionLink | null {
     const parsed = DirectSessionLinkSchema.safeParse(metadata ?? {});
     if (!parsed.success) return null;
     return parsed.data.directSessionV1;

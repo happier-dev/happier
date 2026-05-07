@@ -1,9 +1,12 @@
+import type { LineContentHash } from '@/utils/text/lineContentHash';
+
 export type ReviewCommentSource = 'file' | 'diff';
 
 export type ReviewCommentAnchor =
     | Readonly<{
         kind: 'fileLine';
         startLine: number;
+        lineHash?: LineContentHash;
     }>
     | Readonly<{
         kind: 'diffLine';
@@ -11,6 +14,7 @@ export type ReviewCommentAnchor =
         side: 'before' | 'after';
         oldLine: number | null;
         newLine: number | null;
+        lineHash?: LineContentHash;
     }>;
 
 export type ReviewCommentSnapshot = Readonly<{
@@ -26,6 +30,6 @@ export type ReviewCommentDraft = Readonly<{
     anchor: ReviewCommentAnchor;
     snapshot: ReviewCommentSnapshot;
     body: string;
+    includeInPrompt?: boolean;
     createdAt: number;
 }>;
-

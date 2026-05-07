@@ -4,6 +4,7 @@ import { semverLessThan } from './_shared';
 import type {
   LocalRelayEntry,
   LocalRelayLaneMissing,
+  LocalRelayOffChannelLeftovers,
   LocalRelayVersionStale,
   RepairFinding,
 } from './types';
@@ -25,6 +26,11 @@ export function classifyLocalRelays(params: Readonly<{
   latestRelayVersionForCurrentChannel: string | null;
 }>): readonly RepairFinding[] {
   const findings: RepairFinding[] = [];
+  // If the user has no local relays installed at all, they're a hosted-cloud
+  // (or self-hosted-server) user — we don't nag them to install a local relay.
+  // `local_relay_lane_missing` only fires when the user clearly uses local
+  // relays (they have at least one installed) but none match the current
+  // CLI's channel.
   if (params.relays.length === 0) return findings;
 
   const matchingRelay = params.relays.find((r) => r.releaseChannel === params.currentCliReleaseChannel);
@@ -57,6 +63,21 @@ export function classifyLocalRelays(params: Readonly<{
       latestVersion: params.latestRelayVersionForCurrentChannel,
     };
     findings.push(stale);
+  }
+
+  // Off-channel leftovers: the user has the matching-channel relay AND extras
+  // on other channels. Each extra runs as its own OS service unit; flag once
+  // so the user can clean up unused channels.
+  const leftovers = params.relays.filter((r) => r.releaseChannel !== params.currentCliReleaseChannel);
+  if (leftovers.length > 0) {
+    const finding: LocalRelayOffChannelLeftovers = {
+      kind: 'local_relay_off_channel_leftovers',
+      severity: 'info',
+      autoApplyWithoutPrompt: false,
+      currentChannelEntry: matchingRelay,
+      leftovers,
+    };
+    findings.push(finding);
   }
 
   return findings;

@@ -90,6 +90,12 @@ test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-cli
   assert.equal(internaldev?.env?.HAPPIER_EXPO_USE_NATIVE_DEBUG, 'true');
   assert.equal(internaldev?.env?.EX_UPDATES_NATIVE_DEBUG, '1');
 
+  const internaldevDevClient = build?.['internaldev-dev-client'] ?? null;
+  assert.ok(internaldevDevClient, 'expected internaldev-dev-client build profile');
+  assert.equal(internaldevDevClient.extends, 'internaldev');
+  assert.equal(internaldevDevClient?.env?.EXPO_APP_BUNDLE_ID, 'dev.happier.app.dev.internal.devclient');
+  assert.equal(internaldevDevClient?.env?.EXPO_ANDROID_PACKAGE, 'dev.happier.app.internaldev.devclient');
+
   const internaldevStore = build?.['internaldev-store'] ?? null;
   assert.equal(typeof internaldevStore, 'object');
   assert.equal(internaldevStore.extends, 'base');

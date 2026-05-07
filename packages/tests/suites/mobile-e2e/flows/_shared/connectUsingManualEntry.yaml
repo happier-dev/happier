@@ -1,8 +1,8 @@
 # Connect to Metro via the Expo Dev Client manual-entry form.
 #
-# Some Dev Client variants show "New development server" as a button that opens
-# the form; others render it as the title of an already-expanded sheet. Only tap
-# it when the Connect form is not already visible.
+# Some Dev Client variants show "New development server" or "Enter URL manually"
+# as the button that opens the form; others render the form already expanded.
+# Only tap a launcher affordance when the Connect form is not already visible.
 #
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
@@ -16,8 +16,18 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
           commands:
             - tapOn: "New development server"
 
+- runFlow:
+    when:
+      visible: "Enter URL manually"
+    commands:
+      - runFlow:
+          when:
+            notVisible: "Connect"
+          commands:
+            - tapOn: "Enter URL manually"
+
 - assertVisible: "Connect"
-- tapOn: "http://localhost:8081"
+- tapOn: "(http://localhost:8081|exp://)"
 - eraseText
 - setClipboard: ${HAPPIER_E2E_DEV_CLIENT_METRO_URL}
 - pasteText

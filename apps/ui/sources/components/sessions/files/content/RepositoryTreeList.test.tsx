@@ -173,6 +173,8 @@ async function renderRepositoryTreeList(overrides: Partial<Readonly<{
     webDropHoverPath?: string | null;
     onOpenFile?: (path: string) => void;
     onOpenFilePinned?: (path: string) => void;
+    showInlineLoadingHeader?: boolean;
+    onRootLoadingChange?: (loading: boolean) => void;
 }>> = {}) {
     const { RepositoryTreeList } = await import('./RepositoryTreeList');
     const onOpenFile = overrides.onOpenFile ?? vi.fn();
@@ -195,6 +197,8 @@ async function renderRepositoryTreeList(overrides: Partial<Readonly<{
                 onRequestDownload={overrides.onRequestDownload}
                 onWebDropTargetChange={overrides.onWebDropTargetChange as any}
                 webDropHoverPath={overrides.webDropHoverPath}
+                showInlineLoadingHeader={overrides.showInlineLoadingHeader}
+                onRootLoadingChange={overrides.onRootLoadingChange}
             />
         );
     }
@@ -460,5 +464,79 @@ describe('RepositoryTreeList', () => {
         await settleRepositoryTree();
 
         expect(findRepositoryRows(screen).map((row) => row.props.title)).toEqual(['src/']);
+    });
+
+    it('can report root refresh loading without inserting a loading row above existing nodes', async () => {
+        const pending = (() => {
+            let resolve: ((value: SessionListDirectoryLikeResponse) => void) | null = null;
+            const promise = new Promise<SessionListDirectoryLikeResponse>((res) => {
+                resolve = res;
+            });
+            return { promise, resolve: resolve! };
+        })();
+
+        let rootCalls = 0;
+        sessionListDirectorySpy.mockImplementation(async (_sessionId: string, path: string) => {
+            if (path !== '') return { success: true, entries: [] };
+            rootCalls += 1;
+            if (rootCalls === 1) {
+                return {
+                    success: true,
+                    entries: [
+                        { name: 'README.md', type: 'file' },
+                        { name: 'src', type: 'directory' },
+                    ],
+                };
+            }
+            return pending.promise;
+        });
+
+        const { RepositoryTreeList } = await import('./RepositoryTreeList');
+        const onRootLoadingChange = vi.fn();
+
+        function Wrapper() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            const [reloadToken, setReloadToken] = React.useState(0);
+            return (
+                <>
+                    <RepositoryTreeList
+                        theme={theme}
+                        sessionId="session-1"
+                        reloadToken={reloadToken}
+                        expandedPaths={expandedPaths}
+                        onExpandedPathsChange={setExpandedPaths}
+                        onOpenFile={vi.fn()}
+                        showInlineLoadingHeader={false}
+                        onRootLoadingChange={onRootLoadingChange}
+                    />
+                    {React.createElement('Pressable' as any, {
+                        testID: 'reload-root',
+                        onPress: () => setReloadToken((value) => value + 1),
+                    })}
+                </>
+            );
+        }
+
+        const screen = await renderScreen(<Wrapper />);
+        await settleRepositoryTree();
+
+        await act(async () => {
+            screen.pressByTestId('reload-root');
+        });
+        await settleRepositoryTree();
+
+        expect(findRepositoryRows(screen).map((row) => row.props.title)).toEqual(['src/', 'README.md']);
+        expect(screen.findAll((node) => (node.type as any) === 'ActivityIndicator')).toHaveLength(0);
+        expect(onRootLoadingChange).toHaveBeenCalledWith(true);
+
+        await act(async () => {
+            pending.resolve({
+                success: true,
+                entries: [{ name: 'src', type: 'directory' }],
+            });
+        });
+        await settleRepositoryTree();
+
+        expect(onRootLoadingChange).toHaveBeenLastCalledWith(false);
     });
 });

@@ -495,6 +495,92 @@ describe('SessionRightPanelTerminalView.web', () => {
         }
     });
 
+    it('shares one PTY reader across concurrent terminal mounts and resumes reading when the owner unmounts', async () => {
+        const ownerReadBlocked = createDeferred<{
+            ok: true;
+            terminalId: string;
+            events: [];
+            nextCursor: number;
+            done: boolean;
+        }>();
+
+        try {
+            machineTerminalEnsureSpy
+                .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: false })
+                .mockResolvedValueOnce({ ok: true, terminalId: 't1', reused: true });
+
+            machineTerminalStreamReadSpy.mockReset();
+            machineTerminalStreamReadSpy
+                .mockResolvedValueOnce({
+                    ok: true,
+                    terminalId: 't1',
+                    events: [{ t: 'data', data: 'hello' }],
+                    nextCursor: 5,
+                    done: false,
+                })
+                .mockImplementationOnce(() => ownerReadBlocked.promise)
+                .mockResolvedValueOnce({
+                    ok: true,
+                    terminalId: 't1',
+                    events: [{ t: 'data', data: 'world' }],
+                    nextCursor: 10,
+                    done: true,
+                });
+
+            const SessionEmbeddedTerminalPaneWeb = await loadSessionEmbeddedTerminalPaneWeb();
+
+            const screen = await renderAndFlush(
+                <>
+                    <SessionEmbeddedTerminalPaneWeb
+                        key="pane-a"
+                        sessionId="s1"
+                        scopeId="session:s1"
+                        currentDockLocation="sidebar"
+                        testIdPrefix="pane-a"
+                    />
+                    <SessionEmbeddedTerminalPaneWeb
+                        key="pane-b"
+                        sessionId="s1"
+                        scopeId="session:s1"
+                        currentDockLocation="details"
+                        testIdPrefix="pane-b"
+                    />
+                </>,
+            );
+
+            expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(1);
+            expect(machineTerminalStreamReadSpy).toHaveBeenCalledTimes(2);
+            expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('hello');
+            expect(terminalHandleInstances[1]?.write).toHaveBeenCalledWith('hello');
+
+            await screen.update(
+                <SessionEmbeddedTerminalPaneWeb
+                    key="pane-b"
+                    sessionId="s1"
+                    scopeId="session:s1"
+                    currentDockLocation="details"
+                    testIdPrefix="pane-b"
+                />,
+            );
+
+            await vi.waitFor(() => {
+                expect(machineTerminalEnsureSpy).toHaveBeenCalledTimes(2);
+            });
+            await flushHookEffects();
+
+            expect(machineTerminalStreamReadSpy.mock.calls[2]?.[1]?.cursor).toBe(5);
+            expect(terminalHandleInstances[1]?.write).toHaveBeenCalledWith('world');
+        } finally {
+            ownerReadBlocked.resolve({
+                ok: true,
+                terminalId: 't1',
+                events: [],
+                nextCursor: 5,
+                done: true,
+            });
+        }
+    });
+
     it('rehydrates cached transcript when the terminal renderer handle changes without remounting the pane hook', async () => {
         const blockedRead = createDeferred<{
             ok: true;
@@ -554,7 +640,7 @@ describe('SessionRightPanelTerminalView.web', () => {
         await flushHookEffects();
     });
 
-    it('preserves cached transcript when a reused terminal reconnects without a cached terminal id', async () => {
+    it('preserves cached transcript without injecting output when a reused terminal reconnects without a cached terminal id', async () => {
         const cacheMod = await import('@/components/sessions/terminal/terminalSurfaceStateCache');
         cacheMod.replaceTerminalSurfaceState('session:s1:terminal', {
             terminalId: null,
@@ -581,11 +667,11 @@ describe('SessionRightPanelTerminalView.web', () => {
         expect(cached).toEqual({
             terminalId: 't1',
             cursor: 5,
-            output: 'hello\r\n[Reconnected]\r\n',
+            output: 'hello',
             detectedUrl: null,
         });
         expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('hello');
-        expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('\r\n[Reconnected]\r\n');
+        expect(terminalHandleInstances[0]?.write).not.toHaveBeenCalledWith('\r\n[Reconnected]\r\n');
     });
 
     it('drops in-flight terminal output that resolves after the user clears the transcript', async () => {

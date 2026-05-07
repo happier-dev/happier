@@ -3,9 +3,11 @@ import {
     normalizeCodexRolloutToolInput,
 } from './rolloutToolNameMapping';
 import { readCodexMessageContentText } from '../utils/readCodexMessageContentText';
+import type { LocalTurnLifecycleEvent } from '@/agent/localControl/turnLifecycle';
 
 export type CodexRolloutAction =
     | { type: 'codex-session-id'; id: string }
+    | { type: 'turn-lifecycle'; event: LocalTurnLifecycleEvent }
     | { type: 'user-text'; text: string }
     | { type: 'assistant-text'; text: string }
     | { type: 'tool-call'; callId: string; name: string; input: unknown }
@@ -84,6 +86,10 @@ function readStringField(record: Record<string, unknown>, key: string): string |
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+function readProviderTurnId(record: Record<string, unknown>): string | null {
+    return readStringField(record, 'turn_id') ?? readStringField(record, 'turnId');
+}
+
 function readCollaborationStatus(statusValue: unknown): { status: 'completed' | 'interrupted'; summaryText: string | null } | null {
     const statusRecord = asRecord(statusValue);
     if (!statusRecord) return null;
@@ -138,6 +144,45 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
     if (env.type === 'event_msg') {
         const payload = asRecord(env.payload) ?? {};
         const payloadType = typeof payload.type === 'string' ? String(payload.type) : '';
+
+        if (payloadType === 'task_started') {
+            return [{
+                type: 'turn-lifecycle',
+                event: {
+                    type: 'turn_started',
+                    providerTurnId: readProviderTurnId(payload),
+                    source: 'codex_rollout_task_started',
+                },
+            }];
+        }
+
+        if (payloadType === 'task_complete' || payloadType === 'turn_complete') {
+            return [{
+                type: 'turn-lifecycle',
+                event: {
+                    type: 'turn_terminal',
+                    providerTurnId: readProviderTurnId(payload),
+                    reason: 'completed',
+                    source: payloadType === 'task_complete'
+                        ? 'codex_rollout_task_complete'
+                        : 'codex_rollout_turn_complete',
+                },
+            }];
+        }
+
+        if (payloadType === 'turn_aborted') {
+            const detail = readStringField(payload, 'reason');
+            return [{
+                type: 'turn-lifecycle',
+                event: {
+                    type: 'turn_terminal',
+                    providerTurnId: readProviderTurnId(payload),
+                    reason: 'aborted',
+                    source: 'codex_rollout_turn_aborted',
+                    ...(detail ? { detail } : {}),
+                },
+            }];
+        }
 
         if (payloadType === 'collab_agent_spawn_end') {
             const threadId = readStringField(payload, 'new_thread_id');

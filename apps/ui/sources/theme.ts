@@ -5,6 +5,12 @@ import {
     buildShadowPopoverArrowBoxShadow,
 } from './shadowElevation';
 
+const verticalControlGradient = <TColors extends readonly [string, string, ...string[]]>(colors: TColors) => ({
+    colors,
+    start: { x: 0.5, y: 1 },
+    end: { x: 0.5, y: 0 },
+} as const);
+
 // Shared spacing, sizing constants (DRY - used by both themes)
 const sharedSpacing = {
     // Spacing scale (based on actual usage patterns in codebase)
@@ -67,10 +73,22 @@ export const lightTheme = {
         surfaceSelected: '#f8f8f8',
         surfacePressedOverlay: '#fafafa',
         overlay: {
+            scrimSoft: 'rgba(0, 0, 0, 0.18)',
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
+            scrimWizard: 'rgba(255, 255, 255, 0.52)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
+        },
+        desktopPetOverlay: {
+            bubble: {
+                background: '#FFFFFF',
+                backgroundPressed: '#F7F7F7',
+                text: '#1C1C1E',
+                textSecondary: '#5F6368',
+                controlBackground: 'rgba(255, 255, 255, 0.96)',
+                controlBackgroundPressed: '#F2F2F7',
+            },
         },
         surfaceHigh: '#F8F8F8',
         surfaceHighest: '#f0f0f0',
@@ -88,9 +106,9 @@ export const lightTheme = {
         //
 
         groupped: {
-            background: Platform.select({ ios: '#F5F5F5', default: '#F5F5F5' }),
-            chevron: Platform.select({ ios: '#C7C7CC', default: '#49454F' }),
-            sectionTitle: Platform.select({ ios: '#8E8E93', default: '#49454F' }),
+            background: '#F5F5F5',
+            chevron: '#49454F',
+            sectionTitle: '#49454F',
         },
         header: {
             background: '#ffffff',
@@ -98,7 +116,7 @@ export const lightTheme = {
         },
         switch: {
             track: {
-                active: Platform.select({ ios: '#34C759', default: '#1976D2' }),
+                active: '#1976D2',
                 inactive: '#dddddd',
             },
             thumb: {
@@ -109,7 +127,14 @@ export const lightTheme = {
         fab: {
             background: '#000000',
             backgroundPressed: '#1a1a1a',
+            gradient: verticalControlGradient(['#000000', '#171717']),
             icon: '#FFFFFF',
+        },
+        segmentedControl: {
+            trackBackground: '#f0f0f0',
+            trackGradient: undefined,
+            activeBackground: '#ffffff',
+            activeGradient: verticalControlGradient(['#FDFDFD', '#FFFFFF']),
         },
         radio: {
             active: '#007AFF',
@@ -122,11 +147,17 @@ export const lightTheme = {
         button: {
             primary: {
                 background: '#000000',
+                gradient: verticalControlGradient(['#000000', '#171717']),
                 tint: '#FFFFFF',
                 disabled: '#C0C0C0',
             },
             secondary: {
                 tint: '#666666',
+            }
+        },
+        feed: {
+            card: {
+                background: '#f8f8f8',
             }
         },
         input: {
@@ -283,28 +314,39 @@ export const darkTheme = {
             orange: '#FF9F0A',
             yellow: '#FFD60A',
             red: '#FF453A',
-            indigo: Platform.select({ ios: '#5E5CE6', default: '#9FA8DA' }),
-            purple: Platform.select({ ios: '#BF5AF2', default: '#CE93D8' }),
+            indigo: '#9FA8DA',
+            purple: '#CE93D8',
         },
         deleteAction: '#FF6B6B', // Delete/remove button color (same in both themes)
         warningCritical: '#FF453A',
         warning: '#8E8E93',
         success: '#32D74B',
-        surface: Platform.select({ ios: '#18171C', default: '#212121' }),
+        surface: '#202020',
         surfaceRipple: 'rgba(255, 255, 255, 0.08)',
-        surfacePressed: '#2C2C2E',
-        surfaceSelected: '#2C2C2E',
-        surfacePressedOverlay: Platform.select({ ios: '#2C2C2E', default: 'transparent' }),
+        surfacePressed: '#2C2C2C',
+        surfaceSelected: '#2C2C2C',
+        surfacePressedOverlay: Platform.select({ ios: '#2C2C2C', default: 'transparent' }),
         overlay: {
+            scrimSoft: 'rgba(0, 0, 0, 0.45)',
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
+            scrimWizard: 'rgba(0, 0, 0, 0.16)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
         },
-        // iOS dark theme is #1c1c1e for items, and #000 for the background
-        surfaceHigh: Platform.select({ ios: '#2C2C2E', default: '#171717' }),
-        surfaceHighest: Platform.select({ ios: '#38383A', default: '#292929' }),
-        divider: Platform.select({ ios: '#38383A', default: '#292929' }),
+        desktopPetOverlay: {
+            bubble: {
+                background: '#FFFFFF',
+                backgroundPressed: '#F7F7F7',
+                text: '#1C1C1E',
+                textSecondary: '#5F6368',
+                controlBackground: 'rgba(255, 255, 255, 0.96)',
+                controlBackgroundPressed: '#F2F2F7',
+            },
+        },
+        surfaceHigh: '#171717',
+        surfaceHighest: '#292929',
+        divider: '#292929',
         shadow: {
             color: '#000000',
             opacity: 0.1,
@@ -317,12 +359,12 @@ export const darkTheme = {
         //
 
         header: {
-            background: Platform.select({ ios: '#18171C', default: '#212121' }),
+            background: '#202020',
             tint: '#ffffff'
         },
         switch: {
             track: {
-                active: Platform.select({ ios: '#34C759', default: '#1976D2' }),
+                active: '#1976D2',
                 inactive: '#3a393f',
             },
             thumb: {
@@ -331,14 +373,21 @@ export const darkTheme = {
             },
         },
         groupped: {
-            background: Platform.select({ ios: '#1C1C1E', default: '#1e1e1e' }),
-            chevron: Platform.select({ ios: '#48484A', default: '#CAC4D0' }),
-            sectionTitle: Platform.select({ ios: '#8E8E93', default: '#CAC4D0' }),
+            background: '#181818',
+            chevron: '#CAC4D0',
+            sectionTitle: '#CAC4D0',
         },
         fab: {
-            background: '#FFFFFF',
-            backgroundPressed: '#f0f0f0',
-            icon: '#000000',
+            background: '#303030',
+            backgroundPressed: '#1b1b1b',
+            gradient: verticalControlGradient(['#303030', '#343434']),
+            icon: '#ffffff',
+        },
+        segmentedControl: {
+            trackBackground: '#292929',
+            trackGradient: undefined,
+            activeBackground: '#202020',
+            activeGradient: verticalControlGradient(['#202020', '#232323']),
         },
         radio: {
             active: '#0A84FF',
@@ -350,7 +399,8 @@ export const darkTheme = {
         },
         button: {
             primary: {
-                background: '#000000',
+                background: '#1b1b1b',
+                gradient: verticalControlGradient(['#1b1b1b', '#242424']),
                 tint: '#FFFFFF',
                 disabled: '#C0C0C0',
             },
@@ -359,9 +409,14 @@ export const darkTheme = {
             }
         },
         input: {
-            background: Platform.select({ ios: '#1C1C1E', default: '#303030' }),
+            background: '#303030',
             text: '#FFFFFF',
             placeholder: '#8E8E93',
+        },
+        feed: {
+            card: {
+                background: '#242424',
+            }
         },
         box: {
             warning: {
@@ -453,7 +508,7 @@ export const darkTheme = {
         },
 
         // Message View colors
-        userMessageBackground: '#2C2C2E',
+        userMessageBackground: '#2C2C2C',
         userMessageText: '#FFFFFF',
         agentMessageText: '#FFFFFF',
         agentEventText: '#8E8E93',

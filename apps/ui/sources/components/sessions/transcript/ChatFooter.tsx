@@ -28,10 +28,9 @@ interface ChatFooterProps {
     /**
      * UI-only ephemeral state while a local-controlled session is switching back to remote.
      * This is intentionally not persisted to the session transcript.
-     */
+    */
     controlSwitchTo?: 'remote' | null;
     onRequestSwitchToRemote?: () => void;
-    onRequestSwitchToLocal?: () => void;
     directControl?: ChatFooterDirectControlState;
 }
 
@@ -88,9 +87,9 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
             canDetach: props.controlledByUser === true,
         } satisfies SessionLocalControlState;
 
-        if (!derived.attached && !derived.canAttach) return null;
-
         const switchingToRemote = props.controlSwitchTo === 'remote';
+        if (!derived.attached) return null;
+
         const isSharedAttached = derived.attached && derived.topology === 'shared';
         const showSwitchToRemoteButton =
             derived.attached
@@ -103,11 +102,6 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
             && !switchingToRemote
             && derived.canDetach
             && Boolean(props.onRequestSwitchToRemote);
-        const showAttachButton =
-            !derived.attached
-            && derived.canAttach
-            && Boolean(props.onRequestSwitchToLocal);
-
         const textKey = (() => {
             if (switchingToRemote) return 'chatFooter.switchingToRemote';
             if (isSharedAttached) return 'chatFooter.sessionRunningLocallyAndRemotely';
@@ -147,16 +141,6 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                                 <Text style={switchButtonTextStyle}>{t('chatFooter.detachLocalTerminal')}</Text>
                             </Pressable>
                         )}
-                        {showAttachButton && (
-                            <Pressable
-                                testID="session-chatFooter-switchToLocal"
-                                accessibilityLabel={t('chatFooter.switchToLocal')}
-                                onPress={props.onRequestSwitchToLocal}
-                                style={switchButtonStyle}
-                            >
-                                <Text style={switchButtonTextStyle}>{t('chatFooter.switchToLocal')}</Text>
-                            </Pressable>
-                        )}
                     </View>
                 </View>
             </View>
@@ -165,7 +149,6 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         props.controlSwitchTo,
         props.controlledByUser,
         props.localControl,
-        props.onRequestSwitchToLocal,
         props.onRequestSwitchToRemote,
         props.permissionsInUiWhileLocal,
         switchButtonStyle,

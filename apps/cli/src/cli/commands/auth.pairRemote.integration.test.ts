@@ -20,7 +20,7 @@ vi.mock('cross-spawn', () => {
   };
 });
 
-describe('auth pair-remote (ssh) (json)', () => {
+describe('auth pair-remote (ssh)', () => {
   const envKeys = [
     'HAPPIER_HOME_DIR',
     'HAPPIER_NO_BROWSER_OPEN',
@@ -107,7 +107,7 @@ describe('auth pair-remote (ssh) (json)', () => {
       const { decryptWithEphemeralKey } = await import('@/ui/auth');
       const output = captureConsoleLogAndMuteStdout();
       try {
-        await handleAuthPairRemote(['--ssh', 'user@host', '--json']);
+        await handleAuthPairRemote(['--ssh', 'user@host', '--json', '--no-post-check']);
       } finally {
         output.restore();
       }
@@ -117,11 +117,37 @@ describe('auth pair-remote (ssh) (json)', () => {
       expect(firstCall[0]).toBe('ssh');
       expect(firstCall[1][0]).toBe('user@host');
       expect(firstCall[1].join(' ')).toContain('happier auth request --json');
+      expect(firstCall[1]).toEqual([
+        'user@host',
+        'happier',
+        'auth',
+        'request',
+        '--json',
+        '--persist',
+        '--server-url',
+        'http://happier-auth.test',
+        '--webapp-url',
+        'http://webapp.test',
+      ]);
 
       const secondCall = spawnSyncMock.mock.calls[1] as any[];
       expect(secondCall[0]).toBe('ssh');
       expect(secondCall[1][0]).toBe('user@host');
       expect(secondCall[1].join(' ')).toContain(`happier auth wait --public-key ${remotePublicKey} --json`);
+      expect(secondCall[1]).toEqual([
+        'user@host',
+        'happier',
+        'auth',
+        'wait',
+        '--public-key',
+        remotePublicKey,
+        '--json',
+        '--persist',
+        '--server-url',
+        'http://happier-auth.test',
+        '--webapp-url',
+        'http://webapp.test',
+      ]);
 
       expect(requests.has(remotePublicKey)).toBe(true);
       const response = requests.get(remotePublicKey)?.response;
@@ -131,6 +157,84 @@ describe('auth pair-remote (ssh) (json)', () => {
       expect(decrypted).not.toBeNull();
       expect(decrypted?.[0]).toBe(0);
       expect(Array.from(decrypted?.slice(1, 33) ?? [])).toEqual(Array.from(expectedMachineKey));
+    } finally {
+      restoreAxios();
+      await app.close().catch(() => {});
+    }
+  }, 20_000);
+
+  it('skips the post-pair repair check when the remote CLI cannot report the paired server id', async () => {
+    const requests = new Map<string, { response: string | null }>();
+    const app = fastify({ logger: false });
+
+    app.post('/v1/auth/response', async (req, reply) => {
+      const authHeader = String((req.headers as any)?.authorization ?? '');
+      if (authHeader !== 'Bearer local-token') return reply.code(401).send({ error: 'unauthorized' });
+      const body = req.body as { publicKey?: unknown; response?: unknown } | undefined;
+      const publicKey = typeof body?.publicKey === 'string' ? body.publicKey : '';
+      const response = typeof body?.response === 'string' ? body.response : '';
+      if (!publicKey || !response) return reply.code(400).send({ error: 'invalid' });
+      requests.set(publicKey, { response });
+      return reply.send({ success: true });
+    });
+
+    await app.ready();
+    const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
+
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: localHomeDir,
+        HAPPIER_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_PUBLIC_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_WEBAPP_URL: 'http://webapp.test',
+        HAPPIER_VARIANT: 'stable',
+      });
+      vi.resetModules();
+      const { writeCredentialsLegacy } = await import('@/persistence');
+      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(9), token: 'local-token' });
+
+      const remoteKeypair = tweetnacl.box.keyPair();
+      const remotePublicKey = Buffer.from(remoteKeypair.publicKey).toString('base64');
+      const remoteRequestJson = JSON.stringify({
+        publicKey: remotePublicKey,
+        claimSecret: Buffer.from(new Uint8Array(32).fill(1)).toString('base64url'),
+      });
+
+      spawnSyncMock
+        .mockImplementationOnce((_cmd, _args) => ({
+          status: 0,
+          stdout: Buffer.from(remoteRequestJson + '\n', 'utf8'),
+          stderr: Buffer.alloc(0),
+        }))
+        .mockImplementationOnce((_cmd, _args) => ({
+          status: 0,
+          stdout: Buffer.from(JSON.stringify({ success: true }) + '\n', 'utf8'),
+          stderr: Buffer.alloc(0),
+        }))
+        .mockImplementationOnce((_cmd, _args) => ({
+          status: 0,
+          stdout: Buffer.from(JSON.stringify({ findings: ['would-be-unscoped'] }) + '\n', 'utf8'),
+          stderr: Buffer.alloc(0),
+        }));
+
+      vi.resetModules();
+      const { handleAuthPairRemote } = await import('./auth/pairRemote');
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        await handleAuthPairRemote(['--ssh', 'user@host', '--json']);
+      } finally {
+        output.restore();
+      }
+
+      expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+      expect(requests.has(remotePublicKey)).toBe(true);
+      expect(JSON.parse(output.logs.join('\n'))).toEqual(expect.objectContaining({
+        success: true,
+        postCheck: {
+          skipped: true,
+          reason: 'remote-server-id-unavailable',
+        },
+      }));
     } finally {
       restoreAxios();
       await app.close().catch(() => {});
@@ -193,7 +297,7 @@ describe('auth pair-remote (ssh) (json)', () => {
       const { decryptWithEphemeralKey } = await import('@/ui/auth');
       const output = captureConsoleLogAndMuteStdout();
       try {
-        await handleAuthPairRemote(['--ssh', 'user@host', '--json']);
+        await handleAuthPairRemote(['--ssh', 'user@host', '--json', '--no-post-check']);
       } finally {
         output.restore();
       }

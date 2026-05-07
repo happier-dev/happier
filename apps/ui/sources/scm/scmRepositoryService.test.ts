@@ -6,6 +6,7 @@ import { sessionScmStatusSnapshot } from '@/sync/ops';
 import { machineScmStatusSnapshot } from '@/sync/ops/scm/machineScm';
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot as UiScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { EMPTY_SCM_CAPABILITIES } from './core/snapshotMappers';
 import { ScmRepositoryService, snapshotToScmStatus } from './scmRepositoryService';
 
 vi.mock('@/sync/ops', () => ({
@@ -75,11 +76,20 @@ function makeSnapshot(partial?: Partial<UiScmWorkingSnapshot>): UiScmWorkingSnap
     };
 }
 
-function makeScmSnapshot(partial?: Partial<ProtocolScmWorkingSnapshot>): ProtocolScmWorkingSnapshot {
-    return {
+type ProtocolScmSnapshotOverrides = Partial<
+    Omit<ProtocolScmWorkingSnapshot, 'repo' | 'capabilities' | 'branch' | 'totals'>
+> & {
+    repo?: Partial<ProtocolScmWorkingSnapshot['repo']>;
+    capabilities?: Partial<ProtocolScmWorkingSnapshot['capabilities']>;
+    branch?: Partial<ProtocolScmWorkingSnapshot['branch']>;
+    totals?: Partial<ProtocolScmWorkingSnapshot['totals']>;
+};
+
+function makeScmSnapshot(partial?: ProtocolScmSnapshotOverrides): ProtocolScmWorkingSnapshot {
+    const base: ProtocolScmWorkingSnapshot = {
         projectKey: 'machine:/repo',
         fetchedAt: 123,
-        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [] },
+        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [], remotes: [] },
         capabilities: {
             readStatus: true,
             readDiffFile: true,
@@ -129,7 +139,27 @@ function makeScmSnapshot(partial?: Partial<ProtocolScmWorkingSnapshot>): Protoco
             pendingAdded: 4,
             pendingRemoved: 0,
         },
+    };
+
+    return {
+        ...base,
         ...partial,
+        repo: {
+            ...base.repo,
+            ...(partial?.repo ?? {}),
+        },
+        capabilities: {
+            ...base.capabilities,
+            ...(partial?.capabilities ?? {}),
+        },
+        branch: {
+            ...base.branch,
+            ...(partial?.branch ?? {}),
+        },
+        totals: {
+            ...base.totals,
+            ...(partial?.totals ?? {}),
+        },
     };
 }
 
@@ -156,6 +186,61 @@ describe('snapshotToScmStatus', () => {
 });
 
 describe('ScmRepositoryService.fetchSnapshotForSession', () => {
+    it('preserves hosting provider and pull request projections from protocol snapshots', async () => {
+        const normalized = await Promise.resolve(
+            makeScmSnapshot({
+                hostingProvider: {
+                    kind: 'github',
+                    name: 'GitHub',
+                    baseUrl: 'https://github.com',
+                    nameWithOwner: 'happier/dev',
+                    remoteName: 'origin',
+                },
+                pullRequest: {
+                    provider: {
+                        kind: 'github',
+                        name: 'GitHub',
+                        baseUrl: 'https://github.com',
+                        nameWithOwner: 'happier/dev',
+                        remoteName: 'origin',
+                    },
+                    number: 42,
+                    title: 'Add PR workflow',
+                    url: 'https://github.com/happier/dev/pull/42',
+                    baseBranch: 'main',
+                    headBranch: 'feature/prs',
+                    state: 'open',
+                },
+            })
+        );
+
+        const { normalizeWorkingSnapshotForUi } = await import('./scmRepositoryService');
+        const result = normalizeWorkingSnapshotForUi(normalized, 'machine:/repo');
+
+        expect((result as { hostingProvider?: unknown }).hostingProvider).toEqual({
+            kind: 'github',
+            name: 'GitHub',
+            baseUrl: 'https://github.com',
+            nameWithOwner: 'happier/dev',
+            remoteName: 'origin',
+        });
+        expect((result as { pullRequest?: unknown }).pullRequest).toEqual({
+            provider: {
+                kind: 'github',
+                name: 'GitHub',
+                baseUrl: 'https://github.com',
+                nameWithOwner: 'happier/dev',
+                remoteName: 'origin',
+            },
+            number: 42,
+            title: 'Add PR workflow',
+            url: 'https://github.com/happier/dev/pull/42',
+            baseBranch: 'main',
+            headBranch: 'feature/prs',
+            state: 'open',
+        });
+    });
+
     it('returns null when session metadata path is unavailable', async () => {
         vi.spyOn(storage, 'getState').mockReturnValue({
             sessions: {
@@ -391,7 +476,7 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         expect(result?.capabilities?.operationLabels?.commit).toBe('Commit changes');
     });
 
-    it('preserves protocol repo worktrees in the ui snapshot shape', async () => {
+    it('preserves protocol repo metadata in the ui snapshot shape', async () => {
         vi.spyOn(storage, 'getState').mockReturnValue({
             sessions: {
                 session_1: {
@@ -415,6 +500,13 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
                         { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
                         { path: '/repo', branch: 'main', isCurrent: true },
                     ],
+                    remotes: [
+                        {
+                            name: 'origin',
+                            fetchUrl: 'git@example.com:repo.git',
+                            pushUrl: 'git@example.com:repo.git',
+                        },
+                    ],
                 },
             }),
         } as any);
@@ -425,6 +517,13 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         expect(result?.repo.worktrees).toEqual([
             { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
             { path: '/repo', branch: 'main', isCurrent: true },
+        ]);
+        expect(result?.repo.remotes).toEqual([
+            {
+                name: 'origin',
+                fetchUrl: 'git@example.com:repo.git',
+                pushUrl: 'git@example.com:repo.git',
+            },
         ]);
     });
 
@@ -579,30 +678,7 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         const service = new ScmRepositoryService();
         const result = await service.fetchSnapshotForSession('session_1');
 
-        expect(result?.capabilities).toEqual({
-            readStatus: false,
-            readDiffFile: false,
-            readDiffCommit: false,
-            readLog: false,
-            writeInclude: false,
-            writeExclude: false,
-            writeCommit: false,
-            writeCommitPathSelection: false,
-            writeCommitLineSelection: false,
-            writeBackout: false,
-            writeRemoteFetch: false,
-            writeRemotePull: false,
-            writeRemotePush: false,
-            writeRemotePublish: false,
-            readBranches: false,
-            writeBranchCreate: false,
-            writeBranchCheckout: false,
-            readStash: false,
-            writeStash: false,
-            worktreeCreate: false,
-            changeSetModel: 'working-copy',
-            supportedDiffAreas: ['pending', 'both'],
-        });
+        expect(result?.capabilities).toEqual(EMPTY_SCM_CAPABILITIES);
     });
 });
 

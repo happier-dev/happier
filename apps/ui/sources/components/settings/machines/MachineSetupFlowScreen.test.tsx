@@ -355,7 +355,7 @@ describe('MachineSetupFlowScreen', () => {
             phase: 'awaiting_auth',
             relayUrl: 'https://relay.example.test',
         });
-        expect(routerPushSpy).toHaveBeenCalledWith('/server?url=https%3A%2F%2Frelay.example.test&auto=1');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/server?url=https%3A%2F%2Frelay.example.test&auto=1');
     });
 
     it('shows a recoverable error when the local system task bridge is unavailable', async () => {
@@ -1025,7 +1025,7 @@ describe('MachineSetupFlowScreen', () => {
             relayUrl: 'https://relay.remote.example.test',
             machineId: 'machine-remote-1',
         });
-        expect(routerPushSpy).toHaveBeenCalledWith('/server?url=https%3A%2F%2Frelay.remote.example.test&auto=1');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/server?url=https%3A%2F%2Frelay.remote.example.test&auto=1');
     });
 
     it('clears a stale remote prompt when the relay runtime toggle changes before retrying', async () => {

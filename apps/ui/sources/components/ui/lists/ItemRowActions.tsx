@@ -1,11 +1,11 @@
 import React from 'react';
 import { View, Pressable, useWindowDimensions, type GestureResponderEvent, InteractionManager, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Color from 'color';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { type ItemAction } from '@/components/ui/lists/itemActions';
 import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { resolveWebBlurTintColor } from '@/components/ui/overlays/resolveWebBlurTintColor';
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
 import { t } from '@/text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -69,12 +69,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     const overflowAnchorRef = React.useRef<View>(null);
 
     const blurTintOnWeb = React.useMemo(() => {
-        try {
-            const alpha = theme.dark ? 0.20 : 0.25;
-            return Color(theme.colors.surface).alpha(alpha).rgb().string();
-        } catch {
-            return theme.dark ? 'rgba(0, 0, 0, 0.20)' : 'rgba(255, 255, 255, 0.25)';
-        }
+        return resolveWebBlurTintColor({ surfaceColor: theme.colors.surface, dark: theme.dark });
     }, [theme.colors.surface, theme.dark]);
 
     const compactIds = React.useMemo(() => new Set(props.compactActionIds ?? []), [props.compactActionIds]);

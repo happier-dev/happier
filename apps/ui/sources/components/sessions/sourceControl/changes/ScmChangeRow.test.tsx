@@ -22,6 +22,16 @@ installSourceControlChangesCommonModuleMocks({
     },
 });
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
 describe('ScmChangeRow', () => {
   it('renders change stats and calls onPress', async () => {
     const onPress = vi.fn();
@@ -145,6 +155,91 @@ describe('ScmChangeRow', () => {
     });
     expect(textContent.join(' ')).toContain('README.md');
     expect(textContent.join(' ')).not.toContain('/README.md');
+  });
+
+  it('renders nested paths with the web start-ellipsis wrapper so filenames keep priority', async () => {
+    const { ScmChangeRow } = await import('./ScmChangeRow');
+    const theme = {
+      colors: {
+        surface: '#fff',
+        surfaceHigh: '#f8f8f8',
+        divider: '#ddd',
+        text: '#111',
+        textSecondary: '#666',
+        success: '#0a0',
+        danger: '#a00',
+        warning: '#b60',
+        info: '#09f',
+      },
+    } as any;
+
+    const screen = await renderScreen(<ScmChangeRow
+          theme={theme}
+          file={{
+            fileName: 'rateLimit.ts',
+            filePath: 'src/middleware',
+            fullPath: 'src/middleware/rateLimit.ts',
+            status: 'modified',
+            isIncluded: false,
+            linesAdded: 0,
+            linesRemoved: 0,
+          } as any}
+          onPress={() => {}}
+        />);
+
+    const labels = screen.tree.findAllByType('Text' as any);
+    const pathLabel = labels.find((node) => {
+      return labels.some((candidate) => candidate.props.children === 'src/middleware/' && candidate.parent === node);
+    })!;
+    const pathText = labels.find((node) => node.props.children === 'src/middleware/')!;
+
+    expect(pathLabel.props.ellipsizeMode).toBeUndefined();
+    expect(flattenStyle(pathLabel.props.style)).toMatchObject({
+      textAlign: 'left',
+      writingDirection: 'rtl',
+    });
+    expect(flattenStyle(pathText.props.style)).toMatchObject({
+      writingDirection: 'ltr',
+      unicodeBidi: 'isolate',
+    });
+  });
+
+  it('reserves the provided change stats column width', async () => {
+    const { ScmChangeRow } = await import('./ScmChangeRow');
+    const theme = {
+      colors: {
+        surface: '#fff',
+        surfaceHigh: '#f8f8f8',
+        divider: '#ddd',
+        text: '#111',
+        textSecondary: '#666',
+        success: '#0a0',
+        danger: '#a00',
+        warning: '#b60',
+        info: '#09f',
+      },
+    } as any;
+
+    const screen = await renderScreen(<ScmChangeRow
+          theme={theme}
+          file={{
+            fileName: 'requestId.test.ts',
+            filePath: 'src/middleware',
+            fullPath: 'src/middleware/requestId.test.ts',
+            status: 'modified',
+            isIncluded: false,
+            linesAdded: 146,
+            linesRemoved: 10,
+          } as any}
+          statsColumnWidth={72}
+          onPress={() => {}}
+        />);
+
+    const statsColumn = screen.tree.findByProps({ testID: 'scm-change-row-stats-column' });
+    expect(flattenStyle(statsColumn.props.style)).toMatchObject({
+      width: 72,
+      justifyContent: 'flex-end',
+    });
   });
 
   it('uses surfaceHigh background when highlighted', async () => {

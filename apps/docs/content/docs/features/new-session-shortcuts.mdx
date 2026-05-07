@@ -1,0 +1,166 @@
+---
+title: New session shortcuts
+description: Start a new session from a project or existing session while reusing the right launch settings.
+---
+
+New session shortcuts help you start a related session without re-checking every launch option.
+
+They are useful when you are already working in a project or looking at a session and want another agent session with the same setup.
+
+## Where shortcuts appear
+
+You can start a prefilled new session from:
+
+- a project group in the session list, using the project **+** action
+- the **Session info** screen, using **New session with same setup**
+
+Both shortcuts open the normal new-session screen. You can still review or change anything before sending the first prompt.
+
+## Project shortcuts
+
+The project **+** action is designed for the common case:
+
+1. you are working in a project
+2. you want a second session in that same project
+3. you want it to use the setup you most recently used there
+
+When enabled, Happier looks at the newest session in that project group and uses its launch configuration to seed the new-session screen.
+
+This means the shortcut can reuse the setup from the most recent session in that project, instead of falling back to whatever you last selected globally in another project.
+
+## New session with same setup
+
+The **New session with same setup** action appears on a session's **Session info** screen.
+
+Use it when you want the next session to mirror one specific session, for example:
+
+- you hit a side issue and want another agent to investigate it
+- you want a second attempt with the same backend, model, and permission posture
+- you want to keep the same project, profile, and provider-specific options without manually checking each control
+
+Unlike the project **+** action, this action uses the session you are viewing, not the newest session in the project group.
+
+## What gets reused
+
+Shortcuts reuse launch selections from the source session where those selections are available.
+
+That can include:
+
+- machine
+- folder
+- engine or backend
+- profile
+- transcript storage choice
+- permission mode
+- model choice
+- provider session mode, such as Plan
+- provider config option overrides, such as reasoning effort
+- MCP selection
+- connected-service choices
+- terminal-related launch options
+- provider-specific backend mode, when the provider exposes one
+
+The shortcut does not send a prompt by itself. It only prepares the new-session screen.
+
+## What does not get reused
+
+Shortcuts intentionally do not continue the source conversation.
+
+They do not reuse:
+
+- the source session transcript
+- the source session id
+- the source session resume target
+- the source session's pending messages
+- the source session's current running state
+
+If you want to continue an inactive session, use resume instead. If you want to branch conversation history, use session forking or replay.
+
+## Existing drafts
+
+If you already have a new-session draft, a contextual shortcut does not blindly replace the whole thing.
+
+Happier preserves draft content such as the typed prompt and automation draft, then replaces the launch selections with the shortcut's source session configuration.
+
+For example, if your draft says:
+
+> "Investigate the failing checkout flow"
+
+and you click **New session with same setup** from a Codex session in `/repo/app`, the prompt remains in the composer, but the new-session screen switches to that session's machine, folder, engine, model, permissions, and related session options.
+
+Selections that would conflict with the source session are reset or replaced. This includes stale resume targets and worktree checkout choices from the previous draft.
+
+This behavior keeps your written intent while making the shortcut authoritative for where and how the new session should start.
+
+## Setting: Remember last project session selections
+
+The project **+** shortcut is controlled by **Remember last project session selections**.
+
+Find it in:
+
+1. **Settings**
+2. **Session**
+3. **Permissions**
+4. **New session shortcuts**
+
+The setting is on by default.
+
+When it is on:
+
+- project **+** uses the newest session in that project group as the source configuration
+- existing composer draft content is preserved
+- launch selections come from the project session
+
+When it is off:
+
+- project **+** only preselects the project machine and folder
+- the normal new-session defaults and draft behavior apply
+
+The **Session info** action is always explicit: if you choose **New session with same setup**, that session's setup is used for the new-session screen.
+
+## How this differs from global remembered settings
+
+Happier still has normal new-session defaults and drafts.
+
+The shortcut behavior is more specific:
+
+- normal **New Session** uses the current draft/defaults
+- project **+** can use the newest session in that project
+- **New session with same setup** uses the exact session you are viewing
+
+This avoids a common problem: settings from a different project accidentally shaping a new session in the project you are currently working on.
+
+## Common use cases
+
+### Investigate a side issue
+
+You are in a feature session and discover a separate bug.
+
+Open **Session info** for the current session, choose **New session with same setup**, and type a focused prompt for the side issue.
+
+### Run a second agent in the same project
+
+Use the project **+** action from the session list.
+
+Happier keeps you in the same project context and, when enabled, reuses the newest project session's engine, model, permissions, profile, and options.
+
+### Keep project-specific backend choices separate
+
+One project might use a configured ACP backend, while another uses a built-in provider.
+
+With **Remember last project session selections** on, project shortcuts use the latest setup from that project instead of a global last-used backend from somewhere else.
+
+### Keep a prompt but move it to the right setup
+
+If you already typed a prompt in the new-session screen, then realize you want it launched with the same setup as an existing session, use the contextual shortcut.
+
+The prompt stays; the launch selections are replaced by the session configuration.
+
+## Related guides
+
+- [Session settings](./session-settings)
+- [Model and engine selection](./model-and-engine-selection)
+- [Session modes](./session-modes)
+- [Permissions](./permissions)
+- [Session resume](./session-resume)
+- [Session forking & replay](./session-forking)

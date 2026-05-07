@@ -1,8 +1,9 @@
 import * as React from 'react';
 
-import { getActiveServerSnapshot, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
-import { useAllMachines, useMachineListByServerId, useMachineListStatusByServerId, useSetting } from '@/sync/domains/state/storage';
+import { useAllMachines, useMachineListByServerId, useSetting } from '@/sync/domains/state/storage';
 
 /**
  * Returns the ID of the primary machine from the active server selection.
@@ -18,18 +19,11 @@ import { useAllMachines, useMachineListByServerId, useMachineListStatusByServerI
 export function usePrimaryMachineFromActiveSelection(): string | null {
     const allMachines = useAllMachines();
     const machineListByServerId = useMachineListByServerId();
-    const machineListStatusByServerId = useMachineListStatusByServerId();
     const settingsServerSelectionGroups = useSetting('serverSelectionGroups');
     const settingsServerSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
     const settingsServerSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
 
-    const activeServerSnapshot = React.useMemo(() => {
-        try {
-            return getActiveServerSnapshot();
-        } catch {
-            return { serverId: '', serverUrl: '', generation: 0 };
-        }
-    }, []);
+    const activeServerSnapshot = useActiveServerSnapshot();
 
     const serverProfiles = React.useMemo(() => {
         try {
@@ -80,4 +74,3 @@ export function usePrimaryMachineFromActiveSelection(): string | null {
         settingsServerSelectionGroups,
     ]);
 }
-

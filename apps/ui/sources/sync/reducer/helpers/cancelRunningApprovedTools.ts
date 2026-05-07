@@ -12,6 +12,9 @@ function cancelRunningApprovedTool(
     const tool = message?.tool;
     if (!tool) return false;
     if (tool.state !== 'running') return false;
+    if (tool.permission?.status === 'pending' && !tool.startedAt) {
+        return false;
+    }
     const requireApprovedPermission = opts?.requireApprovedPermission !== false;
     if (requireApprovedPermission) {
         if (tool.permission?.status !== 'approved') return false;
@@ -22,6 +25,7 @@ function cancelRunningApprovedTool(
     tool.completedAt = completedAt;
     if (tool.permission) {
         tool.permission.status = 'canceled';
+        tool.permission.decision = 'abort';
         if (!tool.permission.reason) {
             tool.permission.reason = reason;
         }

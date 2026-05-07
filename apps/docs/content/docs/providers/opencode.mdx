@@ -91,7 +91,7 @@ Using it:
 - keeps the same session id and transcript,
 - leaves the existing terminal open in a read-only/logs-only state until you attach again.
 
-You can later use **Switch to local** in the app or run `happier attach <session-id>` from a terminal on the same machine to get back into the OpenCode TUI.
+You can later run `happier attach <session-id>` from a terminal on the same machine to get back into the OpenCode TUI.
 
 ## Start OpenCode from the app
 
@@ -125,6 +125,7 @@ That means:
 - **Local mode**: you use the OpenCode TUI in a terminal
 - the transcript stays shared in both modes
 - the session stays writable from the app even when a terminal is attached
+- app messages do not need the same exclusive pending-queue handoff used by Claude and Codex local control
 
 In practice, you can:
 
@@ -184,6 +185,7 @@ OpenCode can also expose provider-native session modes and model choices. When t
 
 For the full user guide, see:
 
+- [Model and engine selection](../features/model-and-engine-selection)
 - [Permissions](../features/permissions)
 
 ## Notes
@@ -214,4 +216,4 @@ Do this on the same machine and against the same Happier account/server profile 
 
 ### The terminal is open but no longer accepts prompts
 
-This usually means the session was detached back to remote mode from Happier. Reattach with **Switch to local** in the app or with `happier attach <session-id>`.
+This usually means the session was detached back to remote mode from Happier. Reattach with `happier attach <session-id>` from a terminal on the same machine.

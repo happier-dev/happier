@@ -23,6 +23,7 @@ function createFakeClient() {
     sessionList: vi.fn(async () => ([] as unknown[])),
     sessionCreate: vi.fn(async () => ({ id: 'ses_1' })),
     sessionGet: vi.fn(async ({ sessionId }: { sessionId: string }) => ({ id: sessionId })),
+    sessionUpdate: vi.fn(async ({ sessionId }: { sessionId: string }) => ({ id: sessionId })),
     sessionMessagesList: vi.fn(async () => ([] as unknown[])),
     sessionDiff: vi.fn(async () => ([] as unknown[])),
     sessionPromptAsync: vi.fn(async () => {}),
@@ -331,6 +332,61 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.__getDirectoryOverride()).toBe('/correct');
   });
 
+  it('updates resumed OpenCode session permissions before continuing prompts', async () => {
+    const client = createFakeClient();
+    client.sessionGet = vi.fn(async ({ sessionId }: { sessionId: string }) => ({ id: sessionId }));
+    client.sessionUpdate = vi.fn(async ({ sessionId }: { sessionId: string }) => ({ id: sessionId }));
+
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+      getPermissionMode: () => 'read-only',
+    }, {
+      createClient: async () => client as unknown as OpenCodeServerRuntimeClient,
+    });
+
+    await runtime.startOrLoad({ resumeId: 'ses_remote' });
+
+    expect(runtime.shouldResumeAfterPermissionModeChange()).toBe(true);
+    expect(client.sessionUpdate).toHaveBeenCalledWith({
+      sessionId: 'ses_remote',
+      permission: expect.arrayContaining([
+        { permission: '*', pattern: '*', action: 'deny' },
+        { permission: 'edit', pattern: '*', action: 'deny' },
+        { permission: 'read', pattern: '*', action: 'allow' },
+      ]),
+    });
+
+    runtime.beginTurn();
+    const promptPromise = (runtime as unknown as { sendPromptWithMeta: (opts: { text: string; localId: string }) => Promise<void> })
+      .sendPromptWithMeta({ text: 'continue with stricter permissions', localId: 'local-permission-update' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+    const updateOrder = client.sessionUpdate.mock.invocationCallOrder[0];
+    const promptOrder = client.sessionPromptAsync.mock.invocationCallOrder[0];
+    expect(updateOrder).toBeLessThan(promptOrder);
+
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.updated', properties: { part: { id: 'part_permission_resume', type: 'text', sessionID: 'ses_remote' } } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'message.part.delta', properties: { sessionID: 'ses_remote', messageID: 'msg_permission_resume', partID: 'part_permission_resume', delta: 'ok' } },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_remote' } },
+    });
+
+    await expect(promptPromise).resolves.toBeUndefined();
+  });
+
   it('forwards assistant usage telemetry as token_count context updates', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
@@ -570,7 +626,7 @@ describe('createOpenCodeServerRuntime', () => {
 
     await runtime.startOrLoad({});
 
-    expect(runtime.shouldResumeAfterPermissionModeChange()).toBe(false);
+    expect(runtime.shouldResumeAfterPermissionModeChange()).toBe(true);
     expect(client.sessionCreate).toHaveBeenCalledTimes(1);
     const firstCall = (client.sessionCreate as any).mock.calls[0]?.[0] as any;
     expect(firstCall).toMatchObject({
@@ -730,7 +786,7 @@ describe('createOpenCodeServerRuntime', () => {
       agent: 'build',
       model: { providerID: 'openai', modelID: 'gpt-5.2' },
       config: { telemetry: true, variant: 'high' },
-      parts: [{ type: 'text', text: `hello\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
+      parts: [{ type: 'text', text: 'hello' }],
     });
     expect(firstCall.messageId).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
     expect(session.__getMetadata()?.opencodeUserMessageIdMapV1?.byLocalId?.['local-1']).toBe(firstCall.messageId);
@@ -796,7 +852,7 @@ describe('createOpenCodeServerRuntime', () => {
     const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
     expect(firstCall).toMatchObject({
       sessionId: 'ses_1',
-      parts: [{ type: 'text', text: `hello\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
+      parts: [{ type: 'text', text: 'hello' }],
     });
     expect(firstCall.model).toBeUndefined();
 
@@ -815,7 +871,7 @@ describe('createOpenCodeServerRuntime', () => {
     await expect(promptPromise).resolves.toBeUndefined();
   });
 
-  it('appends CHANGE_TITLE_INSTRUCTION to the first prompt only', async () => {
+  it('does not append hidden change-title instructions to OpenCode prompts', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
     const runtime = createOpenCodeServerRuntime({
@@ -837,7 +893,7 @@ describe('createOpenCodeServerRuntime', () => {
     const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
     expect(firstCall).toMatchObject({
       sessionId: 'ses_1',
-      parts: [{ type: 'text', text: `hello\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
+      parts: [{ type: 'text', text: 'hello' }],
     });
 
     client.__emit({
@@ -878,7 +934,7 @@ describe('createOpenCodeServerRuntime', () => {
     await expect(secondPromptPromise).resolves.toBeUndefined();
   });
 
-  it('still appends CHANGE_TITLE_INSTRUCTION when the prompt mentions the MCP-prefixed change-title alias', async () => {
+  it('leaves prompts mentioning change-title tools unchanged', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
     const runtime = createOpenCodeServerRuntime({
@@ -903,7 +959,7 @@ describe('createOpenCodeServerRuntime', () => {
     const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
     expect(firstCall).toMatchObject({
       sessionId: 'ses_1',
-      parts: [{ type: 'text', text: `hello (mcp__happier__change_title)\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
+      parts: [{ type: 'text', text: 'hello (mcp__happier__change_title)' }],
     });
 
     client.__emit({
@@ -1099,7 +1155,7 @@ describe('createOpenCodeServerRuntime', () => {
     const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
     expect(firstCall).toMatchObject({
       sessionId: 'ses_remote',
-      parts: [{ type: 'text', text: `first after resume\n\n${OPENCODE_CHANGE_TITLE_INSTRUCTION}` }],
+      parts: [{ type: 'text', text: 'first after resume' }],
     });
     expect(firstCall.messageId).toBeUndefined();
 
@@ -1391,7 +1447,7 @@ describe('createOpenCodeServerRuntime', () => {
 
     const promptPromise = runtime.sendPrompt('hello');
     await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
-    const firstCall = client.sessionPromptAsync.mock.calls[0]?.[0] as any;
+    const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
     expect(firstCall.messageId).toBeUndefined();
 
     client.__emit({
@@ -3630,6 +3686,132 @@ describe('createOpenCodeServerRuntime', () => {
     expect(matching[matching.length - 1]?.body?.message).toContain('INLINE_UPDATED_E2E_OK');
   });
 
+  it('does not stream vendor-assigned resumed user prompt snapshots as assistant output', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    session.__getMetadata().opencodeSessionId = 'ses_remote';
+
+    let promptSent = false;
+    client.sessionPromptAsync = vi.fn(async () => {
+      promptSent = true;
+    });
+    client.sessionMessagesList = vi.fn(async () => {
+      if (!promptSent) return [];
+      return [
+        {
+          info: { id: 'msg_vendor_user_1', role: 'user', time: { created: 1 } },
+          parts: [{ type: 'text', text: 'please continue' }],
+        },
+      ];
+    });
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({ resumeId: 'ses_remote' });
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'please continue', localId: 'resume-local-user-snapshot-1' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+    const firstCall = (client.sessionPromptAsync as any).mock.calls[0]?.[0] as any;
+    const effectivePrompt = firstCall.parts[0]?.text;
+    expect(effectivePrompt).toBe('please continue');
+    expect(firstCall.messageId).toBeUndefined();
+
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg_vendor_user_1',
+            role: 'user',
+            sessionID: 'ses_remote',
+          },
+        },
+      },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part_user_prompt_1',
+            type: 'text',
+            sessionID: 'ses_remote',
+            messageID: 'msg_vendor_user_1',
+            text: effectivePrompt,
+          },
+        },
+      },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg_asst_resume_1',
+            role: 'assistant',
+            sessionID: 'ses_remote',
+          },
+        },
+      },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part_asst_resume_1',
+            type: 'text',
+            sessionID: 'ses_remote',
+            messageID: 'msg_asst_resume_1',
+            text: 'assistant resumed OK',
+          },
+        },
+      },
+    });
+    client.__emit({
+      directory: '/tmp',
+      payload: { type: 'session.idle', properties: { sessionID: 'ses_remote' } },
+    });
+
+    await expect(promptPromise).resolves.toBeUndefined();
+    await flushTranscriptCommitMicrotasks();
+
+    const committedMessages = getCommittedTranscriptRows(session, { type: 'message' });
+    expect(committedMessages).toEqual(
+      expect.not.arrayContaining([
+        expect.objectContaining({
+          body: expect.objectContaining({
+            message: expect.stringContaining(OPENCODE_CHANGE_TITLE_INSTRUCTION),
+          }),
+        }),
+      ]),
+    );
+    expect(committedMessages).toEqual(
+      expect.not.arrayContaining([
+        expect.objectContaining({
+          meta: expect.objectContaining({
+            happierStreamKey: expect.stringContaining('msg_vendor_user_1'),
+          }),
+        }),
+      ]),
+    );
+    expect(committedMessages[committedMessages.length - 1]?.body?.message).toContain('assistant resumed OK');
+  });
+
   it('streams inline reasoning snapshots from message.part.updated when no reasoning delta arrives', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
@@ -5843,5 +6025,54 @@ describe('createOpenCodeServerRuntime', () => {
     ]);
 
     expect(outcome).toBe('rejected');
+  });
+
+  it('does not emit an extra turn_aborted when explicit cancel produces a session.error event', async () => {
+    const client = createFakeClient();
+    client.sessionAbort = vi.fn(async () => {
+      await client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'session.error',
+          properties: {
+            sessionID: 'ses_1',
+            error: {
+              name: 'AbortError',
+              message: 'The operation was aborted.',
+            },
+          },
+        },
+      });
+    });
+
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime(
+      {
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any,
+        onThinkingChange: vi.fn(),
+      },
+      {
+        createClient: async () => client as any,
+      },
+    );
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    const promptPromise = (runtime as any).sendPromptWithMeta({ text: 'hello', localId: 'local-cancel-session-error' });
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+
+    await runtime.cancel();
+
+    await expect(promptPromise).rejects.toBeTruthy();
+
+    const turnAbortedMessages = session.sendAgentMessage.mock.calls.filter(
+      (c: any[]) => c?.[0] === 'opencode' && c?.[1]?.type === 'turn_aborted',
+    );
+    expect(turnAbortedMessages).toHaveLength(0);
   });
 });

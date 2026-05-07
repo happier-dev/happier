@@ -1,6 +1,8 @@
 import { parseSessionSlashCommand } from './parseSessionSlashCommand';
 import type { ActionId, PromptInvocationsV1 } from '@happier-dev/protocol';
 import { normalizePromptInvocationTokenV1 } from '@happier-dev/protocol';
+import { findBuiltInPrompt } from './builtInPrompts';
+import { renderPromptTemplateTextV1 } from './renderPromptTemplateTextV1';
 
 export type SessionComposerSendResolution =
     | { kind: 'noop' }
@@ -44,6 +46,33 @@ export function resolveSessionComposerSend(args: {
             return { kind: 'send', text: args.input };
         }
         return parsedSlash;
+    }
+
+    // Built-in core slash commands (e.g. /happier-diagnose). Resolved before
+    // user-defined template invocations so they cannot be shadowed by an entry
+    // with the same token. Built-in prompts inline the rendered body and send
+    // it directly to the agent.
+    {
+        const trimmed = args.input.trim();
+        if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+            const firstSpace = trimmed.search(/\s/);
+            const rawToken = firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace);
+            const normalizedToken = normalizePromptInvocationTokenV1(rawToken);
+            if (!RESERVED_TOKENS.has(normalizedToken)) {
+                const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace).trim();
+                const builtIn = findBuiltInPrompt(normalizedToken);
+                if (builtIn) {
+                    if (!builtIn.allowArgs && rest.length > 0) {
+                        return { kind: 'send', text: args.input };
+                    }
+                    const text = renderPromptTemplateTextV1({
+                        templateMarkdown: builtIn.body,
+                        argsText: rest,
+                    });
+                    return { kind: 'send', text };
+                }
+            }
+        }
     }
 
     // NOTE: Template invocations are opt-in via settings and never override reserved tokens.

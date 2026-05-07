@@ -1,4 +1,4 @@
-import type { ScmRemotePublishRequest, ScmRemotePublishResponse } from '@happier-dev/protocol';
+import type { ScmRemotePublishRequest, ScmRemotePublishResponse, ScmWorkingSnapshot } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import type { ScmBackendContext } from '../../../types';
@@ -9,13 +9,29 @@ import { evaluateRemoteMutationPreconditions } from '../../shared/remoteMutation
 
 import { readGitSnapshotForChecks } from './snapshotChecks';
 
-function validateRemoteName(remote: string | undefined): { ok: true; value: string } | { ok: false; error: string } {
-    const normalized = typeof remote === 'string' ? remote.trim() : '';
-    if (!normalized) return { ok: true, value: 'origin' };
-    if (normalized.startsWith('-')) {
-        return { ok: false, error: 'Remote name cannot start with "-"' };
+function resolveConfiguredPublishRemote(input: {
+    snapshot: ScmWorkingSnapshot;
+    requestedRemote: string | undefined;
+}): { ok: true; remote: string } | { ok: false; error: string } {
+    const remotes = input.snapshot.repo.remotes ?? [];
+    if (remotes.length === 0) {
+        return { ok: false, error: 'Add a Git remote before publishing this branch.' };
     }
-    return { ok: true, value: normalized };
+
+    if (input.requestedRemote) {
+        const requested = remotes.find((remote) => remote.name === input.requestedRemote);
+        if (!requested) {
+            return { ok: false, error: `Remote "${input.requestedRemote}" is not configured for this repository.` };
+        }
+        return { ok: true, remote: requested.name };
+    }
+
+    const origin = remotes.find((remote) => remote.name === 'origin');
+    const fallback = remotes[0];
+    if (!fallback) {
+        return { ok: false, error: 'Add a Git remote before publishing this branch.' };
+    }
+    return { ok: true, remote: (origin ?? fallback).name };
 }
 
 export async function gitRemotePublish(input: {
@@ -111,16 +127,19 @@ export async function gitRemotePublish(input: {
         };
     }
 
-    const remote = validateRemoteName(normalizedRemoteRequest.request.remote);
+    const remote = resolveConfiguredPublishRemote({
+        snapshot,
+        requestedRemote: normalizedRemoteRequest.request.remote,
+    });
     if (!remote.ok) {
         return {
             success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND,
             error: remote.error,
         };
     }
 
-    const args = ['push', '--set-upstream', remote.value, head];
+    const args = ['push', '--set-upstream', remote.remote, head];
     const push = await runScmCommand({
         bin: 'git',
         cwd: input.context.cwd,

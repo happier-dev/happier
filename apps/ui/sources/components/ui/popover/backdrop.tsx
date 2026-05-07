@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import type { PopoverBackdropEffect, PopoverPortalOptions, PopoverWindowRect } from './_types';
 
 export function PopoverBackdrop(props: Readonly<{
@@ -205,7 +206,7 @@ function PopoverBackdropEffectLayer(props: Readonly<{
     const effectStyles = spotlightStyles ?? [fullScreenStyle];
 
     if (props.backdropEffect === 'blur') {
-        const webBlurPx = typeof props.backdropBlurOnWeb?.px === 'number' ? props.backdropBlurOnWeb.px : 12;
+        const webBlurPx = typeof props.backdropBlurOnWeb?.px === 'number' ? props.backdropBlurOnWeb.px : 2;
         const webBlurTint = props.backdropBlurOnWeb?.tintColor ?? 'rgba(0,0,0,0.10)';
         if (Platform.OS !== 'web') {
             try {
@@ -241,13 +242,18 @@ function PopoverBackdropEffectLayer(props: Readonly<{
                         key={index}
                         testID="popover-backdrop-effect"
                         pointerEvents="none"
-                        style={[
-                            style,
-                            Platform.OS === 'web'
-                                ? ({ backdropFilter: `blur(${webBlurPx}px)`, backgroundColor: webBlurTint } as any)
-                                : ({ backgroundColor: 'rgba(0,0,0,0.08)' } as any),
-                        ]}
-                    />
+                            style={[
+                                style,
+                                Platform.OS === 'web'
+                                    ? (createBackdropWebStyle({
+                                        backgroundColor: webBlurTint,
+                                        blurPx: webBlurPx,
+                                    }) as unknown as ViewStyle)
+                                    : createBackdropNativeStyle({
+                                        backgroundColor: 'rgba(0,0,0,0.08)',
+                                    }),
+                            ]}
+                        />
                 ))}
             </>
         );
@@ -270,4 +276,3 @@ function PopoverBackdropEffectLayer(props: Readonly<{
         </>
     );
 }
-

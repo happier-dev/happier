@@ -158,7 +158,7 @@ async function getServerFeaturesSnapshotWithRetry(
                                 method: 'GET',
                                 signal: controller.signal,
                             },
-                            { includeAuth: false },
+                            { includeAuth: false, retry: 'none' },
                         );
                 } catch (error) {
                     const timedOut = controller.signal.aborted;

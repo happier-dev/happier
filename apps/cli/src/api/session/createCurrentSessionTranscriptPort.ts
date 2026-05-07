@@ -11,6 +11,11 @@ type TranscriptPortSession = Readonly<{
     body: ACPMessageData,
     opts: { localId: string; meta?: Record<string, unknown> },
   ) => Promise<void>;
+  sendAgentMessageEphemeral?: (
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+  ) => void;
 }>;
 
 export function createCurrentSessionTranscriptPort(
@@ -19,5 +24,13 @@ export function createCurrentSessionTranscriptPort(
   return {
     sendAgentMessage: (provider, body, opts) => getSession().sendAgentMessage?.(provider, body, opts),
     sendAgentMessageCommitted: (provider, body, opts) => getSession().sendAgentMessageCommitted(provider, body, opts),
+    get sendAgentMessageEphemeral() {
+      if (typeof getSession().sendAgentMessageEphemeral !== 'function') return undefined;
+      return (
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+      ) => getSession().sendAgentMessageEphemeral?.(provider, body, opts);
+    },
   };
 }

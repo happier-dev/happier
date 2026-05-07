@@ -26,6 +26,7 @@ import {
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
 import { fetchServerAdvertisedUrls } from '@/server/serverCapabilities';
+import { promptForCurrentMachineReachableServerUrl } from '@/server/reachability/promptCurrentMachineReachableServerUrl';
 import {
   isInsecureRemoteHttpServerUrl,
   isLocalishServerUrl,
@@ -208,20 +209,10 @@ async function cmdAdd(args: string[]): Promise<void> {
         const localOnly = parseYesNoWithDefault(answer, true);
         if (localOnly) {
           localServerUrlRaw = normalized;
-          let inferredCanonical: string | null = null;
-          if (shouldAutoInferPublicServerUrl() && isLoopbackHttpServerUrl(normalized)) {
-            inferredCanonical = await tailscaleServeHttpsUrlForInternalServerUrl({
-              internalServerUrl: normalized,
-              timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
-              env: process.env,
-            });
-          }
-
-          const canonicalPrompt = inferredCanonical
-            ? `Canonical (shareable) relay URL (https://...) [${inferredCanonical}]: `
-            : 'Canonical (shareable) relay URL (https://...): ';
-          const canonicalAnswer = (await promptInput(canonicalPrompt)).trim();
-          const canonical = canonicalAnswer || inferredCanonical;
+          const canonical = (await promptForCurrentMachineReachableServerUrl({
+            localServerUrl: normalized,
+            remoteDescription: 'other machines',
+          })).trim();
           if (!canonical) {
             throw new Error(
               'Missing canonical relay URL. Provide a public HTTPS URL, or run `happier server add --local-server-url <url> --server-url <canonical>`.',

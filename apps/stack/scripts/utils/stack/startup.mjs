@@ -1,5 +1,5 @@
 import { run, runCapture } from '../proc/proc.mjs';
-import { ensureDepsInstalled, pmExecBin } from '../proc/pm.mjs';
+import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent, pmExecBin } from '../proc/pm.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -205,6 +205,7 @@ export function resolveAuthSeedFromEnv(env) {
 }
 
 export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort = false }) {
+  await ensureWorkspacePackagesBuiltForComponent(serverDir, { env });
   await ensureDepsInstalled(serverDir, 'happier-server-light', { env });
 
   const lightDbProvider = resolveLightDbProviderFromEnv(env);
@@ -277,6 +278,7 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
 }
 
 export async function ensureHappyServerSchemaReady({ serverDir, env }) {
+  await ensureWorkspacePackagesBuiltForComponent(serverDir, { env });
   await ensureDepsInstalled(serverDir, 'happier-server', { env });
 
   try {

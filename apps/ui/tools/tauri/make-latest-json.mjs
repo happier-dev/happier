@@ -47,6 +47,14 @@ function normalizeSegments(filePath) {
     return filePath.split(path.sep).join('/').split('/');
 }
 
+function isValidTauriUpdaterSignature(signature) {
+    const value = String(signature ?? '').trim();
+    if (!/^[A-Za-z0-9+/=]+$/.test(value)) return false;
+
+    const decoded = Buffer.from(value, 'base64').toString('utf8');
+    return decoded.startsWith('untrusted comment:') && decoded.includes('\ntrusted comment:');
+}
+
 function main() {
     const args = parseArgs(process.argv.slice(2));
 
@@ -99,6 +107,9 @@ function main() {
 
         const assetName = path.basename(artifactPath);
         const signature = fs.readFileSync(sigPath, 'utf8').trim();
+        if (!isValidTauriUpdaterSignature(signature)) {
+            fail(`Invalid updater signature file for platform "${platformKey}": ${sigPath}`);
+        }
         platforms[platformKey] = {
             url: `https://github.com/${repo}/releases/download/${releaseTag}/${assetName}`,
             signature,

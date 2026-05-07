@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 
-import { getComponentDir, getRootDir } from './utils/paths/paths.mjs';
+import { getComponentDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureWorkspacePackagesBuiltForComponent, pmExecBin } from './utils/proc/pm.mjs';
 import { spawnProc } from './utils/proc/proc.mjs';
@@ -17,6 +17,7 @@ import {
   buildStackTauriDevProcessInvocation,
   buildTauriRuntimeEnv,
 } from './utils/dev/tauri_dev.mjs';
+import { parseEnvToObject } from './utils/env/dotenv.mjs';
 
 function buildDefaultStackTauriEnv(env, stackName) {
   const nextEnv = { ...env };
@@ -51,6 +52,30 @@ function parsePortFromUrl(rawUrl, fallbackPort) {
     return Number.isFinite(p) && p > 0 ? Math.floor(p) : fallbackPort;
   } catch {
     return fallbackPort;
+  }
+}
+
+async function maybeReadStackEnvFileObject({ stackName, env = process.env } = {}) {
+  const name = String(stackName ?? '').trim();
+  if (!name) return {};
+
+  const explicitEnvFilePath = String(env?.HAPPIER_STACK_ENV_FILE ?? '').trim();
+  if (explicitEnvFilePath && existsSync(explicitEnvFilePath)) {
+    try {
+      const raw = await readFile(explicitEnvFilePath, 'utf-8');
+      if (String(raw ?? '').trim()) return parseEnvToObject(raw);
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const { envPath } = resolveStackEnvPath(name, env);
+    const raw = await readFile(envPath, 'utf-8');
+    if (!String(raw ?? '').trim()) return {};
+    return parseEnvToObject(raw);
+  } catch {
+    return {};
   }
 }
 
@@ -133,13 +158,25 @@ async function main() {
   const uiLayout = assertTauriUiDirForDev(uiDir);
   const repoRootDir = dirname(dirname(uiDir));
   const stackName = String(envWithStackDefaults.HAPPIER_STACK_STACK ?? '').trim();
+  const stackEnvFile = stackName ? await maybeReadStackEnvFileObject({ stackName, env: envWithStackDefaults }) : {};
+  const stackEnvExpoPort = Number(stackEnvFile.HAPPIER_STACK_EXPO_DEV_PORT ?? '');
+  const hasStackEnvExpoPort = Number.isFinite(stackEnvExpoPort) && stackEnvExpoPort > 0;
   const runtimeState = stackName
     ? await readStackRuntimeStateFile(getStackRuntimeStatePath(stackName))
     : null;
-  const devUrl = resolveStackTauriDevUrl({
-    runtimeState,
-    defaultPort: Number(process.env.HAPPIER_STACK_TAURI_DEV_PORT ?? 8081),
-  });
+  const devUrl = (() => {
+    const envExpoPort = Number(envWithStackDefaults.HAPPIER_STACK_EXPO_DEV_PORT ?? '');
+    if (Number.isFinite(envExpoPort) && envExpoPort > 0) {
+      return `http://localhost:${Math.floor(envExpoPort)}`;
+    }
+    if (hasStackEnvExpoPort) {
+      return `http://localhost:${Math.floor(stackEnvExpoPort)}`;
+    }
+    return resolveStackTauriDevUrl({
+      runtimeState,
+      defaultPort: Number(process.env.HAPPIER_STACK_TAURI_DEV_PORT ?? 8081),
+    });
+  })();
   const resolveUserHomeDir = () => {
     try {
       return String(os.userInfo()?.homedir ?? os.homedir() ?? '').trim();

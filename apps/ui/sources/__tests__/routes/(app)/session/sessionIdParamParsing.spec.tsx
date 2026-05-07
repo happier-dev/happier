@@ -39,6 +39,26 @@ vi.mock('@/components/sessions/shell/SessionView', () => ({
         React.createElement('SessionView', { id, jumpToSeq, paneUrlState }),
 }));
 
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+    useAppPaneScope: () => ({
+        scopeId: 'session:test',
+        scopeState: {
+            right: { activeTabId: null },
+            details: { tabs: [] },
+        },
+        openRight: vi.fn(),
+        closeRight: vi.fn(),
+        setRightTab: vi.fn(),
+        setRightTabState: vi.fn(),
+        openDetailsTab: vi.fn(),
+        setDetailsTabState: vi.fn(),
+        pinDetailsTab: vi.fn(),
+        closeDetails: vi.fn(),
+        closeDetailsTab: vi.fn(),
+        setActiveDetailsTab: vi.fn(),
+    }),
+}));
+
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string) => {
         if (sessionId) {

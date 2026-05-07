@@ -35,9 +35,20 @@ import type { ForkedTranscriptSnapshot } from '../domains/sessionFork/forkedTran
 import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forkedTranscriptSnapshot';
 import { resolveVisibleMachinesForActiveServerFromState } from './domains/machines/resolveMachinesForActiveServerFromState';
 import { resolveServerIdForSessionIdFromLocalState } from '../runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '../domains/workspaces/workspaceScope';
 
 export function useSessions() {
-  return getStorage()(useShallow((state) => (state.isDataReady ? state.sessionsData : null)));
+  const snapshot = getStorage()(
+    useShallow((state) => ({
+      isDataReady: state.isDataReady,
+      sessions: state.sessions,
+    }))
+  );
+
+  return React.useMemo(() => {
+    if (!snapshot.isDataReady) return null;
+    return Object.values(snapshot.sessions);
+  }, [snapshot.isDataReady, snapshot.sessions]);
 }
 
 export function useSession(id: string): Session | null {
@@ -60,6 +71,37 @@ const emptyRecord: Record<string, any> = {};
 const emptyReviewCommentDrafts: ReviewCommentDraft[] = [];
 const emptyActionDrafts: SessionActionDraft[] = [];
 
+function normalizeMessageSeq(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.trunc(value);
+}
+
+function compareMessagesOldestFirst(a: Message, b: Message): number {
+  const aSeq = normalizeMessageSeq(a.seq);
+  const bSeq = normalizeMessageSeq(b.seq);
+  if (aSeq !== null && bSeq !== null && aSeq !== bSeq) {
+    return aSeq - bSeq;
+  }
+
+  if (a.createdAt !== b.createdAt) {
+    return a.createdAt - b.createdAt;
+  }
+
+  return String(a.id).localeCompare(String(b.id));
+}
+
+type SessionMessagesArrayCacheEntry = Readonly<{
+  idsRef: readonly string[];
+  messagesByIdRef: Record<string, Message>;
+  messagesVersion: number;
+  messages: readonly Message[];
+}>;
+
+const SESSION_MESSAGES_ARRAY_CACHE_MAX = 16;
+const sessionMessagesArrayCache = new Map<string, SessionMessagesArrayCacheEntry>();
+
 export function useSessionMessages(
   sessionId: string
 ): { messages: Message[]; isLoaded: boolean } {
@@ -75,14 +117,83 @@ export function useSessionMessages(
   const version = useSessionMessagesVersion(sessionId, true);
 
   const messages = React.useMemo(() => {
-    if (!Array.isArray(ids) || ids.length === 0) return emptyArray as any as Message[];
+    if (!Array.isArray(ids) || ids.length === 0) {
+      if (messagesById && Object.keys(messagesById).length > 0) {
+        const cached = sessionMessagesArrayCache.get(sessionId);
+        if (
+          cached &&
+          cached.messagesVersion === version &&
+          cached.idsRef === ids &&
+          cached.messagesByIdRef === messagesById
+        ) {
+          sessionMessagesArrayCache.delete(sessionId);
+          sessionMessagesArrayCache.set(sessionId, cached);
+          return cached.messages as Message[];
+        }
+
+        const out = Object.values(messagesById).slice().sort(compareMessagesOldestFirst);
+        sessionMessagesArrayCache.delete(sessionId);
+        sessionMessagesArrayCache.set(sessionId, {
+          idsRef: ids,
+          messagesByIdRef: messagesById,
+          messagesVersion: version,
+          messages: out,
+        });
+        while (sessionMessagesArrayCache.size > SESSION_MESSAGES_ARRAY_CACHE_MAX) {
+          const oldestKey = sessionMessagesArrayCache.keys().next().value;
+          if (typeof oldestKey !== 'string') break;
+          sessionMessagesArrayCache.delete(oldestKey);
+        }
+        return out;
+      }
+
+      const cached = sessionMessagesArrayCache.get(sessionId);
+      if (cached && !isLoaded) {
+        sessionMessagesArrayCache.delete(sessionId);
+        sessionMessagesArrayCache.set(sessionId, cached);
+        return cached.messages as Message[];
+      }
+
+      if (cached && isLoaded) {
+        sessionMessagesArrayCache.delete(sessionId);
+      }
+
+      return emptyArray as any as Message[];
+    }
+
+    const cached = sessionMessagesArrayCache.get(sessionId);
+    if (
+      cached &&
+      cached.messagesVersion === version &&
+      cached.idsRef === ids &&
+      cached.messagesByIdRef === messagesById
+    ) {
+      sessionMessagesArrayCache.delete(sessionId);
+      sessionMessagesArrayCache.set(sessionId, cached);
+      return cached.messages as Message[];
+    }
+
     const out: Message[] = [];
     for (const id of ids) {
       const m = messagesById[id];
       if (m) out.push(m);
     }
+
+    sessionMessagesArrayCache.delete(sessionId);
+    sessionMessagesArrayCache.set(sessionId, {
+      idsRef: ids,
+      messagesByIdRef: messagesById,
+      messagesVersion: version,
+      messages: out,
+    });
+    while (sessionMessagesArrayCache.size > SESSION_MESSAGES_ARRAY_CACHE_MAX) {
+      const oldestKey = sessionMessagesArrayCache.keys().next().value;
+      if (typeof oldestKey !== 'string') break;
+      sessionMessagesArrayCache.delete(oldestKey);
+    }
+
     return out;
-  }, [ids, messagesById, version]);
+  }, [ids, isLoaded, messagesById, sessionId, version]);
 
   return React.useMemo(() => ({ messages, isLoaded }), [isLoaded, messages]);
 }
@@ -169,7 +280,9 @@ export function useSessionLatestThinkingMessageActivityAtMs(sessionId: string): 
 export function useHasUnreadMessages(sessionId: string): boolean {
   return getStorage()((state) => {
     const session = state.sessions[sessionId];
-    if (!session) return false;
+    if (!session) {
+      return state.sessionListRenderables[sessionId]?.hasUnreadMessages === true;
+    }
     return computeHasUnreadActivity({
       sessionSeq: session.seq ?? 0,
       pendingActivityAt: 0,
@@ -232,6 +345,21 @@ export function useSessionListMeaningfulActivityAt(sessionId: string): number | 
 export function useSessionReviewCommentsDrafts(sessionId: string): ReviewCommentDraft[] {
   return getStorage()(
     useShallow((state) => state.reviewCommentsDraftsBySessionId[sessionId] ?? emptyReviewCommentDrafts)
+  );
+}
+
+export function useWorkspaceReviewCommentsDrafts(scope: WorkspaceScopeBase | null): ReviewCommentDraft[] {
+  const cacheKey = React.useMemo(() => {
+    if (!scope) return null;
+    try {
+      return buildWorkspaceCacheKey(scope);
+    } catch {
+      return null;
+    }
+  }, [scope]);
+
+  return getStorage()(
+    useShallow((state) => (cacheKey ? (state.reviewCommentsDraftsByWorkspaceCacheKey?.[cacheKey] ?? emptyReviewCommentDrafts) : emptyReviewCommentDrafts))
   );
 }
 
@@ -416,12 +544,37 @@ export function useSessionListViewDataByServerId(): Record<string, SessionListVi
   return getStorage()(useShallow((state) => state.sessionListViewDataByServerId));
 }
 
+function sortValuesByUpdatedAtDescending<T extends { updatedAt: number }>(values: Record<string, T>): T[] {
+  return Object.values(values).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
 export function useAllSessions(): Session[] {
   return getStorage()(
     useShallow((state) => {
       if (!state.isDataReady) return [];
-      return Object.values(state.sessions).sort((a, b) => b.updatedAt - a.updatedAt);
+      return sortValuesByUpdatedAtDescending(state.sessions);
     })
+  );
+}
+
+export function useAllSessionsForAttention(): Session[] {
+  return getStorage()(
+    useShallow((state) => sortValuesByUpdatedAtDescending(state.sessions))
+  );
+}
+
+export function useAllSessionListRenderables(): SessionListRenderableSession[] {
+  return getStorage()(
+    useShallow((state) => {
+      if (!state.isDataReady) return [];
+      return sortValuesByUpdatedAtDescending(state.sessionListRenderables);
+    })
+  );
+}
+
+export function useAllSessionListRenderablesForAttention(): SessionListRenderableSession[] {
+  return getStorage()(
+    useShallow((state) => sortValuesByUpdatedAtDescending(state.sessionListRenderables))
   );
 }
 
@@ -651,6 +804,10 @@ export function useIsDataReady(): boolean {
 
 export function useProfile() {
   return getStorage()(useShallow((state) => state.profile));
+}
+
+export function useActiveServerAccountScope() {
+  return getStorage()(useShallow((state) => state.profileScope ?? null));
 }
 
 export function useFriends() {

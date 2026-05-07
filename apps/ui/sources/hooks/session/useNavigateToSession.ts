@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { useAuth } from '@/auth/context/AuthContext';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { buildScopedSessionRouteHref } from './sessionRouteServerScope';
 
 export function useNavigateToSession() {
@@ -12,14 +13,6 @@ export function useNavigateToSession() {
 
     return React.useCallback(async (sessionId: string, opts?: Readonly<{ serverId?: string }>) => {
         const targetServerId = String(opts?.serverId ?? '').trim() || resolveServerIdForSessionIdFromLocalCache(sessionId);
-        if (targetServerId) {
-            try {
-                await setActiveServerAndSwitch({ serverId: targetServerId, scope: 'device', refreshAuth: auth.refreshFromActiveServer });
-            } catch {
-                // Keep the explicit server scope on the route so hydration can recover even if the switch failed.
-            }
-        }
-
         const href = buildScopedSessionRouteHref({
             sessionId,
             serverId: targetServerId || null,
@@ -29,5 +22,14 @@ export function useNavigateToSession() {
                 return 'session';
             },
         });
+
+        if (targetServerId) {
+            // Keep route navigation independent; the explicit server scope lets hydration recover if switching fails.
+            fireAndForget(setActiveServerAndSwitch({
+                serverId: targetServerId,
+                scope: 'device',
+                refreshAuth: auth.refreshFromActiveServer,
+            }));
+        }
     }, [auth.refreshFromActiveServer, router]);
 }

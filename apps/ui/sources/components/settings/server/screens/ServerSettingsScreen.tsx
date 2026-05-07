@@ -1,22 +1,13 @@
 import * as React from 'react';
 import { KeyboardAvoidingView, Platform } from 'react-native';
-import { Stack } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SavedServersSection } from '@/components/settings/server/sections/SavedServersSection';
 import { AddTargetsSection } from '@/components/settings/server/sections/AddTargetsSection';
 import { ServerGroupsSection } from '@/components/settings/server/sections/ServerGroupsSection';
 import { ServerRetentionSection } from '@/components/settings/server/sections/ServerRetentionSection';
-import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
-import { LocalRelayRuntimeControlSection } from '@/components/settings/server/localControl/LocalRelayRuntimeControlSection';
-import { LocalTailscaleSecureAccessSection } from '@/components/settings/server/localControl/LocalTailscaleSecureAccessSection';
-import { resolveKnownLocalRelayUrl } from '@/components/settings/server/localControl/resolveKnownLocalRelayUrl';
 import { useServerSettingsScreenController } from '@/components/settings/server/hooks/useServerSettingsScreenController';
-import { isTauriDesktop } from '@/utils/platform/tauri';
-import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((_theme) => ({
     keyboardAvoidingView: {
@@ -31,120 +22,65 @@ export function ServerSettingsScreen() {
     useUnistyles();
     const styles = stylesheet;
     const controller = useServerSettingsScreenController();
-    const isDesktop = isTauriDesktop();
-    const isWeb = Platform.OS === 'web';
-    const [localRelayUrl, setLocalRelayUrl] = React.useState<string | null>(null);
-    const knownLocalRelayUrl = React.useMemo(() => resolveKnownLocalRelayUrl({
-        activeServerUrl: controller.activeServerUrl,
-        activeLocalRelayUrl: controller.activeLocalRelayUrl,
-    }), [controller.activeLocalRelayUrl, controller.activeServerUrl]);
-    const handleLocalRelayStatusChange = React.useCallback((status: Readonly<{ relayUrl: string }> | null | undefined) => {
-        const nextRelayUrl = typeof status?.relayUrl === 'string' && status.relayUrl.trim().length > 0
-            ? status.relayUrl.trim()
-            : null;
-        setLocalRelayUrl((current) => current === nextRelayUrl ? current : nextRelayUrl);
-    }, []);
 
     return (
-        <>
-            <Stack.Screen options={controller.screenOptions} />
-            <KeyboardAvoidingView
-                style={styles.keyboardAvoidingView}
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                >
-                    <ItemList style={styles.itemListContainer}>
-                    {controller.relayDriftBanner ? (
-                        isDesktop ? (
-                            <RelayDriftActionCard banner={controller.relayDriftBanner} />
-                        ) : (
-                            <ItemGroup title={controller.relayDriftBanner.title}>
-                                <Item
-                                    testID="settings.server.relayDrift.readOnlyNotice"
-                                    title={controller.relayDriftBanner.title}
-                                    subtitle={controller.relayDriftBanner.description}
-                                    showChevron={false}
-                                    mode="info"
-                                />
-                            </ItemGroup>
-                        )
-                    ) : null}
-                    <SavedServersSection
+        <KeyboardAvoidingView
+            style={styles.keyboardAvoidingView}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+            <ItemList
+                style={styles.itemListContainer}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                {...(Platform.OS === 'ios' ? { automaticallyAdjustKeyboardInsets: true } : {})}
+            >
+                <SavedServersSection
+                    servers={controller.servers}
+                    serverGroups={controller.serverGroups}
+                    activeServerId={controller.activeServerId}
+                    deviceDefaultServerId={controller.deviceDefaultServerId}
+                    activeTargetKey={controller.activeTargetKey}
+                    authStatusByServerId={controller.authStatusByServerId}
+                    onSwitch={controller.onSwitchServer}
+                    onSwitchGroup={controller.onSwitchGroup}
+                    onRenameGroup={controller.onRenameGroup}
+                    onRemoveGroup={controller.onRemoveGroup}
+                    onRename={controller.onRenameServer}
+                    onRemove={controller.onRemoveServer}
+                />
+
+                <ServerRetentionSection serverId={controller.activeServerId || null} />
+
+                <AddTargetsSection
+                    autoMode={controller.autoMode}
+                    inputUrl={controller.inputUrl}
+                    inputName={controller.inputName}
+                    error={controller.error}
+                    isValidating={controller.isValidating}
+                    prefillHint={controller.addServerPrefillHint}
+                    defaultExpanded={controller.addServerDefaultExpanded}
+                    onChangeUrl={controller.onChangeUrl}
+                    onChangeName={controller.onChangeName}
+                    onResetServer={controller.onResetServer}
+                    onAddServer={controller.onAddServer}
+                    servers={controller.servers}
+                    activeServerId={controller.activeServerId}
+                    onCreateServerGroup={controller.onCreateServerGroup}
+                />
+
+                {controller.serverGroups.length > 0 ? (
+                    <ServerGroupsSection
+                        groupSelectionEnabled={controller.groupSelectionEnabled}
+                        setGroupSelectionEnabled={controller.setGroupSelectionEnabled}
+                        groupSelectionPresentation={controller.groupSelectionPresentation}
+                        activeServerGroupId={controller.activeServerGroupId}
+                        selectedGroupServerIds={controller.selectedGroupServerIds}
                         servers={controller.servers}
-                        serverGroups={controller.serverGroups}
-                        activeServerId={controller.activeServerId}
-                        deviceDefaultServerId={controller.deviceDefaultServerId}
-                        activeTargetKey={controller.activeTargetKey}
-                        authStatusByServerId={controller.authStatusByServerId}
-                        onSwitch={controller.onSwitchServer}
-                        onSwitchGroup={controller.onSwitchGroup}
-                        onRenameGroup={controller.onRenameGroup}
-                        onRemoveGroup={controller.onRemoveGroup}
-                        onRename={controller.onRenameServer}
-                        onRemove={controller.onRemoveServer}
+                        onToggleGroupPresentation={controller.onToggleGroupPresentation}
+                        onToggleGroupServer={controller.onToggleGroupServer}
                     />
-
-                    <ServerRetentionSection serverId={controller.activeServerId || null} />
-
-                    {isDesktop ? (
-                        <>
-                            <LocalRelayRuntimeControlSection
-                                onStatusChange={handleLocalRelayStatusChange}
-                            />
-                            <LocalTailscaleSecureAccessSection upstreamUrl={localRelayUrl ?? knownLocalRelayUrl} />
-                        </>
-                    ) : isWeb ? (
-                        <ItemGroup title={t('settingsProviders.localControlTitle')}>
-                            <Item
-                                testID="settings.server.localControl.desktopOnlyNotice"
-                                title={t('setupOnboarding.webDesktopOnlyTitle')}
-                                subtitle={t('setupOnboarding.webDesktopOnlyBody')}
-                                showChevron={false}
-                                mode="info"
-                            />
-                        </ItemGroup>
-                    ) : (
-                        <ItemGroup title={t('settingsProviders.localControlTitle')}>
-                            <Item
-                                testID="settings.server.localControl.desktopOnlyNotice"
-                                title={t('settingsProviders.localControlTitle')}
-                                subtitle={t('settings.systemTaskBridgeUnavailable')}
-                                showChevron={false}
-                                mode="info"
-                            />
-                        </ItemGroup>
-                    )}
-
-                    <AddTargetsSection
-                        autoMode={controller.autoMode}
-                        inputUrl={controller.inputUrl}
-                        inputName={controller.inputName}
-                        error={controller.error}
-                        isValidating={controller.isValidating}
-                        prefillHint={controller.addServerPrefillHint}
-                        defaultExpanded={controller.addServerDefaultExpanded}
-                        onChangeUrl={controller.onChangeUrl}
-                        onChangeName={controller.onChangeName}
-                        onResetServer={controller.onResetServer}
-                        onAddServer={controller.onAddServer}
-                        servers={controller.servers}
-                        activeServerId={controller.activeServerId}
-                        onCreateServerGroup={controller.onCreateServerGroup}
-                    />
-
-                    {controller.serverGroups.length > 0 ? (
-                        <ServerGroupsSection
-                            groupSelectionEnabled={controller.groupSelectionEnabled}
-                            setGroupSelectionEnabled={controller.setGroupSelectionEnabled}
-                            groupSelectionPresentation={controller.groupSelectionPresentation}
-                            activeServerGroupId={controller.activeServerGroupId}
-                            selectedGroupServerIds={controller.selectedGroupServerIds}
-                            servers={controller.servers}
-                            onToggleGroupPresentation={controller.onToggleGroupPresentation}
-                            onToggleGroupServer={controller.onToggleGroupServer}
-                        />
-                    ) : null}
-                </ItemList>
-            </KeyboardAvoidingView>
-        </>
+                ) : null}
+            </ItemList>
+        </KeyboardAvoidingView>
     );
 }

@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
+import { HorizontalOverflowScrollView } from '@/components/ui/scroll/HorizontalOverflowScrollView';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -114,16 +115,14 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
                     {children}
                 </View>
             ) : (
-                <ScrollView
+                <HorizontalOverflowScrollView
                     testID={scrollTestID}
-                    horizontal
                     showsHorizontalScrollIndicator={false}
-                    nestedScrollEnabled={true}
                     style={styles.scroll}
                     contentContainerStyle={contentPaddingStyle}
                 >
                     {children}
-                </ScrollView>
+                </HorizontalOverflowScrollView>
             )}
         </View>
     );

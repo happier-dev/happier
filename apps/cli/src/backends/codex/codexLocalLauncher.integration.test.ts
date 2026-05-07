@@ -28,6 +28,10 @@ async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T>)
   }
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 describe('codexLocalLauncher', () => {
 	  it('does not forward CODEX_THREAD_ID to the Codex TUI child process', async () => {
     const fixture = await createCodexBinaryFixture();
@@ -500,6 +504,116 @@ describe('codexLocalLauncher', () => {
         expect(existsSync(fixture.terminatedFlag)).toBe(true);
       });
       expect(metadataUpdates.some((m) => m && m.codexSessionId === sessionId)).toBe(true);
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
+  it('defers UI-triggered remote switch until an active Codex task completes', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      recordArgv: false,
+      emitTaskStarted: true,
+      taskCompleteAfterMs: 300,
+    });
+
+    const { session, metadataUpdates } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: undefined,
+    });
+
+    try {
+      const launcherPromise = codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        resumeId: sessionId,
+        rolloutDiscovery: {
+          initialTimeoutMs: 250,
+          initialPollIntervalMs: 25,
+          extendedPollIntervalMs: 25,
+        },
+      });
+      let settled = false;
+      const observedLauncherPromise = launcherPromise.finally(() => {
+        settled = true;
+      });
+
+      await waitFor(() => {
+        expect(metadataUpdates.some((m) => m && m.codexSessionId === sessionId)).toBe(true);
+      });
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+      await sleep(100);
+      expect(settled).toBe(false);
+      expect(existsSync(fixture.terminatedFlag)).toBe(false);
+
+      await expect(observedLauncherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
+      await waitFor(() => {
+        expect(existsSync(fixture.terminatedFlag)).toBe(true);
+      });
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
+  it('switches after child process exit when an active Codex task never writes a terminal rollout event', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      recordArgv: false,
+      emitTaskStarted: true,
+      exitAfterMs: 200,
+    });
+
+    const { session, metadataUpdates } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: undefined,
+    });
+
+    try {
+      const launcherPromise = codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        resumeId: sessionId,
+        rolloutDiscovery: {
+          initialTimeoutMs: 250,
+          initialPollIntervalMs: 25,
+          extendedPollIntervalMs: 25,
+        },
+      });
+
+      await waitFor(() => {
+        expect(metadataUpdates.some((m) => m && m.codexSessionId === sessionId)).toBe(true);
+      });
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
     } finally {
       restoreEnv();
       await cleanupCodexBinaryFixture(fixture);

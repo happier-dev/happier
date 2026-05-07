@@ -225,7 +225,7 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
             phase: 'awaiting_auth',
             relayUrl,
         });
-        router.push(`/server?url=${encodeURIComponent(relayUrl)}&auto=1`);
+        router.push(`/settings/server?url=${encodeURIComponent(relayUrl)}&auto=1`);
     }, [activeServerSnapshot.serverUrl]);
 
     const handleApprovePairingLocalSetup = React.useCallback(() => {
@@ -297,7 +297,7 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
             relayUrl: remoteRelayRuntimeUrl,
             machineId: remoteCompletedMachine?.machineId ?? null,
         });
-        router.push(`/server?url=${encodeURIComponent(remoteRelayRuntimeUrl)}&auto=1`);
+        router.push(`/settings/server?url=${encodeURIComponent(remoteRelayRuntimeUrl)}&auto=1`);
     }, [remoteCompletedMachine?.machineId, remoteRelayRuntimeUrl]);
 
     const content = (

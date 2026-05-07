@@ -42,9 +42,13 @@ function mockSessionsDomainBoundaries() {
         resolveWarmCacheAccountScope: vi.fn(() => null),
         saveSessionListWarmCacheEntries: vi.fn(),
     }));
-    vi.doMock('../../domains/state/warmCacheAdapters', () => ({
-        buildSessionListCacheEntriesFromRenderables: vi.fn(() => []),
-    }));
+    vi.doMock('../../domains/state/warmCacheAdapters', async () => {
+        const actual = await vi.importActual<typeof import('../../domains/state/warmCacheAdapters')>('../../domains/state/warmCacheAdapters');
+        return {
+            ...actual,
+            buildSessionListCacheEntriesFromRenderables: vi.fn(() => []),
+        };
+    });
     vi.doMock('../buildSessionListViewDataWithServerScope', () => ({
         applyReachableTargetsToSessionListRenderables: vi.fn(({ sessions }) => sessions),
         buildSessionListViewDataWithServerScope: vi.fn(() => []),
@@ -81,6 +85,7 @@ function createHarness(createSessionsDomain: any, createReducer: any) {
         sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},
         reviewCommentsDraftsBySessionId: {},
+        reviewCommentsDraftsByWorkspaceCacheKey: {},
         actionDraftsBySessionId: {},
         isDataReady: false,
         machines: {},

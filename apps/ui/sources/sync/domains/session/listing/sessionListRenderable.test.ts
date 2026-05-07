@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildSessionListRenderableFromSession, derivePendingRequestFlagsFromAgentState } from './sessionListRenderable';
+import {
+    buildSessionListRenderableFromSession,
+    derivePendingRequestFlagsFromAgentState,
+    preserveSessionListRenderableStaleFields,
+} from './sessionListRenderable';
+import type { SessionListRenderableSession } from './sessionListRenderable';
+import { resolveSessionReadStateAction } from '../readState/sessionReadState';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 const storageState = vi.hoisted(() => ({
     sessionMessages: {} as Record<string, unknown>,
@@ -29,6 +36,29 @@ beforeEach(async () => {
     registerStorageStateReader(readStorageState);
 });
 
+function buildRenderable(
+    overrides: Partial<SessionListRenderableSession> & Pick<SessionListRenderableSession, 'id'>,
+): SessionListRenderableSession {
+    const { id, ...rest } = overrides;
+
+    return {
+        id,
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: false,
+        activeAt: 1,
+        archivedAt: null,
+        metadataVersion: 1,
+        agentStateVersion: 0,
+        metadata: null,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 1,
+        ...rest,
+    };
+}
+
 describe('derivePendingRequestFlagsFromAgentState', () => {
     it('treats legacy AskUserQuestion requests without kind as user actions', () => {
         const flags = derivePendingRequestFlagsFromAgentState({
@@ -49,7 +79,133 @@ describe('derivePendingRequestFlagsFromAgentState', () => {
     });
 });
 
+describe('preserveSessionListRenderableStaleFields', () => {
+    it('keeps metadata-unavailable settled state across placeholder replacements', () => {
+        const previous = buildRenderable({
+            id: 's_unavailable',
+            metadata: null,
+            metadataVersion: 2,
+            metadataUnavailable: true,
+        } as Partial<SessionListRenderableSession> & { id: string; metadataUnavailable: true });
+        const next = preserveSessionListRenderableStaleFields(
+            previous,
+            buildRenderable({
+                id: 's_unavailable',
+                metadata: null,
+                metadataVersion: 2,
+            }),
+        );
+
+        expect((next as { metadataUnavailable?: boolean }).metadataUnavailable).toBe(true);
+    });
+
+    it('preserves stale metadata instead of metadata-unavailable state when safe metadata exists', () => {
+        const previousMetadata = {
+            path: '/repo',
+            homeDir: '/home/user',
+            host: 'host-a',
+            machineId: 'machine-a',
+            flavor: 'codex',
+        };
+        const previous = buildRenderable({
+            id: 's_stale',
+            metadata: previousMetadata,
+            metadataVersion: 4,
+            metadataUnavailable: true,
+        } as Partial<SessionListRenderableSession> & { id: string; metadataUnavailable: true });
+        const next = preserveSessionListRenderableStaleFields(
+            previous,
+            buildRenderable({
+                id: 's_stale',
+                metadata: null,
+                metadataVersion: 5,
+            }),
+        );
+
+        expect(next.metadata).toBe(previousMetadata);
+        expect(next.metadataVersion).toBe(4);
+        expect((next as { metadataUnavailable?: boolean }).metadataUnavailable).not.toBe(true);
+    });
+});
+
 describe('buildSessionListRenderableFromSession', () => {
+    it('projects unread state onto renderable session rows', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_unread',
+            seq: 4,
+            lastViewedSessionSeq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 1,
+        } satisfies Session);
+
+        expect(renderable.hasUnreadMessages).toBe(true);
+    });
+
+    it('keeps read-state actions derived from the projected session cursor', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_read',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 1,
+        } satisfies Session);
+
+        expect(resolveSessionReadStateAction(renderable)).toEqual({
+            kind: 'mark-unread',
+            visible: true,
+            targetState: 'unread',
+        });
+    });
+
+    it('keeps read-state actions derived from projected legacy metadata', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_legacy_read',
+            seq: 4,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: {
+                path: '',
+                host: '',
+                readStateV1: { v: 1, sessionSeq: 4, pendingActivityAt: 0, updatedAt: 1 },
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 1,
+        } satisfies Session);
+
+        expect(resolveSessionReadStateAction(renderable)).toEqual({
+            kind: 'mark-unread',
+            visible: true,
+            targetState: 'unread',
+        });
+    });
+
     it('prefers projected pending-request counts when they are present on the session', () => {
         const renderable = buildSessionListRenderableFromSession({
             id: 's1',

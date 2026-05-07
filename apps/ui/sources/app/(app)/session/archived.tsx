@@ -1,7 +1,7 @@
 import React from 'react';
 import { Pressable, View, SectionList, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/ui/text/Text';
@@ -11,10 +11,14 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { useAllSessions, useSetting } from '@/sync/domains/state/storage';
+import { useAllSessions, useSessionListViewDataByServerId, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { sessionUnarchiveWithServerScope } from '@/sync/ops';
+import { sync } from '@/sync/sync';
+
+type ArchivedScreenSession = Session | (SessionListRenderableSession & { serverId?: string });
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -109,7 +113,7 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-function canManageArchive(session: Session): boolean {
+function canManageArchive(session: ArchivedScreenSession): boolean {
     // Owner sessions have no accessLevel set; shared sessions require admin.
     return !session.accessLevel || session.accessLevel === 'admin';
 }
@@ -123,10 +127,16 @@ function normalizePinnedSessionKey(serverIdRaw: unknown, sessionIdRaw: unknown):
 
 export default function ArchivedSessionsScreen() {
     const safeArea = useSafeAreaInsets();
+    const { theme } = useUnistyles();
     const navigateToSession = useNavigateToSession();
     const allSessions = useAllSessions();
+    const sessionListViewDataByServerId = useSessionListViewDataByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
     const pinnedSessionKeysV1 = useSetting('pinnedSessionKeysV1') ?? [];
+
+    React.useEffect(() => {
+        void sync.fetchArchivedSessions().catch(() => undefined);
+    }, []);
 
     const pinnedSessionKeySet = React.useMemo(() => {
         return new Set(
@@ -136,17 +146,41 @@ export default function ArchivedSessionsScreen() {
         );
     }, [pinnedSessionKeysV1]);
 
+    const cachedArchivedSessions = React.useMemo(() => {
+        const byId = new Map<string, ArchivedScreenSession>();
+        for (const [serverId, items] of Object.entries(sessionListViewDataByServerId)) {
+            if (!Array.isArray(items)) continue;
+            for (const item of items) {
+                if (item.type !== 'session') continue;
+                if (item.session.archivedAt == null) continue;
+                byId.set(item.session.id, {
+                    ...item.session,
+                    serverId: typeof item.serverId === 'string' && item.serverId.trim() ? item.serverId.trim() : serverId,
+                });
+            }
+        }
+        return Array.from(byId.values());
+    }, [sessionListViewDataByServerId]);
+
     const archivedSessions = React.useMemo(() => {
-        return allSessions
-            .filter((s) => s.archivedAt != null)
-            .slice()
+        const byId = new Map<string, ArchivedScreenSession>();
+        for (const session of cachedArchivedSessions) {
+            byId.set(session.id, session);
+        }
+        for (const session of allSessions) {
+            if (session.archivedAt != null) {
+                byId.set(session.id, session);
+            }
+        }
+
+        return Array.from(byId.values())
             .sort((a, b) => {
                 const aAt = typeof a.archivedAt === 'number' ? a.archivedAt : 0;
                 const bAt = typeof b.archivedAt === 'number' ? b.archivedAt : 0;
                 if (bAt !== aAt) return bAt - aAt;
                 return b.updatedAt - a.updatedAt;
             });
-    }, [allSessions]);
+    }, [allSessions, cachedArchivedSessions]);
 
     const hiddenInactiveSessions = React.useMemo(() => {
         if (!hideInactiveSessions) return [];
@@ -167,7 +201,7 @@ export default function ArchivedSessionsScreen() {
         const nextSections: Array<{
             key: 'archived' | 'hidden_inactive';
             title: string;
-            data: Session[];
+            data: ArchivedScreenSession[];
         }> = [];
 
         if (hiddenInactiveSessions.length > 0) {
@@ -189,7 +223,7 @@ export default function ArchivedSessionsScreen() {
         return nextSections;
     }, [archivedSessions, hiddenInactiveSessions]);
 
-    const handleUnarchive = React.useCallback((session: Session) => {
+    const handleUnarchive = React.useCallback((session: ArchivedScreenSession) => {
         const serverId = typeof session.serverId === 'string' && session.serverId.trim()
             ? session.serverId.trim()
             : null;
@@ -214,7 +248,7 @@ export default function ArchivedSessionsScreen() {
     }, []);
 
     const renderItem = React.useCallback(
-        ({ item, index, section }: { item: Session; index: number; section: { key: 'archived' | 'hidden_inactive'; data: Session[] } }) => {
+        ({ item, index, section }: { item: ArchivedScreenSession; index: number; section: { key: 'archived' | 'hidden_inactive'; data: ArchivedScreenSession[] } }) => {
             const sessionName = getSessionName(item);
             const sessionSubtitle = getSessionSubtitle(item);
             const avatarId = getSessionAvatarId(item);
@@ -254,13 +288,13 @@ export default function ArchivedSessionsScreen() {
                             accessibilityLabel={t('sessionInfo.unarchiveSession')}
                             hitSlop={8}
                         >
-                            <Ionicons name="arrow-undo-outline" size={18} color={String((styles.sessionSubtitle as any)?.color ?? '#666')} />
+                            <Ionicons name="arrow-undo-outline" size={18} color={theme.colors.textSecondary} />
                         </Pressable>
                     ) : null}
                 </Pressable>
             );
         },
-        [handleUnarchive, navigateToSession],
+        [handleUnarchive, navigateToSession, theme.colors.textSecondary],
     );
 
     const renderSectionHeader = React.useCallback(

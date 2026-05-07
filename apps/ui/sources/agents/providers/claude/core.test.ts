@@ -18,7 +18,7 @@ describe('CLAUDE_CORE install banner', () => {
         expect(CLAUDE_CORE.uiConnectedService).toEqual({
             serviceId: 'anthropic',
             label: 'Claude Code',
-            connectRoute: '/(app)/settings/connect/claude',
+            connectRoute: '/settings/connect/claude',
         });
     });
 });

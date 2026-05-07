@@ -485,7 +485,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         // Regression: when the streamed transcript writer cannot durably commit (e.g. the session
         // client is missing `sendAgentMessageCommitted`) but the streamed deltas still reached the
         // UI, the old fallback re-emitted the result text — producing duplicate assistant messages
-        // AND a synthetic uuid that later poisoned `claudeLastAssistantUuid` resume anchors.
+        // AND a synthetic uuid that could later become an unsafe resume anchor.
         const assistantText = 'hello from stream events';
         const resultText = 'hello from result fallback';
         const emittedMessages: any[] = [];

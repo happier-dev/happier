@@ -245,6 +245,39 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('waiting');
     });
 
+    it('does not return action_required when a user-action request is stale relative to completedRequests', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: {
+                        tool: 'ExitPlanMode',
+                        kind: 'user_action',
+                        arguments: { plan: 'Use the approved plan.' },
+                        createdAt: 100,
+                    },
+                },
+                completedRequests: {
+                    req1: {
+                        tool: 'ExitPlanMode',
+                        arguments: { plan: 'Use the approved plan.' },
+                        createdAt: 100,
+                        completedAt: 200,
+                        status: 'approved',
+                        reason: null,
+                        mode: null,
+                        allowedTools: null,
+                        decision: 'approved',
+                    },
+                },
+            },
+        });
+
+        const status = getSessionStatus(session, 1_000, 0);
+        expect(status.state).toBe('waiting');
+    });
+
     it('does not return action_required when transcript marks the same request as canceled', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
         const session = createBaseSession({
@@ -766,6 +799,59 @@ describe('listPendingUserActionRequests', () => {
             }),
         ]);
     });
+
+    it('keeps requests pending when a local Request interrupted placeholder carries an abort decision', async () => {
+        const { listPendingUserActionRequests } = await import('./sessionUtils');
+        const session = createBaseSession({
+            id: 's-aborted-transcript',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    req1: {
+                        tool: 'AskUserQuestion',
+                        kind: 'user_action',
+                        arguments: { q: 'continue?' },
+                        createdAt: 100,
+                    },
+                },
+                completedRequests: null,
+            },
+        });
+
+        expect(listPendingUserActionRequests(session, [
+            {
+                kind: 'tool-call',
+                id: 'm-tool-1',
+                localId: null,
+                createdAt: 100,
+                children: [],
+                tool: {
+                    id: 'req1',
+                    name: 'AskUserQuestion',
+                    state: 'error',
+                    input: { q: 'continue?' },
+                    createdAt: 100,
+                    completedAt: 101,
+                    result: { error: 'Request interrupted' },
+                    permission: {
+                        id: 'req1',
+                        status: 'canceled',
+                        kind: 'user_action',
+                        reason: 'Request interrupted',
+                        decision: 'abort',
+                    },
+                },
+            } as any,
+        ])).toEqual([
+            expect.objectContaining({
+                id: 'req1',
+                tool: 'AskUserQuestion',
+                kind: 'user_action',
+                arguments: { q: 'continue?' },
+                createdAt: 100,
+            }),
+        ]);
+    });
 });
 
 describe('getSessionStatus', () => {
@@ -1028,7 +1114,7 @@ describe('reachable target session display helpers', () => {
         expect(getSessionSubtitle(session)).toBe('~/workspace/live');
     });
 
-    it('uses the reachable target machine and base path for session avatar ids when metadata is stale after handoff', async () => {
+    it('includes the session id with the reachable target for session avatar ids', async () => {
         const { getSessionAvatarId } = await import('./sessionUtils');
 
         const session = createBaseSession({
@@ -1066,6 +1152,31 @@ describe('reachable target session display helpers', () => {
                 }
                 : null;
 
-        expect(getSessionAvatarId(session)).toBe('machine-target:/Users/test/workspace/live');
+        expect(getSessionAvatarId(session)).toBe('session-1:machine-target:/Users/test/workspace/live');
+    });
+
+    it('keeps avatar ids distinct for separate sessions in the same reachable target', async () => {
+        const { getSessionAvatarId } = await import('./sessionUtils');
+
+        const first = createBaseSession({
+            id: 'session-1',
+            metadata: {
+                machineId: 'machine-target',
+                path: '/Users/test/workspace/live',
+                homeDir: '/Users/test',
+                host: 'target.local',
+            } as Session['metadata'],
+        });
+        const second = createBaseSession({
+            id: 'session-2',
+            metadata: {
+                machineId: 'machine-target',
+                path: '/Users/test/workspace/live',
+                homeDir: '/Users/test',
+                host: 'target.local',
+            } as Session['metadata'],
+        });
+
+        expect(getSessionAvatarId(second)).not.toBe(getSessionAvatarId(first));
     });
 });

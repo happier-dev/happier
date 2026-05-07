@@ -221,8 +221,8 @@ describe('useNewSessionAgentInputPresentation', () => {
         if (!chip?.collapsedContentPopover) {
             throw new Error('Expected link-file chip to define collapsedContentPopover');
         }
-        // Popover content must be scroll-enabled so it doesn't collapse to 0-height on native.
-        expect(chip.collapsedContentPopover.scrollEnabled).toBe(true);
+        // The file browser owns its virtualized list scrolling; the outer popover must not add a ScrollView.
+        expect(chip.collapsedContentPopover.scrollEnabled).toBe(false);
         const renderContent = chip.collapsedContentPopover.renderContent;
         if (typeof renderContent !== 'function') {
             throw new Error('Expected collapsedContentPopover.renderContent to be a function');

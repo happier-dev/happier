@@ -9,6 +9,25 @@ import { installSessionFilesCommonModuleMocks } from './sessionFilesTestHelpers'
 
 installSessionFilesCommonModuleMocks();
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async () => {
+    const React = await import('react');
+    return {
+        DropdownMenu: (props: any) => React.createElement(
+            'DropdownMenu',
+            props,
+            typeof props.trigger === 'function'
+                ? props.trigger({
+                    open: false,
+                    toggle: vi.fn(),
+                    openMenu: vi.fn(),
+                    closeMenu: vi.fn(),
+                    selectedItem: props.items.find((item: any) => item.id === props.selectedId) ?? null,
+                })
+                : props.trigger,
+        ),
+    };
+});
+
 describe('FilesToolbar', () => {
     const theme = {
         colors: {
@@ -53,16 +72,26 @@ describe('FilesToolbar', () => {
 
         expect(onToggleScmPanel).toHaveBeenCalled();
 
+        const viewModeMenu = screen.tree.findByType('DropdownMenu' as any);
+        expect(viewModeMenu.props.selectedId).toBe('repository');
+        expect(viewModeMenu.props.items.map((item: { id: string }) => item.id)).toEqual([
+            'repository',
+            'turn',
+            'session',
+        ]);
+        viewModeMenu.props.onSelect('turn');
+        expect(onChangedFilesViewMode).toHaveBeenCalledWith('turn');
+
         // Smoke-check: the toolbar still exposes the basic navigation callbacks.
         expect(typeof onShowChangedFiles).toBe('function');
         expect(typeof onShowAllRepositoryFiles).toBe('function');
         expect(typeof onChangedFilesViewMode).toBe('function');
         expect(typeof onChangedFilesPresentationChange).toBe('function');
 
-        expect(screen.getTextContent()).toContain('files.toolbar.turnView');
+        expect(screen.getTextContent()).toContain('files.toolbar.view');
     });
 
-    it('hides session toggle when session attribution is not reliable enough', async () => {
+    it('hides scoped view controls when no scoped views are available', async () => {
         const { FilesToolbar } = await import('./FilesToolbar');
 
         const screen = await renderScreen(<FilesToolbar
@@ -84,9 +113,10 @@ describe('FilesToolbar', () => {
         />);
 
         const textContent = screen.getTextContent();
-        expect(textContent).toContain('files.toolbar.repositoryView');
+        expect(textContent).not.toContain('files.toolbar.repositoryView');
         expect(textContent).not.toContain('files.toolbar.turnView');
         expect(textContent).not.toContain('files.toolbar.sessionView');
+        expect(screen.tree.findAllByType('DropdownMenu' as any)).toHaveLength(0);
         expect(textContent).toContain('files.attributionReliabilityLimited');
     });
 });

@@ -1,5 +1,6 @@
 import { logger } from '@/ui/logger';
 import type { Credentials } from '@/persistence';
+import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
 import { resolveCatalogAgentIdForCliSubcommand } from '@/backends/catalog';
 import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '../processSupervision/sessionRunnerRespawnDescriptor';
 import {
@@ -18,6 +19,10 @@ function extractExistingSessionIdFromCommand(command: string): string | null {
   const match = /(?:^|\s)--existing-session(?:=|\s+)(\S+)/.exec(command);
   const sessionId = typeof match?.[1] === 'string' ? match[1].trim() : '';
   return sessionId || null;
+}
+
+function shouldRecoverMarkerlessDaemonSpawnedSessions(env: NodeJS.ProcessEnv = process.env): boolean {
+  return parseOptionalBooleanEnv(env.HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED) !== false;
 }
 
 function extractResumeIdFromCommand(command: string): string | null {
@@ -298,13 +303,15 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
           },
         ] as const),
     );
-    const recoveredMarkerlessCount = await recoverMarkerlessDaemonSpawnedSessions({
-      happyProcesses,
-      incompleteMarkerByPid,
-      markedPids: markedPidSet,
-      pidToTrackedSession,
-      credentials,
-    });
+    const recoveredMarkerlessCount = shouldRecoverMarkerlessDaemonSpawnedSessions()
+      ? await recoverMarkerlessDaemonSpawnedSessions({
+          happyProcesses,
+          incompleteMarkerByPid,
+          markedPids: markedPidSet,
+          pidToTrackedSession,
+          credentials,
+        })
+      : 0;
     if (recoveredMarkerlessCount > 0) {
       logger.debug(
         `[DAEMON RUN] Recovered ${recoveredMarkerlessCount} live daemon session(s) that were missing disk markers during startup`,

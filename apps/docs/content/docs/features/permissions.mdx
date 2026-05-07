@@ -146,6 +146,8 @@ Model changes are capability-driven and provider-specific:
 - **Codex/OpenCode/Kilo/Auggie (ACP)**: Happier applies model changes live when `session/set_model` is supported; otherwise it falls back to provider config options when available.
 - **Gemini (ACP)**: model changes may require recreating the underlying ACP process; Happier preserves context using replay/history so the session still continues.
 
+For the full guide to engine picking, dynamic/static model lists, custom model ids, model-specific options, and favorite models, see [Model and engine selection](/docs/features/model-and-engine-selection).
+
 ## CLI usage
 
 Start a session with a permission mode:
@@ -342,6 +344,7 @@ The UI’s **Effective** line is the source of truth for what your current sessi
 ## Related guides
 
 - [ACP backends](/docs/features/acp-backends)
+- [Model and engine selection](/docs/features/model-and-engine-selection)
 - [Profiles](/docs/features/profiles)
 - [Session modes](/docs/features/session-modes)
 - [Session settings](/docs/features/session-settings)

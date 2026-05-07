@@ -24,4 +24,23 @@ describe('typesRaw progress record handling', () => {
     const normalized = normalizeRawMessage('msg-progress', null, 1000, raw);
     expect(normalized).toBeNull();
   });
+
+  it('accepts codex turn_aborted records and drops them during normalization', () => {
+    const raw: any = {
+      role: 'agent',
+      content: {
+        type: 'codex',
+        data: {
+          type: 'turn_aborted',
+        },
+      },
+      meta: { source: 'cli' },
+    };
+
+    const parsed = RawRecordSchema.safeParse(raw);
+    expect(parsed.success).toBe(true);
+
+    const normalized = normalizeRawMessage('msg-turn-aborted', null, 1000, raw);
+    expect(normalized).toBeNull();
+  });
 });

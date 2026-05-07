@@ -84,10 +84,14 @@ async function setupHarness() {
         loadThemePreference: () => 'adaptive',
         loadPurchases: () => ({}),
         savePurchases: vi.fn(),
+        loadLocalPetSourcesBySourceKey: () => ({}),
+        saveLocalPetSourcesBySourceKey: vi.fn(),
         loadSessionDrafts: () => ({}),
         saveSessionDrafts: vi.fn(),
         loadSessionReviewCommentsDrafts: () => ({}),
         saveSessionReviewCommentsDrafts: vi.fn(),
+        loadWorkspaceReviewCommentsDrafts: () => ({}),
+        saveWorkspaceReviewCommentsDrafts: vi.fn(),
         loadSessionActionDrafts: () => ({}),
         saveSessionActionDrafts: vi.fn(),
         loadNewSessionDraft: () => null,
@@ -276,6 +280,76 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro-preset' },
         });
         expect(captured.value?.backendTarget).toEqual({ kind: 'configuredAcpBackend', backendId: 'custom-kiro-preset' });
+    });
+
+    it('moves the launched machine path to the front without dropping other paths for the same machine', async () => {
+        const { useCreateNewSession } = await setupHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [
+                    { machineId: 'm1', path: '/old/a' },
+                    { machineId: 'm1', path: '/tmp' },
+                    { machineId: 'm2', path: '/other' },
+                ],
+                agentType: 'customAcp',
+                backendTarget: {
+                    kind: 'configuredAcpBackend',
+                    backendId: 'custom-kiro-preset',
+                },
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+            } as any);
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        expect(handleCreateSession).toBeTruthy();
+        await handleCreateSession!();
+
+        expect(applySettingsMock).toHaveBeenCalledWith({
+            recentMachinePaths: [
+                { machineId: 'm1', path: '/tmp' },
+                { machineId: 'm1', path: '/old/a' },
+                { machineId: 'm2', path: '/other' },
+            ],
+            lastUsedAgent: 'customAcp',
+            lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-kiro-preset' },
+        });
     });
 
     it('passes a configured ACP backend target into new-session automation template building', async () => {

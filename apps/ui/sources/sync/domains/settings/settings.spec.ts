@@ -145,6 +145,18 @@ describe('settings', () => {
             });
         });
 
+        it('accepts mesh gradient as an avatar style', () => {
+            const parsed = settingsParse({ avatarStyle: 'meshGradient' });
+
+            expect(parsed.avatarStyle).toBe('meshGradient');
+        });
+
+        it('defaults new settings to mesh gradient columns', () => {
+            const parsed = settingsParse({});
+
+            expect(parsed.avatarStyle).toBe('meshGradientColumns');
+        });
+
         it('should ignore invalid field types and use defaults', () => {
             const invalidSettings = {
                 viewInline: 'not a boolean'
@@ -264,12 +276,12 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).featureToggles?.['files.editor']).toBeUndefined();
-            expect((parsed as any).schemaVersion).toBe(7);
+            expect((parsed as any).schemaVersion).toBe(8);
         });
 
         it('keeps explicit disable for files.editor when schemaVersion matches current (user intent)', () => {
             const parsed = settingsParse({
-                schemaVersion: 7,
+                schemaVersion: 8,
                 experiments: false,
                 featureToggles: {
                     'files.editor': false,
@@ -277,7 +289,7 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).featureToggles?.['files.editor']).toBe(false);
-            expect((parsed as any).schemaVersion).toBe(7);
+            expect((parsed as any).schemaVersion).toBe(8);
         });
 
         it('migrates legacy filesDiffPresentationStyle=split to unified (new default) for old schema versions', () => {
@@ -287,17 +299,17 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).filesDiffPresentationStyle).toBe('unified');
-            expect((parsed as any).schemaVersion).toBe(7);
+            expect((parsed as any).schemaVersion).toBe(8);
         });
 
         it('keeps explicit filesDiffPresentationStyle=split when schemaVersion matches current (user intent)', () => {
             const parsed = settingsParse({
-                schemaVersion: 7,
+                schemaVersion: 8,
                 filesDiffPresentationStyle: 'split',
             } as any);
 
             expect((parsed as any).filesDiffPresentationStyle).toBe('split');
-            expect((parsed as any).schemaVersion).toBe(7);
+            expect((parsed as any).schemaVersion).toBe(8);
         });
 
         it('defaults alwaysShowContextSize to true', () => {
@@ -313,17 +325,37 @@ describe('settings', () => {
             } as any);
 
             expect(parsed.alwaysShowContextSize).toBe(true);
-            expect(parsed.schemaVersion).toBe(7);
+            expect(parsed.schemaVersion).toBe(8);
         });
 
         it('keeps explicit alwaysShowContextSize=false when schemaVersion matches current (user intent)', () => {
             const parsed = settingsParse({
-                schemaVersion: 7,
+                schemaVersion: 8,
                 alwaysShowContextSize: false,
             } as any);
 
             expect(parsed.alwaysShowContextSize).toBe(false);
-            expect(parsed.schemaVersion).toBe(7);
+            expect(parsed.schemaVersion).toBe(8);
+        });
+
+        it('migrates persisted old default avatar style to mesh gradient columns', () => {
+            const parsed = settingsParse({
+                schemaVersion: 7,
+                avatarStyle: 'brutalist',
+            } as any);
+
+            expect(parsed.avatarStyle).toBe('meshGradientColumns');
+            expect(parsed.schemaVersion).toBe(8);
+        });
+
+        it('preserves non-default avatar styles during the mesh gradient columns migration', () => {
+            const parsed = settingsParse({
+                schemaVersion: 7,
+                avatarStyle: 'gradient',
+            } as any);
+
+            expect(parsed.avatarStyle).toBe('gradient');
+            expect(parsed.schemaVersion).toBe(8);
         });
 
         it('migrates legacy sessionListDensity=compact to cozy', () => {
@@ -891,8 +923,9 @@ describe('settings', () => {
 
         describe('settingsDefaults', () => {
             it('should have correct default values', () => {
-            expect(settingsDefaults.schemaVersion).toBe(7);
+            expect(settingsDefaults.schemaVersion).toBe(8);
             expect(settingsDefaults.experiments).toBe(false);
+            expect(settingsDefaults.avatarStyle).toBe('meshGradientColumns');
             expect(settingsDefaults.alwaysShowContextSize).toBe(true);
             expect(settingsDefaults.backendEnabledByTargetKey).toMatchObject({
                 [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' })]: true,
@@ -1016,7 +1049,7 @@ describe('settings', () => {
 
         it('preserves legacy Codex backend mode when upgrading a pre-v6 payload', () => {
             const parsed = settingsParse({ schemaVersion: 5, codexBackendMode: 'mcp' } as any);
-            expect(parsed.schemaVersion).toBe(7);
+            expect(parsed.schemaVersion).toBe(8);
             expect((parsed as any).codexBackendMode).toBe('mcp');
         });
 

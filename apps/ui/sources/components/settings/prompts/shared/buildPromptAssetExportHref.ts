@@ -6,8 +6,8 @@ export function buildPromptAssetExportHref(args: Readonly<{
     link?: PromptExternalLinkEntryV1 | null;
 }>): string {
     const basePath = args.libraryKind === 'bundle'
-        ? `/(app)/settings/prompts/skills/${args.artifactId}/export`
-        : `/(app)/settings/prompts/docs/${args.artifactId}/export`;
+        ? `/settings/prompts/skills/${args.artifactId}/export`
+        : `/settings/prompts/docs/${args.artifactId}/export`;
 
     if (!args.link) return basePath;
 

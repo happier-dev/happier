@@ -248,6 +248,96 @@ describe('claudeRemoteDispatch', () => {
         expect(mockLegacy).toHaveBeenCalledTimes(0);
     });
 
+    it('retries Agent SDK without resumeSessionAt when Claude rejects the matching message anchor', async () => {
+        const mockLegacy = vi.fn(async () => {});
+        const seenPrompts: string[] = [];
+        const capturedResumeAnchors: Array<unknown> = [];
+        const rejectedAnchors: string[] = [];
+        const mockAgentSdk = vi
+            .fn()
+            .mockImplementationOnce(async (params: any) => {
+                capturedResumeAnchors.push(params.resumeSessionAt);
+                const next = await params.nextMessage();
+                seenPrompts.push(next.message);
+                throw new Error(
+                    'Claude Code returned an error result: No message found with message.uuid of: 84a6076b-82b1-4450-b584-ddbb2142472f',
+                );
+            })
+            .mockImplementationOnce(async (params: any) => {
+                capturedResumeAnchors.push(params.resumeSessionAt);
+                const next = await params.nextMessage();
+                seenPrompts.push(next.message);
+            });
+        const onRunnerSelected = vi.fn();
+
+        let sent = false;
+        await claudeRemoteDispatch(
+            {
+                sessionId: 'sess_1',
+                resumeSessionAt: '84a6076b-82b1-4450-b584-ddbb2142472f',
+                onResumeSessionAtRejected: (anchor: string) => {
+                    rejectedAnchors.push(anchor);
+                },
+                onRunnerSelected,
+                nextMessage: async () => {
+                    if (sent) return null;
+                    sent = true;
+                    return {
+                        message: 'continue from phone',
+                        mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any,
+                    };
+                },
+            } as any,
+            { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+        );
+
+        expect(onRunnerSelected).toHaveBeenNthCalledWith(1, 'agentSdk');
+        expect(onRunnerSelected).toHaveBeenNthCalledWith(2, 'agentSdk');
+        expect(mockAgentSdk).toHaveBeenCalledTimes(2);
+        expect(mockLegacy).toHaveBeenCalledTimes(0);
+        expect(capturedResumeAnchors).toEqual([
+            '84a6076b-82b1-4450-b584-ddbb2142472f',
+            null,
+        ]);
+        expect(seenPrompts).toEqual(['continue from phone', 'continue from phone']);
+        expect(rejectedAnchors).toEqual(['84a6076b-82b1-4450-b584-ddbb2142472f']);
+    });
+
+    it('does not retry without resumeSessionAt when Claude rejects a different message anchor', async () => {
+        const mockLegacy = vi.fn(async () => {});
+        const mockAgentSdk = vi.fn(async (params: any) => {
+            await params.nextMessage();
+            throw new Error(
+                'Claude Code returned an error result: No message found with message.uuid of: 00000000-0000-4000-8000-000000000000',
+            );
+        });
+        const onResumeSessionAtRejected = vi.fn();
+
+        let sent = false;
+        await expect(
+            claudeRemoteDispatch(
+                {
+                    sessionId: 'sess_1',
+                    resumeSessionAt: '84a6076b-82b1-4450-b584-ddbb2142472f',
+                    onResumeSessionAtRejected,
+                    nextMessage: async () => {
+                        if (sent) return null;
+                        sent = true;
+                        return {
+                            message: 'continue from phone',
+                            mode: { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true } as any,
+                        };
+                    },
+                } as any,
+                { claudeRemote: mockLegacy, claudeRemoteAgentSdk: mockAgentSdk },
+            ),
+        ).rejects.toThrow(/No message found with message\.uuid/);
+
+        expect(mockAgentSdk).toHaveBeenCalledTimes(1);
+        expect(mockLegacy).toHaveBeenCalledTimes(0);
+        expect(onResumeSessionAtRejected).not.toHaveBeenCalled();
+    });
+
     it('does not fall back to legacy runner when Agent SDK exits with code 1 after emitting a message', async () => {
         const mockLegacy = vi.fn(async () => {});
         const mockAgentSdk = vi.fn(async (params: any) => {

@@ -28,6 +28,10 @@ Claude supports Happier’s attach flow for app-started sessions:
 
 You can later switch back to remote mode and continue from the Happier app without starting a new session.
 
+Local control is started from the terminal. Use `happier attach <session-id>` on the machine that owns the session.
+
+If you send a message from the app while Claude is locally controlled, Happier stores it in the pending queue first. When Claude is idle, Happier can switch back to remote control and process the queued message. If Claude is still working in the terminal, Happier waits until the local turn finishes or stops before switching, so the app message does not interrupt the current Claude turn.
+
 On machines with `tmux`, this is usually a tmux-backed attach flow. On Windows, use Happier’s Windows remote session mode (`Windows Terminal`, `Console`, or `Hidden`) instead of expecting tmux.
 
 For the full workflow, see [Features → Attach to a running session](/docs/features/attach-to-session).
@@ -43,6 +47,7 @@ For the full user guide (CLI flags, UI picker, defaults, and apply timing), see:
 
 - [Permissions](../features/permissions)
 - [Session modes](../features/session-modes)
+- [Model and engine selection](../features/model-and-engine-selection)
 
 ### Claude plan mode
 
@@ -81,6 +86,8 @@ Permission mode is stored canonically in **session metadata**, so it follows the
 - switch between **local** and **remote** mode.
 
 Some permission behavior is implemented by Happier (tool approval gating) and can update immediately; other behavior depends on Claude’s own session flags and may only take effect when Claude is launched/resumed. The in-session picker’s “Effective policy” line is the source of truth for what will apply right now.
+
+When local permission bridge is enabled, Claude permission prompts can still be forwarded into Happier while the terminal owns the session. Message sending is separate from permission approval: app messages sent during exclusive local control still go through the pending queue and are delivered only after Happier can safely resume remote processing.
 
 ## Install Claude Code
 

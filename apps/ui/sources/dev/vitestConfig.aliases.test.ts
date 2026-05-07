@@ -40,4 +40,19 @@ describe('vitest config aliases', () => {
             '/packages/agents/src/permissions/index.ts',
         );
     });
+
+    it('stubs react-native-enriched-markdown so MarkdownView tests do not load native modules', async () => {
+        const module = await import('../../vitest.config');
+        const config = module.default as {
+            resolve?: { alias?: Array<{ find: unknown; replacement: string }> };
+        };
+        const aliasEntries = Array.isArray(config.resolve?.alias)
+            ? config.resolve.alias
+            : [];
+
+        const enrichedMarkdownAlias = aliasEntries.find((entry) => entry.find === 'react-native-enriched-markdown');
+
+        expect(enrichedMarkdownAlias, 'expected enriched markdown to use a node-safe test stub').toBeTruthy();
+        expect(enrichedMarkdownAlias?.replacement).toContain('reactNativeEnrichedMarkdownStub.tsx');
+    });
 });

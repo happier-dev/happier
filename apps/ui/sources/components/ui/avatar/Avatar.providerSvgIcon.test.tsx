@@ -91,4 +91,24 @@ describe('Avatar provider svg icons', () => {
 
         expect(tree.findAllByType('SvgXml' as any).length).toBe(1);
     });
+
+    it('renders the mesh gradient avatar style through the generated avatar path', async () => {
+        const { createStorageModuleStub, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        vi.doMock('@/sync/domains/state/storage', () => createStorageModuleStub({
+            useSetting: createUseSettingMock({
+                values: {
+                    avatarStyle: 'meshGradient',
+                    showFlavorIcons: false,
+                },
+            }),
+        }));
+        vi.resetModules();
+
+        const { Avatar } = await import('./Avatar');
+
+        const { tree } = await renderScreen(<Avatar id="session-mesh" size={48} />);
+
+        expect(tree.findAllByType('AvatarGradient' as any)).toHaveLength(0);
+        expect(tree.findAllByProps({ testID: 'avatar-generated-meshGradient' })).toHaveLength(1);
+    });
 });

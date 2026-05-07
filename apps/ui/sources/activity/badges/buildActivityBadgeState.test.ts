@@ -29,6 +29,65 @@ beforeEach(async () => {
 });
 
 describe('buildActivityBadgeState', () => {
+    it('counts unread session-list renderables before full session hydration completes', () => {
+        const state = buildActivityBadgeState({
+            sessions: [
+                {
+                    id: 's1',
+                    seq: 0,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    metadataVersion: 1,
+                    agentStateVersion: 0,
+                    metadata: null,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                    hasUnreadMessages: true,
+                } as any,
+            ],
+            numericInboxCount: 0,
+            hasNonNumericInboxAttention: false,
+        });
+
+        expect(state).toEqual({
+            count: 1,
+            showNonNumericDot: false,
+        });
+    });
+
+    it('does not count undecryptable unread session-list renderables', () => {
+        const state = buildActivityBadgeState({
+            sessions: [
+                {
+                    id: 's1',
+                    seq: 4,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    metadataVersion: 1,
+                    agentStateVersion: 0,
+                    metadata: null,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                    metadataUnavailable: true,
+                    hasUnreadMessages: true,
+                } as any,
+            ],
+            numericInboxCount: 0,
+            hasNonNumericInboxAttention: false,
+        });
+
+        expect(state).toEqual({
+            count: 0,
+            showNonNumericDot: false,
+        });
+    });
+
     it('counts a session once even when multiple attention reasons are active', () => {
         const state = buildActivityBadgeState({
             sessions: [

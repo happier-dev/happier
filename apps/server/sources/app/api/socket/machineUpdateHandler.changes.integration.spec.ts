@@ -4,6 +4,7 @@ import { createInTxHarness } from "../testkit/txHarness";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
 const emitUpdate = vi.fn();
+const emitEphemeral = vi.fn();
 const buildUpdateMachineUpdate = vi.fn((_machineId: string, updSeq: number, updId: string) => ({
     id: updId,
     seq: updSeq,
@@ -11,7 +12,7 @@ const buildUpdateMachineUpdate = vi.fn((_machineId: string, updSeq: number, updI
 }));
 
 vi.mock("@/app/events/eventRouter", () => ({
-    eventRouter: { emitUpdate, emitEphemeral: vi.fn() },
+    eventRouter: { emitUpdate, emitEphemeral },
     buildUpdateMachineUpdate,
     buildMachineActivityEphemeral: vi.fn(() => ({ t: "machine-activity" })),
 }));
@@ -138,5 +139,71 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         expect(markAccountChanged).not.toHaveBeenCalled();
         expect(emitUpdate).not.toHaveBeenCalled();
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));
+    });
+
+    it("rebroadcasts validated direct-session transcript delta ephemerals", async () => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+
+        const payload = {
+            type: "direct-session-transcript-delta",
+            sessionId: "sess-1",
+            items: [
+                {
+                    id: "a2",
+                    createdAtMs: 1_050,
+                    localId: "direct-2",
+                    raw: {
+                        type: "assistant",
+                        uuid: "a2",
+                        message: { model: "m", content: [{ type: "text", text: "hello from push" }] },
+                    },
+                },
+            ],
+            nextCursor: "cursor-2",
+            truncated: false,
+            futureField: { preserved: true },
+        };
+
+        const socket = createFakeSocket({
+            data: {
+                clientType: "machine-scoped",
+                machineId: "m1",
+            },
+        });
+        machineUpdateHandler("u1", socket as any);
+        const handler = socket.handlers.get("direct-session-transcript-delta");
+        expect(handler).toEqual(expect.any(Function));
+        if (!handler) return;
+
+        await handler(payload);
+
+        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
+            userId: "u1",
+            payload,
+            recipientFilter: { type: "all-interested-in-session", sessionId: "sess-1" },
+        }));
+    });
+
+    it("does not broadcast direct-session transcript deltas from non machine-scoped sockets", async () => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+
+        const socket = createFakeSocket({
+            data: {
+                clientType: "user-scoped",
+            },
+        });
+        machineUpdateHandler("u1", socket as any);
+        const handler = socket.handlers.get("direct-session-transcript-delta");
+        expect(handler).toEqual(expect.any(Function));
+        if (!handler) return;
+
+        await handler({
+            type: "direct-session-transcript-delta",
+            sessionId: "sess-1",
+            items: [],
+            truncated: false,
+        });
+
+        expect(emitEphemeral).not.toHaveBeenCalled();
     });
 });

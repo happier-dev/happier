@@ -7,6 +7,14 @@ import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
+export type ScmCommitAdjacentPushAction = Readonly<{
+    visible: boolean;
+    disabled: boolean;
+    busy: boolean;
+    accessibilityLabel: string;
+    onPress: () => void;
+}>;
+
 export type ScmCommitComposerCardProps = Readonly<{
     theme: any;
     commitActionLabel: string;
@@ -26,7 +34,39 @@ export type ScmCommitComposerCardProps = Readonly<{
         | { ok: true; message: string }
         | { ok: false; error: string }
     >;
+    pushAction?: ScmCommitAdjacentPushAction;
 }>;
+
+function unwrapMarkdownCodeFence(value: string): string {
+    const trimmed = value.trim();
+    const match = /^```(?:json)?\s*\n([\s\S]*?)\n```$/i.exec(trimmed);
+    return match?.[1]?.trim() ?? trimmed;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function normalizeGeneratedCommitMessageSuggestion(value: string): string {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed) return '';
+
+    const unwrapped = unwrapMarkdownCodeFence(trimmed);
+    try {
+        const parsed: unknown = JSON.parse(unwrapped);
+        if (!isRecord(parsed)) return unwrapped;
+
+        const message = typeof parsed.message === 'string' ? parsed.message.trim() : '';
+        if (message) return message;
+
+        const title = typeof parsed.title === 'string' ? parsed.title.trim() : '';
+        const body = typeof parsed.body === 'string' ? parsed.body.trim() : '';
+        if (title && body) return `${title}\n\n${body}`;
+        return title || body || unwrapped;
+    } catch {
+        return unwrapped;
+    }
+}
 
 export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardProps) => {
     const trimmedMessage = String(props.draftMessage ?? '').trim();
@@ -34,6 +74,11 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
     const variant = props.variant ?? 'card';
     const generatorEnabled = props.commitMessageGeneratorEnabled === true && typeof props.onGenerateCommitMessageSuggestion === 'function';
     const [generating, setGenerating] = React.useState(false);
+    const pushAction = props.pushAction?.visible === true ? props.pushAction : null;
+    const pushDisabled = props.busy || pushAction?.disabled === true || pushAction?.busy === true;
+    const commitButtonContentColor = commitDisabled
+        ? props.theme.colors.textSecondary
+        : props.theme.colors.button?.primary?.tint ?? props.theme.colors.surface;
 
     const onGenerate = React.useCallback(async () => {
         if (!generatorEnabled || !props.onGenerateCommitMessageSuggestion) return;
@@ -42,7 +87,7 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
         try {
             const res = await props.onGenerateCommitMessageSuggestion();
             if (res.ok) {
-                props.onDraftMessageChange(res.message);
+                props.onDraftMessageChange(normalizeGeneratedCommitMessageSuggestion(res.message));
             } else {
                 Modal.alert(t('common.error'), res.error);
             }
@@ -76,7 +121,10 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
         >
             {typeof props.selectionCount === 'number' ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <Text style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                    <Text
+                        testID="scm-commit-selection-summary"
+                        style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.default('semiBold') }}
+                    >
                         {t('files.sourceControlOperations.selection', { count: props.selectionCount })}
                     </Text>
                     {(props.onSelectAllSelection || (props.selectionCount > 0 && props.onClearSelection)) ? (
@@ -126,7 +174,7 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                     ) : null}
                 </View>
             ) : null}
-            {props.status ? (
+            {props.status && !props.busy ? (
                 <Text style={{ marginBottom: 8, fontSize: 11, color: props.theme.colors.textSecondary, ...Typography.default() }}>
                     {props.status}
                 </Text>
@@ -203,6 +251,7 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                 <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={props.commitActionLabel}
+                    accessibilityState={{ busy: props.busy, disabled: commitDisabled }}
                     disabled={commitDisabled}
                     onPress={() => props.onCommitFromMessage(trimmedMessage)}
                     testID="scm-commit-submit"
@@ -218,10 +267,45 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                         opacity: commitDisabled ? 0.55 : pressed ? 0.85 : 1,
                     })}
                 >
-                    <Text style={{ fontSize: 12, color: commitDisabled ? props.theme.colors.textSecondary : 'white', ...Typography.default('semiBold') }}>
-                        {props.commitActionLabel}
-                    </Text>
+                    {props.busy ? (
+                        <ActivityIndicator color={commitButtonContentColor} />
+                    ) : (
+                        <Text style={{ fontSize: 12, color: commitButtonContentColor, ...Typography.default('semiBold') }}>
+                            {props.commitActionLabel}
+                        </Text>
+                    )}
                 </Pressable>
+                {pushAction ? (
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={pushAction.accessibilityLabel}
+                        accessibilityState={{ busy: pushAction.busy, disabled: pushDisabled }}
+                        disabled={pushDisabled}
+                        onPress={pushAction.onPress}
+                        testID="scm-commit-adjacent-push"
+                        style={({ pressed }) => ({
+                            width: 38,
+                            height: 38,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: props.theme.colors.divider,
+                            backgroundColor: props.theme.colors.surfaceHigh ?? props.theme.colors.surface,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            opacity: pushDisabled ? 0.5 : pressed ? 0.85 : 1,
+                        })}
+                    >
+                        {pushAction.busy ? (
+                            <ActivityIndicator color={props.theme.colors.textSecondary} />
+                        ) : (
+                            <Ionicons
+                                name="arrow-up-circle-outline"
+                                size={17}
+                                color={props.theme.colors.textSecondary}
+                            />
+                        )}
+                    </Pressable>
+                ) : null}
             </View>
         </View>
     );

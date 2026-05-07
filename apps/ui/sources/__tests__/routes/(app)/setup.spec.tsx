@@ -93,6 +93,8 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => activeServerSnapshot,
+    setActiveServer: (params: { serverId: string; scope?: 'tab' | 'device' }) =>
+        setActiveServerIdMock(params.serverId, { scope: params.scope ?? 'device' }),
     subscribeActiveServer: (listener: () => void) => {
         activeServerListeners.add(listener);
         return () => {
@@ -279,7 +281,7 @@ describe('/setup route', () => {
             phase: 'awaiting_auth',
             relayUrl: 'https://second-relay.example.test',
         });
-        expect(expoRouterMock.spies.push).not.toHaveBeenCalledWith('/server');
+        expect(expoRouterMock.spies.push).not.toHaveBeenCalledWith('/settings/server');
     });
 
     it('keeps the continue path separate from secondary relay editing controls before auth', async () => {

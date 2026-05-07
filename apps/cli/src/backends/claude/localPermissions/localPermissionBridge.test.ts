@@ -77,6 +77,134 @@ describe('ClaudeLocalPermissionBridge', () => {
     });
   });
 
+  it('publishes one request for duplicate hook ids and resolves all duplicate callers after approval', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-duplicate-local-waiters');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const first = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/duplicate-local.txt', content: 'first' },
+      tool_use_id: 'toolu_duplicate_local_1',
+    });
+    const second = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/duplicate-local.txt', content: 'first' },
+      tool_use_id: 'toolu_duplicate_local_1',
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(Object.keys(client.agentState.requests)).toEqual(['toolu_duplicate_local_1']);
+
+    const permissionHandler = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionHandler).toBeDefined();
+    await permissionHandler?.({ id: 'toolu_duplicate_local_1', approved: true });
+
+    await expect(first).resolves.toMatchObject({
+      hookSpecificOutput: { decision: { behavior: 'allow' } },
+    });
+    await expect(second).resolves.toMatchObject({
+      hookSpecificOutput: { decision: { behavior: 'allow' } },
+    });
+    expect(client.agentState.requests.toolu_duplicate_local_1).toBeUndefined();
+    expect(client.agentState.completedRequests.toolu_duplicate_local_1).toMatchObject({
+      status: 'approved',
+      tool: 'Write',
+    });
+  });
+
+  it('does not let the first duplicate waiter timeout cancel a newer duplicate waiter', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-duplicate-local-timeout');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 200 });
+    bridge.activate();
+
+    const first = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/duplicate-timeout.txt', content: 'first' },
+      tool_use_id: 'toolu_duplicate_timeout_1',
+    });
+    let firstResolved = false;
+    first.then(() => {
+      firstResolved = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(199);
+
+    const second = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/duplicate-timeout.txt', content: 'first' },
+      tool_use_id: 'toolu_duplicate_timeout_1',
+    });
+    let secondResolved = false;
+    second.then(() => {
+      secondResolved = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+
+    expect(firstResolved).toBe(true);
+    expect(secondResolved).toBe(false);
+    expect(client.agentState.requests.toolu_duplicate_timeout_1).toBeDefined();
+    expect(client.agentState.completedRequests.toolu_duplicate_timeout_1).toBeUndefined();
+
+    const permissionHandler = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionHandler).toBeDefined();
+    await permissionHandler?.({ id: 'toolu_duplicate_timeout_1', approved: true });
+    await expect(second).resolves.toMatchObject({
+      hookSpecificOutput: { decision: { behavior: 'allow' } },
+    });
+  });
+
+  it('ignores permission RPCs for requests without the local bridge source marker', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('session-local-source-guard');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    client.updateAgentState((current) => ({
+      ...current,
+      requests: {
+        ...current.requests,
+        toolu_remote_owned_1: {
+          tool: 'Read',
+          kind: 'permission',
+          arguments: { file_path: '/tmp/remote-owned.txt' },
+          createdAt: Date.now(),
+        },
+      },
+    }));
+
+    const permissionHandler = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionHandler).toBeDefined();
+    await permissionHandler?.({
+      id: 'toolu_remote_owned_1',
+      approved: true,
+      mode: 'yolo',
+      allowedTools: ['Read(/tmp/remote-owned.txt)'],
+    });
+
+    expect(client.agentState.requests.toolu_remote_owned_1).toBeDefined();
+    expect(client.agentState.completedRequests.toolu_remote_owned_1).toBeUndefined();
+
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/still-requires-local-prompt.txt', content: 'hello' },
+      tool_use_id: 'toolu_after_remote_rpc_1',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(client.agentState.requests.toolu_after_remote_rpc_1).toBeDefined();
+    bridge.dispose();
+    await expect(pending).resolves.toMatchObject({
+      hookSpecificOutput: { hookEventName: 'PermissionRequest' },
+    });
+  });
+
   it('includes updatedPermissions in allow hook responses when supplied by the UI', async () => {
     const { session, client } = createPermissionHandlerSessionStub('session-updated-permissions');
     const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });

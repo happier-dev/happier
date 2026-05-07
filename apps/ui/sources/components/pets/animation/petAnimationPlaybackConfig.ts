@@ -1,0 +1,9 @@
+export const PET_IDLE_DURATION_MULTIPLIER = 6;
+export const PET_ACTION_LOOP_COUNT = 3;
+export const PET_TAP_REACTION_DURATION_MS = 850;
+export const PET_TAP_REACTION_HAPTIC = 'light';
+export const PET_PHASE_EASING_MS = 180;
+export const PET_POSITION_SPRING_RESPONSE = 0.28;
+export const PET_POSITION_SPRING_DAMPING_FRACTION = 0.78;
+
+export const PET_ANIMATION_TICK_MS = 50;

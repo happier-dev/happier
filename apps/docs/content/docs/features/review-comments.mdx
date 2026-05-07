@@ -1,0 +1,142 @@
+---
+title: Review comments
+description: Leave line-specific review instructions on files and diffs, then send the selected comments to an agent.
+---
+
+Review comments let you mark exact lines in a workspace file or diff and turn those notes into structured instructions for an agent.
+
+Use them when you want to review code visually first, then ask an agent to act on a precise set of findings.
+
+Common use cases:
+
+- ask the agent to fix several lines you reviewed manually
+- collect questions while reading a diff, then send them together
+- hand off a code-review pass to a new session in the same workspace
+- keep a few comments detached from the next prompt while sending only the ones you want now
+
+## Availability
+
+Review comments are available when **Settings -> Features -> Review comments** is enabled.
+
+They work from the session workspace surfaces:
+
+- file details
+- diff details
+- the Git review view
+- transcript review-comment cards after comments have been sent
+
+Review comments are workspace-aware. They are scoped to the current server, machine, and workspace folder, so comments from one project do not appear in another project.
+
+## Add a review comment
+
+Open a file or diff from **Files** or **Git**, then hover or focus a line that can accept a comment.
+
+Use the review-comment affordance beside the line to open the comment field. The same line interaction is used whether you click the line gutter or the comment icon.
+
+When you save the comment, Happier stores:
+
+- the workspace-relative file path
+- whether the comment came from the file view or diff view
+- the visible line number
+- a short snippet around the selected line
+- a stable line-content hash when available
+- your comment text
+
+The snippet is shown again later so you can confirm what the comment refers to before sending it.
+
+## Line anchoring
+
+Review comments are not anchored only by line number.
+
+Happier also stores a line-content hash for the selected line when it can. If the file shifts, Happier can use that hash to find the same line content again. If the exact line cannot be found, the stored line number and snippet still give the agent and the UI useful fallback context.
+
+This is why sent review comments include both:
+
+- a human-readable line reference, such as `L8`
+- a line hash, such as `lh1:...`, when available
+
+## Edit, delete, include, or detach comments
+
+Saved comments stay editable until you send or discard them.
+
+You can manage them from:
+
+- the inline file/diff comment area
+- the **Review** chip in the composer
+- the review-comments modal opened from that chip or attachment badge
+
+In the modal, you can:
+
+- review the surrounding snippet
+- edit the comment text
+- delete a comment
+- choose which comments are included in the next prompt
+
+Closing or removing the composer chip does not have to delete the comments. Happier asks whether you want to:
+
+- detach them from the next prompt, or
+- discard the saved comments
+
+Detached comments stay saved for the workspace but are not sent with the next message.
+
+## Send review comments in an existing session
+
+When a session has saved review comments for its workspace, the composer shows a **Review** chip and a review attachment badge.
+
+Before sending, open the chip to review what will be sent. You can select or deselect individual comments.
+
+When you send, Happier sends the selected comments as structured review context. The agent receives:
+
+- each file path
+- the line anchor
+- the line hash when available
+- the surrounding snippet
+- your comment text
+- any additional prompt text you wrote
+
+After the send succeeds, the sent comments move into the transcript as a review-comments card. Comments that were not selected remain saved for the workspace.
+
+## Start a new session with saved review comments
+
+Review comments are scoped to the workspace, not only to one session.
+
+If you create a new session in the same server, machine, and workspace folder, Happier detects the saved comments and shows the **Review** chip in the new-session composer.
+
+This works whether the selected folder is displayed as an absolute path or as a home-relative path such as `~/Documents/project`, as long as both resolve to the same workspace.
+
+Use this when you want to:
+
+- collect comments in one session, then start a clean follow-up session
+- ask a different provider/profile to handle the reviewed findings
+- split review and implementation into separate sessions
+
+## Review comments in the transcript
+
+After comments are sent, the transcript shows them as a structured review-comments card.
+
+The card groups comments by file and shows:
+
+- the workspace-relative file path
+- the anchor label
+- the relevant snippet
+- the comment text
+- a **Jump** action
+
+Use **Jump** to open the referenced file/diff in the session workspace surface. On desktop this opens the right sidebar/details pane. On small screens it opens the focused details screen.
+
+## Use with attachments and linked files
+
+Review comments can be sent together with normal prompt text and message attachments.
+
+Use the different context tools for different jobs:
+
+- **Review comments**: line-specific instructions tied to workspace files or diffs
+- **Link file**: references an existing workspace file without writing a line-specific comment
+- **Attachments**: uploads external files such as screenshots, PDFs, logs, or exported artifacts
+
+## Limitations
+
+- Review comments require workspace file/diff data from the machine.
+- Comments are scoped to a specific server, machine, and workspace path.
+- If the underlying file changes heavily, Happier may not be able to relocate the exact line by hash, but the stored line number and snippet remain available.
+- Routed teammate messages do not currently support review-comment drafts. Send review comments as regular lead messages instead.

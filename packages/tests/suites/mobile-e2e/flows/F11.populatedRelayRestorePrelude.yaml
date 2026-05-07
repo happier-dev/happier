@@ -1,0 +1,18 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: _shared/configureServerIfNeeded.yaml
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///restore/manual
+
+- extendedWaitUntil:
+    visible:
+      id: restore-manual-secret-input
+    timeout: 240000

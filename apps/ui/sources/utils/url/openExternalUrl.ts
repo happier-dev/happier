@@ -1,11 +1,13 @@
 import { Linking, Platform } from 'react-native';
 
+const SAFE_EXTERNAL_URL_SCHEME_PATTERN = /^(https?:\/\/|mailto:)/i;
+
 export async function openExternalUrl(
   url: string,
   opts?: Readonly<{ platformOS?: string }>,
 ): Promise<boolean> {
   const normalized = String(url ?? '').trim();
-  if (!/^https?:\/\//i.test(normalized)) return false;
+  if (!SAFE_EXTERNAL_URL_SCHEME_PATTERN.test(normalized)) return false;
 
   const platformOS = String(opts?.platformOS ?? Platform.OS ?? '').toLowerCase();
   if (platformOS === 'web') {

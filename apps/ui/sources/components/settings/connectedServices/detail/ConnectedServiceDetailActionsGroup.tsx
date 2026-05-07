@@ -10,14 +10,17 @@ export const ConnectedServiceDetailActionsGroup = React.memo(function ConnectedS
   supportsOauth: boolean;
   oauthAddActionModes?: ReadonlyArray<'device' | 'paste' | 'browser'>;
   supportsToken: boolean;
-  tokenKind: 'api-key' | 'setup-token' | null;
+  tokenKind: 'access-token' | 'api-key' | 'setup-token' | null;
+  tokenSetupUrl?: string | null;
   onAddOauthProfile: (method: 'device' | 'paste' | 'browser' | null) => void;
   onConnectToken: () => void;
+  onOpenTokenSetupUrl: (url: string) => void;
 }>) {
   const { theme } = useUnistyles();
   const oauthModes = props.oauthAddActionModes ?? [];
   const showExplicitOauthModes = oauthModes.length > 0;
   const singleOauthMode: 'device' | 'paste' | 'browser' | null = oauthModes[0] ?? null;
+  const tokenSetupUrl = props.tokenSetupUrl ?? null;
 
   return (
     <ItemGroup title={t('connectedServices.detail.actionsGroupTitle')}>
@@ -27,15 +30,28 @@ export const ConnectedServiceDetailActionsGroup = React.memo(function ConnectedS
           title={
             props.tokenKind === 'setup-token'
               ? t('connectedServices.detail.connectSetupTokenTitle')
-              : t('connectedServices.detail.connectApiKeyTitle')
+              : props.tokenKind === 'access-token'
+                ? t('connectedServices.detail.connectAccessTokenTitle')
+                : t('connectedServices.detail.connectApiKeyTitle')
           }
           subtitle={
             props.tokenKind === 'setup-token'
               ? t('connectedServices.detail.connectSetupTokenSubtitle')
-              : t('connectedServices.detail.connectApiKeySubtitle')
+              : props.tokenKind === 'access-token'
+                ? t('connectedServices.detail.connectAccessTokenSubtitle')
+                : t('connectedServices.detail.connectApiKeySubtitle')
           }
           icon={<Ionicons name="key-outline" size={22} color={theme.colors.accent.blue} />}
           onPress={props.onConnectToken}
+        />
+      ) : null}
+      {props.tokenKind === 'access-token' && tokenSetupUrl ? (
+        <Item
+          testID="connected-services-action:open-github-token-template"
+          title={t('connectedServices.detail.openGithubTokenTemplateTitle')}
+          subtitle={t('connectedServices.detail.openGithubTokenTemplateSubtitle')}
+          icon={<Ionicons name="open-outline" size={22} color={theme.colors.accent.blue} />}
+          onPress={() => props.onOpenTokenSetupUrl(tokenSetupUrl)}
         />
       ) : null}
       {props.supportsOauth ? (

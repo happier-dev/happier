@@ -4,6 +4,7 @@ import { View, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -14,14 +15,15 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         borderRadius: 20,
         width: 56,
         height: 56,
-        padding: 16,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    buttonDefault: {
-        backgroundColor: theme.colors.fab.background,
-    },
-    buttonPressed: {
-        backgroundColor: theme.colors.fab.backgroundPressed,
+    surface: {
+        width: '100%',
+        height: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 }));
 
@@ -37,15 +39,21 @@ export const FAB = React.memo((props: { onPress: () => void; accessibilityLabel?
             ]}
         >
             <Pressable
-                style={({ pressed }) => [
-                    styles.button,
-                    pressed ? styles.buttonPressed : styles.buttonDefault
-                ]}
+                style={styles.button}
                 onPress={props.onPress}
                 accessibilityRole="button"
                 accessibilityLabel={props.accessibilityLabel}
             >
-                <Ionicons name="add" size={24} color={theme.colors.fab.icon} />
+                {({ pressed }) => (
+                    <GradientSurface
+                        fallbackColor={pressed ? theme.colors.fab.backgroundPressed : theme.colors.fab.background}
+                        gradient={pressed ? undefined : theme.colors.fab.gradient}
+                        borderRadius={20}
+                        style={styles.surface}
+                    >
+                        <Ionicons name="add" size={24} color={theme.colors.fab.icon} />
+                    </GradientSurface>
+                )}
             </Pressable>
         </View>
     )

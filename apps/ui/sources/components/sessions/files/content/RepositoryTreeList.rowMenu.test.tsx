@@ -254,6 +254,9 @@ describe('RepositoryTreeList (row menu)', () => {
         expect(screen.findByTestId(`repository-tree-row-${toTestIdSafeValue('README.md')}`)).toBeTruthy();
         expect(screen.findByTestId(`repository-tree-row-${toTestIdSafeValue('src')}`)).toBeTruthy();
 
+        expect(screen.findByTestId(`repository-tree-row-${toTestIdSafeValue('README.md')}`)?.props.webRole).toBe('treeitem');
+        expect(screen.findByTestId(`repository-tree-row-${toTestIdSafeValue('src')}`)?.props.webRole).toBe('treeitem');
+
         const fileMenu = findRowActions(screen, 'README.md');
         expect(fileMenu.props.overflowTriggerTestID).toBe(`repository-tree-row-menu-${toTestIdSafeValue('README.md')}`);
         expect(fileMenu.props.compactThreshold).toBe(Number.POSITIVE_INFINITY);

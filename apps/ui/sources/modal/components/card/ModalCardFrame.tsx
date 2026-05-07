@@ -42,6 +42,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderTopWidth: 1,
         borderTopColor: theme.colors.divider,
     },
+    bodyFillLayout: {
+        flexBasis: 0,
+    },
 }));
 
 export function ModalCardFrame(props: ModalCardFrameProps) {
@@ -88,7 +91,10 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 />
             ) : null}
 
-            <ModalCardBody style={props.bodyStyle}>
+            <ModalCardBody style={[
+                layout === 'fill' ? styles.bodyFillLayout : null,
+                props.bodyStyle,
+            ]}>
                 {props.children}
             </ModalCardBody>
 

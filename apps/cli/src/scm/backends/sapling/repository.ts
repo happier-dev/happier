@@ -232,6 +232,7 @@ export async function getSaplingSnapshot(input: {
             backendId: 'sapling',
             mode: input.detection.mode,
             worktrees: [],
+            remotes: [],
         },
         capabilities: createSaplingCapabilities(),
         branch: {

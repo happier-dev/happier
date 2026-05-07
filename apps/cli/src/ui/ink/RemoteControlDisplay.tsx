@@ -2,46 +2,17 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput, useStdout } from 'ink';
 
 import { MessageBuffer, type BufferedMessage } from '@/ui/ink/messageBuffer';
+import {
+  createRemoteModeControlController,
+  interpretRemoteModeKeypress,
+  type RemoteModeActionInProgress,
+  type RemoteModeConfirmation,
+  type RemoteModeControlController,
+  type RemoteModeKeypressAction,
+} from '@/ui/remoteControl/remoteModeControl';
 
-export type RemoteModeConfirmation = 'exit' | 'switch' | null;
-export type RemoteModeActionInProgress = 'exiting' | 'switching' | null;
-
-export type RemoteModeKeypressAction =
-  | 'none'
-  | 'reset'
-  | 'confirm-exit'
-  | 'confirm-switch'
-  | 'exit'
-  | 'switch';
-
-export function interpretRemoteModeKeypress(
-  state: { confirmationMode: RemoteModeConfirmation; actionInProgress: RemoteModeActionInProgress },
-  input: string,
-  key: { ctrl?: boolean; meta?: boolean; shift?: boolean } = {},
-  opts?: { allowSwitchToLocal?: boolean },
-): { action: RemoteModeKeypressAction } {
-  if (state.actionInProgress) return { action: 'none' };
-
-  const allowSwitchToLocal = opts?.allowSwitchToLocal !== false;
-
-  if (key.ctrl && input === 'c') {
-    return { action: state.confirmationMode === 'exit' ? 'exit' : 'confirm-exit' };
-  }
-
-  if (allowSwitchToLocal && key.ctrl && input === 't') {
-    return { action: 'switch' };
-  }
-
-  if (allowSwitchToLocal && input === ' ') {
-    return { action: state.confirmationMode === 'switch' ? 'switch' : 'confirm-switch' };
-  }
-
-  if (state.confirmationMode) {
-    return { action: 'reset' };
-  }
-
-  return { action: 'none' };
-}
+export { interpretRemoteModeKeypress };
+export type { RemoteModeActionInProgress, RemoteModeConfirmation, RemoteModeKeypressAction };
 
 export type RemoteControlDisplayProps = {
   providerName: string;
@@ -63,8 +34,7 @@ export const RemoteControlDisplay: React.FC<RemoteControlDisplayProps> = ({
   const [messages, setMessages] = useState<BufferedMessage[]>([]);
   const [confirmationMode, setConfirmationMode] = useState<RemoteModeConfirmation>(null);
   const [actionInProgress, setActionInProgress] = useState<RemoteModeActionInProgress>(null);
-  const confirmationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const actionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const controllerRef = useRef<RemoteModeControlController | null>(null);
   const { stdout } = useStdout();
   const terminalWidth = stdout.columns || 80;
   const terminalHeight = stdout.rows || 24;
@@ -80,80 +50,36 @@ export const RemoteControlDisplay: React.FC<RemoteControlDisplayProps> = ({
 
     return () => {
       unsubscribe();
-      if (confirmationTimeoutRef.current) {
-        clearTimeout(confirmationTimeoutRef.current);
-      }
-      if (actionTimeoutRef.current) {
-        clearTimeout(actionTimeoutRef.current);
-      }
     };
   }, [messageBuffer]);
 
-  const resetConfirmation = useCallback(() => {
-    setConfirmationMode(null);
-    if (confirmationTimeoutRef.current) {
-      clearTimeout(confirmationTimeoutRef.current);
-      confirmationTimeoutRef.current = null;
-    }
-  }, []);
+  useEffect(() => {
+    const controller = createRemoteModeControlController({
+      allowSwitchToLocal: switchEnabled,
+      onExit,
+      onSwitchToLocal,
+      onStateChange: (snapshot) => {
+        setConfirmationMode(snapshot.confirmationMode);
+        setActionInProgress(snapshot.actionInProgress);
+      },
+    });
+    controllerRef.current = controller;
+    const snapshot = controller.getSnapshot();
+    setConfirmationMode(snapshot.confirmationMode);
+    setActionInProgress(snapshot.actionInProgress);
 
-  const setConfirmationWithTimeout = useCallback(
-    (mode: Exclude<RemoteModeConfirmation, null>) => {
-      setConfirmationMode(mode);
-      if (confirmationTimeoutRef.current) {
-        clearTimeout(confirmationTimeoutRef.current);
-      }
-      confirmationTimeoutRef.current = setTimeout(() => resetConfirmation(), 15_000);
-    },
-    [resetConfirmation],
-  );
+    return () => {
+      controller.dispose();
+      if (controllerRef.current === controller) controllerRef.current = null;
+    };
+  }, [switchEnabled, onExit, onSwitchToLocal]);
 
   useInput(
     useCallback(
       (input, key) => {
-        const { action } = interpretRemoteModeKeypress(
-          { confirmationMode, actionInProgress },
-          input,
-          key as any,
-          { allowSwitchToLocal: switchEnabled },
-        );
-
-        if (action === 'none') return;
-        if (action === 'reset') {
-          resetConfirmation();
-          return;
-        }
-        if (action === 'confirm-exit') {
-          setConfirmationWithTimeout('exit');
-          return;
-        }
-        if (action === 'confirm-switch') {
-          setConfirmationWithTimeout('switch');
-          return;
-        }
-        if (action === 'exit') {
-          resetConfirmation();
-          setActionInProgress('exiting');
-          if (actionTimeoutRef.current) {
-            clearTimeout(actionTimeoutRef.current);
-          }
-          actionTimeoutRef.current = setTimeout(() => {
-            void onExit?.();
-          }, 100);
-          return;
-        }
-        if (action === 'switch') {
-          resetConfirmation();
-          setActionInProgress('switching');
-          if (actionTimeoutRef.current) {
-            clearTimeout(actionTimeoutRef.current);
-          }
-          actionTimeoutRef.current = setTimeout(() => {
-            void onSwitchToLocal?.();
-          }, 100);
-        }
+        controllerRef.current?.handleKeypress(input, key);
       },
-      [confirmationMode, actionInProgress, switchEnabled, onExit, onSwitchToLocal, setConfirmationWithTimeout, resetConfirmation],
+      [],
     ),
   );
 

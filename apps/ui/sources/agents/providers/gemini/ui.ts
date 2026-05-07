@@ -7,8 +7,8 @@ export const GEMINI_UI: AgentUiConfig = {
     svgIconXml: PROVIDER_LOGO_SVG_XML.gemini ?? null,
     tintColor: null,
     avatarOverlay: {
-        circleScale: 0.35,
-        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
+        circleScale: 0.42,
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.32),
     },
     cliGlyph: '\u2726\uFE0E',
 };

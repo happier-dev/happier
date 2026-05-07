@@ -7,18 +7,51 @@
  * notification suppression.
  */
 
-let _activeViewingSessionId: string | null = null;
+type ActiveViewingSessionEntry = Readonly<{
+    sessionId: string;
+    activationId: number | null;
+}>;
 
-export const getActiveViewingSessionId = (): string | null => _activeViewingSessionId;
+let activeViewingSessionEntries: ActiveViewingSessionEntry[] = [];
 
-export const setActiveViewingSessionId = (sessionId: string): void => {
-    _activeViewingSessionId = sessionId;
+function getCurrentActiveViewingSessionEntry(): ActiveViewingSessionEntry | null {
+    return activeViewingSessionEntries[activeViewingSessionEntries.length - 1] ?? null;
+}
+
+function removeActiveViewingSessionEntryAt(index: number): void {
+    activeViewingSessionEntries = [
+        ...activeViewingSessionEntries.slice(0, index),
+        ...activeViewingSessionEntries.slice(index + 1),
+    ];
+}
+
+export const getActiveViewingSessionId = (): string | null => getCurrentActiveViewingSessionEntry()?.sessionId ?? null;
+export const getActiveViewingSessionActivationId = (): number | null => getCurrentActiveViewingSessionEntry()?.activationId ?? null;
+
+export const setActiveViewingSessionId = (sessionId: string, activationId: number | null = null): void => {
+    activeViewingSessionEntries = [
+        ...activeViewingSessionEntries,
+        { sessionId, activationId },
+    ];
 };
 
-export const clearActiveViewingSessionId = (sessionId: string): void => {
-    // Only clear if the current value matches — avoids a race when two
-    // SessionViews mount/unmount in rapid succession during navigation.
-    if (_activeViewingSessionId === sessionId) {
-        _activeViewingSessionId = null;
+export const clearActiveViewingSessionId = (sessionId: string, activationId?: number | null): void => {
+    if (activationId !== undefined) {
+        const index = activeViewingSessionEntries.findIndex(
+            (entry) => entry.sessionId === sessionId && entry.activationId === activationId,
+        );
+        if (index >= 0) {
+            removeActiveViewingSessionEntryAt(index);
+        }
+        return;
     }
+
+    const index = activeViewingSessionEntries.findIndex((entry) => entry.sessionId === sessionId);
+    if (index >= 0) {
+        removeActiveViewingSessionEntryAt(index);
+    }
+};
+
+export const clearActiveViewingSessionsForServerScopeReset = (): void => {
+    activeViewingSessionEntries = [];
 };

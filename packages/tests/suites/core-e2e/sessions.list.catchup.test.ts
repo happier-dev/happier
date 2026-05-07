@@ -121,4 +121,46 @@ describe('core e2e: sessions list catch-up via /v2/changes', () => {
       await artifacts.dumpAll(testDir, { onlyIf: saveArtifactsOnSuccess || !passed });
     }
   });
+
+  it('lets independent devices read the same change set from the same cursor', async () => {
+    const testDir = run.testDir('sessions-list-catchup.non-consumptive');
+    const saveArtifactsOnSuccess = envFlag(['HAPPIER_E2E_SAVE_ARTIFACTS', 'HAPPY_E2E_SAVE_ARTIFACTS'], false);
+    const startedAt = new Date().toISOString();
+
+    server = await startServerLight({ testDir });
+    const auth = await createTestAuth(server.baseUrl);
+
+    writeTestManifestForServer({
+      testDir,
+      server,
+      startedAt,
+      runId: run.runId,
+      testName: 'sessions-list-catchup.non-consumptive',
+      env: {
+        CI: process.env.CI,
+        HAPPIER_E2E_SAVE_ARTIFACTS: process.env.HAPPIER_E2E_SAVE_ARTIFACTS ?? process.env.HAPPY_E2E_SAVE_ARTIFACTS,
+      },
+    });
+
+    const artifacts = new FailureArtifacts();
+    artifacts.json('deviceA.changes.json', async () => await fetchChanges(server!.baseUrl, auth.token, { after: 0 }));
+    artifacts.json('deviceB.changes.json', async () => await fetchChanges(server!.baseUrl, auth.token, { after: 0 }));
+
+    let passed = false;
+    try {
+      const cursor0 = await fetchCursor(server.baseUrl, auth.token);
+      const { sessionId } = await createSession(server.baseUrl, auth.token);
+
+      const deviceAChanges = await fetchChanges(server.baseUrl, auth.token, { after: cursor0.cursor });
+      expect(deviceAChanges.changes.some((c) => c.kind === 'session' && c.entityId === sessionId)).toBe(true);
+
+      const deviceBChanges = await fetchChanges(server.baseUrl, auth.token, { after: cursor0.cursor });
+      expect(deviceBChanges.changes.some((c) => c.kind === 'session' && c.entityId === sessionId)).toBe(true);
+      expect(deviceBChanges.nextCursor).toBe(deviceAChanges.nextCursor);
+
+      passed = true;
+    } finally {
+      await artifacts.dumpAll(testDir, { onlyIf: saveArtifactsOnSuccess || !passed });
+    }
+  });
 });

@@ -4,6 +4,7 @@ import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/
 export function resolveConnectTargetServiceIds(targetId: string): ConnectedServiceId[] {
   const normalized = String(targetId ?? '').trim().toLowerCase();
   if (!normalized) return [];
+  if (normalized === 'github') return ['github'];
 
   const core = (AGENTS_CORE as Record<string, { cloudConnect?: unknown; connectedServices?: { supportedServiceIds: readonly unknown[] } | null }>)[normalized];
   if (!core?.cloudConnect) return [];

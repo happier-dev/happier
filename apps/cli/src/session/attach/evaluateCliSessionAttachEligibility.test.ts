@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe('evaluateCliSessionAttachEligibility', () => {
-  it('rejects sessions from a different machine even when synced tmux metadata exists', async () => {
+  it('rejects sessions from a different physical host even when synced tmux metadata exists', async () => {
     const rawSession = createSessionRecordFixture({
       id: 'sid_remote_tmux_1',
       active: true,
@@ -32,6 +32,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       metadata: JSON.stringify({
         machineId: 'machine-remote',
         flavor: 'claude',
+        host: 'office-imac',
         path: '/tmp/workspace',
         terminal: {
           mode: 'tmux',
@@ -45,6 +46,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
+      currentMachineHost: 'leeroy-mbp',
       localAttachmentInfo: null,
       insideTmux: false,
     })).resolves.toMatchObject({
@@ -53,7 +55,137 @@ describe('evaluateCliSessionAttachEligibility', () => {
     });
   });
 
-  it('requires local attachment state for tmux-backed terminal attach', async () => {
+  it('accepts a local terminal marker even when the session machine identity changed', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_local_marker_after_machine_rotation_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-before-reauth',
+        flavor: 'claude',
+        host: 'leeroy-mbp',
+        path: '/tmp/workspace',
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-after-reauth',
+      currentMachineHost: 'leeroy-mbp',
+      localAttachmentInfo: {
+        version: 1,
+        sessionId: 'sid_local_marker_after_machine_rotation_1',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-1' },
+        },
+        updatedAt: Date.now(),
+      },
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: true,
+      attachStrategy: 'terminal_host',
+      agentId: 'claude',
+      attachScope: 'local',
+      plan: expect.objectContaining({ type: 'tmux', target: 'happy:session-1' }),
+    });
+  });
+
+  it('rejects same-host synced tmux metadata when the machine identity differs and no local marker exists', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_same_host_synced_tmux_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-from-ui',
+        flavor: 'claude',
+        host: 'leeroy-mbp',
+        path: '/tmp/workspace',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-2' },
+        },
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-from-cli',
+      currentMachineHost: 'leeroy-mbp.local',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: false,
+      reasonCode: 'not_current_machine',
+    });
+  });
+
+  it('rejects same-host synced tmux metadata when the current machine id is unavailable and no local marker exists', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_same_host_missing_current_machine_id_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-from-ui',
+        flavor: 'claude',
+        host: 'leeroy-mbp',
+        path: '/tmp/workspace',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-3' },
+        },
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: null,
+      currentMachineHost: 'leeroy-mbp.local',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: false,
+      reasonCode: 'current_machine_unknown',
+    });
+  });
+
+  it('rejects same-host synced tmux metadata when the session machine id is unavailable and no local marker exists', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_same_host_missing_session_machine_id_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        flavor: 'claude',
+        host: 'leeroy-mbp',
+        path: '/tmp/workspace',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:session-4' },
+        },
+      }),
+    });
+
+    await expect(evaluateCliSessionAttachEligibility({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-from-cli',
+      currentMachineHost: 'leeroy-mbp.local',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: false,
+      reasonCode: 'session_machine_unknown',
+    });
+  });
+
+  it('requires a local attachment marker for tmux-backed terminal attach even when same-host synced metadata exists', async () => {
     const rawSession = createSessionRecordFixture({
       id: 'sid_local_tmux_1',
       active: true,
@@ -61,6 +193,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       metadata: JSON.stringify({
         machineId: 'machine-local',
         flavor: 'claude',
+        host: 'leeroy-mbp',
         path: '/tmp/workspace',
         terminal: {
           mode: 'tmux',
@@ -74,6 +207,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
+      currentMachineHost: 'leeroy-mbp.local',
       localAttachmentInfo: null,
       insideTmux: false,
     })).resolves.toMatchObject({

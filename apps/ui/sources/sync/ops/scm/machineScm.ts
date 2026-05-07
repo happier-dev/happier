@@ -3,8 +3,11 @@ import type {
     ScmBranchCheckoutResponse,
     ScmBranchCreateRequest,
     ScmBranchCreateResponse,
+    ScmBranchIntegrationRequest,
+    ScmBranchIntegrationResponse,
     ScmBranchListRequest,
     ScmBranchListResponse,
+    ScmBranchOperationControlRequest,
     ScmChangeApplyRequest,
     ScmChangeApplyResponse,
     ScmChangeDiscardRequest,
@@ -19,10 +22,28 @@ import type {
     ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmPullRequestCheckoutRequest,
+    ScmPullRequestCheckoutResponse,
+    ScmPullRequestGetRequest,
+    ScmPullRequestGetResponse,
+    ScmPullRequestListRequest,
+    ScmPullRequestListResponse,
+    ScmPullRequestOpenComposeRequest,
+    ScmPullRequestOpenComposeResponse,
+    ScmPullRequestOpenOrReuseRequest,
+    ScmPullRequestOpenOrReuseResponse,
+    ScmPullRequestPrepareWorktreeRequest,
+    ScmPullRequestPrepareWorktreeResponse,
+    ScmPullRequestRunStackedRequest,
+    ScmPullRequestRunStackedResponse,
+    ScmRemoteAddRequest,
+    ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
     ScmRemotePublishResponse,
+    ScmRemoteRemoveRequest,
     ScmRemoteRequest,
     ScmRemoteResponse,
+    ScmRemoteSetUrlRequest,
     ScmStashApplyRequest,
     ScmStashApplyResponse,
     ScmStashDropRequest,
@@ -245,11 +266,60 @@ export async function machineScmRemotePull(
     return await callMachineScm<ScmRemoteResponse, ScmRemoteRequest>(machineId, RPC_METHODS.SCM_REMOTE_PULL, request);
 }
 
+export async function machineScmRemoteAdd(
+    machineId: string,
+    request: ScmRemoteAddRequest,
+): Promise<ScmRemoteManagementResponse> {
+    return await callMachineScm<ScmRemoteManagementResponse, ScmRemoteAddRequest>(machineId, RPC_METHODS.SCM_REMOTE_ADD, request);
+}
+
+export async function machineScmRemoteSetUrl(
+    machineId: string,
+    request: ScmRemoteSetUrlRequest,
+): Promise<ScmRemoteManagementResponse> {
+    return await callMachineScm<ScmRemoteManagementResponse, ScmRemoteSetUrlRequest>(machineId, RPC_METHODS.SCM_REMOTE_SET_URL, request);
+}
+
+export async function machineScmRemoteRemove(
+    machineId: string,
+    request: ScmRemoteRemoveRequest,
+): Promise<ScmRemoteManagementResponse> {
+    return await callMachineScm<ScmRemoteManagementResponse, ScmRemoteRemoveRequest>(machineId, RPC_METHODS.SCM_REMOTE_REMOVE, request);
+}
+
 export async function machineScmBranchList(
     machineId: string,
     request: ScmBranchListRequest,
 ): Promise<ScmBranchListResponse> {
     return await callMachineScm<ScmBranchListResponse, ScmBranchListRequest>(machineId, RPC_METHODS.SCM_BRANCH_LIST, request);
+}
+
+export async function machineScmBranchMerge(
+    machineId: string,
+    request: ScmBranchIntegrationRequest,
+): Promise<ScmBranchIntegrationResponse> {
+    return await callMachineScm<ScmBranchIntegrationResponse, ScmBranchIntegrationRequest>(machineId, RPC_METHODS.SCM_BRANCH_MERGE, request);
+}
+
+export async function machineScmBranchRebase(
+    machineId: string,
+    request: ScmBranchIntegrationRequest,
+): Promise<ScmBranchIntegrationResponse> {
+    return await callMachineScm<ScmBranchIntegrationResponse, ScmBranchIntegrationRequest>(machineId, RPC_METHODS.SCM_BRANCH_REBASE, request);
+}
+
+export async function machineScmBranchOperationContinue(
+    machineId: string,
+    request: ScmBranchOperationControlRequest,
+): Promise<ScmBranchIntegrationResponse> {
+    return await callMachineScm<ScmBranchIntegrationResponse, ScmBranchOperationControlRequest>(machineId, RPC_METHODS.SCM_BRANCH_OPERATION_CONTINUE, request);
+}
+
+export async function machineScmBranchOperationAbort(
+    machineId: string,
+    request: ScmBranchOperationControlRequest,
+): Promise<ScmBranchIntegrationResponse> {
+    return await callMachineScm<ScmBranchIntegrationResponse, ScmBranchOperationControlRequest>(machineId, RPC_METHODS.SCM_BRANCH_OPERATION_ABORT, request);
 }
 
 export async function machineScmBranchCreate(
@@ -327,4 +397,53 @@ export async function machineScmStashShow(
     request: ScmStashShowRequest,
 ): Promise<ScmStashShowResponse> {
     return await callMachineScm<ScmStashShowResponse, ScmStashShowRequest>(machineId, RPC_METHODS.SCM_STASH_SHOW, request);
+}
+
+export async function machineScmPullRequestList(
+    machineId: string,
+    request: ScmPullRequestListRequest,
+): Promise<ScmPullRequestListResponse> {
+    return await callMachineScm<ScmPullRequestListResponse, ScmPullRequestListRequest>(machineId, RPC_METHODS.SCM_PULL_REQUEST_LIST, request);
+}
+
+export async function machineScmPullRequestGet(
+    machineId: string,
+    request: ScmPullRequestGetRequest,
+): Promise<ScmPullRequestGetResponse> {
+    return await callMachineScm<ScmPullRequestGetResponse, ScmPullRequestGetRequest>(machineId, RPC_METHODS.SCM_PULL_REQUEST_GET, request);
+}
+
+export async function machineScmPullRequestOpenCompose(
+    machineId: string,
+    request: ScmPullRequestOpenComposeRequest,
+): Promise<ScmPullRequestOpenComposeResponse> {
+    return await callMachineScm<ScmPullRequestOpenComposeResponse, ScmPullRequestOpenComposeRequest>(machineId, RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE, request);
+}
+
+export async function machineScmPullRequestOpenOrReuse(
+    machineId: string,
+    request: ScmPullRequestOpenOrReuseRequest,
+): Promise<ScmPullRequestOpenOrReuseResponse> {
+    return await callMachineScm<ScmPullRequestOpenOrReuseResponse, ScmPullRequestOpenOrReuseRequest>(machineId, RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE, request);
+}
+
+export async function machineScmPullRequestCheckout(
+    machineId: string,
+    request: ScmPullRequestCheckoutRequest,
+): Promise<ScmPullRequestCheckoutResponse> {
+    return await callMachineScm<ScmPullRequestCheckoutResponse, ScmPullRequestCheckoutRequest>(machineId, RPC_METHODS.SCM_PULL_REQUEST_CHECKOUT, request);
+}
+
+export async function machineScmPullRequestPrepareWorktree(
+    machineId: string,
+    request: ScmPullRequestPrepareWorktreeRequest,
+): Promise<ScmPullRequestPrepareWorktreeResponse> {
+    return await callMachineScm<ScmPullRequestPrepareWorktreeResponse, ScmPullRequestPrepareWorktreeRequest>(machineId, RPC_METHODS.SCM_PULL_REQUEST_PREPARE_WORKTREE, request);
+}
+
+export async function machineScmPullRequestRunStacked(
+    machineId: string,
+    request: ScmPullRequestRunStackedRequest,
+): Promise<ScmPullRequestRunStackedResponse> {
+    return await callMachineScm<ScmPullRequestRunStackedResponse, ScmPullRequestRunStackedRequest>(machineId, RPC_METHODS.SCM_PULL_REQUEST_RUN_STACKED, request);
 }

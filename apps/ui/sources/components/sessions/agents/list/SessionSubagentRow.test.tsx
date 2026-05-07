@@ -122,9 +122,12 @@ describe('SessionSubagentRow', () => {
         await screen.pressByTestIdAsync('session-subagent-open-advanced:execution_run:run_1');
         expect(onOpenAdvanced).toHaveBeenCalledTimes(1);
 
+        await screen.pressByTestIdAsync('session-subagent-open-full:execution_run:run_1');
+        expect(onOpenFull).toHaveBeenCalledTimes(1);
+
         await screen.pressByTestIdAsync('session-subagent-send:execution_run:run_1');
         expect(onOpenPreview).toHaveBeenCalledTimes(1);
-        expect(onOpenFull).toHaveBeenCalledTimes(0);
+        expect(onOpenFull).toHaveBeenCalledTimes(1);
 
         await screen.pressByTestIdAsync('session-subagent-stop:execution_run:run_1');
         expect(stopRunSpy).toHaveBeenCalledWith('s1', { runId: 'run_1' });

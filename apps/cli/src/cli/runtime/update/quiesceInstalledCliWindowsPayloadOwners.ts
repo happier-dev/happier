@@ -22,9 +22,19 @@ function normalizeProcessCommand(value: string): string {
 
 function resolveManagedCliInvoker(paths: Readonly<{
   binaryPath: string;
+  resolvedBinaryPath: string | null;
   shimPaths: readonly string[];
 }>): string | null {
-  for (const candidate of [...paths.shimPaths, paths.binaryPath]) {
+  // Probe the JUNCTION-FREE resolved binary first — on Windows, `existsSync`
+  // through `<installRoot>/current` can return false even when the file
+  // exists at the junction's target. The shimPaths sit at `<home>/bin/*.exe`
+  // and don't go through the junction, so they probe reliably either way.
+  const candidates = [
+    ...paths.shimPaths,
+    paths.resolvedBinaryPath,
+    paths.binaryPath,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  for (const candidate of candidates) {
     if (existsSync(candidate)) {
       return candidate;
     }
@@ -72,12 +82,21 @@ export async function quiesceInstalledCliWindowsPayloadOwners(params: Readonly<{
     }
   }
 
+  // Match against BOTH the junction path and the resolved versioned path
+  // because the running process's command-line may contain either one,
+  // depending on which path the runtime walked to launch the daemon. Without
+  // the resolved variants we'd silently miss processes launched via the
+  // version-resolved entrypoint and skip them in the kill loop.
   const matchNeedles = [
     installedPaths.installRoot,
     installedPaths.currentPath,
     installedPaths.binaryPath,
+    installedPaths.resolvedCurrentPath,
+    installedPaths.resolvedBinaryPath,
     ...installedPaths.shimPaths,
-  ].map((value) => normalizeProcessCommand(value));
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => normalizeProcessCommand(value));
 
   const matchingProcesses = (await findAllHappyProcesses())
     .filter((processInfo) => processInfo.pid !== process.pid)

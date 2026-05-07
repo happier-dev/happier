@@ -137,3 +137,25 @@ export function createSessionScopedSocketCollector(
   });
   return new SocketCollector(socket);
 }
+
+export function createMachineScopedSocketCollector(
+  baseUrl: string,
+  token: string,
+  machineId: string,
+): SocketCollector {
+  const socket = io(baseUrl, {
+    path: '/v1/updates',
+    auth: {
+      token,
+      clientType: 'machine-scoped' as const,
+      machineId,
+    },
+    transports: ['websocket'],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    autoConnect: false,
+  });
+  return new SocketCollector(socket);
+}

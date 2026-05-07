@@ -112,6 +112,39 @@ function isBenignSystemctlFailure(
   return output.includes('does not exist') || output.includes('not loaded') || output.includes('not found');
 }
 
+/**
+ * Retry the given launchctl command a few times with increasing delays.
+ * Used for `bootstrap` and `kickstart` which can transiently fail while
+ * launchd is still draining a preceding `bootout` — the teardown is async
+ * and the next command may hit "Could not find service" / silently no-op if
+ * it runs too close on the heels. Short retry loop gives launchd a moment
+ * to finish the prior operation.
+ */
+function runLaunchctlWithRetry(command: DaemonServicePlannedCommand): { ok: boolean; out: string | null } {
+  const delaysMs = [150, 300, 600];
+  let result = runCommand(command);
+  if (result.ok) return result;
+  for (const ms of delaysMs) {
+    const { status } = spawnSync('sleep', [(ms / 1000).toFixed(3)]);
+    if (status !== 0) {
+      // Fallback to a busy wait in the rare environment without `sleep`.
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) {
+        // spin
+      }
+    }
+    result = runCommand(command);
+    if (result.ok) return result;
+  }
+  return result;
+}
+
+function shouldRetryLaunchctlCommand(command: DaemonServicePlannedCommand): boolean {
+  if (command.cmd !== 'launchctl') return false;
+  const action = String(command.args[0] ?? '').trim().toLowerCase();
+  return action === 'kickstart' || action === 'bootstrap';
+}
+
 export function runDaemonServiceCommands(
   commands: readonly DaemonServicePlannedCommand[],
   options: Readonly<{ failureMode?: DaemonServiceCommandFailureMode }> = {},
@@ -127,7 +160,7 @@ export function runDaemonServiceCommands(
     }
 
     refreshLaunchctlBootstrapPath(command);
-    const result = runCommand(command);
+    const result = shouldRetryLaunchctlCommand(command) ? runLaunchctlWithRetry(command) : runCommand(command);
     if (command.ignoreFailure || isBenignLaunchctlFailure(command, result) || isBenignSystemctlFailure(command, result)) {
       continue;
     }

@@ -1,6 +1,9 @@
 import type {
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
+    ScmBranchIntegrationRequest,
+    ScmBranchIntegrationResponse,
+    ScmBranchOperationControlRequest,
     ScmBranchCheckoutRequest,
     ScmBranchCheckoutResponse,
     ScmBranchCreateRequest,
@@ -21,10 +24,14 @@ import type {
     ScmDiffFileResponse,
     ScmLogListRequest,
     ScmLogListResponse,
+    ScmRemoteAddRequest,
+    ScmRemoteManagementResponse,
+    ScmRemoteRemoveRequest,
     ScmRemotePublishRequest,
     ScmRemotePublishResponse,
     ScmRemoteRequest,
     ScmRemoteResponse,
+    ScmRemoteSetUrlRequest,
     ScmStashApplyRequest,
     ScmStashApplyResponse,
     ScmStashDropRequest,
@@ -53,16 +60,25 @@ import {
     runScmRoute,
 } from '@/scm/rpc/dispatch';
 import type { ScmFilesystemAccessPolicy } from '@/scm/runtime';
+import type { ScmConnectedAccountCredentialResolver } from '@/scm/types';
+
+import { registerScmPullRequestHandlers } from './scm/registerScmPullRequestHandlers';
+import { registerScmRepositoryProvisioningHandlers } from './scm/registerScmRepositoryProvisioningHandlers';
+import type { ScmHandlerRouteBase } from './scm/scmHandlerRouteBase';
 
 export function registerScmHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
     workingDirectory: string,
-    deps?: Readonly<{ accessPolicy?: ScmFilesystemAccessPolicy }>
+    deps?: Readonly<{
+        accessPolicy?: ScmFilesystemAccessPolicy;
+        connectedAccounts?: ScmConnectedAccountCredentialResolver;
+    }>
 ): void {
-    const routeBase = {
+    const routeBase: ScmHandlerRouteBase = {
         workingDirectory,
         accessPolicy: deps?.accessPolicy,
-    } as const;
+        connectedAccounts: deps?.connectedAccounts,
+    };
 
     rpcHandlerManager.registerHandler<ScmBackendDescribeRequest, ScmBackendDescribeResponse>(
         RPC_METHODS.SCM_BACKEND_DESCRIBE,
@@ -212,6 +228,54 @@ export function registerScmHandlers(
             })
     );
 
+    rpcHandlerManager.registerHandler<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>(
+        RPC_METHODS.SCM_BRANCH_MERGE,
+        async (request) =>
+            runScmRoute<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmBranchIntegrationResponse>(),
+                runWithBackend: ({ context, selection }) =>
+                    selection.backend.branchMerge({ context, request }),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>(
+        RPC_METHODS.SCM_BRANCH_REBASE,
+        async (request) =>
+            runScmRoute<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmBranchIntegrationResponse>(),
+                runWithBackend: ({ context, selection }) =>
+                    selection.backend.branchRebase({ context, request }),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>(
+        RPC_METHODS.SCM_BRANCH_OPERATION_CONTINUE,
+        async (request) =>
+            runScmRoute<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmBranchIntegrationResponse>(),
+                runWithBackend: ({ context, selection }) =>
+                    selection.backend.branchOperationContinue({ context, request }),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>(
+        RPC_METHODS.SCM_BRANCH_OPERATION_ABORT,
+        async (request) =>
+            runScmRoute<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmBranchIntegrationResponse>(),
+                runWithBackend: ({ context, selection }) =>
+                    selection.backend.branchOperationAbort({ context, request }),
+            })
+    );
+
     rpcHandlerManager.registerHandler<ScmWorktreeCreateRequest, ScmWorktreeCreateResponse>(
         RPC_METHODS.SCM_WORKTREE_CREATE,
         async (request) =>
@@ -257,6 +321,42 @@ export function registerScmHandlers(
                 onNonRepository: async () => notRepositoryResponse<ScmCommitBackoutResponse>(),
                 runWithBackend: ({ context, selection }) =>
                     selection.backend.commitBackout({ context, request }),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmRemoteAddRequest, ScmRemoteManagementResponse>(
+        RPC_METHODS.SCM_REMOTE_ADD,
+        async (request) =>
+            runScmRoute<ScmRemoteAddRequest, ScmRemoteManagementResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmRemoteManagementResponse>(),
+                runWithBackend: ({ context, selection }) =>
+                    selection.backend.remoteAdd({ context, request }),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmRemoteSetUrlRequest, ScmRemoteManagementResponse>(
+        RPC_METHODS.SCM_REMOTE_SET_URL,
+        async (request) =>
+            runScmRoute<ScmRemoteSetUrlRequest, ScmRemoteManagementResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmRemoteManagementResponse>(),
+                runWithBackend: ({ context, selection }) =>
+                    selection.backend.remoteSetUrl({ context, request }),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmRemoteRemoveRequest, ScmRemoteManagementResponse>(
+        RPC_METHODS.SCM_REMOTE_REMOVE,
+        async (request) =>
+            runScmRoute<ScmRemoteRemoveRequest, ScmRemoteManagementResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmRemoteManagementResponse>(),
+                runWithBackend: ({ context, selection }) =>
+                    selection.backend.remoteRemove({ context, request }),
             })
     );
 
@@ -307,6 +407,9 @@ export function registerScmHandlers(
                     selection.backend.remotePublish({ context, request }),
             })
     );
+
+    registerScmRepositoryProvisioningHandlers(rpcHandlerManager, routeBase);
+    registerScmPullRequestHandlers(rpcHandlerManager, routeBase);
 
     rpcHandlerManager.registerHandler<ScmStashListRequest, ScmStashListResponse>(
         RPC_METHODS.SCM_STASH_LIST,

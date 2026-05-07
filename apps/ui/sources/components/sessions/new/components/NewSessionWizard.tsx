@@ -232,6 +232,9 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         handleCreateSession: props.footer.handleCreateSession,
         selectedProfileId: props.profiles.selectedProfileId,
         targetServerId: props.machine.serverId,
+        selectedMachineId: props.machine.selectedMachine?.id ?? null,
+        selectedMachineHomeDir: props.machine.selectedMachine?.metadata?.homeDir ?? null,
+        selectedPath: props.machine.selectedPath,
         baseActionChips: props.footer.agentInputExtraActionChips,
     });
     const renderIconNode = React.useCallback(

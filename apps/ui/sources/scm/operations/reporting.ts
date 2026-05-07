@@ -20,7 +20,7 @@ export function trackBlockedScmOperation(input: {
     operation: ScmProjectOperationKind;
     reason: 'preflight' | 'lock';
     message?: string;
-    surface: 'files' | 'file' | 'commit';
+    surface: 'files' | 'file' | 'commit' | 'update';
     tracking?: ScmOperationTracker | null;
 }) {
     input.tracking?.capture('scm_operation_blocked', {
@@ -37,7 +37,7 @@ export function reportSessionScmOperation(input: {
     sessionId: string;
     operation: ScmProjectOperationKind;
     status: ScmProjectOperationStatus;
-    surface: 'files' | 'file' | 'commit';
+    surface: 'files' | 'file' | 'commit' | 'update';
     path?: string;
     detail?: string;
     rawError?: string;

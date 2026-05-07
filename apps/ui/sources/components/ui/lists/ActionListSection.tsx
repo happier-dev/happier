@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { SelectableRow } from './SelectableRow';
@@ -42,6 +42,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 export function ActionListSection(props: {
     title?: string;
     actions: ReadonlyArray<ActionListItem | null | undefined>;
+    style?: StyleProp<ViewStyle>;
 }) {
     const styles = stylesheet;
     useUnistyles();
@@ -62,7 +63,7 @@ export function ActionListSection(props: {
     }, []);
 
     return (
-        <View style={styles.section}>
+        <View style={[styles.section, props.style]}>
             {props.title ? (
                 <Text style={styles.title}>
                     {props.title}

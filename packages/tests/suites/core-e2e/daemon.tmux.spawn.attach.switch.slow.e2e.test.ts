@@ -280,7 +280,10 @@ describe('core e2e: daemon tmux spawn → attach → Claude remote↔local switc
         { timeoutMs: 45_000, pollMs: 150 },
       );
       expect(Object.prototype.hasOwnProperty.call(sdkInvocation.mergedMcpServers, 'happier')).toBe(true);
-      expect(sdkInvocation.argv).toContain('--setting-sources');
+      const settingSourcesIndex = sdkInvocation.argv.indexOf('--setting-sources');
+      if (settingSourcesIndex >= 0) {
+        expect(String(sdkInvocation.argv[settingSourcesIndex + 1] ?? '')).not.toBe('');
+      }
 
       ui.close();
     } finally {

@@ -167,7 +167,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                             : t('subAgentGuidance.settings.overview.happierStatusDisabledSubtitle')
                     }
                     icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => router.push('/(app)/settings/features')}
+                    onPress={() => router.push('/settings/features')}
                 />
             </ItemGroup>
 
@@ -179,19 +179,19 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                     title={t('subAgentGuidance.settings.related.sessionTitle')}
                     subtitle={t('subAgentGuidance.settings.related.sessionSubtitle')}
                     icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/(app)/settings/session')}
+                    onPress={() => router.push('/settings/session')}
                 />
                 <Item
                     title={t('subAgentGuidance.settings.related.providersTitle')}
                     subtitle={t('subAgentGuidance.settings.related.providersSubtitle')}
                     icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => router.push('/(app)/settings/providers')}
+                    onPress={() => router.push('/settings/providers')}
                 />
                 <Item
                     title={t('subAgentGuidance.settings.related.backendsTitle')}
                     subtitle={t('subAgentGuidance.settings.related.backendsSubtitle')}
                     icon={<Ionicons name="git-network-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/providers')}
+                    onPress={() => router.push('/settings/providers')}
                 />
             </ItemGroup>
 
@@ -319,7 +319,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                         title={t('subAgentGuidance.settings.disabled.enableExecutionRuns.title')}
                         subtitle={t('subAgentGuidance.settings.disabled.enableExecutionRuns.subtitle')}
                         icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
-                        onPress={() => router.push('/(app)/settings/features')}
+                        onPress={() => router.push('/settings/features')}
                     />
                 </ItemGroup>
             )}

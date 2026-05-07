@@ -119,6 +119,93 @@ describe('ApiSessionClient transcript vNext transport', () => {
     expect((client as any).sendTranscriptDraftDelta).toBeUndefined();
   });
 
+  it('emits live transcript stream segments on the session socket without waiting for durable ACKs', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'segment-1', didWrite: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    expect(client.sendAgentMessageEphemeral).toBeTypeOf('function');
+    client.sendAgentMessageEphemeral(
+      'codex',
+      { type: 'message', message: 'Hello', sidechainId: 'sc-1' },
+      {
+        localId: 'segment-1',
+        createdAt: 1_000,
+        meta: {
+          happierStreamSegmentV1: {
+            v: 1,
+            segmentKind: 'assistant',
+            segmentLocalId: 'segment-1',
+            segmentState: 'streaming',
+            startedAtMs: 1_000,
+            updatedAtMs: 1_025,
+          },
+        },
+      },
+    );
+
+    expect(sessionSocketStub.emitWithAck).not.toHaveBeenCalled();
+    expect(sessionSocketStub.emit).toHaveBeenCalledWith(
+      'transcript-stream-segment',
+      expect.objectContaining({
+        sid: 's1',
+        message: expect.objectContaining({
+          localId: 'segment-1',
+          sidechainId: 'sc-1',
+          createdAt: 1_000,
+          updatedAt: 1_025,
+          content: {
+            t: 'plain',
+            v: expect.objectContaining({
+              role: 'agent',
+              content: {
+                type: 'acp',
+                provider: 'codex',
+                data: { type: 'message', message: 'Hello', sidechainId: 'sc-1' },
+              },
+            }),
+          },
+        }),
+      }),
+    );
+  });
+
+  it('does not emit an ephemeral stream segment updatedAt earlier than createdAt', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'segment-1', didWrite: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(500);
+
+    try {
+      const { ApiSessionClient } = await import('./sessionClient');
+
+      const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+      client.sendAgentMessageEphemeral(
+        'codex',
+        { type: 'message', message: 'Hello' },
+        {
+          localId: 'segment-1',
+          createdAt: 1_000,
+        },
+      );
+
+      expect(sessionSocketStub.emit).toHaveBeenCalledWith(
+        'transcript-stream-segment',
+        expect.objectContaining({
+          message: expect.objectContaining({
+            createdAt: 1_000,
+            updatedAt: 1_000,
+          }),
+        }),
+      );
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it('clears materialized localId state when a durable stream checkpoint arrives as message-updated', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true, id: 'm1', seq: 1, localId: 'segment-1', didWrite: true } });

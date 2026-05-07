@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 import { findAllByType, findFirstHostNodeByTestId } from '@/dev/testkit/harness/popoverHarness';
@@ -33,6 +33,10 @@ function PopoverChild() {
 }
 
 describe('PopoverPortalTargetProvider (native)', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('does not churn context value across parent re-renders (prevents maximum update depth loops)', async () => {
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
         const { usePopoverPortalTarget } = await import('./PopoverPortalTarget');
@@ -129,8 +133,10 @@ describe('PopoverPortalTargetProvider (native)', () => {
     });
 
     it('removes portal content when popover closes', async () => {
+        vi.useFakeTimers();
         const { Popover } = await import('./Popover');
         const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
+        const { motionTokens } = await import('@/components/ui/motion/motionTokens');
 
         const anchorRef = {
             current: {
@@ -177,6 +183,12 @@ describe('PopoverPortalTargetProvider (native)', () => {
                     ),
                 ),
             );
+        });
+
+        expect(tree ? findAllByType(tree, 'PopoverChild').length : 0).toBe(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(motionTokens.overlay.popover.exitMs);
         });
 
         expect(tree ? findAllByType(tree, 'PopoverChild').length : 0).toBe(0);

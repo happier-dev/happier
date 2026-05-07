@@ -67,4 +67,28 @@ describe('AgentInputSelectionSimpleList', () => {
 
         expect(onSelect).toHaveBeenCalledWith('plan');
     });
+
+    it('does not select disabled options', async () => {
+        const { AgentInputSelectionSimpleList } = await import('./AgentInputSelectionSimpleList');
+        const onSelect = vi.fn();
+
+        const screen = await renderScreen(
+            <AgentInputSelectionSimpleList
+                title="Mode"
+                options={[
+                    { id: 'hidden', label: 'Hidden' },
+                    { id: 'windows_terminal', label: 'Windows Terminal', disabled: true },
+                ]}
+                selectedOptionId="hidden"
+                onSelect={onSelect}
+            />,
+        );
+
+        const disabledOption = screen.findByProps({ testID: 'agent-input-simple-option:windows_terminal' });
+        expect(disabledOption.props.accessibilityState).toMatchObject({ disabled: true });
+
+        await screen.pressByTestIdAsync('agent-input-simple-option:windows_terminal');
+
+        expect(onSelect).not.toHaveBeenCalled();
+    });
 });

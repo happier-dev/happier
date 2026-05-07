@@ -1,8 +1,6 @@
 import { parseHeartbeatArgs, resolveSignalExitCode, runHeartbeatWrappedCommand } from './runPlaywrightWithHeartbeat.shared.mjs';
 
-function yarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-}
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 
 const { config, passThrough } = parseHeartbeatArgs(process.argv);
 if (!config) {
@@ -12,15 +10,19 @@ if (!config) {
 }
 
 const childArgs = ['-s', 'vitest', 'run', '--no-file-parallelism', '-c', config, ...passThrough];
+const invocation = resolveYarnCommandInvocation(childArgs);
 
 await runHeartbeatWrappedCommand({
   toolName: 'vitest',
   config,
-  command: yarnCommand(),
-  args: childArgs,
+  command: invocation.command,
+  args: invocation.args,
   spawnOptions: {
     stdio: 'inherit',
     env: process.env,
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
   },
   resolveExitCode(result) {
     return typeof result.code === 'number' ? result.code : resolveSignalExitCode(result.signal);

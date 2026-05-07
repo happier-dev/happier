@@ -121,6 +121,103 @@ describe('mapCodexRolloutEventToActions', () => {
         ]);
     });
 
+    it('maps main task lifecycle event messages into turn lifecycle actions', () => {
+        expect(
+            mapCodexRolloutEventToActions(
+                {
+                    type: 'event_msg',
+                    payload: {
+                        type: 'task_started',
+                        turn_id: 'turn_1',
+                    },
+                },
+                { debug: false },
+            ),
+        ).toEqual([
+            {
+                type: 'turn-lifecycle',
+                event: {
+                    type: 'turn_started',
+                    providerTurnId: 'turn_1',
+                    source: 'codex_rollout_task_started',
+                },
+            },
+        ]);
+
+        expect(
+            mapCodexRolloutEventToActions(
+                {
+                    type: 'event_msg',
+                    payload: {
+                        type: 'task_complete',
+                        turn_id: 'turn_1',
+                    },
+                },
+                { debug: false },
+            ),
+        ).toEqual([
+            {
+                type: 'turn-lifecycle',
+                event: {
+                    type: 'turn_terminal',
+                    providerTurnId: 'turn_1',
+                    reason: 'completed',
+                    source: 'codex_rollout_task_complete',
+                },
+            },
+        ]);
+
+        expect(
+            mapCodexRolloutEventToActions(
+                {
+                    type: 'event_msg',
+                    payload: {
+                        type: 'turn_complete',
+                        turn_id: 'turn_1',
+                    },
+                },
+                { debug: false },
+            ),
+        ).toEqual([
+            {
+                type: 'turn-lifecycle',
+                event: {
+                    type: 'turn_terminal',
+                    providerTurnId: 'turn_1',
+                    reason: 'completed',
+                    source: 'codex_rollout_turn_complete',
+                },
+            },
+        ]);
+    });
+
+    it('maps any turn_aborted reason into a terminal aborted lifecycle action', () => {
+        expect(
+            mapCodexRolloutEventToActions(
+                {
+                    type: 'event_msg',
+                    payload: {
+                        type: 'turn_aborted',
+                        turn_id: 'turn_2',
+                        reason: 'replaced',
+                    },
+                },
+                { debug: false },
+            ),
+        ).toEqual([
+            {
+                type: 'turn-lifecycle',
+                event: {
+                    type: 'turn_terminal',
+                    providerTurnId: 'turn_2',
+                    reason: 'aborted',
+                    source: 'codex_rollout_turn_aborted',
+                    detail: 'replaced',
+                },
+            },
+        ]);
+    });
+
     it('maps exec_command function_call to Bash tool-call', () => {
         const actions = mapCodexRolloutEventToActions(
             {

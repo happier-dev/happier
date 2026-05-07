@@ -1,14 +1,15 @@
 import React from 'react';
-import { ElevenLabsProvider } from "@elevenlabs/react-native";
-import { RealtimeVoiceSession } from './RealtimeVoiceSession';
 import { VoiceSessionRuntime } from '@/voice/session/VoiceSessionRuntime';
+import { resolveRealtimeVoiceSessionComponent } from './resolveRealtimeVoiceSessionComponent';
+
+const ResolvedRealtimeVoiceSession = resolveRealtimeVoiceSessionComponent('native');
 
 export const RealtimeProvider = ({ children }: { children: React.ReactNode }) => {
     return (
-        <ElevenLabsProvider>
-            <RealtimeVoiceSession />
+        <>
+            {ResolvedRealtimeVoiceSession ? <ResolvedRealtimeVoiceSession /> : null}
             <VoiceSessionRuntime />
             {children}
-        </ElevenLabsProvider>
+        </>
     );
 };

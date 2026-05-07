@@ -8,6 +8,7 @@ import type { JsRuntime } from "./runClaude"
 import type { PushNotificationClient } from "@/api/pushNotifications"
 import type { AccountSettings } from '@happier-dev/protocol';
 import type { McpServerConfig } from '@/agent';
+import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 
 // Re-export permission mode type from api/types
 // Single unified type with 7 modes - Codex modes mapped at SDK boundary
@@ -82,6 +83,7 @@ interface LoopOptions {
     /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
     jsRuntime?: JsRuntime
     startedBy?: 'daemon' | 'terminal'
+    terminalRuntime?: TerminalRuntimeFlags | null
     defaultSystemPromptText?: string
     precomputedMcpBridge?: { mcpServers: Record<string, McpServerConfig>; stop: () => void } | null
 }
@@ -105,6 +107,7 @@ export async function loop(opts: LoopOptions): Promise<number> {
         hookPluginDir: opts.hookPluginDir ?? null,
         jsRuntime: opts.jsRuntime,
         startedBy: opts.startedBy ?? 'terminal',
+        terminalRuntime: opts.terminalRuntime ?? null,
         defaultSystemPromptText: opts.defaultSystemPromptText,
         precomputedMcpBridge: opts.precomputedMcpBridge ?? null,
     });

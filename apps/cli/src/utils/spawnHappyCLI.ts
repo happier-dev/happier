@@ -138,13 +138,28 @@ function shouldPreferDevTsxSubprocess(): boolean {
   );
 }
 
-export type HappyCliSubprocessRuntime = 'node' | 'bun';
+export type HappyCliSubprocessRuntime = 'node' | 'bun' | 'binary';
 
-export type HappyCliSubprocessInvocation = {
-  runtime: HappyCliSubprocessRuntime;
+export type HappyCliSubprocessLaunchOptions = Readonly<{
+  preferWindowsPackagedBinary?: boolean;
+}>;
+
+export type HappyCliSubprocessRuntimeInvocation = {
+  runtime: Exclude<HappyCliSubprocessRuntime, 'binary'>;
   argv: string[];
   env?: Record<string, string>;
 };
+
+export type HappyCliSubprocessBinaryInvocation = {
+  runtime: 'binary';
+  filePath: string;
+  argv: string[];
+  env?: Record<string, string>;
+};
+
+export type HappyCliSubprocessInvocation =
+  | HappyCliSubprocessRuntimeInvocation
+  | HappyCliSubprocessBinaryInvocation;
 
 export type HappyCliSubprocessLaunchSpec = {
   runtime: HappyCliSubprocessRuntime;
@@ -194,6 +209,36 @@ function buildCurrentProcessBinaryFallbackInvocation(args: string[]): HappyCliSu
   };
 }
 
+function resolveSiblingWindowsPackagedBinary(entrypoint: string): string | null {
+  if (process.platform !== 'win32') return null;
+  const distDir = dirname(entrypoint);
+  if (basename(distDir).toLowerCase() !== 'package-dist') return null;
+  const binaryPath = join(dirname(distDir), 'happier.exe');
+  return existsSync(binaryPath) ? binaryPath : null;
+}
+
+function shouldUseWindowsPackagedBinary(options: HappyCliSubprocessLaunchOptions | undefined): boolean {
+  if (!options?.preferWindowsPackagedBinary) return false;
+  if (process.platform !== 'win32') return false;
+  const enabled = parseOptionalBooleanEnv(process.env.HAPPIER_WINDOWS_SESSION_RUNNER_BINARY);
+  return enabled !== false;
+}
+
+function buildWindowsPackagedBinaryInvocation(
+  args: string[],
+  entrypoint: string,
+  options: HappyCliSubprocessLaunchOptions | undefined,
+): HappyCliSubprocessInvocation | null {
+  if (!shouldUseWindowsPackagedBinary(options)) return null;
+  const binaryPath = resolveSiblingWindowsPackagedBinary(entrypoint);
+  if (!binaryPath) return null;
+  return {
+    runtime: 'binary',
+    filePath: binaryPath,
+    argv: [...args],
+  };
+}
+
 function buildCurrentProcessBundledBunFallbackInvocation(
   args: string[],
 ): HappyCliSubprocessInvocation | null {
@@ -214,7 +259,7 @@ function buildCurrentProcessBundledBunFallbackInvocation(
   return null;
 }
 
-function resolveSubprocessRuntimeExecutable(runtime: HappyCliSubprocessRuntime): string {
+function resolveSubprocessRuntimeExecutable(runtime: Exclude<HappyCliSubprocessRuntime, 'binary'>): string {
   // Prefer the currently-running runtime binary when possible. This avoids PATH
   // issues on Windows (and GUI-launched shells) where `node`/`bun` may not resolve.
   if (runtime === 'node') {
@@ -261,13 +306,21 @@ function buildDevTsxSubprocessInvocation(args: string[], entrypoint: string): Ha
   };
 }
 
-export function buildHappyCliSubprocessInvocation(args: string[]): HappyCliSubprocessInvocation {
+export function buildHappyCliSubprocessInvocation(
+  args: string[],
+  options?: HappyCliSubprocessLaunchOptions,
+): HappyCliSubprocessInvocation {
   const entrypoint = resolveSubprocessEntrypoint();
   const runtime = getSubprocessRuntime();
 
   if (runtime === 'node' && shouldPreferDevTsxSubprocess()) {
     const tsxInvocation = buildDevTsxSubprocessInvocation(args, entrypoint);
     if (tsxInvocation) return tsxInvocation;
+  }
+
+  if (runtime === 'node') {
+    const windowsBinaryInvocation = buildWindowsPackagedBinaryInvocation(args, entrypoint, options);
+    if (windowsBinaryInvocation) return windowsBinaryInvocation;
   }
 
   // Use the same Node.js flags that the wrapper script uses
@@ -315,8 +368,19 @@ export function buildHappyCliSubprocessInvocation(args: string[]): HappyCliSubpr
   return { runtime, argv };
 }
 
-export function buildHappyCliSubprocessLaunchSpec(args: string[]): HappyCliSubprocessLaunchSpec {
-  const invocation = buildHappyCliSubprocessInvocation(args);
+export function buildHappyCliSubprocessLaunchSpec(
+  args: string[],
+  options?: HappyCliSubprocessLaunchOptions,
+): HappyCliSubprocessLaunchSpec {
+  const invocation = buildHappyCliSubprocessInvocation(args, options);
+  if (invocation.runtime === 'binary') {
+    return {
+      runtime: invocation.runtime,
+      filePath: invocation.filePath,
+      args: invocation.argv,
+      env: invocation.env,
+    };
+  }
   return {
     runtime: invocation.runtime,
     filePath: resolveSubprocessRuntimeExecutable(invocation.runtime),
@@ -336,7 +400,11 @@ export function buildHappyCliSubprocessLaunchSpec(args: string[]): HappyCliSubpr
  * @param options - Spawn options (same as child_process.spawn)
  * @returns ChildProcess instance
  */
-export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): ChildProcess {
+export function spawnHappyCLI(
+  args: string[],
+  options: SpawnOptions = {},
+  launchOptions?: HappyCliSubprocessLaunchOptions,
+): ChildProcess {
   let directory: string | URL | undefined;
   if ('cwd' in options) {
     directory = options.cwd
@@ -351,7 +419,7 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   const fullCommand = `happier ${args.join(' ')}`;
   logger.debug(`[SPAWN HAPPIER CLI] Spawning: ${fullCommand} in ${directory}`);
 
-  const launchSpec = buildHappyCliSubprocessLaunchSpec(args);
+  const launchSpec = buildHappyCliSubprocessLaunchSpec(args, launchOptions);
   const spawnOptions: SpawnOptions = launchSpec.env
     ? { ...options, env: { ...(options.env ?? process.env), ...launchSpec.env } }
     : options;

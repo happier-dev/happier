@@ -1748,6 +1748,15 @@ test('buildUpdaterScheduledTaskCreateArgs uses DAILY schedule when at is provide
   assert.equal(args.includes('MINUTE'), false);
 });
 
+test('buildUpdaterScheduledTaskCreateArgs uses hidden non-interactive PowerShell on Windows', () => {
+  const args = buildUpdaterScheduledTaskCreateArgs({
+    backend: 'schtasks-user',
+    taskName: 'Happier\\\\happier-server-updater',
+    definitionPath: 'C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\services\\\\happier-server-updater.ps1',
+  });
+  assert.equal(args[args.indexOf('/TR') + 1], 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\\\\Users\\\\me\\\\.happier\\\\self-host\\\\services\\\\happier-server-updater.ps1"');
+});
+
 test('mergeEnvTextWithDefaults preserves overrides while backfilling new default keys', () => {
   const defaults = renderServerEnvFile({
     port: 3005,

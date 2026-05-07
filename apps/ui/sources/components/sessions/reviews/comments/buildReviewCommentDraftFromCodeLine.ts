@@ -7,22 +7,29 @@ import type {
     ReviewCommentSource,
 } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { nowServerMs } from '@/sync/runtime/time';
+import { computeLineContentHash } from '@/utils/text/lineContentHash';
 
-function formatSnapshotLine(params: { source: ReviewCommentSource; line: CodeLine }): string {
+export function formatReviewCommentCodeLineContent(params: { source: ReviewCommentSource; line: CodeLine }): string {
     if (params.source === 'diff') {
         const prefix = params.line.renderPrefixText ?? '';
         const code = params.line.renderCodeText ?? '';
-        return `${prefix}${code}`.trimEnd();
+        return `${prefix}${code}`;
     }
-    return (params.line.renderCodeText ?? '').trimEnd();
+    return params.line.renderCodeText ?? '';
+}
+
+export function formatReviewCommentCodeLineDisplayText(params: { source: ReviewCommentSource; line: CodeLine }): string {
+    return formatReviewCommentCodeLineContent(params).trimEnd();
 }
 
 function buildAnchor(params: { source: ReviewCommentSource; line: CodeLine }): ReviewCommentAnchor {
+    const lineHash = computeLineContentHash(formatReviewCommentCodeLineContent(params));
+
     if (params.source === 'file') {
         const startLine = typeof params.line.newLine === 'number' && params.line.newLine > 0
             ? params.line.newLine
             : params.line.sourceIndex + 1;
-        return { kind: 'fileLine', startLine };
+        return { kind: 'fileLine', startLine, lineHash };
     }
 
     const side: 'before' | 'after' = params.line.kind === 'remove' ? 'before' : 'after';
@@ -32,6 +39,7 @@ function buildAnchor(params: { source: ReviewCommentSource; line: CodeLine }): R
         side,
         oldLine: params.line.oldLine,
         newLine: params.line.newLine,
+        lineHash,
     };
 }
 
@@ -47,17 +55,17 @@ function buildSnapshot(params: {
     for (let i = params.targetIndex - 1; i >= 0 && before.length < params.contextRadius; i--) {
         const line = params.lines[i];
         if (!line || line.renderIsHeaderLine) continue;
-        before.unshift(formatSnapshotLine({ source: params.source, line }));
+        before.unshift(formatReviewCommentCodeLineDisplayText({ source: params.source, line }));
     }
     for (let i = params.targetIndex + 1; i < params.lines.length && after.length < params.contextRadius; i++) {
         const line = params.lines[i];
         if (!line || line.renderIsHeaderLine) continue;
-        after.push(formatSnapshotLine({ source: params.source, line }));
+        after.push(formatReviewCommentCodeLineDisplayText({ source: params.source, line }));
     }
 
     const selected = params.lines[params.targetIndex];
     const selectedLines = selected && !selected.renderIsHeaderLine
-        ? [formatSnapshotLine({ source: params.source, line: selected })]
+        ? [formatReviewCommentCodeLineDisplayText({ source: params.source, line: selected })]
         : [];
 
     return {
@@ -102,4 +110,3 @@ export function buildReviewCommentDraftFromCodeLine(params: {
         createdAt,
     };
 }
-

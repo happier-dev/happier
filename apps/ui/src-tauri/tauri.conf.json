@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Happier",
-  "version": "0.2.4",
+  "version": "0.2.6",
   "identifier": "dev.happier.app",
   "build": {
     "frontendDist": "../dist",
@@ -10,9 +10,11 @@
     "beforeBuildCommand": "node ./scripts/runTauriBeforeCommand.mjs tauri:prepare:build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "security": {
       "capabilities": [
-        "default"
+        "default",
+        "pet_overlay"
       ],
       "csp": null
     },
@@ -21,6 +23,10 @@
         "title": "Happier",
         "width": 800,
         "height": 600,
+        "visible": false,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
         "resizable": true,
         "fullscreen": false
       }

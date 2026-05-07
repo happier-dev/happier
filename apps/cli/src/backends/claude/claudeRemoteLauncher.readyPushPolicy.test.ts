@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { createTurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -64,6 +65,31 @@ describe('createClaudeRemoteReadyHandler', () => {
 
     expect(sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
     expect(sendToAllDevices).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the structured turn assistant preview when present', () => {
+    const sendSessionEvent = vi.fn();
+    const sendToAllDevices = vi.fn();
+    const tracker = createTurnAssistantPreviewTracker();
+    tracker.replace('The branch is ready to review.');
+
+    const onReady = createClaudeRemoteReadyHandler({
+      session: { sessionId: 's_1', sendSessionEvent },
+      pushSender: { sendToAllDevices },
+      logPrefix: '[remote]',
+      waitingForCommandLabel: 'Claude',
+      getPending: () => null,
+      getQueueSize: () => 0,
+      assistantPreviewTracker: tracker,
+    });
+
+    onReady();
+
+    expect(sendToAllDevices).toHaveBeenCalledWith(
+      'Claude',
+      'The branch is ready to review.',
+      { sessionId: 's_1' },
+    );
   });
 
   it('reads session titles from class-style metadata snapshot methods without losing this binding', () => {

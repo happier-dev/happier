@@ -26,6 +26,7 @@ import {
   installOrUpdateRelayRuntimeLocal,
   shouldMigrateLegacyUnsuffixedRelayRuntimeInstallRoot,
 } from '../firstPartyRuntime/relayRuntimeInstall.js';
+import { resolveNonCollidingRelayPort } from '../firstPartyRuntime/resolveNonCollidingRelayPort.js';
 import {
   mergeSelfHostServerEnvText,
   parseEnvText,
@@ -260,8 +261,30 @@ async function resolveLocalDesiredRelayUrl(params: Readonly<{
     homeDir: homedir(),
   });
   const envPath = join(defaults.configDir, 'server.env');
+  const existingEnvText = existsSync(envPath) ? await readFile(envPath, 'utf8').catch(() => '') : '';
+
+  // Resolve the port we'll advertise for this channel. When there's no
+  // existing server.env for this channel AND the user didn't explicitly pass
+  // a PORT override, avoid colliding with another channel's relay on the
+  // same machine: each channel stores independent data, so two relays on
+  // the same URL would share a profile id and cross-wire daemon state.
+  const existingPortRaw = existingEnvText ? String(parseEnvText(existingEnvText).PORT ?? '').trim() : '';
+  const overridePortRaw = String((params.envOverrides ?? {}).PORT ?? '').trim();
+  const configuredPortRaw = overridePortRaw || existingPortRaw;
+  const configuredPort = configuredPortRaw && Number.isInteger(Number.parseInt(configuredPortRaw, 10))
+    ? Number.parseInt(configuredPortRaw, 10)
+    : null;
+  const resolvedPort = await resolveNonCollidingRelayPort({
+    platform: process.platform,
+    mode: params.mode,
+    channel: params.channel,
+    homeDir: homedir(),
+    defaultPort: defaults.serverPort,
+    configuredPort,
+  });
+
   const baseEnvText = renderSelfHostServerEnvTextFromResolvedValues({
-    port: defaults.serverPort,
+    port: resolvedPort,
     host: defaults.serverHost,
     dataDir: defaults.dataDir,
     filesDir: join(defaults.dataDir, 'files'),
@@ -270,14 +293,13 @@ async function resolveLocalDesiredRelayUrl(params: Readonly<{
     sqliteAutoMigrate: resolveSelfHostSqliteAutoMigrateValue(),
     sqliteMigrationsDir: join(defaults.dataDir, 'migrations', 'sqlite'),
   });
-  const existingEnvText = existsSync(envPath) ? await readFile(envPath, 'utf8').catch(() => '') : '';
   const envText = mergeSelfHostServerEnvText({
     baseEnvText,
     existingEnvText,
     overrides: params.envOverrides,
   });
   return resolveConfiguredSelfHostBaseUrl({
-    fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
+    fallbackBaseUrl: `http://${defaults.serverHost}:${resolvedPort}`,
     envText,
   });
 }
@@ -1652,6 +1674,28 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       envOverrides: parsed.env,
     });
 
+    // Surface port reassignment so users aren't surprised that dev landed on
+    // an ephemeral port instead of the default 3005. The reassignment happens
+    // transparently in resolveLocalDesiredRelayUrl when another channel
+    // already owns the default port. Writes to stderr so it doesn't pollute
+    // the JSON output envelope.
+    try {
+      const desiredPort = Number.parseInt(new URL(desiredRelayUrl).port, 10);
+      if (Number.isInteger(desiredPort) && desiredPort !== defaults.serverPort) {
+        const configuredEnvPath = join(defaults.configDir, 'server.env');
+        const hadExistingEnv = existsSync(configuredEnvPath);
+        const hadPortOverride = Boolean(String((parsed.env ?? {}).PORT ?? '').trim());
+        if (!hadExistingEnv && !hadPortOverride) {
+          process.stderr.write(
+            `[relay-host] Port ${defaults.serverPort} is already used by another channel's relay; `
+            + `installing ${formatRelayChannelLabel(channel)} on port ${desiredPort} (data is independent per channel).\n`,
+          );
+        }
+      }
+    } catch {
+      // Best-effort notice; don't block install on URL parsing.
+    }
+
     const shouldTreatStableLaneAsLegacyUnsuffixedInstall = await (async () => {
       return await shouldMigrateLegacyUnsuffixedRelayRuntimeInstallRoot({
         platform: process.platform,
@@ -1880,11 +1924,30 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
       return undefined;
     })();
 
+    // Propagate the resolved port (from `desiredRelayUrl`) into the env we
+    // pass to the lower-level installer. Otherwise the installer would call
+    // its own port-resolution helper with no configured port and might pick a
+    // different ephemeral port, causing the advertised URL (desiredRelayUrl)
+    // to disagree with what we actually wrote to the plist/unit file.
+    const resolvedPortFromDesiredUrl = (() => {
+      try {
+        const parsedUrl = new URL(desiredRelayUrl);
+        const value = Number.parseInt(parsedUrl.port, 10);
+        return Number.isInteger(value) && value > 0 && value <= 65_535 ? String(value) : null;
+      } catch {
+        return null;
+      }
+    })();
+    const envForInstaller: Record<string, string> = {
+      ...(parsed.env ?? {}),
+      ...(resolvedPortFromDesiredUrl && !(parsed.env ?? {}).PORT ? { PORT: resolvedPortFromDesiredUrl } : {}),
+    };
+
     const local = await installOrUpdateRelayRuntimeLocal({
       serverBinaryPath,
       channel,
       mode,
-      env: parsed.env,
+      env: envForInstaller,
       legacyInstallRoot: legacyInstallRootToMigrate,
       version,
       runServiceCommands: policy.runServiceCommands !== false,

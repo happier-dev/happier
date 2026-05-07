@@ -60,4 +60,22 @@ describe('eas.json', () => {
             expect(cmd).toMatch(/-x\s+lintVitalAnalyzeRelease\b/);
         }
     });
+
+    it('gives dev-client sibling profiles unique app schemes for side-by-side installs', () => {
+        const eas = readEasJson();
+        const build = eas?.build ?? {};
+
+        const internalDevBase = resolveBuildProfile(build, 'internaldev')?.env?.EXPO_APP_SCHEME;
+        const internalDevClient = resolveBuildProfile(build, 'internaldev-dev-client')?.env?.EXPO_APP_SCHEME;
+        const publicDevBase = resolveBuildProfile(build, 'publicdev')?.env?.EXPO_APP_SCHEME;
+        const publicDevClient = resolveBuildProfile(build, 'publicdev-dev-client')?.env?.EXPO_APP_SCHEME;
+
+        expect(internalDevBase).toBe('happier-internaldev');
+        expect(internalDevClient).toBe('happier-internaldev-devclient');
+        expect(internalDevClient).not.toBe(internalDevBase);
+
+        expect(publicDevBase).toBe('happier-dev');
+        expect(publicDevClient).toBe('happier-dev-devclient');
+        expect(publicDevClient).not.toBe(publicDevBase);
+    });
 });

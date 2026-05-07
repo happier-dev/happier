@@ -23,9 +23,10 @@ function resolveAbsPathFromRepoRoot(repoRoot, rawPath) {
   return join(repoRoot, p);
 }
 
-function resolveAndroidDevClientCachedApkPath({ env } = {}) {
+function resolveAndroidDevClientCachedApkPath({ env, profile } = {}) {
   const home = getHappyStacksHomeDir(env ?? process.env);
-  return join(home, 'mobile-dev-client', 'android', 'happier-dev-client-android.apk');
+  const profileDir = String(profile ?? '').trim() || 'internaldev';
+  return join(home, 'mobile-dev-client', profileDir, 'android', 'happier-dev-client-android.apk');
 }
 
 async function main() {
@@ -39,9 +40,11 @@ async function main() {
       data: {
         flags: [
           '--platform=ios|android',
+          '--profile=internaldev|publicdev',
           '--device=<id-or-name>',
           '--scheme=<url-scheme>',
           '--bundle-id=<bundle-id>',
+          '--android-package=<package-name>',
           '--app-name=<name>',
           '--port=<port>',
           '--reuse',
@@ -55,10 +58,11 @@ async function main() {
         banner('mobile-dev-client', { subtitle: 'Install the shared dev-client app (one-time).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hstack mobile-dev-client')} --install [--platform=ios|android] [--device=...] [--scheme=...] [--bundle-id=...] [--app-name=...] [--port=...] [--clean] [--configuration=Debug|Release] [--json]`,
+        `  ${cyan('hstack mobile-dev-client')} --install [--profile=internaldev|publicdev] [--platform=ios|android] [--device=...] [--scheme=...] [--bundle-id=...] [--android-package=...] [--app-name=...] [--port=...] [--clean] [--configuration=Debug|Release] [--json]`,
         '',
         sectionTitle('notes:'),
         `- Installs a dedicated ${cyan('hstack Dev')} Expo dev-client app on your phone.`,
+        `- ${cyan('--profile=publicdev')} installs the public dev app identity (${cyan('happier-dev')}).`,
         `- This app is intended to be ${cyan('reused across stacks')} (no per-stack installs).`,
         `- If you install with a custom ${cyan('--scheme')}, set ${cyan('HAPPIER_STACK_DEV_CLIENT_SCHEME')} to the same value so QR links open the right app.`,
         `- iOS requires ${yellow('Xcode')} + ${yellow('CocoaPods')} (macOS).`,
@@ -131,13 +135,14 @@ async function main() {
 
   if (platform === 'android') {
     const defaultApkAbs = join(repoRoot, 'dist', 'ui-mobile', 'happier-dev-client-android.apk');
-    const cachedApkAbs = resolveAndroidDevClientCachedApkPath({ env: process.env });
+    const cachedApkAbs = resolveAndroidDevClientCachedApkPath({ env: process.env, profile: invocation.profile });
     const requestedApkAbs = apkArg ? resolveAbsPathFromRepoRoot(repoRoot, apkArg) : '';
+    const requiresProfileScopedReuse = String(invocation.profile ?? '').trim().toLowerCase() !== 'internaldev';
     const reuseApkAbs = (() => {
       if (requestedApkAbs) return requestedApkAbs;
-      if (existsSync(defaultApkAbs)) return defaultApkAbs;
       if (existsSync(cachedApkAbs)) return cachedApkAbs;
-      return defaultApkAbs;
+      if (!requiresProfileScopedReuse && existsSync(defaultApkAbs)) return defaultApkAbs;
+      return requiresProfileScopedReuse ? cachedApkAbs : defaultApkAbs;
     })();
 
     if (wantsReuseApk || requestedApkAbs) {
@@ -199,7 +204,7 @@ async function main() {
           '--platform',
           'android',
           '--profile',
-          'development',
+          invocation.easBuildProfile,
           '--out',
           outJsonRel,
           '--build-mode',

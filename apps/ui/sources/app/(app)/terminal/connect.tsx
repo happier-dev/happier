@@ -98,7 +98,7 @@ export default function TerminalConnectScreen() {
         });
 
         fireAndForget((async () => {
-            if (effectiveTarget && effectiveTarget !== activeServerUrl) {
+            if (effectiveTarget) {
                 try {
                     await upsertActivateAndSwitchServer({
                         serverUrl: effectiveTarget,

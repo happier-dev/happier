@@ -22,7 +22,8 @@ import { emitReadyIfIdle as emitReadyIfIdleShared } from '@/agent/runtime/emitRe
 import { hashObject } from '@/utils/deterministicJson';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
-import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
+import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
+import { createTurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { stopCaffeinate } from '@/integrations/caffeinate';
@@ -360,6 +361,7 @@ export async function runGemini(opts: {
   });
 
   const turnMessageState = createGeminiTurnMessageState();
+  const turnAssistantPreviewTracker = createTurnAssistantPreviewTracker();
   const transcriptStream = createStreamedTranscriptWriter({
     provider: 'gemini',
     session: createCurrentSessionTranscriptPort(() => session),
@@ -379,7 +381,7 @@ export async function runGemini(opts: {
       waitingForCommandLabel: 'Gemini',
       logPrefix: '[Gemini]',
       sessionTitle: getSessionNotificationTitle(session.getMetadataSnapshot.bind(session)),
-      assistantPreviewText: getLatestAssistantMessagePreview(messageBuffer),
+      assistantPreviewText: turnAssistantPreviewTracker.getPreview(),
       accountSettings: opts.accountSettingsContext?.settings ?? null,
       settingsSecretsReadKeys: opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
       includeAssistantPreviewText:
@@ -419,6 +421,7 @@ export async function runGemini(opts: {
 
   async function handleAbort() {
     logger.debug('[Gemini] Abort requested - stopping current task');
+    await permissionHandler.abortPendingRequestsAndFlush('Aborted by user');
     await transcriptStream.flushAll({
       reason: 'abort',
       interruptedReason: 'abort-requested',
@@ -596,6 +599,7 @@ export async function runGemini(opts: {
         state: turnMessageState,
         diffProcessor,
         transcriptStream,
+        turnAssistantPreviewTracker,
       }),
     );
   }
@@ -824,6 +828,7 @@ export async function runGemini(opts: {
         // Reset accumulated response for new prompt
         // This ensures a new assistant message will be created (not updating previous one)
         resetGeminiTurnMessageStateForPrompt(turnMessageState, message.message);
+        turnAssistantPreviewTracker.reset();
         
         if (!geminiBackend || !acpSessionId) {
           throw new Error('Gemini backend or session not initialized');

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -19,6 +20,15 @@ async function readOptionalTrimmedFile(path: string): Promise<string | null> {
   }
 }
 
+function readOptionalTrimmedFileSync(path: string): string | null {
+  try {
+    const value = readFileSync(path, 'utf8').trim();
+    return value.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function readInstalledVersionMarkers(layout: FirstPartyInstallLayout): Promise<{
   currentVersionId: string | null;
   previousVersionId: string | null;
@@ -26,6 +36,24 @@ export async function readInstalledVersionMarkers(layout: FirstPartyInstallLayou
   return {
     currentVersionId: await readOptionalTrimmedFile(resolveMarkerPath(layout, CURRENT_VERSION_MARKER_FILE)),
     previousVersionId: await readOptionalTrimmedFile(resolveMarkerPath(layout, PREVIOUS_VERSION_MARKER_FILE)),
+  };
+}
+
+/**
+ * Sync companion to `readInstalledVersionMarkers`. The runtime path resolver
+ * needs to read these synchronously to derive a junction-free
+ * `<installRoot>/versions/<currentVersionId>` path before any fs check runs —
+ * see `resolveJunctionFreeCurrentPath`. This is the only sane way to query the
+ * "current" install on Windows, where reparse-point trust mitigations make
+ * `<installRoot>/current` traversal unreliable for `existsSync`/`statSync`.
+ */
+export function readInstalledVersionMarkersSync(layout: FirstPartyInstallLayout): {
+  currentVersionId: string | null;
+  previousVersionId: string | null;
+} {
+  return {
+    currentVersionId: readOptionalTrimmedFileSync(resolveMarkerPath(layout, CURRENT_VERSION_MARKER_FILE)),
+    previousVersionId: readOptionalTrimmedFileSync(resolveMarkerPath(layout, PREVIOUS_VERSION_MARKER_FILE)),
   };
 }
 

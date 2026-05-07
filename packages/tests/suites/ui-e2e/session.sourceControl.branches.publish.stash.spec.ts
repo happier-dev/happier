@@ -216,10 +216,12 @@ test.describe('ui e2e: SCM branch publish + switch-with-changes + stash restore'
 
       await expect(rightPane.getByTestId('scm-branch-menu-trigger')).toContainText(newBranch, { timeout: 120_000 });
 
-      // Publish branch (set upstream + push).
-      await expect(rightPane.getByTestId('scm-publish-branch')).toHaveCount(1, { timeout: 120_000 });
-      await rightPane.getByTestId('scm-publish-branch').click();
-      await expect(rightPane.getByTestId('scm-publish-branch')).toHaveCount(0, { timeout: 180_000 });
+      // Publish branch (set upstream + push) from the Update tab.
+      await rightPane.getByTestId('session-rightpanel-git-subtab:update').click();
+      await expect(rightPane.getByTestId('scm-update-publish-branch')).toHaveCount(1, { timeout: 120_000 });
+      await rightPane.getByTestId('scm-update-publish-branch').click();
+      await expect(rightPane.getByTestId('scm-update-publish-branch')).toHaveCount(0, { timeout: 180_000 });
+      await rightPane.getByTestId('session-rightpanel-git-subtab:commit').click();
 
       const targetBranch = 'bring-target';
       execGit(repoDir, ['checkout', '-b', targetBranch]);

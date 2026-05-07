@@ -1,11 +1,17 @@
 import { mkdirSync, mkdtempSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { describe, expect, it, vi } from 'vitest';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import {
+    buildConnectedServiceCredentialRecord,
+    SCM_OPERATION_ERROR_CODES,
+    type ConnectedServiceId,
+} from '@happier-dev/protocol';
 
 import { runScmRoute } from './dispatch';
+import type { ScmBackendContext } from '@/scm/types';
 
 type TestResponse = {
     success: boolean;
@@ -14,6 +20,38 @@ type TestResponse = {
 };
 
 describe('runScmRoute', () => {
+    it('threads connected account credential resolution into backend context', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-dispatch-connected-'));
+        execFileSync('git', ['init'], { cwd: workspace, stdio: 'ignore' });
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1_000,
+            serviceId: 'github',
+            profileId: 'primary',
+            kind: 'token',
+            token: {
+                token: 'ghp_test',
+                providerAccountId: '42',
+                providerEmail: null,
+            },
+        });
+        const connectedAccounts = {
+            resolveCredential: async (serviceId: ConnectedServiceId) => serviceId === 'github' ? record : null,
+        };
+        const routeInput = {
+            request: { cwd: '.' },
+            workingDirectory: workspace,
+            connectedAccounts,
+            onNonRepository: () => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY }),
+            runWithBackend: async ({ context }: { context: ScmBackendContext }) => ({
+                success: (await context.connectedAccounts?.resolveCredential('github'))?.serviceId === 'github',
+            }),
+        };
+
+        await expect(runScmRoute<{ cwd?: string }, TestResponse>(routeInput)).resolves.toEqual({
+            success: true,
+        });
+    });
+
     it('returns INVALID_PATH when restricted cwd fails validation', async () => {
         const suiteDir = mkdtempSync(join(tmpdir(), 'happier-scm-dispatch-'));
         const workspace = join(suiteDir, 'workspace');

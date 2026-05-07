@@ -119,6 +119,14 @@ describe('resolveSessionComposerSend', () => {
         });
     });
 
+    it('intercepts /pet as a client-only action regardless of execution-run enablement', () => {
+        expect(resolveSessionComposerSend({ input: '/pet', executionRunsEnabled: false })).toEqual({
+            kind: 'action',
+            actionId: 'ui.pet.choose',
+            rest: '',
+        });
+    });
+
     it('does not intercept /h.review when disabled (passes through as a normal message)', () => {
         expect(resolveSessionComposerSend({ input: '/h.review review this', executionRunsEnabled: false })).toEqual({
             kind: 'send',
@@ -131,5 +139,66 @@ describe('resolveSessionComposerSend', () => {
             kind: 'send',
             text: '/review review this',
         });
+    });
+
+    it('expands /happier-diagnose to the built-in skill body and sends it', () => {
+        const resolved = resolveSessionComposerSend({ input: '/happier-diagnose', executionRunsEnabled: true });
+        expect(resolved.kind).toBe('send');
+        if (resolved.kind === 'send') {
+            // Body is the verbatim SKILL.md. Sanity-check a couple of distinctive lines.
+            expect(resolved.text).toContain('name: happier-diagnose');
+            expect(resolved.text).toContain('# Happier Diagnose');
+            // Should not be the literal slash token.
+            expect(resolved.text).not.toBe('/happier-diagnose');
+        }
+    });
+
+    it('appends /happier-diagnose arguments after the body (allowArgs: true)', () => {
+        const resolved = resolveSessionComposerSend({
+            input: '/happier-diagnose sess_abcdef123456',
+            executionRunsEnabled: true,
+        });
+        expect(resolved.kind).toBe('send');
+        if (resolved.kind === 'send') {
+            expect(resolved.text).toContain('# Happier Diagnose');
+            expect(resolved.text.endsWith('sess_abcdef123456')).toBe(true);
+        }
+    });
+
+    it('built-in /happier-diagnose takes precedence over a user template with the same token', () => {
+        const resolved = resolveSessionComposerSend({
+            input: '/happier-diagnose',
+            executionRunsEnabled: true,
+            promptInvocationsV1: {
+                v: 1,
+                entries: [
+                    {
+                        id: 'shadow',
+                        token: '/happier-diagnose',
+                        title: 'User shadow',
+                        target: { kind: 'doc', artifactId: 'shadow-artifact' },
+                        behavior: 'insert',
+                        allowArgs: false,
+                        availableIn: 'global',
+                    },
+                ],
+            },
+        });
+        expect(resolved.kind).toBe('send');
+    });
+
+    it('built-in expansion is bypassed by the // escape hatch', () => {
+        expect(resolveSessionComposerSend({ input: '//happier-diagnose', executionRunsEnabled: true })).toEqual({
+            kind: 'send',
+            text: '/happier-diagnose',
+        });
+    });
+
+    it('built-in tokens are case-insensitive', () => {
+        const resolved = resolveSessionComposerSend({ input: '/Happier-Diagnose', executionRunsEnabled: true });
+        expect(resolved.kind).toBe('send');
+        if (resolved.kind === 'send') {
+            expect(resolved.text).toContain('# Happier Diagnose');
+        }
     });
 });

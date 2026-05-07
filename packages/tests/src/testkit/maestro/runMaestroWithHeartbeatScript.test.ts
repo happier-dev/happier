@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, chmod, readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, chmod, readdir, readFile, cp, symlink } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile, spawn } from 'node:child_process';
@@ -173,6 +174,93 @@ describe('scripts/run-maestro-with-heartbeat.mjs', () => {
         expect(adbArgs).toContain('reverse');
         expect(adbArgs).toContain('tcp:26050');
         expect(adbArgs).toContain('tcp:8081');
+    }, TEST_TIMEOUT_MS);
+
+    it('uses the stable tsx package import instead of a private dist path or the tsx CLI wrapper', async () => {
+        const repoRoot = resolve(__dirname, '../../../../..');
+        const scratch = await mkdtemp(join(tmpdir(), 'happier-maestro-script-tsx-hook-'));
+        const fakeRepoRoot = join(scratch, 'repo');
+
+        const fakeScriptsDir = join(fakeRepoRoot, 'packages', 'tests', 'scripts');
+        const fakeCliDir = join(fakeRepoRoot, 'packages', 'tests', 'src', 'testkit', 'maestro');
+        await mkdir(fakeScriptsDir, { recursive: true });
+        await mkdir(fakeCliDir, { recursive: true });
+        await writeFile(join(fakeRepoRoot, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
+
+        await cp(
+            join(repoRoot, 'packages', 'tests', 'scripts', 'run-maestro-with-heartbeat.mjs'),
+            join(fakeScriptsDir, 'run-maestro-with-heartbeat.mjs'),
+        );
+        await cp(
+            join(repoRoot, 'packages', 'tests', 'scripts', 'managedChildLifecycle.mjs'),
+            join(fakeScriptsDir, 'managedChildLifecycle.mjs'),
+        );
+        await cp(
+            join(repoRoot, 'packages', 'tests', 'scripts', 'processTree.mjs'),
+            join(fakeScriptsDir, 'processTree.mjs'),
+        );
+
+        const fakeNodeModulesDir = join(fakeRepoRoot, 'node_modules');
+        await mkdir(join(fakeNodeModulesDir, '.bin'), { recursive: true });
+        await cp(join(repoRoot, 'node_modules', 'tsx'), join(fakeNodeModulesDir, 'tsx'), { recursive: true });
+        await cp(join(repoRoot, 'node_modules', 'get-tsconfig'), join(fakeNodeModulesDir, 'get-tsconfig'), { recursive: true });
+        await cp(join(repoRoot, 'node_modules', 'resolve-pkg-maps'), join(fakeNodeModulesDir, 'resolve-pkg-maps'), { recursive: true });
+        await cp(join(repoRoot, 'node_modules', 'esbuild'), join(fakeNodeModulesDir, 'esbuild'), { recursive: true });
+        await cp(join(repoRoot, 'node_modules', '@esbuild'), join(fakeNodeModulesDir, '@esbuild'), { recursive: true });
+        await symlink('../tsx/dist/cli.mjs', join(fakeNodeModulesDir, '.bin', 'tsx'));
+        await writeFile(
+            join(fakeNodeModulesDir, 'tsx', 'dist', 'cli.mjs'),
+            [
+                '#!/usr/bin/env node',
+                'this is not valid JavaScript',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const cliMarkerPath = join(scratch, 'mobile-cli-marker.json');
+        await writeFile(
+            join(fakeCliDir, 'mobileMaestroCli.ts'),
+            [
+                "import { writeFileSync } from 'node:fs';",
+                "const markerPath = process.env.MOBILE_CLI_MARKER_PATH;",
+                "if (!markerPath) throw new Error('Missing MOBILE_CLI_MARKER_PATH');",
+                "writeFileSync(markerPath, JSON.stringify({ argv: process.argv.slice(2), execArgv: process.execArgv }), 'utf8');",
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        await execFileAsync(
+            process.execPath,
+            [
+                join(fakeScriptsDir, 'run-maestro-with-heartbeat.mjs'),
+                '--platform',
+                'android',
+                '--flows',
+                'suites/mobile-e2e/flows/F1.bootAndCreateAccount.yaml',
+            ],
+            {
+                cwd: scratch,
+                env: {
+                    ...process.env,
+                    MOBILE_CLI_MARKER_PATH: cliMarkerPath,
+                },
+            },
+        );
+
+        const marker = JSON.parse(await readFile(cliMarkerPath, 'utf8')) as { argv?: string[]; execArgv?: string[] };
+        const fakeRequire = createRequire(join(fakeScriptsDir, 'run-maestro-with-heartbeat.mjs'));
+        const expectedTsxEntrypoint = fakeRequire.resolve('tsx');
+        expect(marker.argv).toEqual([
+            '--platform',
+            'android',
+            '--flows',
+            'suites/mobile-e2e/flows/F1.bootAndCreateAccount.yaml',
+        ]);
+        expect(marker.execArgv?.[0]).toBe('--import');
+        expect(marker.execArgv?.[1]).toBe(expectedTsxEntrypoint);
+        expect(marker.execArgv?.join(' ')).not.toContain('dist/esm/index.mjs');
     }, TEST_TIMEOUT_MS);
 
     it('terminates a long-running maestro child on SIGTERM', async () => {

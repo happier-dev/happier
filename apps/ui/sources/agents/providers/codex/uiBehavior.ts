@@ -85,6 +85,9 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     guidance: {
         includeInSessionGettingStartedCliExamples: true,
     },
+    sessionUsage: {
+        supportsExactContextUsageBadge: false,
+    },
     mcpServers: {
         supportsDetectedConfigScan: true,
     },

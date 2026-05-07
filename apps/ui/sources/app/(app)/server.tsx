@@ -1,8 +1,6 @@
 import * as React from 'react';
-
-import { ServerSettingsScreen } from '@/components/settings/server/screens/ServerSettingsScreen';
+import { Redirect } from 'expo-router';
 
 export default function ServerConfigRoute() {
-    return <ServerSettingsScreen />;
+    return <Redirect href="/settings/server" />;
 }
-

@@ -8,10 +8,12 @@ const { mockRequest, mockResolveContext, mockRuntimeFetchWithServerReachability,
     sessions: {},
     sessionListViewDataByServerId: {},
     applySessions: vi.fn(),
+    applySessionListRenderablePatches: vi.fn(),
   } as {
     sessions: Record<string, unknown>;
     sessionListViewDataByServerId: Record<string, unknown>;
     applySessions: ReturnType<typeof vi.fn>;
+    applySessionListRenderablePatches: ReturnType<typeof vi.fn>;
   },
 }));
 
@@ -61,6 +63,7 @@ describe('sessionArchiveWithServerScope', () => {
     mockStorageState.sessions = {};
     mockStorageState.sessionListViewDataByServerId = {};
     mockStorageState.applySessions.mockReset();
+    mockStorageState.applySessionListRenderablePatches.mockReset();
   });
 
   it('uses active apiSocket.request when scope is active', async () => {
@@ -135,7 +138,7 @@ describe('sessionArchiveWithServerScope', () => {
     expect(mockResolveContext).toHaveBeenCalledWith({ serverId: 'server-owned' });
   });
 
-  it('surfaces a stable session_active code for archive conflicts', async () => {
+  it('surfaces a stable session_active code for JSON archive conflicts', async () => {
     mockResolveContext.mockResolvedValue({
       scope: 'active',
       targetServerUrl: 'https://active.example',
@@ -147,7 +150,7 @@ describe('sessionArchiveWithServerScope', () => {
     mockRequest.mockResolvedValue(makeResponse({
       ok: false,
       status: 409,
-      text: 'Cannot archive an active session',
+      text: '{"error":"session-active"}',
     }));
 
     const res = await sessionArchiveWithServerScope('sid-conflict', { serverId: 'server-a' });
@@ -158,6 +161,32 @@ describe('sessionArchiveWithServerScope', () => {
       code: 'session_active',
     });
   });
+
+  it('patches cache-only list renderables after a successful archive', async () => {
+    mockResolveContext.mockResolvedValue({
+      scope: 'active',
+      targetServerUrl: 'https://active.example',
+      targetServerId: 'server-a',
+      token: 'tok',
+      timeoutMs: 1000,
+      encryption: null,
+    });
+    mockRequest.mockResolvedValue(makeResponse({ ok: true, json: { success: true, archivedAt: 42 } }));
+
+    const res = await sessionArchiveWithServerScope('sid-cache-only', { serverId: 'server-a' });
+
+    expect(res).toEqual({ success: true, archivedAt: 42 });
+    expect(mockStorageState.applySessions).not.toHaveBeenCalled();
+    expect(mockStorageState.applySessionListRenderablePatches).toHaveBeenCalledWith([
+      {
+        sessionId: 'sid-cache-only',
+        patch: expect.objectContaining({
+          archivedAt: 42,
+          updatedAt: expect.any(Number),
+        }),
+      },
+    ]);
+  });
 });
 
 describe('sessionUnarchiveWithServerScope', () => {
@@ -165,6 +194,9 @@ describe('sessionUnarchiveWithServerScope', () => {
     mockRequest.mockReset();
     mockResolveContext.mockReset();
     mockRuntimeFetchWithServerReachability.mockReset();
+    mockStorageState.sessions = {};
+    mockStorageState.applySessions.mockReset();
+    mockStorageState.applySessionListRenderablePatches.mockReset();
   });
 
   it('uses active apiSocket.request when scope is active', async () => {
@@ -182,5 +214,31 @@ describe('sessionUnarchiveWithServerScope', () => {
     expect(res).toEqual({ success: true, archivedAt: null });
     expect(mockRequest).toHaveBeenCalledWith('/v2/sessions/sid-1/unarchive', { method: 'POST' });
     expect(mockRuntimeFetchWithServerReachability).not.toHaveBeenCalled();
+  });
+
+  it('patches cache-only list renderables after a successful unarchive', async () => {
+    mockResolveContext.mockResolvedValue({
+      scope: 'active',
+      targetServerUrl: 'https://active.example',
+      targetServerId: 'server-a',
+      token: 'tok',
+      timeoutMs: 1000,
+      encryption: null,
+    });
+    mockRequest.mockResolvedValue(makeResponse({ ok: true, json: { success: true, archivedAt: null } }));
+
+    const res = await sessionUnarchiveWithServerScope('sid-cache-only', { serverId: 'server-a' });
+
+    expect(res).toEqual({ success: true, archivedAt: null });
+    expect(mockStorageState.applySessions).not.toHaveBeenCalled();
+    expect(mockStorageState.applySessionListRenderablePatches).toHaveBeenCalledWith([
+      {
+        sessionId: 'sid-cache-only',
+        patch: expect.objectContaining({
+          archivedAt: null,
+          updatedAt: expect.any(Number),
+        }),
+      },
+    ]);
   });
 });

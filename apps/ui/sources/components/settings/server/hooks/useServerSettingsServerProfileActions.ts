@@ -5,6 +5,7 @@ import { t } from '@/text';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { removeServerProfile, renameServerProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
+import { retargetPendingTerminalConnectToServerUrl } from '@/components/settings/server/hooks/retargetPendingTerminalConnectToServerUrl';
 
 import type { ServerAuthStatus } from './useServerAuthStatusByServerId';
 
@@ -14,9 +15,6 @@ export function useServerSettingsServerProfileActions(params: Readonly<{
     onAfterSignedOutSwitch: () => void;
 
     setRevision: React.Dispatch<React.SetStateAction<number>>;
-
-    setServerSelectionActiveTargetKind: (value: 'server' | 'group' | null) => void;
-    setServerSelectionActiveTargetId: (value: string | null) => void;
 }>) {
     const onSwitchServer = React.useCallback(async (profile: ServerProfile) => {
         let authStatus = params.authStatusByServerId[profile.id] ?? 'unknown';
@@ -33,8 +31,7 @@ export function useServerSettingsServerProfileActions(params: Readonly<{
             if (!shouldContinue) return;
         }
 
-        params.setServerSelectionActiveTargetKind('server');
-        params.setServerSelectionActiveTargetId(profile.id);
+        retargetPendingTerminalConnectToServerUrl(profile.serverUrl);
 
         await params.onSwitchServerById(profile.id);
         if (authStatus === 'signedOut') {

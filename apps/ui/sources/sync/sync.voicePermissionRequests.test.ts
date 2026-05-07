@@ -95,6 +95,7 @@ describe('sync: voice permission request announcements', () => {
                         latestThinkingMessageId: null,
                         latestThinkingMessageActivityAtMs: null,
                         messagesVersion: 0,
+                        lastAppliedAgentStateVersion: null,
                         isLoaded: true,
                     },
                 },

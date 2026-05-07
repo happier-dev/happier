@@ -5,15 +5,15 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ReviewCommentsV1 } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { formatReviewCommentAnchorLabel } from '@/sync/domains/input/reviewComments/reviewCommentPresentation';
 
 
 export function ReviewCommentsMessageCard(props: {
     payload: ReviewCommentsV1;
     onJumpToAnchor: (target: { filePath: string; source: ReviewCommentSource; anchor: ReviewCommentAnchor }) => void;
 }) {
-    const [expandedCommentId, setExpandedCommentId] = React.useState<string | null>(null);
-
     const comments = props.payload.comments;
     const byFile = React.useMemo(() => {
         const map = new Map<string, typeof comments>();
@@ -32,33 +32,36 @@ export function ReviewCommentsMessageCard(props: {
                 <View key={filePath} style={styles.fileGroup}>
                     <Text selectable style={styles.filePathText}>{filePath}</Text>
                     {fileComments.map((c) => {
-                        const isExpanded = expandedCommentId === c.id;
                         return (
                             <View key={c.id} style={styles.commentRow}>
-                                <Pressable
+                                <View
                                     testID={`review-comments-header:${c.id}`}
-                                    accessibilityRole="button"
-                                    onPress={() => setExpandedCommentId((prev) => (prev === c.id ? null : c.id))}
                                     style={styles.commentHeader}
                                 >
-                                    <Text selectable style={styles.commentHeaderText}>{c.body}</Text>
-                                </Pressable>
-                                <View style={styles.commentActions}>
+                                    <Text selectable numberOfLines={1} style={styles.anchorText}>
+                                        {formatReviewCommentAnchorLabel(c)}
+                                    </Text>
                                     <Pressable
                                         testID={`review-comments-jump:${c.id}`}
                                         accessibilityRole="button"
                                         onPress={() => props.onJumpToAnchor({ filePath: c.filePath, source: c.source, anchor: c.anchor })}
+                                        style={styles.jumpButton}
                                     >
                                         <Text style={styles.jumpText}>{t('files.reviewComments.jump')}</Text>
                                     </Pressable>
                                 </View>
-                                {isExpanded && (
-                                    <View style={styles.commentBody}>
-                                        {c.snapshot.selectedLines.map((line, idx) => (
-                                            <Text selectable key={idx} style={styles.codeText}>{line}</Text>
-                                        ))}
-                                    </View>
-                                )}
+                                <View style={styles.commentBody}>
+                                    {c.snapshot.beforeContext.map((line, idx) => (
+                                        <Text selectable key={`before:${idx}`} numberOfLines={1} style={styles.codeMutedText}>{line}</Text>
+                                    ))}
+                                    {c.snapshot.selectedLines.map((line, idx) => (
+                                        <Text selectable key={`selected:${idx}`} numberOfLines={1} style={styles.codeText}>{line}</Text>
+                                    ))}
+                                    <Text selectable style={styles.commentText}>{c.body}</Text>
+                                    {c.snapshot.afterContext.map((line, idx) => (
+                                        <Text selectable key={`after:${idx}`} numberOfLines={1} style={styles.codeMutedText}>{line}</Text>
+                                    ))}
+                                </View>
                             </View>
                         );
                     })}
@@ -83,7 +86,7 @@ const styles = StyleSheet.create((theme) => ({
         fontWeight: '600',
     },
     fileGroup: {
-        gap: 6,
+        gap: 8,
     },
     filePathText: {
         color: theme.colors.textSecondary,
@@ -91,21 +94,26 @@ const styles = StyleSheet.create((theme) => ({
         fontWeight: '600',
     },
     commentRow: {
-        paddingVertical: 6,
+        gap: 6,
+        paddingVertical: 8,
         borderTopWidth: 1,
         borderTopColor: theme.colors.divider,
     },
     commentHeader: {
-        paddingVertical: 4,
-    },
-    commentHeaderText: {
-        color: theme.colors.text,
-        fontSize: 13,
-    },
-    commentActions: {
         flexDirection: 'row',
-        justifyContent: 'flex-end',
-        paddingTop: 2,
+        alignItems: 'center',
+        gap: 8,
+    },
+    anchorText: {
+        flex: 1,
+        minWidth: 0,
+        color: theme.colors.textSecondary,
+        fontSize: 12,
+        ...Typography.default(),
+    },
+    jumpButton: {
+        paddingHorizontal: 6,
+        paddingVertical: 3,
     },
     jumpText: {
         color: theme.colors.textLink,
@@ -113,12 +121,28 @@ const styles = StyleSheet.create((theme) => ({
         fontWeight: '600',
     },
     commentBody: {
-        paddingTop: 6,
-        gap: 2,
+        gap: 4,
+        padding: 10,
+        borderRadius: 10,
+        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surfaceHighest,
     },
     codeText: {
         color: theme.colors.text,
         fontFamily: 'Menlo',
         fontSize: 12,
+    },
+    codeMutedText: {
+        color: theme.colors.textSecondary,
+        fontFamily: 'Menlo',
+        fontSize: 12,
+    },
+    commentText: {
+        color: theme.colors.text,
+        fontSize: 13,
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderRadius: 8,
+        backgroundColor: theme.colors.surfaceHighest,
+        ...Typography.default(),
     },
 }));

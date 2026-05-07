@@ -1,13 +1,39 @@
 import type { Metadata } from '@/api/types';
+import {
+  normalizeWindowsTerminalWindowName as normalizeProtocolWindowsTerminalWindowName,
+  DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME,
+} from '@happier-dev/protocol';
 import { randomBytes } from 'node:crypto';
 
 type WindowsHostedActualMode = 'windows_terminal' | 'windows_console';
 type WindowsHostedRequestedMode = 'windows_terminal' | 'console';
 
+export function normalizeWindowsTerminalWindowName(value: unknown): string {
+  return normalizeProtocolWindowsTerminalWindowName(value);
+}
+
+export function resolveWindowsTerminalWindowName(params: {
+  requested?: string | null | undefined;
+  env: NodeJS.ProcessEnv;
+}): string {
+  const envName = normalizeWindowsTerminalWindowName(params.env.HAPPIER_WINDOWS_TERMINAL_WINDOW_NAME);
+  if (envName !== DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME || typeof params.env.HAPPIER_WINDOWS_TERMINAL_WINDOW_NAME === 'string') {
+    return envName;
+  }
+
+  const legacyEnvName = normalizeWindowsTerminalWindowName(params.env.HAPPIER_WINDOWS_TERMINAL_WINDOW_ID);
+  if (legacyEnvName !== DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME || typeof params.env.HAPPIER_WINDOWS_TERMINAL_WINDOW_ID === 'string') {
+    return legacyEnvName;
+  }
+
+  return normalizeWindowsTerminalWindowName(params.requested);
+}
+
 export function buildWindowsTerminalWindowIdentity(params: {
   existingSessionId?: string;
   reservedSessionId?: string;
   agentCommand: string;
+  windowName?: string | null;
   now?: () => number;
   randomHex?: () => string;
 }): { windowId: string; title: string } {
@@ -22,7 +48,7 @@ export function buildWindowsTerminalWindowIdentity(params: {
   const sanitizedBase = base.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'session';
   const sanitizedAgent = params.agentCommand.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'agent';
   return {
-    windowId: `happy-${sanitizedAgent}-${sanitizedBase}`,
+    windowId: normalizeWindowsTerminalWindowName(params.windowName),
     title: `Happier ${params.agentCommand} ${base}`,
   };
 }

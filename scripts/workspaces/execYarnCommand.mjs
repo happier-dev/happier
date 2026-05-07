@@ -44,22 +44,36 @@ export function resolveYarnInvocation(npmExecPath = process.env.npm_execpath, op
   return { command: processExecPath, args: [normalizedNpmExecPath] };
 }
 
-export function execYarn(args, options = {}) {
-  const execFileSync = options.execFileSync ?? defaultExecFileSync;
+export function resolveYarnCommandInvocation(args = [], options = {}) {
   const platform = options.platform ?? process.platform;
-  const { execFileSync: _execFileSync, npmExecPath, platform: _platform, comspec, ...childOptions } = options;
+  const { npmExecPath, platform: _platform, comspec: _comspec, processExecPath: _processExecPath, ..._childOptions } = options;
   const invocation = resolveYarnInvocation(npmExecPath, {
     platform,
     processExecPath: options.processExecPath,
   });
+  const commandArgs = [...invocation.args, ...args];
 
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(invocation.command)) {
-    const wrapped = buildWindowsCmdShimInvocation(invocation.command, [...invocation.args, ...args], { comspec });
-    return execFileSync(wrapped.command, wrapped.args, {
-      ...childOptions,
-      windowsVerbatimArguments: wrapped.windowsVerbatimArguments,
-    });
+    return buildWindowsCmdShimInvocation(invocation.command, commandArgs, { comspec: options.comspec });
   }
 
-  return execFileSync(invocation.command, [...invocation.args, ...args], childOptions);
+  return { command: invocation.command, args: commandArgs };
+}
+
+export function execYarn(args, options = {}) {
+  const execFileSync = options.execFileSync ?? defaultExecFileSync;
+  const { execFileSync: _execFileSync, npmExecPath, platform: _platform, comspec, processExecPath: _processExecPath, ...childOptions } = options;
+  const invocation = resolveYarnCommandInvocation(args, {
+    npmExecPath,
+    platform: options.platform,
+    processExecPath: options.processExecPath,
+    comspec,
+  });
+
+  return execFileSync(invocation.command, invocation.args, {
+    ...childOptions,
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
+  });
 }

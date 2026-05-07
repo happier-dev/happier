@@ -7,6 +7,7 @@ import {
     useSessionActionDrafts,
     useSessionLatestThinkingMessageId,
     useSessionLatestThinkingMessageActivityAtMs,
+    useSessionMessages,
     useSessionMessagesById,
     useSessionPendingMessages,
     useSessionTranscriptIds,
@@ -42,7 +43,10 @@ import { reduceTranscriptScrollPinState, type TranscriptScrollPinState } from '@
 import { shouldPrefetchOlderFromTop } from '@/components/sessions/transcript/scroll/shouldPrefetchOlderFromTop';
 import { resolveTranscriptInitialFillTuning } from '@/components/sessions/transcript/scroll/resolveTranscriptInitialFillTuning';
 import { resolveWebPinRetryTimeoutMs } from '@/components/sessions/transcript/scroll/resolveWebPinRetryTimeoutMs';
+import { resolveSessionEntryBottomFollow } from '@/components/sessions/transcript/scroll/resolveSessionEntryBottomFollow';
+import { resolveTranscriptBottomFollowIntent } from '@/components/sessions/transcript/scroll/resolveTranscriptBottomFollowIntent';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { preloadEnrichedMarkdownRuntime } from '@/components/markdown/enriched/preloadEnrichedMarkdownRuntime';
 import { resolveActiveThinkingMessageId } from '@/components/sessions/transcript/thinking/resolveActiveThinkingMessageId';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { deriveTranscriptInteractionFromSession, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -61,7 +65,9 @@ import {
     getWebTranscriptDistanceFromBottom,
     isWebTranscriptScrollable,
     resolveWebTranscriptScrollMetrics,
+    type WebTranscriptScrollMetrics,
 } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
+import { resolveWebBottomFollowAdjustment } from '@/components/sessions/transcript/scroll/resolveWebBottomFollowAdjustment';
 import { WebTranscriptSplitFooter } from '@/components/sessions/transcript/web/WebTranscriptSplitFooter';
 import {
     captureWebTranscriptPrependAnchor,
@@ -72,6 +78,10 @@ import {
     TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX,
     type WebTranscriptPrependAnchor,
 } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
+import {
+    clearSessionUiTelemetryMarks,
+    recordStreamingVisibleUpdateForSessionUiTelemetry,
+} from '@/sync/runtime/performance/sessionUiTelemetry';
 
 type ScrollableChatListRef = Readonly<{
     scrollToIndex: (params: { index: number; animated?: boolean; viewPosition?: number }) => void;
@@ -86,10 +96,18 @@ type ChatTranscriptListItem =
         turn: TranscriptTurn;
     };
 
+const TRANSCRIPT_SCROLL_AUTO_REPIN_THROTTLE_MS = 200;
+const TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS = 250;
+const TRANSCRIPT_SCROLL_USER_INTENT_RECENT_MS = 500;
+
 export type ChatListBottomNotice = {
     title: string;
     body: string;
 };
+
+function readSessionViewportForEntry(sessionId: string) {
+    return typeof sync.getSessionViewport === 'function' ? sync.getSessionViewport(sessionId) : null;
+}
 
 export const ChatList = React.memo((props: {
     session: Session;
@@ -97,14 +115,18 @@ export const ChatList = React.memo((props: {
     controlledByUserOverride?: boolean;
     controlSwitchTo?: 'remote' | null;
     onRequestSwitchToRemote?: () => void;
-    onRequestSwitchToLocal?: () => void;
     directControlFooter?: ChatFooterDirectControlState;
     jumpToSeq?: number | null;
     onViewportChange?: (state: { isPinned: boolean; offsetY: number }) => void;
 }) => {
+    React.useEffect(() => {
+        fireAndForget(preloadEnrichedMarkdownRuntime(), { tag: 'ChatList.preloadEnrichedMarkdownRuntime' });
+    }, []);
+
     const fork = useForkedTranscriptSnapshot(props.session.id);
     const { ids: childMessageIdsOldestFirst, isLoaded } = useSessionTranscriptIds(props.session.id);
     const childMessagesById = useSessionMessagesById(props.session.id);
+    const { messages: swrCommittedMessages } = useSessionMessages(props.session.id);
     const { messages: pendingMessages, discarded: discardedPendingMessages } = useSessionPendingMessages(props.session.id);
     const actionDrafts = useSessionActionDrafts(props.session.id);
 
@@ -114,6 +136,21 @@ export const ChatList = React.memo((props: {
     const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
 
     const forkedTranscriptEnabled = fork != null;
+    const swrFallbackEnabled = !forkedTranscriptEnabled
+        && childMessageIdsOldestFirst.length === 0
+        && swrCommittedMessages.length > 0;
+    const swrFallbackMessageIdsOldestFirst = React.useMemo(() => {
+        if (!swrFallbackEnabled) return childMessageIdsOldestFirst;
+        return swrCommittedMessages.map((message) => message.id);
+    }, [childMessageIdsOldestFirst, swrCommittedMessages, swrFallbackEnabled]);
+    const swrFallbackMessagesById = React.useMemo(() => {
+        if (!swrFallbackEnabled) return childMessagesById;
+        const out: Record<string, Message> = {};
+        for (const message of swrCommittedMessages) {
+            out[message.id] = message;
+        }
+        return out;
+    }, [childMessagesById, swrCommittedMessages, swrFallbackEnabled]);
 
     const forkContextNeedsPrefetch = React.useMemo(() => {
         if (!fork) return false;
@@ -135,14 +172,14 @@ export const ChatList = React.memo((props: {
         if (forkedTranscriptEnabled) {
             return fork!.combinedMessageIdsOldestFirst as any as string[];
         }
-        return childMessageIdsOldestFirst;
-    }, [childMessageIdsOldestFirst, fork, forkedTranscriptEnabled]);
+        return swrFallbackMessageIdsOldestFirst;
+    }, [fork, forkedTranscriptEnabled, swrFallbackMessageIdsOldestFirst]);
     const messagesById = React.useMemo(() => {
         if (forkedTranscriptEnabled) {
             return fork!.combinedMessagesById as any;
         }
-        return childMessagesById;
-    }, [childMessagesById, fork, forkedTranscriptEnabled]);
+        return swrFallbackMessagesById;
+    }, [fork, forkedTranscriptEnabled, swrFallbackMessagesById]);
 
     const groupingMode = forkedTranscriptEnabled ? 'linear' : (transcriptGroupingMode === 'turns' ? 'turns' : 'linear');
     const groupToolCalls =
@@ -286,7 +323,6 @@ export const ChatList = React.memo((props: {
             controlledByUserOverride={props.controlledByUserOverride}
             controlSwitchTo={props.controlSwitchTo ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-            onRequestSwitchToLocal={props.onRequestSwitchToLocal}
             directControlFooter={props.directControlFooter}
             interaction={interaction}
             jumpToSeq={props.jumpToSeq ?? null}
@@ -316,7 +352,6 @@ const ListFooter = React.memo((props: {
     controlledByUserOverride?: boolean;
     controlSwitchTo?: 'remote' | null;
     onRequestSwitchToRemote?: () => void;
-    onRequestSwitchToLocal?: () => void;
     directControl?: ChatFooterDirectControlState;
 }) => {
     const session = useSession(props.sessionId);
@@ -332,7 +367,6 @@ const ListFooter = React.memo((props: {
             notice={props.bottomNotice ?? null}
             controlSwitchTo={props.controlSwitchTo ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-            onRequestSwitchToLocal={props.onRequestSwitchToLocal}
             directControl={props.directControl ?? null}
         />
     )
@@ -403,7 +437,6 @@ const ChatListInternal = React.memo((props: {
     controlledByUserOverride?: boolean;
     controlSwitchTo?: 'remote' | null;
     onRequestSwitchToRemote?: () => void,
-    onRequestSwitchToLocal?: () => void,
     directControlFooter?: ChatFooterDirectControlState;
     interaction: TranscriptInteraction;
     jumpToSeq?: number | null;
@@ -432,9 +465,11 @@ const ChatListInternal = React.memo((props: {
     const pendingWebPrependIndexRecoveryRef = React.useRef(false);
     const scheduledWebPrependIndexRecoveryRef = React.useRef<{ kind: 'raf' | 'timeout'; ids: any[] } | null>(null);
       const wantsPinnedRef = React.useRef(true);
-      const lastUserScrollIntentAtMsRef = React.useRef(0);
+      const lastUserScrollIntentAtMsRef = React.useRef(Number.NEGATIVE_INFINITY);
       const lastAutoRepinAtMsRef = React.useRef(0);
       const lastPinOffsetForIntentRef = React.useRef<number | null>(null);
+      const lastScrollOffsetForIntentRef = React.useRef<number | null>(null);
+    const lastNativeInitialPinOffsetRef = React.useRef<number | null>(null);
     const initialWebPinStabilizingRef = React.useRef(false);
 
     const transcriptMotionPreset = useSetting('transcriptMotionPreset');
@@ -536,12 +571,33 @@ const ChatListInternal = React.memo((props: {
     const transcriptListImplementation = useSetting('transcriptListImplementation');
     const transcriptToolCallsCollapsedPreviewCountSetting = useSetting('transcriptToolCallsCollapsedPreviewCount');
 
-      const [scrollPin, setScrollPin] = React.useState<TranscriptScrollPinState>({
-          isPinned: true,
+      const [scrollPin, setScrollPin] = React.useState<TranscriptScrollPinState>(() => ({
+          isPinned: resolveSessionEntryBottomFollow(readSessionViewportForEntry(props.sessionId)),
           newActivityCount: 0,
           lastActivityKey: null,
-      });
+      }));
       const isPinnedRef = React.useRef(true);
+      const sessionEntryViewportRef = React.useRef<{
+          sessionId: string;
+          shouldFollowBottom: boolean;
+          offsetY: number;
+      } | null>(null);
+      if (sessionEntryViewportRef.current?.sessionId !== props.sessionId) {
+          const sessionViewport = readSessionViewportForEntry(props.sessionId);
+          const shouldFollowBottom = resolveSessionEntryBottomFollow(sessionViewport);
+          sessionEntryViewportRef.current = {
+              sessionId: props.sessionId,
+              shouldFollowBottom,
+              offsetY: sessionViewport?.offsetY ?? 0,
+          };
+          wantsPinnedRef.current = shouldFollowBottom;
+          isPinnedRef.current = shouldFollowBottom;
+          lastUserScrollIntentAtMsRef.current = Number.NEGATIVE_INFINITY;
+          lastAutoRepinAtMsRef.current = 0;
+          lastPinOffsetForIntentRef.current = shouldFollowBottom ? 0 : (sessionViewport?.offsetY ?? null);
+          lastScrollOffsetForIntentRef.current = null;
+          lastNativeInitialPinOffsetRef.current = null;
+      }
       const [expandedToolCallsAnchorMessageIds, setExpandedToolCallsAnchorMessageIds] = React.useState<ReadonlySet<string>>(
           () => new Set<string>(),
       );
@@ -587,8 +643,9 @@ const ChatListInternal = React.memo((props: {
             });
         }, [thinkingDefaultExpanded]);
 
+    const onViewportChangeRef = React.useRef(props.onViewportChange);
     React.useEffect(() => {
-        props.onViewportChange?.({ isPinned: isPinnedRef.current, offsetY: 0 });
+        onViewportChangeRef.current = props.onViewportChange;
     }, [props.onViewportChange]);
 
     React.useEffect(() => {
@@ -621,6 +678,22 @@ const ChatListInternal = React.memo((props: {
             }
         }
         setExpandedToolCallsAnchorMessageIds(new Set());
+        const entryViewport = sessionEntryViewportRef.current;
+        const shouldFollowBottom = entryViewport?.shouldFollowBottom ?? true;
+        const offsetY = entryViewport?.offsetY ?? 0;
+        wantsPinnedRef.current = shouldFollowBottom;
+        isPinnedRef.current = shouldFollowBottom;
+        lastUserScrollIntentAtMsRef.current = Number.NEGATIVE_INFINITY;
+        lastAutoRepinAtMsRef.current = 0;
+        lastPinOffsetForIntentRef.current = shouldFollowBottom ? 0 : offsetY;
+        lastScrollOffsetForIntentRef.current = null;
+        lastNativeInitialPinOffsetRef.current = null;
+        setScrollPin({
+            isPinned: shouldFollowBottom,
+            newActivityCount: 0,
+            lastActivityKey: null,
+        });
+        onViewportChangeRef.current?.({ isPinned: shouldFollowBottom, offsetY });
     }, [props.sessionId]);
 
     const pinEnabled = transcriptScrollPinEnabled !== false;
@@ -672,13 +745,57 @@ const ChatListInternal = React.memo((props: {
     // (e.g. initial viewport fill and jump-to-seq resolution).
     itemsRef.current = displayItems;
 
+    React.useEffect(() => {
+        recordStreamingVisibleUpdateForSessionUiTelemetry({
+            sessionId: props.sessionId,
+            latestMessageId: props.latestCommittedActivityKey,
+            committedMessages: props.committedMessagesCount,
+            transcriptLoaded: props.isLoaded ? 1 : 0,
+            visibleItems: listData.length,
+        });
+    }, [
+        listData.length,
+        props.committedMessagesCount,
+        props.isLoaded,
+        props.latestCommittedActivityKey,
+        props.messagesById,
+        props.sessionId,
+    ]);
+
+    React.useEffect(() => {
+        return () => {
+            clearSessionUiTelemetryMarks(props.sessionId);
+        };
+    }, [props.sessionId]);
+
+    const usesNativeFlashListBottomMaintenance =
+        Platform.OS !== 'web' && listImplementation === 'flash_v2';
+
+    const shouldCommitContentHeightState = React.useCallback(() => {
+        if (Platform.OS === 'web') return true;
+        if (initialFillStatusRef.current !== 'done') return true;
+        return props.jumpToSeq != null;
+    }, [props.jumpToSeq]);
+
     const flashListMaintainVisibleContentPosition = React.useMemo(() => {
         // FlashList/web can throw "index out of bounds, not enough layouts" under heavy append + scroll
         // when `maintainVisibleContentPosition.startRenderingFromBottom` is enabled. On web we already
         // pin via direct DOM scroll writes, so omit this prop to avoid the crash.
         if (Platform.OS === 'web') return undefined;
-        return { startRenderingFromBottom: true } as const;
-    }, []);
+        const autoscrollToBottomThreshold =
+            pinEnabled && autoFollowWhenPinned
+                ? (listLayoutHeight > 0 ? pinThresholdPx / listLayoutHeight : 0)
+                : undefined;
+        return {
+            startRenderingFromBottom: true,
+            ...(typeof autoscrollToBottomThreshold === 'number'
+                ? {
+                    autoscrollToBottomThreshold: Math.max(0, Math.min(1, autoscrollToBottomThreshold)),
+                    animateAutoScrollToBottom: false,
+                }
+                : {}),
+        } as const;
+    }, [autoFollowWhenPinned, listLayoutHeight, pinEnabled, pinThresholdPx]);
 
     const flatListMaintainVisibleContentPosition = React.useMemo(() => {
         return pinEnabled && autoFollowWhenPinned
@@ -997,7 +1114,6 @@ const ChatListInternal = React.memo((props: {
             controlledByUserOverride={props.controlledByUserOverride}
             controlSwitchTo={props.controlSwitchTo ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-            onRequestSwitchToLocal={props.onRequestSwitchToLocal}
             directControl={props.directControlFooter}
         />
     ), [
@@ -1005,7 +1121,6 @@ const ChatListInternal = React.memo((props: {
         props.controlSwitchTo,
         props.controlledByUserOverride,
         props.directControlFooter,
-        props.onRequestSwitchToLocal,
         props.onRequestSwitchToRemote,
         props.sessionId,
     ]);
@@ -1155,6 +1270,59 @@ const ChatListInternal = React.memo((props: {
         return true;
     }, [listImplementation, resolveWebScrollMetrics]);
 
+    const captureWebBottomFollowPreviousMetrics = React.useCallback((): WebTranscriptScrollMetrics | null => {
+        if (Platform.OS !== 'web' || listImplementation !== 'flash_v2') return null;
+        const metrics = resolveWebScrollMetrics();
+        if (!metrics) return null;
+        return {
+            ...metrics,
+            clientHeight: listLayoutHeightRef.current > 0 ? listLayoutHeightRef.current : metrics.clientHeight,
+            scrollHeight: listContentHeightRef.current > 0 ? listContentHeightRef.current : metrics.scrollHeight,
+        };
+    }, [listImplementation, resolveWebScrollMetrics]);
+
+    const applyWebBottomFollowAdjustment = React.useCallback((previousMetrics: WebTranscriptScrollMetrics): boolean => {
+        if (Platform.OS !== 'web' || listImplementation !== 'flash_v2') return false;
+        const nextMetrics = resolveWebScrollMetrics();
+        if (!nextMetrics) return false;
+        const targetScrollTop = resolveWebBottomFollowAdjustment({
+            mode: wantsPinnedRef.current ? 'following' : 'released',
+            previousMetrics,
+            nextMetrics,
+            tolerancePx: pinThresholdPx,
+            recentUserIntent: Date.now() - lastUserScrollIntentAtMsRef.current < TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS,
+        });
+        if (targetScrollTop === null) return false;
+        try {
+            nextMetrics.element.scrollTop = targetScrollTop;
+            return true;
+        } catch {
+            return false;
+        }
+    }, [listImplementation, pinThresholdPx, resolveWebScrollMetrics]);
+
+    const pinNativeFlashListToBottomIfMeasured = React.useCallback((): boolean => {
+        if (!usesNativeFlashListBottomMaintenance) return false;
+        if (props.jumpToSeq != null) return false;
+        if (!wantsPinnedRef.current) return false;
+        if (Date.now() - lastUserScrollIntentAtMsRef.current < TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS) return false;
+
+        const layoutHeight = listLayoutHeightRef.current;
+        const contentHeight = listContentHeightRef.current;
+        if (!Number.isFinite(layoutHeight) || layoutHeight <= 0) return false;
+        if (!Number.isFinite(contentHeight) || contentHeight <= 0) return false;
+
+        const offset = Math.max(0, Math.trunc(contentHeight - layoutHeight));
+        if (lastNativeInitialPinOffsetRef.current === offset) return true;
+
+        const node: any = listRef.current as any;
+        if (!node || typeof node.scrollToOffset !== 'function') return false;
+
+        node.scrollToOffset({ offset, animated: false });
+        lastNativeInitialPinOffsetRef.current = offset;
+        return true;
+    }, [props.jumpToSeq, usesNativeFlashListBottomMaintenance]);
+
     const pinToBottom = React.useCallback(() => {
         if (Platform.OS === 'web') {
             // Prefer DOM scroll writes on web: RNW list refs can apply delayed `scrollToOffset` that
@@ -1168,6 +1336,9 @@ const ChatListInternal = React.memo((props: {
             // being attached/measured.
             return;
         }
+        if (usesNativeFlashListBottomMaintenance) {
+            return;
+        }
         const node: any = listRef.current as any;
         if (node && typeof node.scrollToOffset === 'function') {
             const offset =
@@ -1176,7 +1347,7 @@ const ChatListInternal = React.memo((props: {
                     : Math.max(0, Math.trunc(listContentHeightRef.current - listLayoutHeightRef.current));
             node.scrollToOffset({ offset, animated: false });
         }
-    }, [listImplementation, tryPinToBottomDom]);
+    }, [listImplementation, tryPinToBottomDom, usesNativeFlashListBottomMaintenance]);
 
     const jumpToBottom = React.useCallback(() => {
         if (Platform.OS === 'web') {
@@ -1205,41 +1376,47 @@ const ChatListInternal = React.memo((props: {
         }
     }, [jumpAnimateScroll, listImplementation, pinToBottom, tryPinToBottomDom]);
 
-    const shouldAutoPinToBottomNow = React.useCallback((): boolean => {
-        if (!pinEnabled || !autoFollowWhenPinned) return false;
-        if (props.jumpToSeq != null) return false;
-        if (!wantsPinnedRef.current) return false;
-        return Date.now() - lastUserScrollIntentAtMsRef.current >= 250;
+    const resolveAutoPinWaitMs = React.useCallback((): number | null => {
+        if (!pinEnabled || !autoFollowWhenPinned) return null;
+        if (props.jumpToSeq != null) return null;
+        if (!wantsPinnedRef.current) return null;
+        const elapsedSinceUserIntentMs = Date.now() - lastUserScrollIntentAtMsRef.current;
+        if (elapsedSinceUserIntentMs >= TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS) return 0;
+        return Math.max(0, TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS - elapsedSinceUserIntentMs);
     }, [autoFollowWhenPinned, pinEnabled, props.jumpToSeq]);
 
-    const scheduledPinRef = React.useRef<{ kind: 'raf' | 'timeout'; id: any } | null>(null);
-    const schedulePinToBottom = React.useCallback(() => {
+    const scheduledPinRef = React.useRef<{ kind: 'raf' | 'timeout'; id: any; previousWebMetrics: WebTranscriptScrollMetrics | null } | null>(null);
+    const schedulePinToBottom = React.useCallback((previousWebMetrics: WebTranscriptScrollMetrics | null = null) => {
         if (listImplementation !== 'flash_v2') return;
-        if (!shouldAutoPinToBottomNow()) return;
+        if (usesNativeFlashListBottomMaintenance) return;
+        const waitMs = resolveAutoPinWaitMs();
+        if (waitMs === null) return;
         if (scheduledPinRef.current) return;
 
         const raf = (globalThis as any)?.requestAnimationFrame as undefined | ((cb: () => void) => any);
-        if (typeof raf === 'function') {
-            const handle: { kind: 'raf'; id: any } = { kind: 'raf', id: 0 };
+        if (waitMs === 0 && typeof raf === 'function') {
+            const handle: { kind: 'raf'; id: any; previousWebMetrics: WebTranscriptScrollMetrics | null } = { kind: 'raf', id: 0, previousWebMetrics };
             scheduledPinRef.current = handle;
             handle.id = raf(() => {
                 if (scheduledPinRef.current !== handle) return;
                 scheduledPinRef.current = null;
-                if (!shouldAutoPinToBottomNow()) return;
+                if (resolveAutoPinWaitMs() !== 0) return;
+                if (handle.previousWebMetrics && applyWebBottomFollowAdjustment(handle.previousWebMetrics)) return;
                 pinToBottom();
             });
             return;
         }
 
-        const handle: { kind: 'timeout'; id: any } = { kind: 'timeout', id: null };
+        const handle: { kind: 'timeout'; id: any; previousWebMetrics: WebTranscriptScrollMetrics | null } = { kind: 'timeout', id: null, previousWebMetrics };
         scheduledPinRef.current = handle;
         handle.id = setTimeout(() => {
             if (scheduledPinRef.current !== handle) return;
             scheduledPinRef.current = null;
-            if (!shouldAutoPinToBottomNow()) return;
+            if (resolveAutoPinWaitMs() !== 0) return;
+            if (handle.previousWebMetrics && applyWebBottomFollowAdjustment(handle.previousWebMetrics)) return;
             pinToBottom();
-        }, 0);
-    }, [listImplementation, pinToBottom, shouldAutoPinToBottomNow]);
+        }, waitMs);
+    }, [applyWebBottomFollowAdjustment, listImplementation, pinToBottom, resolveAutoPinWaitMs, usesNativeFlashListBottomMaintenance]);
 
     React.useEffect(() => {
         return () => {
@@ -1285,12 +1462,25 @@ const ChatListInternal = React.memo((props: {
         // ensure the visual bottom stays stable.
         initialPinSessionIdRef.current = props.sessionId;
         let cancelled = false;
+        let lastPinnedWebScrollHeight: number | null = null;
 
-        const isSettledAtVisualBottom = () => {
-            if (Platform.OS !== 'web') return false;
+        const pinInitialWebToBottomIfNeeded = (): boolean => {
             const metrics = resolveWebScrollMetrics();
-            if (!metrics) return false;
-            return getWebTranscriptDistanceFromBottom(metrics) === 0;
+            if (
+                metrics &&
+                getWebTranscriptDistanceFromBottom(metrics) === 0 &&
+                lastPinnedWebScrollHeight === metrics.scrollHeight
+            ) {
+                return true;
+            }
+
+            pinToBottom();
+            const nextMetrics = resolveWebScrollMetrics();
+            if (!nextMetrics || getWebTranscriptDistanceFromBottom(nextMetrics) !== 0) {
+                return false;
+            }
+            lastPinnedWebScrollHeight = nextMetrics.scrollHeight;
+            return true;
         };
 
         const attempt = (): boolean => {
@@ -1302,13 +1492,12 @@ const ChatListInternal = React.memo((props: {
                     initialWebPinStabilizingRef.current = false;
                     return true;
                 }
-                if (Date.now() - lastUserScrollIntentAtMsRef.current < 250) return false;
+                if (Date.now() - lastUserScrollIntentAtMsRef.current < TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS) return false;
+                pinInitialWebToBottomIfNeeded();
+                return false;
             }
+            if (pinNativeFlashListToBottomIfMeasured()) return false;
             pinToBottom();
-            if (Platform.OS === 'web' && isSettledAtVisualBottom()) {
-                initialWebPinStabilizingRef.current = false;
-                return true;
-            }
             return false;
         };
 
@@ -1327,18 +1516,25 @@ const ChatListInternal = React.memo((props: {
 
             const startedAtMs = Date.now();
 
-            if (attempt()) {
+            if (stabilizeMaxMs <= 0 || attempt()) {
+                if (stabilizeMaxMs <= 0) {
+                    attempt();
+                }
                 return () => {
                     cancelled = true;
                     initialWebPinStabilizingRef.current = false;
                 };
             }
 
-            const delays = [0, 16, 50, 100, 200, 400, 800].filter((ms) => ms <= stabilizeMaxMs);
+            const delays = [16, 50, 100, 200, 400, 800].filter((ms) => ms <= stabilizeMaxMs);
             if (stabilizeMaxMs >= 1000) {
                 for (let ms = 1000; ms <= stabilizeMaxMs; ms += retryIntervalMs) {
                     delays.push(ms);
                 }
+            }
+            if (!delays.includes(stabilizeMaxMs)) {
+                delays.push(stabilizeMaxMs);
+                delays.sort((left, right) => left - right);
             }
 
             if (delays.length === 0) {
@@ -1392,7 +1588,7 @@ const ChatListInternal = React.memo((props: {
             void attempt();
         });
         return () => { cancelled = true; };
-    }, [pinToBottom, props.isLoaded, props.jumpToSeq, props.sessionId, resolveWebScrollMetrics]);
+    }, [pinNativeFlashListToBottomIfMeasured, pinToBottom, props.isLoaded, props.jumpToSeq, props.sessionId, resolveWebScrollMetrics]);
 
     const isScrollable = React.useCallback((): boolean => {
         // On web, list content height can include collapsed/offscreen subtrees (e.g. tool-call group bodies),
@@ -1616,7 +1812,9 @@ const ChatListInternal = React.memo((props: {
         const signal = controller.signal;
         fireAndForget((async () => {
             // Always pin once up front; this protects against initial layout anchoring quirks on web.
-            pinToBottom();
+            if (!pinNativeFlashListToBottomIfMeasured()) {
+                pinToBottom();
+            }
             if (Platform.OS === 'web') {
                 await waitForNextVisualUpdate();
             }
@@ -1646,7 +1844,9 @@ const ChatListInternal = React.memo((props: {
                 // Yield to allow store updates + list re-render + content size update.
                 await Promise.resolve();
                 await Promise.resolve();
-                pinToBottom();
+                if (!pinNativeFlashListToBottomIfMeasured()) {
+                    pinToBottom();
+                }
                 if (consecutiveNoProgressLoads >= maxNoProgressLoads) break;
             }
             if (signal.aborted) return;
@@ -1657,6 +1857,7 @@ const ChatListInternal = React.memo((props: {
         listContentHeight,
         listLayoutHeight,
         loadOlder,
+        pinNativeFlashListToBottomIfMeasured,
         pinToBottom,
         props.committedMessagesCount,
         props.isLoaded,
@@ -1713,50 +1914,47 @@ const ChatListInternal = React.memo((props: {
                         setListContentHeight(h);
                     }
                 }}
-                  onScroll={(e) => {
-                      const y = e?.nativeEvent?.contentOffset?.y;
-                      if (typeof y !== 'number' || !Number.isFinite(y)) return;
-                          const nowMs = Date.now();
-                        const isTrusted = (e as any)?.nativeEvent?.isTrusted === true;
-                        if (isTrusted) {
-                            lastUserScrollIntentAtMsRef.current = nowMs;
-                        }
-                        const distanceFromBottom = Math.max(0, Math.trunc(y));
-                        const prev = lastPinOffsetForIntentRef.current;
-                        const movedAwayFromBottom = typeof prev === 'number' ? distanceFromBottom > prev : false;
-                        lastPinOffsetForIntentRef.current = distanceFromBottom;
+                onScroll={(e) => {
+                    const y = e?.nativeEvent?.contentOffset?.y;
+                    if (typeof y !== 'number' || !Number.isFinite(y)) return;
+                    const nowMs = Date.now();
+                    const isTrusted = (e as any)?.nativeEvent?.isTrusted === true;
+                    if (isTrusted) {
+                        lastUserScrollIntentAtMsRef.current = nowMs;
+                    }
+                    const followIntent = resolveTranscriptBottomFollowIntent({
+                        direction: 'toward-zero',
+                        distanceFromBottom: y,
+                        pinThresholdPx,
+                        previousScrollOffset: lastScrollOffsetForIntentRef.current ?? (wantsPinnedRef.current ? 0 : null),
+                        recentUserIntent: isTrusted || nowMs - lastUserScrollIntentAtMsRef.current < TRANSCRIPT_SCROLL_USER_INTENT_RECENT_MS,
+                        scrollOffset: y,
+                        wantsPinned: wantsPinnedRef.current,
+                    });
+                    lastPinOffsetForIntentRef.current = followIntent.nextDistanceFromBottom;
+                    lastScrollOffsetForIntentRef.current = followIntent.nextScrollOffset;
+                    wantsPinnedRef.current = followIntent.wantsPinned;
 
-                        // Only re-enable pin intent when the user returns to the exact bottom. Staying within
-                        // the threshold does not imply intent (it can be a deliberate small scroll).
-                          if (distanceFromBottom === 0) {
-                              wantsPinnedRef.current = true;
-                          } else {
-                              const recentlyUserIntent =
-                                    isTrusted || nowMs - lastUserScrollIntentAtMsRef.current < 500;
-                              if (recentlyUserIntent && movedAwayFromBottom) {
-                                  wantsPinnedRef.current = false;
-                              }
-                          }
-
-                        const effectiveThresholdPx = wantsPinnedRef.current ? pinThresholdPx : 0;
-                      const pinned = distanceFromBottom <= effectiveThresholdPx;
-                        if (
-                            !pinned &&
-                            wantsPinnedRef.current &&
-                            pinEnabled &&
-                            autoFollowWhenPinned &&
-                            props.jumpToSeq == null &&
-                            Platform.OS !== 'web' &&
-                            nowMs - lastAutoRepinAtMsRef.current > 200 &&
-                            nowMs - lastUserScrollIntentAtMsRef.current >= 250
-                        ) {
-                            // Web/virtualization can sometimes drift the scroll position even without user intent.
-                            // If we still "want pinned", repin opportunistically.
-                            lastAutoRepinAtMsRef.current = nowMs;
-                            pinToBottom();
-                        }
-                      isPinnedRef.current = pinned;
-                      props.onViewportChange?.({ isPinned: pinned, offsetY: distanceFromBottom });
+                    const distanceFromBottom = followIntent.nextDistanceFromBottom;
+                    const effectiveThresholdPx = followIntent.effectivePinnedOffsetThresholdPx;
+                    const pinned = followIntent.isPinned;
+                    if (
+                        !pinned &&
+                        wantsPinnedRef.current &&
+                        pinEnabled &&
+                        autoFollowWhenPinned &&
+                        props.jumpToSeq == null &&
+                        Platform.OS !== 'web' &&
+                        nowMs - lastAutoRepinAtMsRef.current > TRANSCRIPT_SCROLL_AUTO_REPIN_THROTTLE_MS &&
+                        nowMs - lastUserScrollIntentAtMsRef.current >= TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS
+                    ) {
+                        // Web/virtualization can sometimes drift the scroll position even without user intent.
+                        // If we still "want pinned", repin opportunistically.
+                        lastAutoRepinAtMsRef.current = nowMs;
+                        pinToBottom();
+                    }
+                    isPinnedRef.current = pinned;
+                    props.onViewportChange?.({ isPinned: pinned, offsetY: distanceFromBottom });
                     setScrollPin((prev) =>
                         reduceTranscriptScrollPinState(prev, {
                             type: 'scroll',
@@ -1827,19 +2025,25 @@ const ChatListInternal = React.memo((props: {
                       onLayout={(e: LayoutChangeEvent) => {
                           const h = e?.nativeEvent?.layout?.height;
                           if (typeof h === 'number' && Number.isFinite(h)) {
+                              const layoutHeightChanged = listLayoutHeightRef.current !== h;
+                              const previousWebMetrics = captureWebBottomFollowPreviousMetrics();
                               listLayoutHeightRef.current = h;
                               setListLayoutHeight(h);
-                                if (listContentHeightRef.current > 0) {
-                                    schedulePinToBottom();
+                                if (layoutHeightChanged && listContentHeightRef.current > 0) {
+                                    schedulePinToBottom(previousWebMetrics);
                                 }
                           }
                       }}
                       onContentSizeChange={(_: number, h: number) => {
                           if (typeof h === 'number' && Number.isFinite(h)) {
+                              const contentHeightChanged = listContentHeightRef.current !== h;
+                              const previousWebMetrics = captureWebBottomFollowPreviousMetrics();
                               listContentHeightRef.current = h;
-                              setListContentHeight(h);
-                                if (listLayoutHeightRef.current > 0) {
-                                    schedulePinToBottom();
+                              if (shouldCommitContentHeightState()) {
+                                  setListContentHeight(h);
+                              }
+                                if (contentHeightChanged && listLayoutHeightRef.current > 0) {
+                                    schedulePinToBottom(previousWebMetrics);
                                 }
                           }
                       }}
@@ -1857,6 +2061,10 @@ const ChatListInternal = React.memo((props: {
                                   layoutH > 0 && contentH >= layoutH
                                       ? Math.max(0, Math.trunc(contentH - layoutH - y))
                                       : 0;
+                                const visualBottomScrollOffset =
+                                    layoutH > 0 && contentH >= layoutH
+                                        ? Math.max(0, Math.trunc(contentH - layoutH))
+                                        : null;
                                 const backwardPrefetchThresholdPx = sync.getSyncTuning().transcriptBackwardPrefetchThresholdPx;
                                 const scrollable = layoutH > 0 && contentH > layoutH + 16;
                                 if (shouldPrefetchOlderFromTop({
@@ -1872,66 +2080,65 @@ const ChatListInternal = React.memo((props: {
                                 if (loadOlderInFlight.current) {
                                     refreshInFlightWebPrependAnchor();
                                 }
-                                const prev = lastPinOffsetForIntentRef.current;
-                                const movedAwayFromBottom = typeof prev === 'number' ? distanceFromBottom > prev : false;
-                                lastPinOffsetForIntentRef.current = distanceFromBottom;
+                                const followIntent = resolveTranscriptBottomFollowIntent({
+                                    direction: 'toward-max',
+                                    distanceFromBottom,
+                                    pinThresholdPx,
+                                    previousScrollOffset: lastScrollOffsetForIntentRef.current ?? (wantsPinnedRef.current ? visualBottomScrollOffset : null),
+                                    recentUserIntent: isTrusted || nowMs - lastUserScrollIntentAtMsRef.current < TRANSCRIPT_SCROLL_USER_INTENT_RECENT_MS,
+                                    scrollOffset: y,
+                                    wantsPinned: wantsPinnedRef.current,
+                                });
+                                lastPinOffsetForIntentRef.current = followIntent.nextDistanceFromBottom;
+                                lastScrollOffsetForIntentRef.current = followIntent.nextScrollOffset;
+                                wantsPinnedRef.current = followIntent.wantsPinned;
 
-                                if (distanceFromBottom === 0) {
-                                    wantsPinnedRef.current = true;
-                                } else {
-                                    const recentlyUserIntent =
-                                            isTrusted || nowMs - lastUserScrollIntentAtMsRef.current < 500;
-                                    if (recentlyUserIntent && movedAwayFromBottom) {
-                                        wantsPinnedRef.current = false;
+                                const effectiveThresholdPx = followIntent.effectivePinnedOffsetThresholdPx;
+                                const pinned = followIntent.isPinned;
+                                if (
+                                    !pinned &&
+                                    wantsPinnedRef.current &&
+                                    pinEnabled &&
+                                    autoFollowWhenPinned &&
+                                    props.jumpToSeq == null &&
+                                    Platform.OS !== 'web' &&
+                                    nowMs - lastAutoRepinAtMsRef.current > TRANSCRIPT_SCROLL_AUTO_REPIN_THROTTLE_MS &&
+                                    nowMs - lastUserScrollIntentAtMsRef.current >= TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS
+                                ) {
+                                    lastAutoRepinAtMsRef.current = nowMs;
+                                    pinToBottom();
+                                }
+                                isPinnedRef.current = pinned;
+                                props.onViewportChange?.({ isPinned: pinned, offsetY: distanceFromBottom });
+                                setScrollPin((prev) =>
+                                    reduceTranscriptScrollPinState(prev, {
+                                        type: 'scroll',
+                                        enabled: pinEnabled,
+                                        offsetY: distanceFromBottom,
+                                        pinnedOffsetThresholdPx: effectiveThresholdPx,
+                                    })
+                                );
+
+                                const prefetchThresholdPx = sync.getSyncTuning().transcriptForwardPrefetchThresholdPx;
+                                if (!pinned && distanceFromBottom <= prefetchThresholdPx && !loadNewerInFlight.current) {
+                                    if (sync.hasDeferredNewerMessages(props.sessionId) === true) {
+                                        loadNewerInFlight.current = true;
+                                        const p = sync.loadNewerMessages(props.sessionId);
+                                        p.finally(() => {
+                                            loadNewerInFlight.current = false;
+                                        }).catch(() => {});
+                                        fireAndForget(p, { tag: 'ChatList.loadNewerMessages' });
                                     }
                                 }
-
-                              const effectiveThresholdPx = wantsPinnedRef.current ? pinThresholdPx : 0;
-                            const pinned = distanceFromBottom <= effectiveThresholdPx;
-                              if (
-                                  !pinned &&
-                                  wantsPinnedRef.current &&
-                                  pinEnabled &&
-                                  autoFollowWhenPinned &&
-                                  props.jumpToSeq == null &&
-                                  Platform.OS !== 'web' &&
-                                  nowMs - lastAutoRepinAtMsRef.current > 200 &&
-                                  nowMs - lastUserScrollIntentAtMsRef.current >= 250
-                              ) {
-                                  lastAutoRepinAtMsRef.current = nowMs;
-                                  pinToBottom();
-                              }
-                              isPinnedRef.current = pinned;
-                              props.onViewportChange?.({ isPinned: pinned, offsetY: distanceFromBottom });
-                          setScrollPin((prev) =>
-                              reduceTranscriptScrollPinState(prev, {
-                                  type: 'scroll',
-                                  enabled: pinEnabled,
-                                  offsetY: distanceFromBottom,
-                                  pinnedOffsetThresholdPx: effectiveThresholdPx,
-                              })
-                          );
-
-                          const prefetchThresholdPx = sync.getSyncTuning().transcriptForwardPrefetchThresholdPx;
-                          if (!pinned && distanceFromBottom <= prefetchThresholdPx && !loadNewerInFlight.current) {
-                              if (sync.hasDeferredNewerMessages(props.sessionId) === true) {
-                                  loadNewerInFlight.current = true;
-                                  const p = sync.loadNewerMessages(props.sessionId);
-                                  p.finally(() => {
-                                      loadNewerInFlight.current = false;
-                                  }).catch(() => {});
-                                  fireAndForget(p, { tag: 'ChatList.loadNewerMessages' });
-                              }
-                          }
-                      }}
-                        onScrollBeginDrag={() => {
-                            if (Platform.OS === 'web') return;
-                            lastUserScrollIntentAtMsRef.current = Date.now();
-                        }}
-                      scrollEventThrottle={16}
-                      keyboardShouldPersistTaps="handled"
-                      keyboardDismissMode="none"
-                      renderItem={renderItem}
+                            }}
+                            onScrollBeginDrag={() => {
+                                if (Platform.OS === 'web') return;
+                                lastUserScrollIntentAtMsRef.current = Date.now();
+                            }}
+                            scrollEventThrottle={16}
+                            keyboardShouldPersistTaps="handled"
+                            keyboardDismissMode="none"
+                            renderItem={renderItem}
                       onStartReachedThreshold={0.2}
                       onStartReached={() => {
                           if (!shouldLoadOlderFromStartReached()) return;

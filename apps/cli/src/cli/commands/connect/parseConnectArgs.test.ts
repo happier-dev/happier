@@ -24,4 +24,9 @@ describe('parseConnectArgs', () => {
     const res = parseConnectArgs(['claude', '--api-key']);
     expect(res.options.apiKey).toBe(true);
   });
+
+  it('parses --token', () => {
+    const res = parseConnectArgs(['github', '--token']);
+    expect(res.options.token).toBe(true);
+  });
 });

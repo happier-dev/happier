@@ -19,6 +19,7 @@ import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separators/TranscriptSeparatorRow';
+import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import { PendingMessagesDragReorderList } from './PendingMessagesDragReorderList';
 
 function getPendingText(message: PendingMessage | DiscardedPendingMessage): string {
@@ -813,15 +814,12 @@ const styles = StyleSheet.create(() => ({
         maxWidth: '100%',
     },
     transcriptMarkdownText: {
-        fontSize: 14,
-        lineHeight: 20,
-        marginTop: 0,
-        marginBottom: 0,
+        ...transcriptMarkdownTextStyle,
     },
     collapsedPlainText: {
         ...Typography.default(),
-        fontSize: 14,
-        lineHeight: 20,
+        fontSize: transcriptMarkdownTextStyle.fontSize,
+        lineHeight: transcriptMarkdownTextStyle.lineHeight,
         marginTop: 0,
         marginBottom: 0,
     },

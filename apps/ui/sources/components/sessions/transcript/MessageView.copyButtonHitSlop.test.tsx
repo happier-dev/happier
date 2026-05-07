@@ -118,4 +118,35 @@ describe('MessageView (copy button hitSlop)', () => {
             expect(dropdowns).toHaveLength(0);
         },
     );
+
+    it.each([
+        ['ios', true],
+        ['android', true],
+    ] as const)(
+        'sets transcript markdown selectability on %s to %s',
+        async (platformOS, expectedSelectable) => {
+            platformState.os = platformOS;
+            vi.resetModules();
+            const { MessageView } = await import('./MessageView');
+
+            const message: any = {
+                kind: 'user-text',
+                localId: 'local-1',
+                id: 'm1',
+                text: 'hello',
+            };
+
+            const screen = await renderScreen(
+                <MessageView message={message} metadata={null} sessionId="s1" />,
+            );
+
+            const markdownView = screen.findByType('MarkdownView' as any);
+            expect(markdownView.props.selectable).toBe(expectedSelectable);
+            expect(markdownView.props.profile).toBe('transcript');
+            expect(markdownView.props.textStyle).toMatchObject({
+                fontSize: 16,
+                lineHeight: 24,
+            });
+        },
+    );
 });

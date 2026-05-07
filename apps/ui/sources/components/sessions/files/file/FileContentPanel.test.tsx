@@ -39,6 +39,13 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
     },
 }));
 
+vi.mock('@/components/markdown/MarkdownView', () => ({
+    MarkdownView: (props: any) => {
+        markdownViewPropsState.current = props;
+        return React.createElement('MarkdownView', props);
+    },
+}));
+
 let thresholds = { lineThreshold: 50_000, byteThreshold: 120_000 };
 vi.mock('@/components/ui/code/diff/useInlineDiffVirtualizationThresholds', () => ({
     useInlineDiffVirtualizationThresholds: () => thresholds,
@@ -52,6 +59,7 @@ vi.mock('@/constants/Typography', () => ({
 
 const diffViewerPropsState: { current: any | null } = { current: null };
 const codeLinesViewPropsState: { current: any | null } = { current: null };
+const markdownViewPropsState: { current: any | null } = { current: null };
 
 describe('FileContentPanel', () => {
     const theme = {
@@ -102,6 +110,28 @@ describe('FileContentPanel', () => {
                 />)).tree;
 
         expect(codeLinesViewPropsState.current).toBeTruthy();
+    });
+
+    it('renders markdown content when markdown mode is selected', async () => {
+        const { FileContentPanel } = await import('./FileContentPanel');
+        markdownViewPropsState.current = null;
+
+        await renderScreen(<FileContentPanel
+                    theme={theme as any}
+                    displayMode={'markdown' as any}
+                    sessionId="s1"
+                    filePath="docs/readme.md"
+                    diffContent="diff --git a/readme.md b/readme.md"
+                    fileContent={'# Title\n\nHello **world**.'}
+                    language="markdown"
+                    selectedLineKeys={new Set()}
+                    lineSelectionEnabled={false}
+                    onToggleLine={vi.fn()}
+                />);
+
+        expect(markdownViewPropsState.current?.markdown).toBe('# Title\n\nHello **world**.');
+        expect(markdownViewPropsState.current?.profile).toBe('default');
+        expect(markdownViewPropsState.current?.streamingMode).toBe('static');
     });
 
     it('disables virtualization when review comments are enabled', async () => {
@@ -197,6 +227,30 @@ describe('FileContentPanel', () => {
 
         expect(codeLinesViewPropsState.current?.scrollToLineId).toBe('f:2');
         expect(codeLinesViewPropsState.current?.highlightLineId).toBe('f:2');
+    });
+
+    it('falls back to line hash when a fileLine anchor moved', async () => {
+        thresholds = { lineThreshold: 50_000, byteThreshold: 120_000 };
+        const { FileContentPanel } = await import('./FileContentPanel');
+        const { computeLineContentHash } = await import('@/utils/text/lineContentHash');
+        codeLinesViewPropsState.current = null;
+
+        await renderScreen(<FileContentPanel
+                    theme={theme as any}
+                    displayMode="file"
+                    sessionId="s1"
+                    filePath="src/a.ts"
+                    diffContent={null}
+                    fileContent={['inserted', 'one', 'two'].join('\n')}
+                    language="typescript"
+                    selectedLineKeys={new Set()}
+                    lineSelectionEnabled={false}
+                    onToggleLine={vi.fn()}
+                    jumpToAnchor={{ kind: 'fileLine', startLine: 1, lineHash: computeLineContentHash('two') }}
+                />);
+
+        expect(codeLinesViewPropsState.current?.scrollToLineId).toBe('f:3');
+        expect(codeLinesViewPropsState.current?.highlightLineId).toBe('f:3');
     });
 
     it('passes scroll/highlight target for diffLine anchors', async () => {

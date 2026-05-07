@@ -32,6 +32,7 @@ function createHarness() {
         sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},
         reviewCommentsDraftsBySessionId: {},
+        reviewCommentsDraftsByWorkspaceCacheKey: {},
         actionDraftsBySessionId: {},
         isDataReady: false,
         machines: {},

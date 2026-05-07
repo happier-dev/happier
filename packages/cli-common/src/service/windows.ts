@@ -13,6 +13,9 @@ export type WindowsScheduledTaskStatusSnapshot = Readonly<{
   active: boolean;
   stateLabel: string;
   stateValue: number | null;
+  lastRunTime: string;
+  lastTaskResult: number | null;
+  taskToRun: string;
 }>;
 
 export function buildReadWindowsScheduledTaskStatusPowerShellCommand(params: Readonly<{
@@ -27,7 +30,7 @@ export function buildReadWindowsScheduledTaskStatusPowerShellCommand(params: Rea
     `$taskName = ${psQuoted(taskName)}`,
     '$task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue',
     'if ($null -eq $task) {',
-    '  [pscustomobject]@{ exists = $false; enabled = $false; active = $false; stateLabel = "not_installed"; stateValue = $null } | ConvertTo-Json -Compress',
+    '  [pscustomobject]@{ exists = $false; enabled = $false; active = $false; stateLabel = "not_installed"; stateValue = $null; lastRunTime = ""; lastTaskResult = $null; taskToRun = "" } | ConvertTo-Json -Compress',
     '  exit 0',
     '}',
     '$taskInfo = Get-ScheduledTaskInfo -TaskPath $taskPath -TaskName $taskName -ErrorAction Stop',
@@ -35,7 +38,10 @@ export function buildReadWindowsScheduledTaskStatusPowerShellCommand(params: Rea
     '$stateValue = if ($null -ne $task.State) { [int]$task.State } elseif ($null -ne $taskInfo.State) { [int]$taskInfo.State } else { $null }',
     '$enabled = if ($null -ne $task.Settings) { [bool]$task.Settings.Enabled } else { $false }',
     '$active = $stateValue -eq 4',
-    '[pscustomobject]@{ exists = $true; enabled = $enabled; active = $active; stateLabel = $stateLabel; stateValue = $stateValue } | ConvertTo-Json -Compress',
+    '$lastRunTime = if ($null -ne $taskInfo.LastRunTime) { $taskInfo.LastRunTime.ToString("o") } else { "" }',
+    '$lastTaskResult = if ($null -ne $taskInfo.LastTaskResult) { [int64]$taskInfo.LastTaskResult } else { $null }',
+    '$taskToRun = (@($task.Actions | ForEach-Object { $execute = if ($null -ne $_.Execute) { $_.Execute.ToString() } else { "" }; $arguments = if ($null -ne $_.Arguments) { $_.Arguments.ToString() } else { "" }; if ($execute.Trim()) { ($execute + " " + $arguments).Trim() } else { $_.ToString() } }) -join "; ")',
+    '[pscustomobject]@{ exists = $true; enabled = $enabled; active = $active; stateLabel = $stateLabel; stateValue = $stateValue; lastRunTime = $lastRunTime; lastTaskResult = $lastTaskResult; taskToRun = $taskToRun } | ConvertTo-Json -Compress',
   ].join('; ');
 }
 
@@ -49,9 +55,15 @@ export function parseWindowsScheduledTaskStatusPowerShellJson(text: string): Win
       active?: unknown;
       stateLabel?: unknown;
       stateValue?: unknown;
+      lastRunTime?: unknown;
+      lastTaskResult?: unknown;
+      taskToRun?: unknown;
     };
     const stateValue = typeof parsed.stateValue === 'number' && Number.isInteger(parsed.stateValue)
       ? parsed.stateValue
+      : null;
+    const lastTaskResult = typeof parsed.lastTaskResult === 'number' && Number.isInteger(parsed.lastTaskResult)
+      ? parsed.lastTaskResult
       : null;
     return {
       exists: parsed.exists === true,
@@ -59,10 +71,21 @@ export function parseWindowsScheduledTaskStatusPowerShellJson(text: string): Win
       active: parsed.active === true || stateValue === 4,
       stateLabel: typeof parsed.stateLabel === 'string' ? parsed.stateLabel.trim() : '',
       stateValue,
+      lastRunTime: typeof parsed.lastRunTime === 'string' ? parsed.lastRunTime.trim() : '',
+      lastTaskResult,
+      taskToRun: typeof parsed.taskToRun === 'string' ? parsed.taskToRun.trim() : '',
     };
   } catch {
     return null;
   }
+}
+
+export function buildWindowsScheduledTaskPowerShellAction(params: Readonly<{
+  definitionPath: string;
+}>): string {
+  const definitionPath = String(params.definitionPath ?? '').trim();
+  if (!definitionPath) throw new Error('definitionPath is required for Windows scheduled task action');
+  return `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "${definitionPath}"`;
 }
 
 export function renderWindowsScheduledTaskWrapperPs1(params: Readonly<{

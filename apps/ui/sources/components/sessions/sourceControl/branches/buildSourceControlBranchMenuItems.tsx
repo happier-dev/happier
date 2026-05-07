@@ -18,7 +18,8 @@ export function buildSourceControlBranchMenuItems(input: Readonly<{
     canCheckout: boolean;
     canCreateWorktrees: boolean;
     canLaunchWorktreeSession: boolean;
-    canPublish: boolean;
+    canCheckoutPullRequests: boolean;
+    canPreparePullRequestWorktrees: boolean;
     canReadBranches: boolean;
     currentBranch: string | null;
     hasMachineTarget: boolean;
@@ -32,7 +33,8 @@ export function buildSourceControlBranchMenuItems(input: Readonly<{
         canCheckout,
         canCreateWorktrees,
         canLaunchWorktreeSession,
-        canPublish,
+        canCheckoutPullRequests,
+        canPreparePullRequestWorktrees,
         canReadBranches,
         currentBranch,
         hasMachineTarget,
@@ -43,15 +45,6 @@ export function buildSourceControlBranchMenuItems(input: Readonly<{
     } = input;
 
     const out: DropdownMenuItem[] = [];
-
-    if (canPublish) {
-        out.push({
-            id: 'publish',
-            title: t('files.branchMenu.publish.title'),
-            subtitle: t('files.branchMenu.publish.subtitle'),
-            category: t('files.branchMenu.category.actions'),
-        });
-    }
 
     if (canCreateWorktrees) {
         out.push({
@@ -75,6 +68,23 @@ export function buildSourceControlBranchMenuItems(input: Readonly<{
             subtitle: t('files.branchMenu.worktrees.pruneSubtitle'),
             category: t('files.branchMenu.category.actions'),
             disabled: !hasMachineTarget,
+        });
+    }
+
+    if (canCheckoutPullRequests || canPreparePullRequestWorktrees) {
+        out.push({
+            id: 'pull-request:checkout-local',
+            title: t('files.branchMenu.pullRequests.checkoutLocalTitle'),
+            subtitle: t('files.branchMenu.pullRequests.checkoutLocalSubtitle'),
+            category: t('files.branchMenu.category.actions'),
+            disabled: !canCheckoutPullRequests,
+        });
+        out.push({
+            id: 'pull-request:open-worktree',
+            title: t('files.branchMenu.pullRequests.openWorktreeTitle'),
+            subtitle: t('files.branchMenu.pullRequests.openWorktreeSubtitle'),
+            category: t('files.branchMenu.category.actions'),
+            disabled: !canPreparePullRequestWorktrees || !hasMachineTarget,
         });
     }
 
@@ -149,4 +159,3 @@ export function buildSourceControlBranchMenuItems(input: Readonly<{
 
     return out;
 }
-

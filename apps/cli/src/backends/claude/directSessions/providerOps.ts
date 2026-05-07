@@ -5,6 +5,7 @@ import { pageClaudeTranscript } from './pageClaudeTranscript';
 import { readAfterClaudeTranscript } from './readAfterClaudeTranscript';
 import { resolveClaudeConfigDirForDirectSessions } from './resolveClaudeConfigDir';
 
+import { createPollingDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createPollingDirectSessionFollowLease';
 import {
   mergeDirectSessionEnvironmentVariables,
   type DirectSessionProviderOps,
@@ -36,6 +37,10 @@ export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
     const res = await readAfterClaudeTranscript({ source, remoteSessionId, cursor, maxBytes, maxItems });
     return { items: res.items, nextCursor: res.nextCursor ?? null, truncated: res.truncated === true };
   },
+  acquireFollowLease: async ({ source, remoteSessionId }) => createPollingDirectSessionFollowLease({
+    readAfterTranscript: ({ cursor, maxBytes, maxItems }) =>
+      readAfterClaudeTranscript({ source, remoteSessionId, cursor, maxBytes, maxItems }),
+  }),
   resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
     const configDir = resolveClaudeConfigDirForDirectSessions({ source: linked.source, env: process.env });
     const directory =

@@ -24,6 +24,7 @@ export function AgentInputSessionModeSection(
   props: AgentInputSessionModeSectionProps,
 ) {
   const { theme } = useUnistyles();
+  const selectedIndicatorColor = theme.dark ? theme.colors.text : theme.colors.button.primary.background;
 
   if (props.options.length === 0) {
     return null;
@@ -87,7 +88,7 @@ export function AgentInputSessionModeSection(
                     <Ionicons
                       name="checkmark-circle"
                       size={18}
-                      color={theme.colors.button.primary.background}
+                      color={selectedIndicatorColor}
                     />
                   ) : null}
                 </View>

@@ -2,7 +2,12 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReducer } from '@/sync/reducer/reducer';
+import { clearPendingMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+
+const pathnameState = vi.hoisted(() => ({
+    pathname: '/session/s1',
+}));
 
 installMessageViewCommonModuleMocks({
     reactNative: async () => {
@@ -75,6 +80,7 @@ installMessageViewCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const routerMock = createExpoRouterMock({
+            pathname: () => pathnameState.pathname,
             router: { push: routerPushSpy },
         });
         return routerMock.module;
@@ -164,6 +170,8 @@ let filesImagePreviewMaxBytes: number | null = null;
 let toolViewTimelineChromeMode: 'activity_feed' | 'cards' | null = null;
 
 afterEach(() => {
+    clearPendingMobileSurfaceTransition();
+    pathnameState.pathname = '/session/s1';
     thinkingDisplayMode = 'inline';
     thinkingInlinePresentation = 'full';
     filesImagePreviewMaxBytes = null;
@@ -329,6 +337,50 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         expect(screen.findByTestId('message-attachments-inline-images')).not.toBeNull();
         expect(screen.findAllByTestId('message-attachments-row')).toHaveLength(0);
+    });
+
+    it('renders attachments for structured review-comment messages that carry attachment metadata', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: 'review prompt\n\n[attachments block]',
+            displayText: 'Review comments (1)\n\n[attachments block]',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+                happierAttachments: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'note.txt', path: '.happier/uploads/messages/m1/note.txt', mimeType: 'text/plain', sizeBytes: 10, sha256: 'h1' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findAllByType(ReviewCommentsMessageCard as any)).toHaveLength(1);
+        expect(screen.findByTestId('message-attachments-row')).not.toBeNull();
     });
 
     it('normalizes wrapped voice agent turn text before rendering it in the hidden voice transcript', async () => {
@@ -538,6 +590,14 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         await screen.pressByTestIdAsync('review-comments-jump:c1');
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/file?path=src%2Ffoo.ts&source=file&anchor=fileLine&startLine=12');
+        const {
+            resolvePendingMobileSurfaceTransitionStackOptions,
+        } = await import('@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent');
+        expect(resolvePendingMobileSurfaceTransitionStackOptions({
+            routeName: 'session/[id]/file',
+        })).toEqual({
+            animation: 'slide_from_right',
+        });
     });
 
     it('renders a structured review-findings card for tool-call messages when meta.happier.kind is review_findings.v1', async () => {

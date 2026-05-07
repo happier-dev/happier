@@ -113,6 +113,16 @@ export default React.memo(function SecretRequirementPickerScreen() {
         return () => sub?.();
     }, [navigation, sendResultToNewSession]);
 
+    const hasUsableRouteState = Boolean(profile && secretEnvVarName);
+    React.useEffect(() => {
+        if (hasUsableRouteState) return;
+        if (profileId) {
+            sendResultToNewSession({ action: 'cancel' });
+            return;
+        }
+        safeRouterBack({ router, navigation, fallbackHref: '/new' });
+    }, [hasUsableRouteState, navigation, profileId, router, sendResultToNewSession]);
+
     if (!profile || !secretEnvVarName) {
         return (
             <>

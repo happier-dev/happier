@@ -1,11 +1,14 @@
-import { resolve as resolvePath } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { join as joinPath, resolve as resolvePath } from 'node:path';
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 
 import { createRunDirs } from '../runDir';
 import { resolveExpoDevClientDeepLink } from '../mobile/expoDevClientDeepLink';
 import { resolveTerminalConnectDeepLink } from '../mobile/terminalConnectDeepLink';
 import { resolveDeviceVisibleBaseUrl } from '../mobile/resolveDeviceHost';
+import { resolveMobileAppScheme } from '../mobile/mobileAppScheme';
+import { resolveInstalledAndroidDevClientRuntimeVersion } from '../mobile/androidDevClientRuntimeVersion';
+import { sleep } from '../timing';
 import { parseMaestroArgs as defaultParseMaestroArgs } from '../../../scripts/runMaestroWithHeartbeat.shared.mjs';
 import { defaultPrimePlatformAppLaunch } from './primePlatformAppLaunch';
 
@@ -19,6 +22,7 @@ export type StartedServerLike = Readonly<{
 export type StartedDevClientMetroLike = Readonly<{
   baseUrl: string;
   port?: number;
+  stdoutPath?: string;
   stop?: () => Promise<void>;
 }>;
 
@@ -83,6 +87,11 @@ export type MobileMaestroDeps = Readonly<{
     platform: 'android' | 'ios';
     appId: string;
   }) => Promise<void>;
+  resolveAndroidDevClientRuntimeVersion: (params: {
+    appId: string;
+    env: NodeJS.ProcessEnv;
+    outputDir: string;
+  }) => string | null;
   resolveMaestroBin: (env: NodeJS.ProcessEnv) => string;
   parseMaestroArgs: (argv: string[]) => {
     flows: string | null;
@@ -100,6 +109,10 @@ function maestroCommand(env: NodeJS.ProcessEnv): string {
 
 function adbCommand(env: NodeJS.ProcessEnv): string {
   return (String(env.HAPPIER_E2E_ADB_BIN ?? '').trim() || 'adb');
+}
+
+function xcrunCommand(env: NodeJS.ProcessEnv): string {
+  return (String(env.HAPPIER_E2E_XCRUN_BIN ?? '').trim() || 'xcrun');
 }
 
 function isTruthyEnv(value: unknown): boolean {
@@ -124,7 +137,56 @@ function stripTrailingSlash(url: string): string {
   return url.replace(/\/$/, '');
 }
 
+function resolveVisibleHostPatternFromUrl(url: string): string {
+  if (!url) return '';
+  try {
+    return escapeRegExp(new URL(url).host);
+  } catch {
+    return '';
+  }
+}
+
 type ConnectedMachineMode = 'cli-terminal-daemon' | null;
+
+const SENSITIVE_MAESTRO_ENV_KEYS = ['HAPPIER_E2E_RESTORE_KEY', 'HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK'] as const;
+const RESTORE_KEY_CHUNK_SIZE = 8;
+const RESTORE_KEY_CHUNK_COUNT = 32;
+const REDACTABLE_MAESTRO_ARTIFACT_EXTENSIONS = new Set(['.html', '.json', '.log', '.txt', '.yaml', '.yml']);
+const MAX_REDACTABLE_MAESTRO_ARTIFACT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MOBILE_APP_INSTALL_CHECK_ATTEMPTS = 3;
+const DEFAULT_MOBILE_APP_INSTALL_CHECK_RETRY_DELAY_MS = 500;
+const DEFAULT_MOBILE_APP_INSTALL_CHECK_TIMEOUT_MS = 15_000;
+const ANDROID_LOGCAT_ARTIFACT = 'android-logcat.log';
+const DEFAULT_ANDROID_LOGCAT_STOP_TIMEOUT_MS = 2_000;
+const IOS_SIMULATOR_LOG_ARTIFACT = 'ios-simulator.log';
+const DEFAULT_IOS_SIMULATOR_LOG_STOP_TIMEOUT_MS = 2_000;
+
+type AndroidLogcatCapture = Readonly<{
+  logPath: string;
+  stop: () => Promise<void>;
+}>;
+
+async function stopCapturedLogProcess(params: Readonly<{
+  child: ReturnType<typeof spawn>;
+  closeSignal: Promise<void>;
+  timeoutMs: number;
+  isClosed: () => boolean;
+}>): Promise<void> {
+  if (!params.isClosed()) {
+    params.child.kill('SIGTERM');
+  }
+  await Promise.race([
+    params.closeSignal,
+    sleep(params.timeoutMs),
+  ]);
+  if (!params.isClosed()) {
+    params.child.kill('SIGKILL');
+    await Promise.race([
+      params.closeSignal,
+      sleep(params.timeoutMs),
+    ]);
+  }
+}
 
 function resolveConnectedMachineMode(env: NodeJS.ProcessEnv): ConnectedMachineMode {
   const mode = String(env.HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE ?? '').trim().toLowerCase();
@@ -134,6 +196,284 @@ function resolveConnectedMachineMode(env: NodeJS.ProcessEnv): ConnectedMachineMo
 function resolveConnectedMachineBootstrapFlow(env: NodeJS.ProcessEnv): string {
   const configured = String(env.HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_BOOTSTRAP_FLOW ?? '').trim();
   return configured || 'suites/mobile-e2e/flows/_bootstrap/connectedMachineTerminalAuth.yaml';
+}
+
+function getFileExtension(path: string): string {
+  const basename = path.split('/').pop()?.split('\\').pop() ?? path;
+  const index = basename.lastIndexOf('.');
+  return index >= 0 ? basename.slice(index).toLowerCase() : '';
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function readPositiveInteger(value: unknown, fallback: number): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function shouldCaptureAndroidLogcat(env: NodeJS.ProcessEnv): boolean {
+  const configured = env.HAPPIER_E2E_ANDROID_LOGCAT_CAPTURE;
+  if (configured !== undefined) return isTruthyEnv(configured);
+  return true;
+}
+
+function shouldCaptureIosSimulatorLog(env: NodeJS.ProcessEnv): boolean {
+  const configured = env.HAPPIER_E2E_IOS_SIMULATOR_LOG_CAPTURE;
+  if (configured !== undefined) return isTruthyEnv(configured);
+  return true;
+}
+
+function startAndroidLogcatCapture(params: Readonly<{
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  runDir: string;
+}>): AndroidLogcatCapture {
+  const logPath = resolvePath(params.runDir, ANDROID_LOGCAT_ARTIFACT);
+  const serial = String(params.env.HAPPIER_E2E_ANDROID_SERIAL ?? params.env.ANDROID_SERIAL ?? '').trim();
+  const baseArgs = serial ? ['-s', serial] : [];
+  const child = spawn(
+    adbCommand(params.env),
+    [...baseArgs, 'logcat', '-v', 'threadtime'],
+    {
+      cwd: params.cwd,
+      env: params.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  const logStream = createWriteStream(logPath, { flags: 'a' });
+  child.stdout?.pipe(logStream, { end: false });
+  child.stderr?.on('data', (chunk: Buffer | string) => {
+    logStream.write(`[logcat-stderr] ${String(chunk)}`);
+  });
+  child.on('error', (error) => {
+    logStream.write(`[logcat-error] ${error instanceof Error ? error.message : String(error)}\n`);
+  });
+
+  let stopped = false;
+  let closedState = false;
+  const closed = new Promise<void>((resolve) => {
+    const markClosed = () => {
+      closedState = true;
+      resolve();
+    };
+    child.once('close', markClosed);
+    child.once('error', markClosed);
+  });
+
+  return {
+    logPath,
+    stop: async () => {
+      if (stopped) return;
+      stopped = true;
+      if (!child.killed) {
+        child.kill('SIGTERM');
+      }
+      const timeoutMs = readPositiveInteger(
+        params.env.HAPPIER_E2E_ANDROID_LOGCAT_STOP_TIMEOUT_MS,
+        DEFAULT_ANDROID_LOGCAT_STOP_TIMEOUT_MS,
+      );
+      await stopCapturedLogProcess({
+        child,
+        closeSignal: closed,
+        isClosed: () => closedState,
+        timeoutMs,
+      });
+      child.stdout?.unpipe(logStream);
+      await new Promise<void>((resolve) => {
+        logStream.end(resolve);
+      });
+    },
+  };
+}
+
+function startIosSimulatorLogCapture(params: Readonly<{
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  runDir: string;
+}>): AndroidLogcatCapture {
+  const logPath = resolvePath(params.runDir, IOS_SIMULATOR_LOG_ARTIFACT);
+  const child = spawn(
+    xcrunCommand(params.env),
+    [
+      'simctl',
+      'spawn',
+      'booted',
+      'log',
+      'stream',
+      '--style',
+      'compact',
+      '--predicate',
+      'eventMessage CONTAINS "[sync-perf]" OR eventMessage CONTAINS "ReactNativeJS"',
+    ],
+    {
+      cwd: params.cwd,
+      env: params.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  const logStream = createWriteStream(logPath, { flags: 'a' });
+  child.stdout?.pipe(logStream, { end: false });
+  child.stderr?.on('data', (chunk: Buffer | string) => {
+    logStream.write(`[simulator-log-stderr] ${String(chunk)}`);
+  });
+  child.on('error', (error) => {
+    logStream.write(`[simulator-log-error] ${error instanceof Error ? error.message : String(error)}\n`);
+  });
+
+  let stopped = false;
+  let closedState = false;
+  const closed = new Promise<void>((resolve) => {
+    const markClosed = () => {
+      closedState = true;
+      resolve();
+    };
+    child.once('close', markClosed);
+    child.once('error', markClosed);
+  });
+
+  return {
+    logPath,
+    stop: async () => {
+      if (stopped) return;
+      stopped = true;
+      if (!child.killed) {
+        child.kill('SIGTERM');
+      }
+      const timeoutMs = readPositiveInteger(
+        params.env.HAPPIER_E2E_IOS_SIMULATOR_LOG_STOP_TIMEOUT_MS,
+        DEFAULT_IOS_SIMULATOR_LOG_STOP_TIMEOUT_MS,
+      );
+      await stopCapturedLogProcess({
+        child,
+        closeSignal: closed,
+        isClosed: () => closedState,
+        timeoutMs,
+      });
+      child.stdout?.unpipe(logStream);
+      await new Promise<void>((resolve) => {
+        logStream.end(resolve);
+      });
+    },
+  };
+}
+
+function buildRestoreKeyChunkEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const restoreKey = String(env.HAPPIER_E2E_RESTORE_KEY ?? '').trim();
+  if (!restoreKey) return {};
+  return Object.fromEntries(
+    Array.from({ length: RESTORE_KEY_CHUNK_COUNT }, (_, index) => {
+      const chunkNumber = String(index + 1).padStart(2, '0');
+      const start = index * RESTORE_KEY_CHUNK_SIZE;
+      return [`HAPPIER_E2E_RESTORE_KEY_CHUNK_${chunkNumber}`, restoreKey.slice(start, start + RESTORE_KEY_CHUNK_SIZE)];
+    }),
+  );
+}
+
+function isRestoreKeyChunkEnvKey(key: string): boolean {
+  return /^HAPPIER_E2E_RESTORE_KEY_CHUNK_\d+$/.test(key);
+}
+
+function deleteRestoreKeyChunkEnvEntries(env: NodeJS.ProcessEnv): void {
+  for (const key of Object.keys(env)) {
+    if (isRestoreKeyChunkEnvKey(key)) {
+      delete env[key];
+    }
+  }
+}
+
+function collectSensitiveMaestroEnvEntries(env: NodeJS.ProcessEnv): ReadonlyArray<Readonly<{ key: string; value: string }>> {
+  const staticEntries = SENSITIVE_MAESTRO_ENV_KEYS
+    .map((key) => ({ key, value: String(env[key] ?? '').trim() }))
+    .filter((entry) => entry.value.length > 0);
+  const existingRestoreKeyChunkEntries = Object.entries(env)
+    .filter(([key]) => isRestoreKeyChunkEnvKey(key))
+    .map(([key, value]) => ({ key, value: String(value ?? '').trim() }))
+    .filter((entry) => entry.value.length > 0);
+  const restoreKeyChunkEntries = Object.entries(buildRestoreKeyChunkEnv(env))
+    .map(([key, value]) => ({ key, value }))
+    .filter((entry) => entry.value.length > 0);
+
+  return [...staticEntries, ...existingRestoreKeyChunkEntries, ...restoreKeyChunkEntries];
+}
+
+function buildSensitiveMaestroEnvArgs(entries: ReadonlyArray<Readonly<{ key: string; value: string }>>): string[] {
+  return entries
+    .filter((entry) => entry.key !== 'HAPPIER_E2E_RESTORE_KEY')
+    .flatMap((entry) => ['-e', `${entry.key}=${entry.value}`]);
+}
+
+function buildMaestroProcessEnv(baseEnv: NodeJS.ProcessEnv, extraEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = {
+    ...baseEnv,
+  };
+  delete next.HAPPIER_E2E_RESTORE_KEY;
+  deleteRestoreKeyChunkEnvEntries(next);
+  Object.assign(next, buildRestoreKeyChunkEnv(baseEnv), extraEnv ?? {});
+  delete next.HAPPIER_E2E_RESTORE_KEY;
+  return next;
+}
+
+function buildNonSecretOrchestrationProcessEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = { ...baseEnv };
+  delete next.HAPPIER_E2E_RESTORE_KEY;
+  delete next.HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK;
+  deleteRestoreKeyChunkEnvEntries(next);
+  return next;
+}
+
+export function redactSensitiveMaestroCommandArgsForLog(args: readonly string[], env: NodeJS.ProcessEnv): string[] {
+  const entries = collectSensitiveMaestroEnvEntries(env);
+  return args.map((arg) => {
+    let redacted = arg;
+    for (const entry of entries) {
+      redacted = redacted.replace(new RegExp(escapeRegExp(entry.value), 'g'), `[redacted:${entry.key}]`);
+    }
+    return redacted;
+  });
+}
+
+function redactSensitiveMaestroDebugArtifacts(
+  rootDir: string,
+  entries: ReadonlyArray<Readonly<{ key: string; value: string }>>,
+): void {
+  if (!rootDir || entries.length === 0 || !existsSync(rootDir)) return;
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    let stat;
+    try {
+      stat = statSync(current);
+    } catch {
+      continue;
+    }
+    if (stat.isDirectory()) {
+      for (const child of readdirSync(current)) {
+        stack.push(joinPath(current, child));
+      }
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    if (stat.size > MAX_REDACTABLE_MAESTRO_ARTIFACT_BYTES) continue;
+    if (!REDACTABLE_MAESTRO_ARTIFACT_EXTENSIONS.has(getFileExtension(current))) continue;
+
+    let text: string;
+    try {
+      text = readFileSync(current, 'utf8');
+    } catch {
+      continue;
+    }
+
+    let redacted = text;
+    for (const entry of entries) {
+      redacted = redacted.replace(new RegExp(escapeRegExp(entry.value), 'g'), `[redacted:${entry.key}]`);
+    }
+    if (redacted !== text) {
+      writeFileSync(current, redacted, 'utf8');
+    }
+  }
 }
 
 function shouldWarmExpoDevClientBundle(params: Readonly<{
@@ -159,6 +499,7 @@ function resolveWarmExpoDevClientBundleTimeoutMs(params: Readonly<{
 async function warmExpoDevClientBundle(params: Readonly<{
   platform: 'android' | 'ios';
   hostMetroUrl: string;
+  metroStdoutPath?: string;
   timeoutMs: number;
   signal?: AbortSignal;
 }>): Promise<void> {
@@ -190,7 +531,41 @@ async function warmExpoDevClientBundle(params: Readonly<{
     throw new Error(`Failed to warm Expo Dev Client bundle: bundle not ok (${bundleRes.status})`);
   }
 
-  await bundleRes.body?.cancel().catch(() => {});
+  try {
+    if (params.metroStdoutPath) {
+      await waitForMetroBundleLog({
+        platform: params.platform,
+        stdoutPath: params.metroStdoutPath,
+        timeoutMs: params.timeoutMs,
+        signal,
+      });
+    }
+  } finally {
+    await bundleRes.body?.cancel().catch(() => {});
+  }
+}
+
+async function waitForMetroBundleLog(params: Readonly<{
+  platform: 'android' | 'ios';
+  stdoutPath: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}>): Promise<void> {
+  const platformLabel = params.platform === 'android' ? 'Android' : 'iOS';
+  const deadline = Date.now() + params.timeoutMs;
+  while (Date.now() < deadline) {
+    if (params.signal?.aborted) {
+      throw new Error(`Timed out waiting for Expo Dev Client ${platformLabel} bundle log.`);
+    }
+    try {
+      const log = readFileSync(params.stdoutPath, 'utf8');
+      if (log.includes(`${platformLabel} Bundled`)) return;
+    } catch {
+      // The Metro stdout artifact is created by the managed process; retry until timeout.
+    }
+    await sleep(Math.min(250, Math.max(1, deadline - Date.now())));
+  }
+  throw new Error(`Timed out waiting for Expo Dev Client ${platformLabel} bundle log.`);
 }
 
 async function withHardTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -215,12 +590,16 @@ async function defaultIsAppInstalled(params: Readonly<{
   platform: 'android' | 'ios';
   appId: string;
 }>): Promise<boolean> {
+  const timeoutMs = readPositiveInteger(
+    params.env.HAPPIER_E2E_MOBILE_APP_INSTALL_CHECK_TIMEOUT_MS,
+    DEFAULT_MOBILE_APP_INSTALL_CHECK_TIMEOUT_MS,
+  );
   if (params.platform === 'ios') {
     try {
       const outcome = spawnSync(
         'xcrun',
         ['simctl', 'get_app_container', 'booted', params.appId, 'app'],
-        { stdio: 'ignore', timeout: 5000, env: params.env },
+        { stdio: 'ignore', timeout: timeoutMs, env: params.env },
       );
       return outcome.status === 0;
     } catch {
@@ -235,7 +614,7 @@ async function defaultIsAppInstalled(params: Readonly<{
       const outcome = spawnSync(
         adbCommand(params.env),
         [...baseArgs, 'shell', 'pm', 'path', params.appId],
-        { encoding: 'utf8', timeout: 5000, env: params.env },
+        { encoding: 'utf8', timeout: timeoutMs, env: params.env },
       );
       if (outcome.status !== 0) return false;
       const stdout = String((outcome.stdout ?? '')).trim();
@@ -319,16 +698,27 @@ export async function runMobileMaestro(
   const mobilePlatform = platform === 'android' || platform === 'ios' ? platform : null;
   const skipAppInstallCheck =
     parsed.skipAppInstallCheck === true || isTruthyEnv(params.env.HAPPIER_E2E_SKIP_APP_INSTALL_CHECK ?? '0');
+  const orchestrationEnv = buildNonSecretOrchestrationProcessEnv(params.env);
 
   const isAppInstalled = deps.isAppInstalled ?? defaultIsAppInstalled;
   if (mobilePlatform && !skipAppInstallCheck) {
-    let installed = await isAppInstalled({ env: params.env, platform: mobilePlatform, appId });
-    if (!installed) {
-      installed = await isAppInstalled({ env: params.env, platform: mobilePlatform, appId });
+    const installCheckAttempts = readPositiveInteger(
+      params.env.HAPPIER_E2E_MOBILE_APP_INSTALL_CHECK_ATTEMPTS,
+      DEFAULT_MOBILE_APP_INSTALL_CHECK_ATTEMPTS,
+    );
+    const installCheckRetryDelayMs = readPositiveInteger(
+      params.env.HAPPIER_E2E_MOBILE_APP_INSTALL_CHECK_RETRY_DELAY_MS,
+      DEFAULT_MOBILE_APP_INSTALL_CHECK_RETRY_DELAY_MS,
+    );
+    let installed = false;
+    for (let attempt = 1; attempt <= installCheckAttempts; attempt += 1) {
+      installed = await isAppInstalled({ env: orchestrationEnv, platform: mobilePlatform, appId });
+      if (installed) break;
+      if (attempt < installCheckAttempts) await sleep(installCheckRetryDelayMs);
     }
     if (!installed) {
       throw new Error(
-        `Mobile e2e cannot run: app "${appId}" is not installed on the target ${mobilePlatform} device/simulator. Install a development build first (see packages/tests/suites/mobile-e2e/README.md).`,
+        `Mobile e2e cannot run: app "${appId}" is not installed or was not detected on the target ${mobilePlatform} device/simulator after ${installCheckAttempts} install probe attempts. Install a development build first (see packages/tests/suites/mobile-e2e/README.md).`,
       );
     }
   }
@@ -340,6 +730,8 @@ export async function runMobileMaestro(
 
   const manifestPath = resolvePath(run.runDir, 'manifest.json');
   const debugOutputDir = resolvePath(run.runDir, 'maestro-debug');
+  let androidLogcatCapture: AndroidLogcatCapture | null = null;
+  let iosSimulatorLogCapture: AndroidLogcatCapture | null = null;
 
   const manageMetro = isTruthyEnv(params.env.HAPPIER_E2E_MOBILE_MANAGE_METRO ?? '1');
   const explicitHostMetroUrl = String(params.env.HAPPIER_E2E_DEV_CLIENT_METRO_URL ?? '').trim();
@@ -352,15 +744,32 @@ export async function runMobileMaestro(
 
   let server: StartedServerLike | null = null;
   let metro: StartedDevClientMetroLike | null = null;
+  let androidDevClientRuntimeVersion: string | null = null;
 
   if (manageMetro && !explicitHostMetroUrl) {
     if (!deps.startDevClientMetro) {
       throw new Error('Missing startDevClientMetro dependency.');
     }
     const metroEnv: NodeJS.ProcessEnv = {
-      ...params.env,
+      ...orchestrationEnv,
     };
     metroEnv.HAPPIER_E2E_EXPO_CLEAR ??= '1';
+    const shouldPinAndroidRuntime =
+      platform === 'android' &&
+      !String(metroEnv.HAPPIER_EXPO_RUNTIME_VERSION ?? '').trim() &&
+      isTruthyEnv(params.env.HAPPIER_E2E_ANDROID_PIN_DEV_CLIENT_RUNTIME ?? '1');
+    if (shouldPinAndroidRuntime) {
+      const resolveAndroidDevClientRuntimeVersion =
+        deps.resolveAndroidDevClientRuntimeVersion ?? resolveInstalledAndroidDevClientRuntimeVersion;
+      androidDevClientRuntimeVersion = resolveAndroidDevClientRuntimeVersion({
+        appId,
+        env: orchestrationEnv,
+        outputDir: run.testDir('android-dev-client-runtime'),
+      });
+      if (androidDevClientRuntimeVersion) {
+        metroEnv.HAPPIER_EXPO_RUNTIME_VERSION = androidDevClientRuntimeVersion;
+      }
+    }
     const metroHost = String(params.env.HAPPIER_E2E_DEV_CLIENT_HOST ?? '').trim() || (platform === 'android' ? 'lan' : 'localhost');
     metro = await deps.startDevClientMetro({
       testDir: run.testDir('expo-metro'),
@@ -380,7 +789,7 @@ export async function runMobileMaestro(
       throw new Error('Missing startServerLight dependency (required when serverUrl is not provided).');
     }
     const extraEnv: NodeJS.ProcessEnv = {
-      ...params.env,
+      ...orchestrationEnv,
     };
     // Prefer the Node `--import` start path to avoid relying on workspace-local `node_modules/.bin` layout.
     extraEnv.HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT ??= '1';
@@ -391,13 +800,20 @@ export async function runMobileMaestro(
     });
   }
 
+  androidLogcatCapture = mobilePlatform === 'android' && shouldCaptureAndroidLogcat(params.env)
+    ? startAndroidLogcatCapture({ cwd: params.cwd, env: orchestrationEnv, runDir: run.runDir })
+    : null;
+  iosSimulatorLogCapture = mobilePlatform === 'ios' && shouldCaptureIosSimulatorLog(params.env)
+    ? startIosSimulatorLogCapture({ cwd: params.cwd, env: orchestrationEnv, runDir: run.runDir })
+    : null;
+
   const adbReversePorts =
     deps.adbReversePorts
       ? deps.adbReversePorts
       : (reverseParams: Parameters<typeof runAdbReverseIfEnabled>[0]) => runAdbReverseIfEnabled(reverseParams);
 
   const adbReverse = adbReversePorts({
-    env: params.env,
+    env: orchestrationEnv,
     platform,
     urls: [server.baseUrl, hostMetroUrl].filter(Boolean),
   });
@@ -430,18 +846,24 @@ export async function runMobileMaestro(
     if (!port || !adbReverse.reversedPorts.includes(port)) return deviceMetroUrlRaw;
     try {
       const parsed = new URL(deviceMetroUrlRaw);
-      parsed.hostname = 'localhost';
+      parsed.hostname = '127.0.0.1';
       parsed.port = String(port);
       return stripTrailingSlash(parsed.toString());
     } catch {
       return deviceMetroUrlRaw;
     }
   })();
+  const deviceServerVisibleHostPattern = deviceServerUrl
+    ? resolveVisibleHostPatternFromUrl(deviceServerUrl)
+    : '';
 
+  const mobileAppScheme = resolveMobileAppScheme(params.env, { appId });
+  const devClientScheme = mobilePlatform === 'ios' ? appId : mobileAppScheme;
   const devClientLaunchUrl = deviceMetroUrl
     ? resolveExpoDevClientDeepLink({
         env: params.env,
         metroUrl: deviceMetroUrl,
+        scheme: devClientScheme,
       })
     : '';
 
@@ -470,6 +892,7 @@ export async function runMobileMaestro(
         warmExpoDevClientBundle({
           platform: mobilePlatform,
           hostMetroUrl,
+          metroStdoutPath: metro?.stdoutPath,
           timeoutMs: warmTimeoutMs,
           signal: abortController.signal,
         }),
@@ -494,7 +917,7 @@ export async function runMobileMaestro(
     && isTruthyEnv(params.env.HAPPIER_E2E_ANDROID_PRIME_APP_LAUNCH ?? '1')
   ) {
     await primeAppLaunch({
-      env: params.env,
+      env: orchestrationEnv,
       platform: mobilePlatform,
       appId,
     });
@@ -519,10 +942,25 @@ export async function runMobileMaestro(
         devClientLaunchUrl: devClientLaunchUrl || null,
         connectedMachineMode,
         passThrough: parsed.passThrough ?? [],
+        artifacts: {
+          ...(androidLogcatCapture ? { androidLogcat: ANDROID_LOGCAT_ARTIFACT } : {}),
+          ...(iosSimulatorLogCapture ? { iosSimulatorLog: IOS_SIMULATOR_LOG_ARTIFACT } : {}),
+          syncPerformanceLogs: [
+            ...(androidLogcatCapture ? [ANDROID_LOGCAT_ARTIFACT] : []),
+            ...(iosSimulatorLogCapture ? [IOS_SIMULATOR_LOG_ARTIFACT] : []),
+            ...(metro ? [
+              'expo-metro/ui.dev-client.metro.stdout.log',
+              'expo-metro/ui.dev-client.metro.stderr.log',
+            ] : []),
+          ],
+        },
         env: {
           APP_ENV: params.env.APP_ENV ?? null,
+          mobileAppScheme,
+          devClientScheme,
           androidAdbReverse: adbReverse.enabled,
           androidAdbReversePorts: adbReverse.reversedPorts,
+          androidDevClientRuntimeVersion: androidDevClientRuntimeVersion ?? null,
           manageMetro: manageMetro,
         },
       },
@@ -537,18 +975,26 @@ export async function runMobileMaestro(
   }
 
   const buildMaestroEnv = (extraEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
-    ...params.env,
+    ...buildMaestroProcessEnv(params.env, extraEnv),
     // Disable analytics prompts for deterministic local runs.
     MAESTRO_CLI_NO_ANALYTICS: String(params.env.MAESTRO_CLI_NO_ANALYTICS ?? '1'),
     ...(deviceServerUrl ? { HAPPIER_E2E_SERVER_URL: deviceServerUrl } : {}),
+    ...(deviceServerVisibleHostPattern ? { HAPPIER_E2E_SERVER_VISIBLE_HOST_PATTERN: deviceServerVisibleHostPattern } : {}),
     ...(server?.baseUrl ? { HAPPIER_E2E_SERVER_URL_HOST: server.baseUrl } : {}),
     ...(platform ? { HAPPIER_E2E_MOBILE_PLATFORM: platform } : {}),
     ...(devClientLaunchUrl ? { HAPPIER_E2E_DEV_CLIENT_LAUNCH_URL: devClientLaunchUrl } : {}),
+    HAPPIER_E2E_MOBILE_APP_SCHEME: mobileAppScheme,
     HAPPIER_E2E_MOBILE_APP_ID: appId,
-    ...(extraEnv ?? {}),
   });
 
-  const buildMaestroArgs = (flowPath: string, extraArgs?: string[]): string[] => [
+  const baseSensitiveMaestroEnvEntries = collectSensitiveMaestroEnvEntries(params.env);
+  let runtimeLogSensitiveMaestroEnvEntries = baseSensitiveMaestroEnvEntries;
+
+  const buildMaestroArgs = (
+    flowPath: string,
+    sensitiveMaestroEnvEntries: ReadonlyArray<Readonly<{ key: string; value: string }>>,
+    extraArgs?: string[],
+  ): string[] => [
     ...(platform ? ['-p', platform] : []),
     'test',
     flowPath,
@@ -557,21 +1003,35 @@ export async function runMobileMaestro(
     '-e',
     `HAPPIER_E2E_MOBILE_APP_ID=${appId}`,
     ...(deviceServerUrl ? ['-e', `HAPPIER_E2E_SERVER_URL=${deviceServerUrl}`] : []),
+    ...(deviceServerVisibleHostPattern ? ['-e', `HAPPIER_E2E_SERVER_VISIBLE_HOST_PATTERN=${deviceServerVisibleHostPattern}`] : []),
     ...(server?.baseUrl ? ['-e', `HAPPIER_E2E_SERVER_URL_HOST=${server.baseUrl}`] : []),
     ...(platform ? ['-e', `HAPPIER_E2E_MOBILE_PLATFORM=${platform}`] : []),
+    '-e',
+    `HAPPIER_E2E_MOBILE_APP_SCHEME=${mobileAppScheme}`,
     ...(deviceMetroUrl ? ['-e', `HAPPIER_E2E_DEV_CLIENT_METRO_URL=${deviceMetroUrl}`] : []),
     ...(devClientLaunchUrl ? ['-e', `HAPPIER_E2E_DEV_CLIENT_LAUNCH_URL=${devClientLaunchUrl}`] : []),
+    ...buildSensitiveMaestroEnvArgs(sensitiveMaestroEnvEntries),
     ...(extraArgs ?? []),
     ...(parsed.passThrough ?? []),
   ];
 
   const runMaestroFlow = async (flowPath: string, extraEnv?: NodeJS.ProcessEnv, extraArgs?: string[]) => {
-    return await deps.runMaestro!({
-      cwd: params.cwd,
-      env: buildMaestroEnv(extraEnv),
-      maestroBin: maestroBin || maestroCommand(params.env),
-      args: buildMaestroArgs(flowPath, extraArgs),
-    });
+    const maestroEnv = buildMaestroEnv(extraEnv);
+    const sensitiveMaestroEnvEntries = collectSensitiveMaestroEnvEntries({ ...params.env, ...(extraEnv ?? {}) });
+    runtimeLogSensitiveMaestroEnvEntries = [
+      ...runtimeLogSensitiveMaestroEnvEntries,
+      ...sensitiveMaestroEnvEntries,
+    ];
+    try {
+      return await deps.runMaestro!({
+        cwd: params.cwd,
+        env: maestroEnv,
+        maestroBin: maestroBin || maestroCommand(params.env),
+        args: buildMaestroArgs(flowPath, sensitiveMaestroEnvEntries, extraArgs),
+      });
+    } finally {
+      redactSensitiveMaestroDebugArtifacts(debugOutputDir, sensitiveMaestroEnvEntries);
+    }
   };
 
   let exitCode = 1;
@@ -594,7 +1054,7 @@ export async function runMobileMaestro(
         cliHomeDir,
         serverUrl: server.baseUrl,
         webappUrl: server.baseUrl,
-        env: params.env,
+        env: orchestrationEnv,
       });
 
       const terminalConnectDeepLink = resolveTerminalConnectDeepLink(startedCliTerminalConnect.connectUrl, {
@@ -602,14 +1062,13 @@ export async function runMobileMaestro(
         serverUrl: deviceServerUrl,
       });
       if (!terminalConnectDeepLink) {
-        throw new Error(`Failed to build terminal connect deep link from ${JSON.stringify(startedCliTerminalConnect.connectUrl)}`);
+        throw new Error('Failed to build terminal connect deep link from terminal connect URL');
       }
 
       const bootstrapFlow = resolveConnectedMachineBootstrapFlow(params.env);
       const bootstrapResult = await runMaestroFlow(
         bootstrapFlow,
         { HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK: terminalConnectDeepLink },
-        ['-e', `HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK=${terminalConnectDeepLink}`],
       );
       if (bootstrapResult.exitCode !== 0) {
         exitCode = bootstrapResult.exitCode;
@@ -619,7 +1078,7 @@ export async function runMobileMaestro(
           testDir: run.testDir('daemon'),
           happyHomeDir: cliHomeDir,
           env: {
-            ...params.env,
+            ...orchestrationEnv,
             HAPPIER_SERVER_URL: server.baseUrl,
             HAPPIER_WEBAPP_URL: server.baseUrl,
           },
@@ -627,7 +1086,6 @@ export async function runMobileMaestro(
         const result = await runMaestroFlow(
           flows,
           { HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK: terminalConnectDeepLink },
-          ['-e', `HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK=${terminalConnectDeepLink}`],
         );
         exitCode = result.exitCode;
       }
@@ -641,6 +1099,14 @@ export async function runMobileMaestro(
     }
     if (startedCliTerminalConnect?.stop) {
       await startedCliTerminalConnect.stop();
+    }
+    if (androidLogcatCapture) {
+      await androidLogcatCapture.stop();
+      redactSensitiveMaestroDebugArtifacts(androidLogcatCapture.logPath, runtimeLogSensitiveMaestroEnvEntries);
+    }
+    if (iosSimulatorLogCapture) {
+      await iosSimulatorLogCapture.stop();
+      redactSensitiveMaestroDebugArtifacts(iosSimulatorLogCapture.logPath, runtimeLogSensitiveMaestroEnvEntries);
     }
     if (server?.stop) {
       await server.stop();

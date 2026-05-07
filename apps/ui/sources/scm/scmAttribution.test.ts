@@ -6,7 +6,9 @@ import {
     buildChangedFilesAttribution,
     canOfferSessionChangedFilesView,
     getDefaultChangedFilesViewMode,
+    getSelectableChangedFilesViewModes,
     getSessionAttributionReliability,
+    resolveChangedFilesViewMode,
     type SessionAttributionConfidence,
 } from './scmAttribution';
 
@@ -48,8 +50,8 @@ describe('buildChangedFilesAttribution', () => {
         expect(getDefaultChangedFilesViewMode()).toBe('repository');
     });
 
-    it('marks files directly staged/unstaged by this session as high confidence', () => {
-        const files = [makeFile('src/high.ts')];
+    it('does not treat commit selection stage operations as session-authored file changes', () => {
+        const files = [makeFile('src/selected.ts'), makeFile('src/unselected.ts')];
         const result = buildChangedFilesAttribution({
             allChangedFiles: files,
             touchedPaths: [],
@@ -58,12 +60,22 @@ describe('buildChangedFilesAttribution', () => {
                     operation: 'stage',
                     status: 'success',
                     timestamp: 1000,
-                    detail: 'src/high.ts',
+                    detail: 'src/selected.ts',
+                }),
+                makeLog({
+                    operation: 'unstage',
+                    status: 'success',
+                    timestamp: 1001,
+                    detail: 'src/unselected.ts',
                 }),
             ],
         });
 
-        expect(confidenceForPath(result.sessionAttributedFiles, 'src/high.ts')).toBe('high');
+        expect(result.sessionAttributedFiles).toEqual([]);
+        expect(result.repositoryOnlyFiles.map((entry) => entry.fullPath)).toEqual([
+            'src/selected.ts',
+            'src/unselected.ts',
+        ]);
     });
 
     it('marks touched-only files as inferred and leaves unrelated files as repository-only', () => {
@@ -98,7 +110,7 @@ describe('buildChangedFilesAttribution', () => {
         expect(result.repositoryOnlyFiles.map((entry) => entry.fullPath)).toEqual(['src/a.ts']);
     });
 
-    it('treats path-prefixed operation detail metadata as high confidence', () => {
+    it('ignores path-prefixed commit selection detail metadata for attribution', () => {
         const files = [makeFile('src/a.ts')];
         const result = buildChangedFilesAttribution({
             allChangedFiles: files,
@@ -113,11 +125,11 @@ describe('buildChangedFilesAttribution', () => {
             ],
         });
 
-        expect(confidenceForPath(result.sessionAttributedFiles, 'src/a.ts')).toBe('high');
-        expect(result.repositoryOnlyFiles).toEqual([]);
+        expect(result.sessionAttributedFiles).toEqual([]);
+        expect(result.repositoryOnlyFiles.map((entry) => entry.fullPath)).toEqual(['src/a.ts']);
     });
 
-    it('uses structured operation path metadata when available', () => {
+    it('ignores structured commit selection path metadata for attribution', () => {
         const files = [makeFile('src/structured.ts')];
         const result = buildChangedFilesAttribution({
             allChangedFiles: files,
@@ -135,52 +147,60 @@ describe('buildChangedFilesAttribution', () => {
             ],
         });
 
-        expect(confidenceForPath(result.sessionAttributedFiles, 'src/structured.ts')).toBe('high');
-        expect(result.repositoryOnlyFiles).toEqual([]);
+        expect(result.sessionAttributedFiles).toEqual([]);
+        expect(result.repositoryOnlyFiles.map((entry) => entry.fullPath)).toEqual(['src/structured.ts']);
     });
 
-    it('orders high-confidence session files before inferred files', () => {
-        const files = [makeFile('src/inferred.ts'), makeFile('src/high.ts')];
+    it('orders inferred session files by repository path', () => {
+        const files = [makeFile('src/z.ts'), makeFile('src/a.ts')];
         const result = buildChangedFilesAttribution({
             allChangedFiles: files,
-            touchedPaths: ['src/inferred.ts'],
-            operationLog: [
-                makeLog({
-                    operation: 'stage',
-                    status: 'success',
-                    timestamp: 3000,
-                    detail: 'src/high.ts',
-                }),
-            ],
+            touchedPaths: ['src/z.ts', 'src/a.ts'],
+            operationLog: [],
         });
 
         expect(result.sessionAttributedFiles.map((entry) => `${entry.file.fullPath}:${entry.confidence}`)).toEqual([
-            'src/high.ts:high',
-            'src/inferred.ts:inferred',
+            'src/a.ts:inferred',
+            'src/z.ts:inferred',
         ]);
     });
 
     it('can suppress inferred attribution for lower-reliability session mode', () => {
-        const files = [makeFile('src/inferred.ts'), makeFile('src/high.ts')];
+        const files = [makeFile('src/inferred.ts'), makeFile('src/repo-only.ts')];
         const result = buildChangedFilesAttribution({
             allChangedFiles: files,
             touchedPaths: ['src/inferred.ts'],
-            operationLog: [
-                makeLog({
-                    operation: 'stage',
-                    status: 'success',
-                    timestamp: 3001,
-                    detail: 'src/high.ts',
-                }),
-            ],
+            operationLog: [],
             includeInferred: false,
         });
 
-        expect(result.sessionAttributedFiles.map((entry) => `${entry.file.fullPath}:${entry.confidence}`)).toEqual([
-            'src/high.ts:high',
-        ]);
-        expect(result.repositoryOnlyFiles.map((entry) => entry.fullPath)).toEqual(['src/inferred.ts']);
+        expect(result.sessionAttributedFiles).toEqual([]);
+        expect(result.repositoryOnlyFiles.map((entry) => entry.fullPath)).toEqual(['src/inferred.ts', 'src/repo-only.ts']);
         expect(result.suppressedInferredCount).toBe(1);
+    });
+});
+
+describe('changed-files view modes', () => {
+    it('offers selected-for-commit as an explicit scope only when files are selected', () => {
+        expect(getSelectableChangedFilesViewModes({
+            showTurnViewToggle: false,
+            showSessionViewToggle: false,
+            showSelectedViewToggle: true,
+        })).toEqual(['repository', 'selected']);
+
+        expect(resolveChangedFilesViewMode({
+            mode: 'selected',
+            showTurnViewToggle: false,
+            showSessionViewToggle: false,
+            showSelectedViewToggle: true,
+        })).toBe('selected');
+
+        expect(resolveChangedFilesViewMode({
+            mode: 'selected',
+            showTurnViewToggle: true,
+            showSessionViewToggle: false,
+            showSelectedViewToggle: false,
+        })).toBe('turn');
     });
 });
 

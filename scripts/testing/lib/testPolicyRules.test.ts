@@ -104,6 +104,109 @@ test('collectPolicyFindings reports UI tree walking when canonical harness impor
   );
 });
 
+test('collectPolicyFindings enforces reactive active-server reads in empty React memos', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'apps/ui/sources/components/example.tsx',
+      content: `
+        import React from 'react';
+        import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+        export function Example() {
+          return React.useMemo(() => getActiveServerSnapshot().serverUrl, []);
+        }
+      `,
+    },
+  ]);
+
+  assert.deepEqual(
+    report.findings.map((finding) => `${finding.ruleId}:${finding.mode}`),
+    ['no-active-server-snapshot-empty-memo:enforce'],
+  );
+});
+
+test('collectPolicyFindings enforces reactive active-server reads in empty React memos for namespace imports', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'apps/ui/sources/components/example.tsx',
+      content: `
+        import React from 'react';
+        import * as serverRuntime from '@/sync/domains/server/serverRuntime';
+        export function Example() {
+          return React.useMemo(() => serverRuntime.getActiveServerSnapshot().serverUrl, []);
+        }
+      `,
+    },
+  ]);
+
+  assert.deepEqual(
+    report.findings.map((finding) => `${finding.ruleId}:${finding.mode}`),
+    ['no-active-server-snapshot-empty-memo:enforce'],
+  );
+});
+
+test('collectPolicyFindings enforces reactive active-server reads in React state initializers', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'apps/ui/sources/components/example.tsx',
+      content: `
+        import React from 'react';
+        import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+        export function Example() {
+          const [snapshot] = React.useState(() => getActiveServerSnapshot());
+          return snapshot.serverUrl;
+        }
+      `,
+    },
+  ]);
+
+  assert.deepEqual(
+    report.findings.map((finding) => `${finding.ruleId}:${finding.mode}`),
+    ['no-active-server-snapshot-state-capture:enforce'],
+  );
+});
+
+test('collectPolicyFindings enforces reactive active-server reads in React state initializers for aliased imports', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'apps/ui/sources/components/example.tsx',
+      content: `
+        import React from 'react';
+        import { getActiveServerSnapshot as readActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+        export function Example() {
+          const [snapshot] = React.useState(() => readActiveServerSnapshot());
+          return snapshot.serverUrl;
+        }
+      `,
+    },
+  ]);
+
+  assert.deepEqual(
+    report.findings.map((finding) => `${finding.ruleId}:${finding.mode}`),
+    ['no-active-server-snapshot-state-capture:enforce'],
+  );
+});
+
+test('collectPolicyFindings enforces reactive active-server reads in React refs', () => {
+  const report = collectPolicyFindings([
+    {
+      filePath: 'apps/ui/sources/components/example.tsx',
+      content: `
+        import React, { useRef } from 'react';
+        import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+        export function Example() {
+          const snapshotRef = useRef(getActiveServerSnapshot());
+          return snapshotRef.current.serverUrl;
+        }
+      `,
+    },
+  ]);
+
+  assert.deepEqual(
+    report.findings.map((finding) => `${finding.ruleId}:${finding.mode}`),
+    ['no-active-server-snapshot-ref-capture:enforce'],
+  );
+});
+
 test('collectPolicyFindings enforces canonical helpers for detached background spawns in test policy files', () => {
   const report = collectPolicyFindings([
     {

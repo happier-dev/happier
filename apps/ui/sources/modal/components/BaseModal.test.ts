@@ -79,6 +79,49 @@ describe('BaseModal (web)', () => {
         expect(screen.findAllByType('DialogOverlay' as any).length).toBe(0);
     });
 
+    it('uses the themed blurred modal backdrop on web', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const screen = await renderBaseModalScreen(BaseModal);
+
+        const overlay = screen.findAllByType('DialogOverlay' as any)?.[0];
+        expect(overlay?.props.style).toMatchObject({
+            WebkitBackdropFilter: 'blur(2px)',
+            backdropFilter: 'blur(2px)',
+            backgroundColor: 'rgba(255, 255, 255, 0.52)',
+        });
+        expect(overlay?.props.style.opacity).toBeUndefined();
+        expect(overlay?.props.style.transition).not.toContain('opacity');
+    });
+
+    it('keeps the web modal mounted until the shared exit animation finishes', async () => {
+        vi.useFakeTimers();
+        const { BaseModal } = await import('./BaseModal');
+        const { motionTokens } = await import('@/components/ui/motion/motionTokens');
+        const screen = await renderBaseModalScreen(BaseModal);
+
+        expect(screen.findAllByType('DialogRoot' as any).length).toBe(1);
+
+        await act(async () => {
+            screen.tree.update(React.createElement(BaseModal, {
+                visible: false,
+                children: React.createElement('Child'),
+            }));
+        });
+
+        expect(screen.findAllByType('DialogRoot' as any).length).toBe(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(motionTokens.overlay.modal.exitMs - 1);
+        });
+        expect(screen.findAllByType('DialogRoot' as any).length).toBe(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(1);
+        });
+        expect(screen.findAllByType('DialogRoot' as any).length).toBe(0);
+        vi.useRealTimers();
+    });
+
     it('prevents outside dismissal when closeOnBackdrop is false', async () => {
         const { BaseModal } = await import('./BaseModal');
 

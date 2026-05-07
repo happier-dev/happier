@@ -9,6 +9,11 @@ import {
   BUG_REPORT_DEFAULT_ISSUE_REPO,
 } from '@happier-dev/protocol';
 
+export type BugReportAttachmentArg = {
+  path: string;
+  sourceKind: 'attachment' | 'session-log' | 'provider-transcript';
+};
+
 export type ParsedBugReportArgs = {
   showHelp: boolean;
   title: string;
@@ -27,6 +32,8 @@ export type ParsedBugReportArgs = {
   skipSimilarIssues: boolean;
   serverVersion: string;
   deploymentType: BugReportDeploymentType | null;
+  sessionId: string;
+  attachments: BugReportAttachmentArg[];
 };
 
 export function bugReportUsage(): string {
@@ -55,6 +62,10 @@ export function bugReportUsage(): string {
     '  --no-similar-issues                Skip searching for similar issues',
     '  --server-version <version>',
     '  --deployment-type <cloud|self-hosted|enterprise>',
+    '  --session-id <id>                  Bind the report to a specific Happier session id',
+    '  --attach <path>                    Attach an additional file (repeatable)',
+    '  --attach-session-log <path>        Attach a Happier session log file (repeatable)',
+    '  --attach-provider-transcript <path> Attach a provider transcript (Claude/Codex/...) (repeatable)',
     '  -h, --help',
   ].join('\n');
 }
@@ -78,6 +89,8 @@ export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
     skipSimilarIssues: false,
     serverVersion: '',
     deploymentType: null,
+    sessionId: '',
+    attachments: [],
   };
 
   const readValue = (
@@ -200,6 +213,28 @@ export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
       parsed.deploymentType = deployment;
       continue;
     }
+    if (arg === '--session-id') {
+      [parsed.sessionId, index] = readValue(index, arg);
+      continue;
+    }
+    if (arg === '--attach') {
+      let value = '';
+      [value, index] = readValue(index, arg);
+      parsed.attachments.push({ path: value, sourceKind: 'attachment' });
+      continue;
+    }
+    if (arg === '--attach-session-log') {
+      let value = '';
+      [value, index] = readValue(index, arg);
+      parsed.attachments.push({ path: value, sourceKind: 'session-log' });
+      continue;
+    }
+    if (arg === '--attach-provider-transcript') {
+      let value = '';
+      [value, index] = readValue(index, arg);
+      parsed.attachments.push({ path: value, sourceKind: 'provider-transcript' });
+      continue;
+    }
 
     throw new Error(`Unknown argument for bug-report command: ${arg}`);
   }
@@ -212,5 +247,9 @@ export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
   parsed.whatChangedRecently = parsed.whatChangedRecently.trim();
   parsed.providerUrl = parsed.providerUrl.trim();
   parsed.serverVersion = parsed.serverVersion.trim();
+  parsed.sessionId = parsed.sessionId.trim();
+  parsed.attachments = parsed.attachments
+    .map((entry) => ({ path: entry.path.trim(), sourceKind: entry.sourceKind }))
+    .filter((entry) => entry.path.length > 0);
   return parsed;
 }

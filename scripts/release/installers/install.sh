@@ -12,7 +12,8 @@ if [[ -n "${HAPPIER_WITH_DAEMON+x}" ]]; then
 fi
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
-ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart
+ACTION="${HAPPIER_INSTALLER_ACTION:-install}" # install|reinstall|version|check|uninstall|restart|rollback
+INSTALL_VERSION="${HAPPIER_INSTALL_VERSION:-}"
 RUN_ACTION="${HAPPIER_INSTALLER_RUN_ACTION:-}"
 SETUP_RELAY_SHORTCUT="0"
 DEBUG_MODE="${HAPPIER_INSTALLER_DEBUG:-0}"
@@ -241,18 +242,90 @@ detect_arch() {
   esac
 }
 
+release_asset_version_from_name() {
+  local name="$1"
+  local version=""
+  if [[ "${name}" =~ ^checksums-.+-v(.+)[.]txt[.]minisig$ ]]; then
+    version="${BASH_REMATCH[1]}"
+  elif [[ "${name}" =~ ^checksums-.+-v(.+)[.]txt$ ]]; then
+    version="${BASH_REMATCH[1]}"
+  elif [[ "${name}" =~ ^.+-v(.+)-(linux|darwin|win32)-[^-]+[.]tar[.]gz$ ]]; then
+    version="${BASH_REMATCH[1]}"
+  fi
+  printf '%s' "${version}"
+}
+
+release_asset_version_sort_key() {
+  local name="$1"
+  local version
+  version="$(release_asset_version_from_name "${name}")"
+
+  local version_without_build
+  version_without_build="${version%%+*}"
+
+  local core
+  local prerelease=""
+  core="${version_without_build%%-*}"
+  if [[ "${version_without_build}" == *-* ]]; then
+    prerelease="${version_without_build#*-}"
+  fi
+
+  local major=0
+  local minor=0
+  local patch=0
+  IFS='.' read -r major minor patch _ <<< "${core}"
+  major="${major:-0}"
+  minor="${minor:-0}"
+  patch="${patch:-0}"
+  [[ "${major}" =~ ^[0-9]+$ ]] || major=0
+  [[ "${minor}" =~ ^[0-9]+$ ]] || minor=0
+  [[ "${patch}" =~ ^[0-9]+$ ]] || patch=0
+
+  local sort_key
+  sort_key="$(printf '%09d|%09d|%09d|' "${major}" "${minor}" "${patch}")"
+
+  local prerelease_rank="1|stable|"
+  if [[ -n "${prerelease}" ]]; then
+    prerelease_rank="0|"
+    local part
+    local prerelease_parts=()
+    IFS='.' read -r -a prerelease_parts <<< "${prerelease}"
+    for part in "${prerelease_parts[@]}"; do
+      if [[ "${part}" =~ ^[0-9]+$ ]]; then
+        prerelease_rank+="$(printf '1|0|%09d|' "${part}")"
+      else
+        prerelease_rank+="1|1|${part}|"
+      fi
+    done
+    prerelease_rank+="0|"
+  fi
+
+  printf '%s' "${sort_key}${prerelease_rank}${name}"
+}
+
 json_lookup_asset_url() {
   local json="$1"
   local name_regex="$2"
+  local matched=""
+  local matched_sort_key=""
   # GitHub API JSON is typically pretty-printed (newlines + spaces). Avoid "minifying" into one
   # giant line (which can overflow awk line-length limits on some platforms) and instead parse
-  # line-by-line within the assets array. We intentionally return the *last* match to support
-  # rolling tags that may contain multiple versions: newest assets are appended later in the JSON.
-  printf '%s' "$json" | tr '{},' '\n\n\n' | awk -v re="$name_regex" '
+  # line-by-line within the assets array. Select by semantic version instead of provider order so
+  # rolling tags remain deterministic even when GitHub returns older assets last.
+  while IFS=$'\t' read -r name url; do
+    if [[ -z "${name}" || -z "${url}" ]]; then
+      continue
+    fi
+    local sort_key
+    sort_key="$(release_asset_version_sort_key "${name}")"
+    if [[ -z "${matched}" || "${sort_key}" > "${matched_sort_key}" ]]; then
+      matched="${url}"
+      matched_sort_key="${sort_key}"
+    fi
+  done < <(printf '%s' "$json" | tr '{},' '\n\n\n' | awk -v re="$name_regex" '
     BEGIN {
       in_assets = 0
       name = ""
-      last = ""
     }
     {
       raw = $0
@@ -287,16 +360,14 @@ json_lookup_asset_url() {
           url = substr(v, 1, q - 1)
         }
         if (name ~ re && url != "") {
-          last = url
+          printf "%s\t%s\n", name, url
         }
       }
     }
-    END {
-      if (last != "") {
-        print last
-      }
-    }
-  '
+  ')
+  if [[ -n "${matched}" ]]; then
+    printf '%s' "${matched}"
+  fi
 }
 
 find_local_release_asset_path() {
@@ -310,11 +381,17 @@ find_local_release_asset_path() {
   fi
 
   local matched=""
+  local matched_sort_key=""
   while IFS= read -r -d '' path; do
     local name
     name="$(basename "${path}")"
     if [[ "${name}" =~ ${name_regex} ]]; then
-      matched="${path}"
+      local sort_key
+      sort_key="$(release_asset_version_sort_key "${name}")"
+      if [[ -z "${matched}" || "${sort_key}" > "${matched_sort_key}" ]]; then
+        matched="${path}"
+        matched_sort_key="${sort_key}"
+      fi
     fi
   done < <(find "${RELEASE_ASSETS_DIR}" -maxdepth 1 -type f -print0 2>/dev/null)
 
@@ -332,6 +409,23 @@ resolve_release_asset_source() {
     return
   fi
   json_lookup_asset_url "${release_json}" "${name_regex}"
+}
+
+escape_regex_literal() {
+  printf '%s' "$1" | sed 's/[][\\.^$*+?{}()|]/\\&/g'
+}
+
+validate_requested_install_version() {
+  local version="$1"
+  if [[ -z "${version}" ]]; then
+    echo "Missing value for --version" >&2
+    return 1
+  fi
+  if [[ ! "${version}" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+    echo "Invalid install version '${version}'. Expected a release version such as 0.2.1." >&2
+    return 1
+  fi
+  return 0
 }
 
 download_release_asset_with_retry() {
@@ -635,6 +729,100 @@ action_uninstall() {
   return 0
 }
 
+read_installer_marker_file() {
+  local path="$1"
+  if [[ ! -f "${path}" ]]; then
+    return 1
+  fi
+  local value=""
+  IFS= read -r value < "${path}" || true
+  printf '%s' "${value}"
+}
+
+cli_default_channel_matches_selected_channel() {
+  local state_path="${INSTALL_DIR}/default-cli-release-channel.json"
+  if [[ -f "${state_path}" ]]; then
+    grep -Eq "\"releaseChannel\"[[:space:]]*:[[:space:]]*\"${CHANNEL}\"" "${state_path}"
+    return $?
+  fi
+  [[ "${CHANNEL}" == "stable" ]]
+}
+
+sync_cli_rollback_shim() {
+  local shim_name="$1"
+  local managed_root="$2"
+  local install_shim_path="${INSTALL_DIR}/bin/${shim_name}"
+  local path_shim_path="${BIN_DIR}/${shim_name}"
+
+  mkdir -p "${INSTALL_DIR}/bin" "${BIN_DIR}"
+  rm -f "${install_shim_path}" || true
+  ln -sfn "${INSTALL_DIR}/${managed_root}/current/happier" "${install_shim_path}"
+  rm -f "${path_shim_path}" || true
+  ln -sfn "${install_shim_path}" "${path_shim_path}"
+}
+
+action_rollback() {
+  if [[ "${PRODUCT}" != "cli" ]]; then
+    echo "Rollback is only supported for the CLI installer." >&2
+    return 1
+  fi
+
+  local managed_root=""
+  managed_root="$(cli_managed_install_root "${CHANNEL}")" || {
+    echo "Unsupported CLI channel: ${CHANNEL}" >&2
+    return 1
+  }
+  local shim_name=""
+  shim_name="$(cli_shim_name "${CHANNEL}")" || {
+    echo "Unsupported CLI shim channel: ${CHANNEL}" >&2
+    return 1
+  }
+
+  local install_root="${INSTALL_DIR}/${managed_root}"
+  local previous_version=""
+  previous_version="$(read_installer_marker_file "${install_root}/previous.version" 2>/dev/null || true)"
+  if [[ -z "${previous_version}" ]]; then
+    echo "No previous ${shim_name} version is available for rollback." >&2
+    return 1
+  fi
+
+  local previous_dir="${install_root}/versions/${previous_version}"
+  if [[ ! -x "${previous_dir}/happier" ]]; then
+    echo "Rollback target is missing or incomplete: ${previous_dir}" >&2
+    return 1
+  fi
+
+  local current_version=""
+  current_version="$(read_installer_marker_file "${install_root}/current.version" 2>/dev/null || true)"
+  local current_dir=""
+  if [[ -n "${current_version}" ]]; then
+    current_dir="${install_root}/versions/${current_version}"
+  fi
+
+  rm -rf "${install_root}/current"
+  ln -sfn "versions/${previous_version}" "${install_root}/current"
+  printf '%s\n' "${previous_version}" > "${install_root}/current.version"
+
+  if [[ -n "${current_version}" && -d "${current_dir}" ]]; then
+    rm -rf "${install_root}/previous"
+    ln -sfn "versions/${current_version}" "${install_root}/previous"
+    printf '%s\n' "${current_version}" > "${install_root}/previous.version"
+  else
+    rm -rf "${install_root}/previous"
+    rm -f "${install_root}/previous.version"
+  fi
+
+  sync_cli_rollback_shim "${shim_name}" "${managed_root}"
+  if [[ "${shim_name}" != "happier" ]] && cli_default_channel_matches_selected_channel; then
+    sync_cli_rollback_shim "happier" "${managed_root}"
+  fi
+
+  success "Rolled back ${shim_name} from ${current_version:-current} to ${previous_version}."
+  say "Tip: if your shell still can't find changes, run:"
+  shell_command_cache_hint
+  return 0
+}
+
 tar_extract_gz() {
   local archive_path="$1"
   local dest_dir="$2"
@@ -665,6 +853,14 @@ rolling_suffix_for_channel() {
     preview) echo "preview" ;;
     publicdev) echo "dev" ;;
     *) return 1 ;;
+  esac
+}
+
+default_release_asset_version_regex() {
+  case "$1" in
+    preview) printf '%s' '[^-]+-preview([.][0-9A-Za-z.+-]+)?' ;;
+    publicdev) printf '%s' '[^-]+-dev([.][0-9A-Za-z.+-]+)?' ;;
+    *) printf '%s' '[^-]+' ;;
   esac
 }
 
@@ -1266,15 +1462,22 @@ action_version() {
   fi
 
   local tag=""
-  local asset_regex="^happier-v.*-${os}-${arch}[.]tar[.]gz$"
+  local default_version_regex=""
+  default_version_regex="$(default_release_asset_version_regex "${CHANNEL}")"
+  local asset_regex="^happier-v${default_version_regex}-${os}-${arch}[.]tar[.]gz$"
   local version_prefix="happier-v"
   if [[ "${PRODUCT}" == "server" ]]; then
-    asset_regex="^happier-server-v.*-${os}-${arch}[.]tar[.]gz$"
+    asset_regex="^happier-server-v${default_version_regex}-${os}-${arch}[.]tar[.]gz$"
     version_prefix="happier-server-v"
   fi
   if [[ "${PRODUCT}" == "stack" ]]; then
-    asset_regex="^hstack-v.*-${os}-${arch}[.]tar[.]gz$"
+    asset_regex="^hstack-v${default_version_regex}-${os}-${arch}[.]tar[.]gz$"
     version_prefix="hstack-v"
+  fi
+  if [[ -n "${INSTALL_VERSION}" ]]; then
+    local requested_version_regex=""
+    requested_version_regex="$(escape_regex_literal "${INSTALL_VERSION}")"
+    asset_regex="^${version_prefix}${requested_version_regex}-${os}-${arch}[.]tar[.]gz$"
   fi
   tag="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}")" || {
     echo "Unsupported product/channel combination: ${PRODUCT}/${CHANNEL}" >&2
@@ -1304,7 +1507,7 @@ action_version() {
   local asset_source=""
   asset_source="$(resolve_release_asset_source "${release_json}" "${asset_regex}")"
   if [[ -z "${asset_source}" ]]; then
-    echo "Unable to locate release assets for ${OS}-${ARCH} on tag ${tag}." >&2
+    echo "Unable to locate release assets for ${os}-${arch} on tag ${tag}." >&2
     return 1
   fi
   local asset_name=""
@@ -1354,7 +1557,8 @@ Options:
   --with-daemon
   --without-daemon
   --check
-  --version
+  --version [version]
+  --rollback
   --reinstall
   --restart
   --uninstall [--purge]
@@ -1438,7 +1642,22 @@ while [[ $# -gt 0 ]]; do
       shift 1
       ;;
     --version)
-      ACTION="version"
+      if [[ $# -ge 2 && -n "${2:-}" && "${2}" != --* ]]; then
+        INSTALL_VERSION="${2}"
+        ACTION="install"
+        shift 2
+      else
+        ACTION="version"
+        shift 1
+      fi
+      ;;
+    --version=*)
+      INSTALL_VERSION="${1#*=}"
+      ACTION="install"
+      shift 1
+      ;;
+    --rollback)
+      ACTION="rollback"
       shift 1
       ;;
     --reinstall)
@@ -1489,6 +1708,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 CHANNEL="$(normalize_channel "${CHANNEL}")"
+
+if [[ -n "${INSTALL_VERSION}" ]]; then
+  validate_requested_install_version "${INSTALL_VERSION}" || {
+    usage >&2
+    exit 1
+  }
+fi
 
 if [[ "${RUN_ACTION}" == "setup-relay" && ${#RUN_ACTION_DEFAULT_ARGS[@]} -eq 0 ]]; then
   RUN_ACTION_DEFAULT_ARGS=(--mode user --yes --channel "$(display_channel_label "${CHANNEL}")" --preserve-active-server)
@@ -1666,6 +1892,10 @@ if [[ "${ACTION}" == "uninstall" ]]; then
   action_uninstall
   exit $?
 fi
+if [[ "${ACTION}" == "rollback" ]]; then
+  action_rollback
+  exit $?
+fi
 
 if [[ -n "${RUN_ACTION}" ]]; then
   if [[ "${PRODUCT}" != "cli" ]]; then
@@ -1673,7 +1903,7 @@ if [[ -n "${RUN_ACTION}" ]]; then
     exit 1
   fi
   if [[ "${ACTION}" != "install" ]]; then
-    echo "--run cannot be combined with installer actions like --check/--version/--uninstall." >&2
+    echo "--run cannot be combined with installer actions like --check/--version/--rollback/--uninstall." >&2
     exit 1
   fi
   INSTALLED_CLI_BIN="$(resolve_installed_cli_invoker_for_channel "${CHANNEL}" 2>/dev/null || true)"
@@ -1951,18 +2181,19 @@ if [[ "${OS}" == "unsupported" || "${ARCH}" == "unsupported" ]]; then
 fi
 
 TAG=""
-ASSET_REGEX="^happier-v.*-${OS}-${ARCH}[.]tar[.]gz$"
-CHECKSUMS_REGEX="^checksums-happier-v.*[.]txt$"
-SIG_REGEX="^checksums-happier-v.*[.]txt[.]minisig$"
+DEFAULT_VERSION_REGEX="$(default_release_asset_version_regex "${CHANNEL}")"
+ASSET_REGEX="^happier-v${DEFAULT_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
+CHECKSUMS_REGEX="^checksums-happier-v${DEFAULT_VERSION_REGEX}[.]txt$"
+SIG_REGEX="^checksums-happier-v${DEFAULT_VERSION_REGEX}[.]txt[.]minisig$"
 EXE_NAME="happier"
 INSTALL_NAME="Happier CLI"
 VERSION_PREFIX="happier-v"
 CHECKSUMS_PREFIX="checksums-happier-v"
 
 if [[ "${PRODUCT}" == "server" ]]; then
-  ASSET_REGEX="^happier-server-v.*-${OS}-${ARCH}[.]tar[.]gz$"
-  CHECKSUMS_REGEX="^checksums-happier-server-v.*[.]txt$"
-  SIG_REGEX="^checksums-happier-server-v.*[.]txt[.]minisig$"
+  ASSET_REGEX="^happier-server-v${DEFAULT_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
+  CHECKSUMS_REGEX="^checksums-happier-server-v${DEFAULT_VERSION_REGEX}[.]txt$"
+  SIG_REGEX="^checksums-happier-server-v${DEFAULT_VERSION_REGEX}[.]txt[.]minisig$"
   EXE_NAME="happier-server"
   INSTALL_NAME="Happier Server"
   VERSION_PREFIX="happier-server-v"
@@ -1970,13 +2201,20 @@ if [[ "${PRODUCT}" == "server" ]]; then
 fi
 
 if [[ "${PRODUCT}" == "stack" ]]; then
-  ASSET_REGEX="^hstack-v.*-${OS}-${ARCH}[.]tar[.]gz$"
-  CHECKSUMS_REGEX="^checksums-hstack-v.*[.]txt$"
-  SIG_REGEX="^checksums-hstack-v.*[.]txt[.]minisig$"
+  ASSET_REGEX="^hstack-v${DEFAULT_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
+  CHECKSUMS_REGEX="^checksums-hstack-v${DEFAULT_VERSION_REGEX}[.]txt$"
+  SIG_REGEX="^checksums-hstack-v${DEFAULT_VERSION_REGEX}[.]txt[.]minisig$"
   EXE_NAME="hstack"
   INSTALL_NAME="Happier Stack"
   VERSION_PREFIX="hstack-v"
   CHECKSUMS_PREFIX="checksums-hstack-v"
+fi
+
+if [[ -n "${INSTALL_VERSION}" ]]; then
+  REQUESTED_VERSION_REGEX="$(escape_regex_literal "${INSTALL_VERSION}")"
+  ASSET_REGEX="^${VERSION_PREFIX}${REQUESTED_VERSION_REGEX}-${OS}-${ARCH}[.]tar[.]gz$"
+  CHECKSUMS_REGEX="^${CHECKSUMS_PREFIX}${REQUESTED_VERSION_REGEX}[.]txt$"
+  SIG_REGEX="^${CHECKSUMS_PREFIX}${REQUESTED_VERSION_REGEX}[.]txt[.]minisig$"
 fi
 
 TAG="$(resolve_release_tag "${PRODUCT}" "${CHANNEL}")" || {

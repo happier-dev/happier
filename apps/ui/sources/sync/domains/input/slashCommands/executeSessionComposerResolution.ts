@@ -23,6 +23,7 @@ export async function executeSessionComposerResolution(args: Readonly<{
   clearDraft: () => void;
   trackMessageSent: () => void;
   navigateToRuns: () => void;
+  navigateToPetSettings?: () => void;
   modalAlert: (title: string, message: string) => void;
 }>): Promise<boolean> {
   const ctx: ActionExecutorContext = {
@@ -45,6 +46,13 @@ export async function executeSessionComposerResolution(args: Readonly<{
   if (actionId === 'execution.run.list') {
     args.setMessage('');
     args.navigateToRuns();
+    return true;
+  }
+
+  if (actionId === 'ui.pet.choose') {
+    args.setMessage('');
+    args.clearDraft();
+    args.navigateToPetSettings?.();
     return true;
   }
 

@@ -7,6 +7,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { serverFetch, StaleServerGenerationError } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { storage } from '@/sync/domains/state/storage';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import {
@@ -633,14 +634,16 @@ class ApiSocket {
 
     private installSocketEventHandlers(socket: Socket) {
         socket.onAny((event, data) => {
-            // console.log(`📥 SyncSocket: Received event '${event}':`, JSON.stringify(data).substring(0, 200));
-            const handler = this.messageHandlers.get(event);
-            if (handler) {
-                // console.log(`📥 SyncSocket: Calling handler for '${event}'`);
-                handler(data);
-            } else {
-                // console.log(`📥 SyncSocket: No handler registered for '${event}'`);
-            }
+            syncPerformanceTelemetry.measure(
+                'sync.socket.event',
+                { handlers: this.messageHandlers.has(event) ? 1 : 0 },
+                () => {
+                    const handler = this.messageHandlers.get(event);
+                    if (handler) {
+                        handler(data);
+                    }
+                },
+            );
         });
     }
 

@@ -12,8 +12,8 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import type { AccountSettings } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
-import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
 import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
+import { buildResumeSelectionModel, formatResumeSelectionFooter } from '@/cli/commands/resumeInteractiveSelection';
 
 import type { CommandContext, CommandHandler } from '@/cli/commandRegistry';
 
@@ -49,28 +49,19 @@ async function selectResumableSessionId(params: Readonly<{
   accountSettings: AccountSettings;
   fetchSessionsPageFn: FetchSessionsPageFn;
 }>): Promise<ResumableSessionSelection> {
-  const page = await params.fetchSessionsPageFn({ token: params.credentials.token, limit: 200 });
-  const rows = page.sessions
-    .map((raw) => buildCliSessionRowModel({ credentials: params.credentials, rawSession: raw, accountSettings: params.accountSettings }))
-    .filter((row) => row.isSystem !== true)
-    .filter((row) => row.archivedAt === null && row.active !== true)
-    .filter((row) => Boolean(row.path))
-    .filter((row) => row.vendorResume.eligible === true)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const model = await buildResumeSelectionModel({
+    credentials: params.credentials,
+    accountSettings: params.accountSettings,
+    fetchSessionsPageFn: params.fetchSessionsPageFn,
+  });
 
-  if (rows.length === 0) return { type: 'none' };
+  if (model.rows.length === 0) return { type: 'none' };
 
-  const selectorRows: SessionActionSelectorRow[] = rows.map((row) => ({
-    sessionId: row.id,
-    agentId: row.agentId,
-    updatedAt: row.updatedAt,
-    title: [row.tag, row.title].filter((v) => typeof v === 'string' && v.trim().length > 0).join(' · '),
-    path: row.path ?? '',
-  }));
   const selection = await runSessionActionSelector({
     title: 'Resume a session',
     actionVerb: 'resume',
-    rows: selectorRows,
+    rows: model.rows,
+    footerHint: formatResumeSelectionFooter(model.hint),
   });
   return selection.type === 'selected' ? selection : { type: 'cancelled' };
 }

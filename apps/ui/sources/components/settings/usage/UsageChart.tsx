@@ -9,6 +9,7 @@ interface UsageChartProps {
     data: UsageDataPoint[];
     metric: 'tokens' | 'cost';
     height?: number;
+    locale?: string;
     onBarPress?: (dataPoint: UsageDataPoint, index: number) => void;
 }
 
@@ -62,6 +63,7 @@ export const UsageChart: React.FC<UsageChartProps> = ({
     data,
     metric,
     height = 200,
+    locale,
     onBarPress
 }) => {
     const { theme } = useUnistyles();
@@ -92,9 +94,9 @@ export const UsageChart: React.FC<UsageChartProps> = ({
         const isToday = date.toDateString() === now.toDateString();
         
         if (isToday) {
-            return date.toLocaleTimeString('en-US', { hour: 'numeric' });
+            return date.toLocaleTimeString(locale, { hour: 'numeric' });
         } else {
-            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
         }
     };
     
@@ -147,8 +149,8 @@ export const UsageChart: React.FC<UsageChartProps> = ({
                                         {
                                             height: Math.max(barHeight, 2),
                                             backgroundColor: metric === 'cost' 
-                                                ? '#FF9500' 
-                                                : '#007AFF',
+                                                ? theme.colors.accent.orange
+                                                : theme.colors.accent.blue,
                                         }
                                     ]}
                                 />

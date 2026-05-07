@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DirectSessionTranscriptDeltaEphemeral } from '@happier-dev/protocol';
 
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import type { Machine } from './types';
@@ -200,5 +201,101 @@ describe('ApiMachineClient transports', () => {
         },
       },
     ]);
+  });
+
+  it('emits direct-session transcript delta updates over the machine-scoped socket', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+
+    const mod = await import('./apiMachine');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.connect();
+
+    expect(client.emitDirectSessionTranscriptUpdate).toEqual(expect.any(Function));
+
+    client.emitDirectSessionTranscriptUpdate({
+      type: 'direct-session-transcript-delta',
+      sessionId: 'session-1',
+      items: [
+        {
+          id: 'a2',
+          createdAtMs: 1_050,
+          localId: 'direct-2',
+          raw: {
+            type: 'assistant',
+            uuid: 'a2',
+            message: { model: 'm', content: [{ type: 'text', text: 'hello from push' }] },
+          },
+        },
+      ],
+      nextCursor: 'cursor-2',
+      truncated: false,
+    });
+
+    expect(machineSocket.emit).toHaveBeenCalledWith('direct-session-transcript-delta', expect.objectContaining({
+      sessionId: 'session-1',
+      truncated: false,
+      items: expect.arrayContaining([
+        expect.objectContaining({ id: 'a2' }),
+      ]),
+    }));
+  });
+
+  it('threads direct-session transcript delta emission into machine RPC dependencies', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+
+    const mod = await import('./apiMachine');
+    const rpcHandlers = await import('./machine/rpcHandlers');
+    const registerMachineRpcHandlers = vi.mocked(rpcHandlers.registerMachineRpcHandlers);
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.connect();
+    client.setRPCHandlers({
+      spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
+      stopSession: async () => true,
+      requestShutdown: () => {},
+    });
+
+    const lastCall = registerMachineRpcHandlers.mock.calls.at(-1)?.[0];
+    const deps = lastCall?.deps as Partial<{
+      emitDirectSessionTranscriptUpdate: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+    }> | undefined;
+
+    expect(deps?.emitDirectSessionTranscriptUpdate).toEqual(expect.any(Function));
+
+    deps?.emitDirectSessionTranscriptUpdate?.({
+      type: 'direct-session-transcript-delta',
+      sessionId: 'session-1',
+      items: [{ id: 'a2', createdAtMs: 1_050, raw: { type: 'assistant' } }],
+      nextCursor: 'cursor-2',
+      truncated: false,
+    });
+
+    expect(machineSocket.emit).toHaveBeenCalledWith('direct-session-transcript-delta', expect.objectContaining({
+      sessionId: 'session-1',
+      nextCursor: 'cursor-2',
+    }));
   });
 });

@@ -15,7 +15,12 @@ import { auditTranslations } from '../../tools/i18n/translationAudit';
 
 const IGNORED_UNTRANSLATED_KEYS = new Set([
     'promptLibrary.supportingFilePathPlaceholder',
+    'files.sourceControlOperations.update.remotes.namePlaceholder',
     'settingsSession.handoff.includeIgnoredMode.globsPlaceholder',
+    'connectedServices.detail.prompts.accessTokenPlaceholder',
+    'connectedServices.serviceNames.github',
+    'deps.installable.githubCli.title',
+    'newSession.githubCliBanner.title',
 ]);
 
 // This test is a drift-stopper: it fails if we introduce any *new* untranslated English strings outside

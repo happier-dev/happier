@@ -72,6 +72,8 @@ When the underlying ACP CLI supports it, Happier can probe a configured backend 
 
 That lets different custom backends behave as distinct backend choices, even when they happen to launch the same CLI with different args or env.
 
+Custom ACP models can also be saved as favorites from the new-session engine picker. Favorites are stored per configured backend, not just per provider family.
+
 ## Authentication
 
 Custom ACP does not imply one single provider-level auth system.
@@ -125,6 +127,7 @@ Use Custom ACP when you want to point Happier at a local ACP stub or test harnes
 ## Related guides
 
 - [ACP backends](/docs/features/acp-backends)
+- [Model and engine selection](/docs/features/model-and-engine-selection)
 - [Profiles](/docs/features/profiles)
 - [Session settings](/docs/features/session-settings)
 - [Provider authentication](/docs/features/provider-authentication)

@@ -110,6 +110,119 @@ afterEach(() => {
 });
 
 describe('concurrent session cache socket routing', () => {
+    it('reuses per-server session data key caches across concurrent refreshes', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+        mockReachabilityOnline();
+
+        const fakeSocket = createSocketStub();
+        ioSpy.mockReturnValue(fakeSocket);
+        getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
+            if (serverUrl === 'https://stack-b.example.test') {
+                return { token: 'token-b', secret: 'secret-b' };
+            }
+            return null;
+        });
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        vi.doMock('socket.io-client', () => ({
+            io: (...args: unknown[]) => ioSpy(...args),
+        }));
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
+            TokenStorage: {
+                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+            },
+            isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
+        }));
+        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
+            listServerProfiles: () => listServerProfilesSpy(),
+        }));
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
+            subscribeActiveServer: () => () => {},
+        }));
+        vi.doMock('@/sync/encryption/encryption', () => ({
+            Encryption: {
+                create: async () => ({}) as unknown,
+            },
+        }));
+        vi.doMock('@/encryption/base64', () => ({
+            decodeBase64: () => new Uint8Array(32),
+        }));
+
+        const seenExistingKeys: number[] = [];
+        const seenExistingEnvelopes: Array<string | null> = [];
+        const sessionDataKeysArgs: Array<Map<string, Uint8Array>> = [];
+        const sessionDataKeyEnvelopesArgs: Array<Map<string, string> | undefined> = [];
+        vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
+            fetchAndApplySessions: async ({
+                sessionDataKeys,
+                sessionDataKeyEnvelopes,
+                applySessions,
+            }: {
+                sessionDataKeys: Map<string, Uint8Array>;
+                sessionDataKeyEnvelopes?: Map<string, string>;
+                applySessions: (sessions: unknown[]) => void;
+            }) => {
+                seenExistingKeys.push(sessionDataKeys.get('session-b')?.[0] ?? 0);
+                seenExistingEnvelopes.push(sessionDataKeyEnvelopes?.get('session-b') ?? null);
+                sessionDataKeysArgs.push(sessionDataKeys);
+                sessionDataKeyEnvelopesArgs.push(sessionDataKeyEnvelopes);
+                sessionDataKeys.set('session-b', new Uint8Array([sessionDataKeysArgs.length]));
+                sessionDataKeyEnvelopes?.set('session-b', `envelope-${sessionDataKeysArgs.length}`);
+                applySessions([]);
+            },
+        }));
+        vi.doMock('@/sync/engine/machines/syncMachines', () => ({
+            fetchAndApplyMachines: async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
+                applyMachines([]);
+            },
+        }));
+
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        storage.setState((state) => ({
+            ...state,
+            settings: {
+                ...state.settings,
+                ...settingsDefaults,
+                serverSelectionGroups: [
+                    {
+                        id: 'group-main',
+                        name: 'Main',
+                        serverIds: ['server-a', 'server-b'],
+                        presentation: 'grouped',
+                    },
+                ],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'group-main',
+            },
+        }));
+
+        const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
+        startConcurrentSessionCacheSync();
+
+        await flushConcurrentCacheStartup();
+        await flushConcurrentCachePeriodicRefresh();
+
+        expect(sessionDataKeysArgs.length).toBeGreaterThanOrEqual(2);
+        expect(sessionDataKeysArgs[1]).toBe(sessionDataKeysArgs[0]);
+        expect(sessionDataKeyEnvelopesArgs[0]).toBeInstanceOf(Map);
+        expect(sessionDataKeyEnvelopesArgs[1]).toBe(sessionDataKeyEnvelopesArgs[0]);
+        expect(seenExistingKeys.slice(0, 2)).toEqual([0, 1]);
+        expect(seenExistingEnvelopes.slice(0, 2)).toEqual([null, 'envelope-1']);
+
+        stopConcurrentSessionCacheSync();
+    });
+
     it('replaces stale machine entries when an authoritative refresh omits a removed machine', async () => {
         process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
         mockReachabilityOnline();

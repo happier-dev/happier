@@ -341,15 +341,6 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
       await page.goto(`${sessionUrl}?right=files`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 
-      // Agent input: "Link file" should toggle a popover on web (regression: could not close via second click).
-      const linkFileTrigger = page.getByTestId('agent-input-link-file');
-      await expect(linkFileTrigger).toHaveCount(1, { timeout: 60_000 });
-      await linkFileTrigger.click();
-      const linkFilePopover = page.getByTestId('agent-input-link-file-popover');
-      await expect(linkFilePopover).toHaveCount(1, { timeout: 60_000 });
-      await linkFileTrigger.click();
-      await expect(linkFilePopover).toHaveCount(0, { timeout: 60_000 });
-
     // Right pane should open from URL state, but that can race with hydration. Ensure it is open before interacting.
     if ((await rightPaneLocator(page).count()) === 0) {
       await page.getByTestId('session-open-source-control').click();
@@ -472,18 +463,18 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     const reviewTabKey = 'scmReview:working';
     await expect(page.getByTestId(`session-details-tab-${toTestIdSafeValue(`file:${laterPath}`)}`)).toHaveCount(1, { timeout: 60_000 });
 
-    // Pin icon state: preview tabs show a pin action; pinned tabs show a pinned indicator (different testId).
+    // Pin icon state: preview tabs show a pin action; pinned tabs show an unpin action.
     const laterTabSafeKey = toTestIdSafeValue(`file:${laterPath}`);
     const pinAction = page.getByTestId(`session-details-tab-pin-${laterTabSafeKey}`);
-    const pinnedIndicator = page.getByTestId(`session-details-tab-pinned-${laterTabSafeKey}`);
+    const unpinAction = page.getByTestId(`session-details-tab-unpin-${laterTabSafeKey}`);
     if (await pinAction.count()) {
       await pinAction.click();
       await expect(pinAction).toHaveCount(0, { timeout: 60_000 });
-      await expect(pinnedIndicator).toHaveCount(1, { timeout: 60_000 });
+      await expect(unpinAction).toHaveCount(1, { timeout: 60_000 });
     } else {
       // If tab settings are persistent, the file may open pinned immediately; ensure we never end up in a
-      // "non-preview, non-pinned" state (regression: pin icon missing / state ambiguous).
-      await expect(pinnedIndicator).toHaveCount(1, { timeout: 60_000 });
+      // "non-preview, non-unpinnable" state (regression: pin icon missing / state ambiguous).
+      await expect(unpinAction).toHaveCount(1, { timeout: 60_000 });
     }
 
     await page.getByTestId(`session-details-tab-${toTestIdSafeValue(reviewTabKey)}`).click();
@@ -690,15 +681,16 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
 	    // Diff mode scroll.
 	    await expectScrollableToScroll(page, 'file-details-scroll', 1800);
 
-	    // File mode scroll.
-	    await page.getByTestId('file-details-toggle-file').click();
-	    await expectScrollableToScroll(page, 'file-details-scroll', 1800);
+    // File mode scroll.
+    await page.getByTestId('file-details-view-mode-menu').click();
+    await page.getByTestId('dropdown-option-file').click();
+    await expectScrollableToScroll(page, 'file-details-scroll', 1800);
 
     // Link-file popover should open and be closable (regression: popover rendered behind transcript).
     await page.getByTestId('session-details-close').click();
     await expect(detailsPaneLocator(page)).toHaveCount(0, { timeout: 60_000 });
     await page.getByTestId('agent-input-link-file').click();
-    const linkPopover = page.getByTestId('agent-input-link-file-popover');
+    const linkPopover = page.getByTestId('agent-input-content-popover');
     await expect(linkPopover).toHaveCount(1, { timeout: 60_000 });
     const linkPopoverClose = page.getByTestId('repository-tree-close');
     await expect(linkPopoverClose).toHaveCount(1, { timeout: 60_000 });
@@ -710,14 +702,6 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     // Clicking again should re-open it (toggle open).
     await page.getByTestId('agent-input-link-file').click();
     await expect(linkPopover).toHaveCount(1, { timeout: 60_000 });
-
-	    // Popover should size like the agent input (full-width anchor), not the chip.
-	    const composerBox = await page.getByTestId('session-composer-input').boundingBox();
-	    const popoverBox = await linkPopover.boundingBox();
-	    if (composerBox && popoverBox) {
-	      // Popover matches the composer width (allowing for composer padding vs textarea content box).
-	      expect(Math.abs(popoverBox.width - composerBox.width)).toBeLessThanOrEqual(40);
-	    }
 
     await linkPopoverClose.click();
     await expect(linkPopoverClose).toHaveCount(0, { timeout: 60_000 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { FeaturesResponse } from '@happier-dev/protocol';
 
 const {
@@ -54,7 +54,12 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
         requestPath ? `${basePath}/${requestPath}` : basePath,
 }));
 
-import { callSessionMachineRpcWithFallback, createSessionMachineRpcFallbackCaller } from './sessionMachineRpcFallback';
+import {
+    INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+    callSessionMachineRpcWithFallback,
+    createSessionMachineRpcFallbackCaller,
+    resolveDefaultSessionRpcFallbackRoute,
+} from './sessionMachineRpcFallback';
 
 function createServerFeatures(partial?: Readonly<{
     features?: unknown;
@@ -336,6 +341,45 @@ describe('sessionMachineRpcFallback', () => {
             serverId: 'server-owned',
             method: RPC_METHODS.WRITE_FILE,
             payload: { path: 'hello.txt', content: 'Zm9v' },
+            preferScoped: true,
+        });
+        expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();
+    });
+
+    it('uses server-scoped machine RPC for guarded methods when session RPC is unavailable', async () => {
+        readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
+        canUseSessionRpcMock.mockReturnValue(false);
+        resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
+        getReadyServerFeaturesMock.mockResolvedValue(null);
+
+        machineRPC.mockResolvedValue({ success: true, value: 'direct' });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true, value: 'relayed' });
+
+        const caller = createSessionMachineRpcFallbackCaller({
+            sessionId: 'session-1',
+            resolveFallbackRoute: async () => resolveDefaultSessionRpcFallbackRoute({
+                sessionId: 'session-1',
+                inactiveResponse: {
+                    success: false,
+                    error: INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR,
+                    errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                },
+            }),
+            reuseResolvedRoute: false,
+        });
+
+        await expect(caller.call({
+            request: { path: 'hello.txt' },
+            machineMethod: RPC_METHODS.LIST_DIRECTORY,
+            sessionMethod: RPC_METHODS.LIST_DIRECTORY,
+        })).resolves.toEqual({ success: true, value: 'relayed' });
+
+        expect(machineRPC).not.toHaveBeenCalled();
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'machine-1',
+            serverId: 'server-owned',
+            method: RPC_METHODS.LIST_DIRECTORY,
+            payload: { path: 'hello.txt' },
             preferScoped: true,
         });
         expect(sessionRpcWithServerScopeMock).not.toHaveBeenCalled();

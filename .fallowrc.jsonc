@@ -1,0 +1,77 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "vitest.config.ts",
+    "apps/*/app.config.{js,ts}",
+    "apps/*/babel.config.{js,cjs,mjs,ts}",
+    "apps/*/metro.config.{js,cjs,mjs,ts}",
+    "apps/*/vitest*.config.{js,ts,mjs}",
+    "packages/tests/playwright*.config.{js,mjs,ts}",
+    "packages/tests/vitest*.config.ts",
+    "scripts/**/*.{js,mjs,cjs,ts,tsx}",
+    "apps/*/scripts/**/*.{js,mjs,cjs,ts,tsx}",
+    "packages/*/scripts/**/*.{js,mjs,cjs,ts,tsx}",
+    "dagger/src/**/*.ts"
+  ],
+  "workspaces": {
+    "patterns": [
+      "dagger"
+    ]
+  },
+  "ignorePatterns": [
+    ".fallow/**",
+    "graphify-out/**",
+    "coverage/**",
+    "**/coverage/**",
+    "**/dist/**",
+    "**/.expo/**",
+    "**/.next/**",
+    "**/__generated__/**",
+    "**/generated/**",
+    "**/*.generated.*",
+    "apps/ui/android/**",
+    "apps/ui/ios/**",
+    "packages/tests/playwright-report/**",
+    "packages/tests/test-results/**"
+  ],
+  "ignoreDependencies": [
+    "@elevenlabs/__mocks__",
+    "@expo/__mocks__",
+    "@happier-dev/__mocks__",
+    "@huggingface/__mocks__",
+    "@pierre/__mocks__",
+    "@playwright/__mocks__",
+    "@react-native-async-storage/__mocks__",
+    "@react-navigation/__mocks__",
+    "@sentry/__mocks__",
+    "@shopify/__mocks__",
+    "@socket.io/__mocks__",
+    "@xterm/__mocks__",
+    "node:sqlite"
+  ],
+  "duplicates": {
+    "ignoreImports": true,
+    "ignore": [
+      ".fallow/**",
+      "graphify-out/**",
+      "**/__generated__/**",
+      "**/generated/**",
+      "**/*.generated.*"
+    ]
+  },
+  "health": {
+    "ignore": [
+      ".fallow/**",
+      "graphify-out/**",
+      "**/__generated__/**",
+      "**/generated/**",
+      "**/*.generated.*"
+    ]
+  },
+  "audit": {
+    "gate": "new-only"
+  },
+  "rules": {
+    "feature-flags": "off"
+  }
+}

@@ -1,6 +1,5 @@
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { scmStatusSync } from '@/scm/scmStatusSync';
 import {
     isAtomicCommitStrategy,
     resolveCommitScopeForStrategy,
@@ -23,6 +22,7 @@ export async function executeScmCommit(input: {
     commitSelectionPaths: string[];
     commitSelectionPatches: Array<{ path: string; patch: string }>;
     loadCommitHistory: (opts?: { reset?: boolean }) => Promise<void>;
+    refreshScmData: () => Promise<void>;
     setScmOperationBusy: (busy: boolean) => void;
     setScmOperationStatus: (status: string | null) => void;
     tracking: ScmOperationTracker | null;
@@ -41,7 +41,7 @@ export async function executeScmCommit(input: {
                 });
                 const includePatches = isAtomicCommitStrategy(input.scmCommitStrategy)
                     && input.commitSelectionPatches.length > 0;
-                const requestScope = includePatches ? undefined : scope;
+                const requestScope = includePatches && scope?.kind === 'all-pending' ? undefined : scope;
                 const response = await sessionScmCommitCreate(input.sessionId, {
                     message: input.commitMessage,
                     ...(requestScope ? { scope: requestScope } : {}),
@@ -80,7 +80,7 @@ export async function executeScmCommit(input: {
 
                 input.setScmOperationStatus('Refreshing repository status…');
                 try {
-                    await scmStatusSync.invalidateFromMutationAndAwait(input.sessionId);
+                    await input.refreshScmData();
                     await input.loadCommitHistory({ reset: true });
                 } catch (refreshError) {
                     const refreshMessage = getScmUserFacingError({

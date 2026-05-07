@@ -1,6 +1,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { findNearestHostParent, flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 import { installMarkdownCommonModuleMocks } from './markdownTestHelpers';
 
 
@@ -65,10 +66,11 @@ describe('MarkdownView (tables)', () => {
         expect(scrollViews[0]!.props.horizontal).toBe(true);
         expect(scrollViews[0]!.props.showsHorizontalScrollIndicator).toBe(true);
 
-        const scrollShell = screen.findAllByType('View' as any).find((node) =>
-            Array.isArray(node.children) && node.children.includes(scrollViews[0]),
-        );
+        const scrollShell = findNearestHostParent(scrollViews[0]);
         expect(scrollShell).toBeTruthy();
+        const shellStyle = flattenTestStyle(scrollShell?.props?.style);
+        expect(shellStyle.alignSelf).toBe('flex-start');
+        expect(shellStyle.maxWidth).toBe('100%');
     }, 60_000);
 
     it('renders table header/cell text as selectable so users can copy values from transcripts', async () => {
@@ -88,5 +90,28 @@ describe('MarkdownView (tables)', () => {
 
         expect(findTextNode('A').props.selectable).toBe(true);
         expect(findTextNode('1').props.selectable).toBe(true);
+    }, 60_000);
+
+    it('applies GitHub table column alignment to header and body cells', async () => {
+        mockPlatform('web');
+        const { MarkdownView } = await import('./MarkdownView');
+
+        const markdown = [
+            '| Left | Center | Right |',
+            '| :--- | :---: | ---: |',
+            '| Alpha | Bravo | Charlie |',
+        ].join('\n');
+
+        const screen = await renderScreen(<MarkdownView markdown={markdown} />);
+
+        const findTextNode = (text: string) =>
+            screen.findAllByType('Text' as any).find((n) => n.props?.children === text)!;
+
+        expect(flattenTestStyle(findTextNode('Alpha').props.style).textAlign).toBe('left');
+        expect(flattenTestStyle(findTextNode('Bravo').props.style).textAlign).toBe('center');
+        expect(flattenTestStyle(findTextNode('Charlie').props.style).textAlign).toBe('right');
+
+        const rightCell = findNearestHostParent(findTextNode('Charlie'), 'View');
+        expect(flattenTestStyle(rightCell?.props?.style).alignItems).toBe('flex-end');
     }, 60_000);
 });

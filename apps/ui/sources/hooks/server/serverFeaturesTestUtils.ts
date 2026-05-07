@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 
-import type { FeaturesResponse } from '@happier-dev/protocol';
+import { DEFAULT_PETS_CAPABILITIES, type FeaturesResponse } from '@happier-dev/protocol';
 
 type FixtureOverrides = {
     friendsEnabled?: boolean;
@@ -13,6 +13,8 @@ type FixtureOverrides = {
     connectedServicesEnabled?: boolean;
     connectedServicesQuotasEnabled?: boolean;
     updatesOtaEnabled?: boolean;
+    petsCompanionEnabled?: boolean;
+    petsSyncEnabled?: boolean;
     pairingDesktopQrMobileScanEnabled?: boolean;
     oauthProviders?: Record<string, { enabled: boolean; configured: boolean }>;
     authProviders?: Record<string, { enabled: boolean; configured: boolean }>;
@@ -60,6 +62,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             attachments: {
                 uploads: { enabled: true },
+            },
+            pets: {
+                companion: { enabled: overrides.petsCompanionEnabled ?? false },
+                sync: { enabled: overrides.petsSyncEnabled ?? false },
             },
             automations: {
                 enabled: overrides.automationsEnabled ?? true,
@@ -148,6 +154,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 requested: voiceEnabled,
                 disabledByBuildPolicy: false,
             },
+            pets: DEFAULT_PETS_CAPABILITIES,
             encryption: {
                 storagePolicy: 'required_e2ee',
                 allowAccountOptOut: false,

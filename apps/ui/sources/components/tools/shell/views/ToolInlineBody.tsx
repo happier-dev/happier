@@ -8,7 +8,7 @@ import { StructuredResultView } from '@/components/tools/renderers/system/Struct
 import { knownTools } from '@/components/tools/catalog';
 import { ToolHeaderActionsContext } from '@/components/tools/shell/presentation/ToolHeaderActionsContext';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
-import { ToolSectionView } from '@/components/tools/shell/presentation/ToolSectionView';
+import { ToolSectionSpacingProvider, ToolSectionView } from '@/components/tools/shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
 import { maybeParseJson } from '@/components/tools/normalization/parse/parseJson';
 import { TextSelectabilityScope } from '@/components/ui/text/Text';
@@ -33,9 +33,11 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     };
     detailLevel: 'summary' | 'full';
+    sectionSpacing?: 'default' | 'compact';
     setHeaderActions: (node: React.ReactNode | null) => void;
 }) {
     const { tool, normalizedToolName } = props;
+    const sectionSpacing = props.sectionSpacing ?? 'default';
 
     const isSubAgentRunLikeErrorResult = React.useMemo(() => {
         const parsed = maybeParseJson(tool.result);
@@ -108,26 +110,28 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     if (SpecificToolView) {
         return (
             <TextSelectabilityScope selectable>
-                <ToolHeaderActionsContext.Provider value={{ setHeaderActions: props.setHeaderActions }}>
-                    <SpecificToolView
-                        tool={tool}
-                        metadata={props.metadata}
-                        messages={props.messages}
-                        sessionId={props.sessionId}
-                        messageId={props.messageId}
-                        detailLevel={props.detailLevel}
-                        interaction={props.interaction}
-                    />
-                </ToolHeaderActionsContext.Provider>
-                {tool.state === 'error' && tool.result && !hideDefaultError && (
-                    <ToolError
-                        message={
-                            typeof tool.result === 'string'
-                                ? tool.result
-                                : JSON.stringify(tool.result, null, 2)
-                        }
-                    />
-                )}
+                <ToolSectionSpacingProvider spacing={sectionSpacing}>
+                    <ToolHeaderActionsContext.Provider value={{ setHeaderActions: props.setHeaderActions }}>
+                        <SpecificToolView
+                            tool={tool}
+                            metadata={props.metadata}
+                            messages={props.messages}
+                            sessionId={props.sessionId}
+                            messageId={props.messageId}
+                            detailLevel={props.detailLevel}
+                            interaction={props.interaction}
+                        />
+                    </ToolHeaderActionsContext.Provider>
+                    {tool.state === 'error' && tool.result && !hideDefaultError && (
+                        <ToolError
+                            message={
+                                typeof tool.result === 'string'
+                                    ? tool.result
+                                    : JSON.stringify(tool.result, null, 2)
+                            }
+                        />
+                    )}
+                </ToolSectionSpacingProvider>
             </TextSelectabilityScope>
         );
     }
@@ -136,12 +140,14 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     if (minimal) {
         if (tool.result) {
             return (
-                <StructuredResultView
-                    tool={tool}
-                    metadata={props.metadata}
-                    messages={props.messages}
-                    sessionId={props.sessionId}
-                />
+                <ToolSectionSpacingProvider spacing={sectionSpacing}>
+                    <StructuredResultView
+                        tool={tool}
+                        metadata={props.metadata}
+                        messages={props.messages}
+                        sessionId={props.sessionId}
+                    />
+                </ToolSectionSpacingProvider>
             );
         }
         return null;
@@ -161,13 +167,15 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         }
         return (
             <TextSelectabilityScope selectable>
-                <ToolError
-                    message={
-                        typeof tool.result === 'string'
-                            ? tool.result
-                            : JSON.stringify(tool.result, null, 2)
-                    }
-                />
+                <ToolSectionSpacingProvider spacing={sectionSpacing}>
+                    <ToolError
+                        message={
+                            typeof tool.result === 'string'
+                                ? tool.result
+                                : JSON.stringify(tool.result, null, 2)
+                        }
+                    />
+                </ToolSectionSpacingProvider>
             </TextSelectabilityScope>
         );
     }
@@ -177,9 +185,11 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         if (tool.input) {
             return (
                 <TextSelectabilityScope selectable>
-                    <ToolSectionView title={t('toolView.input')}>
-                        <CodeView code={JSON.stringify(tool.input, null, 2)} />
-                    </ToolSectionView>
+                    <ToolSectionSpacingProvider spacing={sectionSpacing}>
+                        <ToolSectionView title={t('toolView.input')}>
+                            <CodeView code={JSON.stringify(tool.input, null, 2)} />
+                        </ToolSectionView>
+                    </ToolSectionSpacingProvider>
                 </TextSelectabilityScope>
             );
         }
@@ -188,30 +198,32 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
 
     return (
         <TextSelectabilityScope selectable>
-            {tool.input ? (
-                <ToolSectionView title={t('toolView.input')}>
-                    <CodeView code={JSON.stringify(tool.input, null, 2)} />
-                </ToolSectionView>
-            ) : null}
-            {tool.state === 'running' && tool.result ? (
-                <StructuredResultView
-                    tool={tool}
-                    metadata={props.metadata}
-                    messages={props.messages}
-                    sessionId={props.sessionId}
-                />
-            ) : null}
-            {tool.state === 'completed' && tool.result ? (
-                <ToolSectionView title={t('toolView.output')}>
-                    <CodeView
-                        code={
-                            typeof tool.result === 'string'
-                                ? tool.result
-                                : JSON.stringify(tool.result, null, 2)
-                        }
+            <ToolSectionSpacingProvider spacing={sectionSpacing}>
+                {tool.input ? (
+                    <ToolSectionView title={t('toolView.input')}>
+                        <CodeView code={JSON.stringify(tool.input, null, 2)} />
+                    </ToolSectionView>
+                ) : null}
+                {tool.state === 'running' && tool.result ? (
+                    <StructuredResultView
+                        tool={tool}
+                        metadata={props.metadata}
+                        messages={props.messages}
+                        sessionId={props.sessionId}
                     />
-                </ToolSectionView>
-            ) : null}
+                ) : null}
+                {tool.state === 'completed' && tool.result ? (
+                    <ToolSectionView title={t('toolView.output')}>
+                        <CodeView
+                            code={
+                                typeof tool.result === 'string'
+                                    ? tool.result
+                                    : JSON.stringify(tool.result, null, 2)
+                            }
+                        />
+                    </ToolSectionView>
+                ) : null}
+            </ToolSectionSpacingProvider>
         </TextSelectabilityScope>
     );
 });

@@ -165,7 +165,7 @@ describe('ChatFooter (local control)', () => {
         expect(screen.findByTestId('session-chatFooter-switchToRemote')).toBeNull();
     });
 
-    it('renders an attach-local action when shared local control can be attached from remote mode', async () => {
+    it('does not render app-side switch-to-local for shared remote sessions that can be attached locally', async () => {
         const screen = await renderFooter({
             controlledByUser: false,
             localControl: {
@@ -178,10 +178,14 @@ describe('ChatFooter (local control)', () => {
             onRequestSwitchToLocal: vi.fn(),
         } as any);
 
-        expect(screen.findByTestId('session-chatFooter-switchToLocal')).not.toBeNull();
+        // Remote -> local takeover is intentionally not exposed in the app transcript UI.
+        // Users should attach from their terminal instead; keep this assertion so future
+        // changes do not reintroduce the misleading "Switch to local" banner/button.
+        expect(screen.findByTestId('session-chatFooter-switchToLocal')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('chatFooter.switchToLocal');
     });
 
-    it('renders an attach-local action when exclusive local control can be attached from remote mode', async () => {
+    it('does not render app-side switch-to-local for exclusive remote sessions that can be attached locally', async () => {
         const screen = await renderFooter({
             controlledByUser: false,
             localControl: {
@@ -194,7 +198,11 @@ describe('ChatFooter (local control)', () => {
             onRequestSwitchToLocal: vi.fn(),
         } as any);
 
-        expect(screen.findByTestId('session-chatFooter-switchToLocal')).not.toBeNull();
+        // Remote -> local takeover is intentionally not exposed in the app transcript UI.
+        // Users should attach from their terminal instead; keep this assertion so future
+        // changes do not reintroduce the misleading "Switch to local" banner/button.
+        expect(screen.findByTestId('session-chatFooter-switchToLocal')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('chatFooter.switchToLocal');
     });
 
     it('renders direct takeover actions for linked direct sessions that are not yet controlled by Happier', async () => {

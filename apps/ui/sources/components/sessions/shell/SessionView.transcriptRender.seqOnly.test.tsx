@@ -2,7 +2,8 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -367,6 +368,8 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
     });
 
     afterEach(() => {
+        syncPerformanceTelemetry.configure({ enabled: false });
+        syncPerformanceTelemetry.reset();
         standardCleanup();
         vi.clearAllMocks();
         (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
@@ -428,6 +431,45 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
 
         expect(screen.findAllByTestId('session-encrypted-locked').length).toBe(0);
         expect(screen.findAllByTestId('session-encrypted-locked-restore').length).toBe(0);
+
+        await screen.unmount();
+    });
+
+    it('records open-to-transcript telemetry when the transcript is usable and telemetry is enabled', async () => {
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+
+        const screen = await renderSessionView();
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const openEvent = syncPerformanceTelemetry
+            .snapshot()
+            .events.find((event) => event.name === 'ui.sessions.openToTranscript');
+
+        expect(openEvent).toBeTruthy();
+        expect(openEvent?.fields).toMatchObject({
+            transcript: 1,
+            empty: 0,
+            committedMessages: 0,
+            pendingMessages: 0,
+        });
+        expect(Object.values(openEvent?.fields ?? {}).every((value) => typeof value === 'number')).toBe(true);
+
+        await screen.unmount();
+    });
+
+    it('does not record open-to-transcript telemetry when telemetry is disabled', async () => {
+        syncPerformanceTelemetry.configure({ enabled: false });
+        syncPerformanceTelemetry.reset();
+
+        const screen = await renderSessionView();
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(syncPerformanceTelemetry.snapshot().events).toEqual([]);
 
         await screen.unmount();
     });

@@ -200,18 +200,18 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
 
     const showTurnViewToggle = React.useMemo(() => {
         if (!computeAttribution) return false;
-        if (turnScope.attributedFiles.length > 0) return true;
-        return Boolean(latestTurnChangeSet && latestTurnChangeSet.files.length > 0);
-    }, [computeAttribution, latestTurnChangeSet, turnScope.attributedFiles.length]);
+        return turnScope.attributedFiles.length > 0;
+    }, [computeAttribution, turnScope.attributedFiles.length]);
 
     const showSessionViewToggle = React.useMemo(() => {
         if (!computeAttribution) return false;
+        if (sessionScope.attributedFiles.length === 0) return false;
         if (sessionScope.hasProviderProjection) return true;
         return canOfferSessionChangedFilesView({
             reliability: attributionReliability,
             highConfidenceAttributionCount,
         });
-    }, [attributionReliability, computeAttribution, highConfidenceAttributionCount, sessionScope.hasProviderProjection]);
+    }, [attributionReliability, computeAttribution, highConfidenceAttributionCount, sessionScope.attributedFiles.length, sessionScope.hasProviderProjection]);
 
     return {
         attributionReliability: sessionScope.hasProviderProjection ? 'high' : attributionReliability,

@@ -1,21 +1,6 @@
-import { spawn } from 'node:child_process';
 import tmp from 'tmp';
 import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common/firstPartyRuntime';
-
-function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            env: env as Record<string, string>,
-            stdio: 'inherit',
-            shell: false,
-        });
-        child.on('error', reject);
-        child.on('exit', (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`${cmd} exited with code ${code}`));
-        });
-    });
-}
+import { runCommand } from './runCommand';
 
 function parseNameArg(argv: string[]): { name: string | null; passthrough: string[] } {
     const passthrough: string[] = [];
@@ -54,8 +39,8 @@ async function main() {
     const dbFile = tmp.fileSync({ prefix: 'happy-server-light-migrate-', postfix: '.sqlite' }).name;
     env.DATABASE_URL = renderPrismaCompatibleSqliteDatabaseUrl({ dbPath: dbFile, platform: process.platform });
 
-    await run('yarn', ['-s', 'schema:sync', '--quiet'], env);
-    await run(
+    await runCommand('yarn', ['-s', 'schema:sync', '--quiet'], env);
+    await runCommand(
         'yarn',
         [
             '-s',

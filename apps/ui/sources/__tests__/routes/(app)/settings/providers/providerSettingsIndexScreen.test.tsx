@@ -78,6 +78,6 @@ describe('ProviderSettingsIndexScreen', () => {
             screen.pressRowByTitle('agent.codex');
         });
 
-        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers/codex');
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/providers/codex');
     });
 });

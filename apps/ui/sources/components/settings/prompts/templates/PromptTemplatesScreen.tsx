@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import type { PromptInvocationsV1 } from '@happier-dev/protocol';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -60,7 +60,6 @@ export const PromptTemplatesScreen = React.memo(() => {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: t('promptLibrary.templates') }} />
       <ScrollView
         contentContainerStyle={{
           paddingVertical: 12,
@@ -82,7 +81,7 @@ export const PromptTemplatesScreen = React.memo(() => {
                 title={entry.title}
                 subtitle={subtitle}
                 icon={<Ionicons name="flash-outline" size={29} color={theme.colors.textSecondary} />}
-                onPress={() => router.push(`/(app)/settings/prompts/templates/${entry.id}`)}
+                onPress={() => router.push(`/settings/prompts/templates/${entry.id}`)}
                 rightElement={(
                   <ItemRowActions
                     title={entry.title}
@@ -92,7 +91,7 @@ export const PromptTemplatesScreen = React.memo(() => {
                         id: 'edit',
                         title: t('common.edit'),
                         icon: 'pencil-outline',
-                        onPress: () => router.push(`/(app)/settings/prompts/templates/${entry.id}`),
+                        onPress: () => router.push(`/settings/prompts/templates/${entry.id}`),
                       },
                       {
                         id: 'delete',
@@ -123,7 +122,7 @@ export const PromptTemplatesScreen = React.memo(() => {
             title={t('promptLibrary.newTemplate')}
             subtitle={t('promptLibrary.newTemplateSubtitle')}
             icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.accent.blue} />}
-            onPress={() => router.push('/(app)/settings/prompts/templates/new')}
+            onPress={() => router.push('/settings/prompts/templates/new')}
           />
         </ItemGroup>
       </ScrollView>

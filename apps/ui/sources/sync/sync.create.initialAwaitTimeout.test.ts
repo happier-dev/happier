@@ -66,7 +66,7 @@ import { flushHookEffects } from '@/dev/testkit';
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import { Encryption } from '@/sync/encryption/encryption';
-import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import type { SyncTuning } from '@/sync/runtime/syncTuning';
 
 function buildTokenWithSub(sub: string): string {
     const payload = encodeBase64(encodeUTF8(JSON.stringify({ sub })), 'base64');
@@ -117,10 +117,29 @@ describe('sync.create initial awaits', () => {
         // Simulate a network stall: fetch never resolves.
         vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
 
-        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
-
         const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        const configureNativeCryptoWorkerSpy = vi.spyOn(encryption, 'configureNativeCryptoWorker');
+        const warmNativeCryptoWorkerSpy = vi
+            .spyOn(encryption, 'warmNativeCryptoWorkerForDiagnostics')
+            .mockResolvedValue(null);
         const { sync } = await import('./sync');
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+        const syncWithTuning = sync as unknown as {
+            syncTuning: SyncTuning;
+        };
+        syncWithTuning.syncTuning = {
+            ...sync.getSyncTuning(),
+            nativeCryptoWorkerMode: 'auto',
+            nativeCryptoWorkerMaxBatchSize: 32,
+            nativeCryptoWorkerMinBatchSize: 2,
+            nativeCryptoWorkerMinPayloadBytes: 0,
+            nativeCryptoWorkerTimeoutMs: 1234,
+            nativeCryptoWorkerLogFallbacks: true,
+            nativeCryptoWorkerTelemetryEnabled: true,
+            nativeCryptoWorkerStreamingSampleRate: 0.5,
+            nativeCryptoWorkerCapabilityStalenessMs: 60_000,
+        };
 
         const credentials: AuthCredentials = {
             token: buildTokenWithSub('server-test'),
@@ -139,5 +158,24 @@ describe('sync.create initial awaits', () => {
         expect(resolved).toBe(true);
 
         await promise;
+        expect(configureNativeCryptoWorkerSpy).toHaveBeenCalledWith({
+            routing: {
+                mode: 'auto',
+                maxBatchSize: 32,
+                minBatchSize: 2,
+                minPayloadBytes: 0,
+                timeoutMs: 1234,
+                logFallbacks: true,
+                telemetryEnabled: true,
+                streamingSampleRate: 0.5,
+                capabilityStalenessMs: 60_000,
+            },
+            scope: {
+                accountId: 'server-test',
+                serverId: expect.any(String),
+                generation: 0,
+            },
+        });
+        expect(warmNativeCryptoWorkerSpy).toHaveBeenCalledTimes(1);
     });
 });

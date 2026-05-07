@@ -73,7 +73,7 @@ export async function updateAccountSettingsV2WithRetry(_params: Readonly<{
     updateSettings?: (req: Readonly<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }>) => Promise<AccountSettingsV2UpdateResponse>;
     randomBytes?: (n: number) => Uint8Array;
     nowMs?: () => number;
-    resolveCachePath?: () => string;
+    resolveCachePath?: (credentials: Credentials) => string;
     writeCache?: (path: string, cache: AccountSettingsCache) => Promise<void>;
   }>;
   maxAttempts?: number;
@@ -152,7 +152,7 @@ export async function updateAccountSettingsV2WithRetry(_params: Readonly<{
 
     const response = await updateSettings({ expectedVersion: version, content: nextContent });
     if (response.success === true) {
-      const cachePath = resolveCachePath();
+      const cachePath = resolveCachePath(params.credentials);
       try {
         await writeCache(cachePath, {
           version: 2,

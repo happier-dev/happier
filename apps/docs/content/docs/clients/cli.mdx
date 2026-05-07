@@ -89,13 +89,17 @@ User guide: [Features → Device linking & restore](/docs/features/device-linkin
 If you want to run Happier on a **remote machine** (VPS, home server, dev box) but approve/authenticate it from a machine where you're already signed in:
 
 ```bash
-happier auth pair-remote --ssh user@host --json
+happier auth pair-remote --ssh user@host
 ```
 
 Notes:
 
 - This orchestrates a claim-gated pairing flow over SSH (remote request → local approve → remote wait).
-- Add `--server ...` or `--server-url/--webapp-url` if you're targeting a self-hosted server.
+- Add `--json` for machine-readable output.
+- Add `--server ...` or `--server-url/--webapp-url` to choose the local relay profile/account used for approval.
+- If your selected relay is local-only (`localhost` / `127.0.0.1`), interactive mode offers reachable addresses for this computer (Tailscale Serve, direct Tailscale IP, LAN IP) plus Custom. In scripts, pass the address the remote machine should use to reach this computer's relay: `happier auth pair-remote --ssh user@host --server-url-for-remote https://relay.example.com`.
+- `--remote-server-url` remains available as a legacy alias for `--server-url-for-remote`.
+- For remote Windows hosts, make sure the Happier CLI command is available in the SSH session. If the command is not named `happier`, pass `--remote-command hdev` or the installed command name.
 
 ### Pairing (JSON, manual / scripting)
 

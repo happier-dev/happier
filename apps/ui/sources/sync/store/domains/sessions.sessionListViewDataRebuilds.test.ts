@@ -24,6 +24,7 @@ function mockSessionPersistenceBoundaries(): void {
         loadSessionPermissionModes: vi.fn(() => ({})),
         loadSessionActionDrafts: vi.fn(() => ({})),
         loadSessionReviewCommentsDrafts: vi.fn(() => ({})),
+        loadWorkspaceReviewCommentsDrafts: vi.fn(() => ({})),
         saveSessionDrafts: vi.fn(),
         saveSessionLastViewed: vi.fn(),
         loadSettings: vi.fn(() => ({
@@ -40,6 +41,7 @@ function mockSessionPersistenceBoundaries(): void {
         saveSessionPermissionModes: vi.fn(),
         saveSessionActionDrafts: vi.fn(),
         saveSessionReviewCommentsDrafts: vi.fn(),
+        saveWorkspaceReviewCommentsDrafts: vi.fn(),
         saveLocalSettings: vi.fn(),
         savePurchases: vi.fn(),
         saveSettings: vi.fn(),
@@ -70,7 +72,7 @@ function mockSessionPersistenceBoundaries(): void {
     });
 }
 
-function createHarness(createSessionsDomain: any) {
+function createHarness(createSessionsDomain: any, initialState: Record<string, any> = {}) {
     let state: any = {
         sessions: {},
         sessionListRenderables: {},
@@ -81,6 +83,7 @@ function createHarness(createSessionsDomain: any) {
         sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},
         reviewCommentsDraftsBySessionId: {},
+        reviewCommentsDraftsByWorkspaceCacheKey: {},
         actionDraftsBySessionId: {},
         isDataReady: false,
         machines: {},
@@ -88,6 +91,7 @@ function createHarness(createSessionsDomain: any) {
         sessionMessages: {},
         profile: { id: 'account_a' },
         settings: { groupInactiveSessionsByProject: false },
+        ...initialState,
     };
     storageStateRef.current = state;
 
@@ -103,6 +107,53 @@ function createHarness(createSessionsDomain: any) {
 }
 
 describe('sessions domain: sessionListViewData rebuild gating', () => {
+    it('lazily registers loaded sessions before writing per-session project SCM snapshots', async () => {
+        mockSessionPersistenceBoundaries();
+        const { projectManager } = await import('../../runtime/orchestration/projectManager');
+        projectManager.clear();
+
+        const session = {
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: { machineId: 'm1', host: 'h1', path: '/home/u/repo', homeDir: '/home/u' },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        };
+        const snapshot = {
+            fetchedAt: 123,
+            repo: {
+                isRepo: true,
+                rootPath: '/home/u/repo',
+                backendId: 'git',
+                mode: '.git',
+                worktrees: [{ path: '/home/u/repo', branch: 'main', isCurrent: true }],
+            },
+            entries: [],
+        };
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { domain } = createHarness(createSessionsDomain, {
+            sessions: { s1: session },
+            machines: { m1: { id: 'm1', metadata: { homeDir: '/home/u' } } },
+        });
+
+        expect(projectManager.getProjectForSession('s1')).toBeNull();
+
+        domain.updateSessionProjectScmSnapshot('s1', snapshot as any);
+
+        expect(domain.getSessionProjectScmSnapshot('s1')).toBe(snapshot);
+        expect(projectManager.getProjectForSession('s1')?.sessionIds).toEqual(['s1']);
+    });
+
     it('does not call projectManager.updateSessions for non-project-structural session updates', async () => {
         const updateSessions = vi.fn();
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
@@ -203,6 +254,78 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
         ]);
 
         expect(get().sessionListViewData).toBe(initial);
+    });
+
+    it('does not maintain the legacy sessionsData list during applySessions updates', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        expect(get().sessions.s1).toBeTruthy();
+        expect(Array.isArray(get().sessionListViewData)).toBe(true);
+        expect(get().sessionsData).toBeNull();
+    });
+
+    it('keeps store collection references stable for idempotent applySessions refreshes', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        const initialSessions = get().sessions;
+        const initialRenderables = get().sessionListRenderables;
+        const initialMessages = get().sessionMessages;
+        const initialListViewData = get().sessionListViewData;
+
+        domain.applySessions([get().sessions.s1]);
+
+        expect(get().sessions).toBe(initialSessions);
+        expect(get().sessionListRenderables).toBe(initialRenderables);
+        expect(get().sessionMessages).toBe(initialMessages);
+        expect(get().sessionListViewData).toBe(initialListViewData);
     });
 
     it('preserves transient renderable visibility flags across applySessions refreshes', async () => {
@@ -590,5 +713,253 @@ describe('sessions domain: sessionListViewData rebuild gating', () => {
 
         domain.markSessionOptimisticThinking('s1');
         expect(get().sessionListViewData).toBe(initial);
+    });
+
+    it('does not rewrite the warm cache for thinking-only applySessions updates', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                projectManager: { updateSessions: vi.fn() },
+            }));
+            mockSessionPersistenceBoundaries();
+
+            const warmCache = await import('../../domains/state/warmCachePersistence');
+            const { createSessionsDomain } = await import('./sessions');
+            const { get, domain } = createHarness(createSessionsDomain);
+
+            domain.applySessions([
+                {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                } as any,
+            ]);
+
+            const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+            const initialListViewData = get().sessionListViewData;
+
+            domain.applySessions([
+                {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: true,
+                    thinkingAt: 1,
+                    presence: 1,
+                } as any,
+            ]);
+
+            expect(get().sessions.s1?.thinking).toBe(true);
+            expect(get().sessionListViewData).toBe(initialListViewData);
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+    it('records applySessions telemetry when sync performance telemetry is enabled', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
+        const { createSessionsDomain } = await import('./sessions');
+        const { domain } = createHarness(createSessionsDomain);
+
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+
+        try {
+            domain.applySessions([
+                {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                } as any,
+            ]);
+
+            const event = syncPerformanceTelemetry
+                .snapshot()
+                .events.find((candidate) => candidate.name === 'sync.store.sessions.apply');
+            expect(event?.count).toBe(1);
+            expect(event?.fields.sessions).toBe(1);
+
+            const changedEvent = syncPerformanceTelemetry
+                .snapshot()
+                .events.find((candidate) => candidate.name === 'sync.store.sessions.apply.changed');
+            expect(changedEvent?.count).toBe(1);
+            expect(changedEvent?.fields.changedSessions).toBe(1);
+            expect(changedEvent?.fields.changedRenderables).toBe(1);
+            expect(changedEvent?.fields.listRebuild).toBe(1);
+            expect(changedEvent?.fields.projectManagerUpdate).toBe(1);
+
+            const firstApplyEvents = syncPerformanceTelemetry.snapshot().events;
+            const mergeEvent = firstApplyEvents.find((candidate) => candidate.name === 'sync.store.sessions.apply.merge');
+            expect(mergeEvent?.count).toBe(1);
+            expect(mergeEvent?.fields.sessions).toBe(1);
+            const mergeOutcomeEvent = firstApplyEvents.find((candidate) => candidate.name === 'sync.store.sessions.apply.merge.outcome');
+            expect(mergeOutcomeEvent?.count).toBe(1);
+            expect(mergeOutcomeEvent?.fields.changedSessions).toBe(1);
+            expect(mergeOutcomeEvent?.fields.changedRenderables).toBe(1);
+            expect(mergeOutcomeEvent?.fields.listRebuild).toBe(1);
+            expect(mergeOutcomeEvent?.fields.listViewFieldChanges).toBe(1);
+            const listRebuildEvent = firstApplyEvents.find((candidate) => candidate.name === 'sync.store.sessions.apply.listRebuild');
+            expect(listRebuildEvent?.count).toBe(1);
+            expect(listRebuildEvent?.fields.renderables).toBe(1);
+            const projectManagerEvent = firstApplyEvents.find((candidate) => candidate.name === 'sync.store.sessions.apply.projectManager');
+            expect(projectManagerEvent?.count).toBe(1);
+            expect(projectManagerEvent?.fields.sessions).toBe(1);
+            const warmCacheEvent = firstApplyEvents.find((candidate) => candidate.name === 'sync.store.sessions.apply.warmCache');
+            expect(warmCacheEvent?.count).toBe(1);
+            expect(warmCacheEvent?.fields.renderables).toBe(1);
+
+            domain.applySessions([
+                {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                } as any,
+            ]);
+
+            const noopEvent = syncPerformanceTelemetry
+                .snapshot()
+                .events.find((candidate) => candidate.name === 'sync.store.sessions.apply.noop');
+            expect(noopEvent?.count).toBe(1);
+            expect(noopEvent?.fields.sessions).toBe(1);
+        } finally {
+            syncPerformanceTelemetry.configure({ enabled: false });
+        }
+    });
+
+    it('skips reachable peer reevaluation for non-reachability session updates', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+
+        try {
+            domain.applySessions([
+                {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 10,
+                    active: false,
+                    activeAt: 10,
+                    metadata: { machineId: 'm1', host: 'host-a', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 10,
+                } as any,
+                {
+                    id: 's2',
+                    seq: 2,
+                    createdAt: 2,
+                    updatedAt: 20,
+                    active: false,
+                    activeAt: 20,
+                    metadata: { machineId: 'm2', host: 'host-b', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 20,
+                } as any,
+            ]);
+
+            const initialListViewData = get().sessionListViewData;
+            syncPerformanceTelemetry.reset();
+
+            domain.applySessions([
+                {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 10,
+                    active: false,
+                    activeAt: 11,
+                    metadata: { machineId: 'm1', host: 'host-a', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 11,
+                } as any,
+            ]);
+
+            expect(get().sessionListViewData).toBe(initialListViewData);
+
+            const changedEvent = syncPerformanceTelemetry
+                .snapshot()
+                .events.find((candidate) => candidate.name === 'sync.store.sessions.apply.changed');
+            expect(changedEvent?.fields.changedSessions).toBe(1);
+            expect(changedEvent?.fields.changedRenderables).toBe(1);
+            expect(changedEvent?.fields.listRebuild).toBe(0);
+            expect(changedEvent?.fields.projectManagerUpdate).toBe(0);
+            expect(changedEvent?.fields.reachablePeerReevaluation).toBe(0);
+        } finally {
+            syncPerformanceTelemetry.configure({ enabled: false });
+        }
     });
 });

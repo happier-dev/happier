@@ -20,6 +20,7 @@ const MACHINE_DISPLAY_WARM_CACHE_PREFIX = 'machine-display-warm-cache-v1';
 
 export const SessionListCacheEntryV1Schema = z.object({
     sessionId: z.string().min(1),
+    seq: z.number().int().nonnegative().optional(),
     metadataVersion: z.number().int().nonnegative(),
     agentStateVersion: z.number().int().nonnegative(),
     updatedAt: z.number(),
@@ -27,6 +28,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     active: z.boolean(),
     activeAt: z.number(),
     archivedAt: z.number().nullable(),
+    lastViewedSessionSeq: z.number().int().nonnegative().nullable().optional(),
     pendingCount: z.number().int().nonnegative().optional(),
     pendingVersion: z.number().int().nonnegative().optional(),
     accessLevel: z.enum(['view', 'edit', 'admin']).optional(),
@@ -46,6 +48,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     keepVisibleWhenInactive: z.boolean().optional(),
     hasPendingPermissionRequests: z.boolean().optional(),
     hasPendingUserActionRequests: z.boolean().optional(),
+    hasUnreadMessages: z.boolean().optional(),
 });
 
 export type SessionListCacheEntryV1 = z.infer<typeof SessionListCacheEntryV1Schema>;

@@ -49,6 +49,7 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     loadPendingSettings: () => ({}),
     loadSessionMaterializedMaxSeqById: () => ({}),
     loadChangesCursor: () => null,
+    pruneStaleInstanceChangesCursors: vi.fn(() => 0),
     saveSessionDrafts: vi.fn(),
     saveSessionLastViewed: vi.fn(),
     saveSessionModelModeUpdatedAts: vi.fn(),
@@ -93,7 +94,9 @@ describe('createSettingsDomain local settings analytics', () => {
         function createState() {
             return {
                 sessions: {},
+                sessionListRenderables: {},
                 machines: {},
+                machineDisplayById: {},
                 sessionListViewData: null,
                 sessionListViewDataByServerId: {},
             };

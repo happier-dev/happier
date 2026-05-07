@@ -57,6 +57,21 @@ describe('buildSpawnHappySessionRpcParams', () => {
         });
     });
 
+    it('includes a configured Windows Terminal window name when provided', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'm1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            windowsRemoteSessionLaunchMode: 'windows_terminal',
+            windowsTerminalWindowName: 'happier-qa',
+        } satisfies SpawnSessionOptions);
+
+        expect(params).toMatchObject({
+            windowsRemoteSessionLaunchMode: 'windows_terminal',
+            windowsTerminalWindowName: 'happier-qa',
+        });
+    });
+
     it('includes model selection when provided', () => {
         const params = buildSpawnHappySessionRpcParams({
             machineId: 'm1',

@@ -1,5 +1,11 @@
 import { parseBooleanEnv, parseIntEnv } from '../../../config/env';
-import { MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY, normalizeMachineTransferServerRoutedMaxBytes } from '@happier-dev/protocol';
+import {
+  MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,
+  normalizeMachineTransferServerRoutedMaxBytes,
+  PET_PACKAGE_LIMITS_V1,
+  PetsEncryptedCustomPetSyncPolicySchema,
+  type PetsEncryptedCustomPetSyncPolicy,
+} from '@happier-dev/protocol';
 import { FEATURE_ENV_KEYS } from './featureEnvSchema';
 import { resolveEffectiveWebappBaseUrl } from '../../serverUrls/effectiveServerUrls';
 
@@ -38,6 +44,17 @@ export type UpdatesFeatureEnv = Readonly<{
 
 export type AttachmentsUploadsFeatureEnv = Readonly<{
   enabled: boolean;
+}>;
+
+export type PetsFeatureEnv = Readonly<{
+  companionEnabled: boolean;
+  syncEnabled: boolean;
+  maxManifestBytes: number;
+  maxCanonicalSpritesheetBytes: number;
+  maxCanonicalPackageBytes: number;
+  maxImportedPetsPerAccount: number;
+  maxImportedPetBytesPerAccount: number;
+  encryptedCustomPetSyncPolicy: PetsEncryptedCustomPetSyncPolicy;
 }>;
 
 export type SessionHandoffFeatureEnv = Readonly<{
@@ -235,6 +252,39 @@ export function readUpdatesFeatureEnv(env: NodeJS.ProcessEnv): UpdatesFeatureEnv
 export function readAttachmentsUploadsFeatureEnv(env: NodeJS.ProcessEnv): AttachmentsUploadsFeatureEnv {
   return {
     enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.attachmentsUploadsEnabled], true),
+  };
+}
+
+export function readPetsFeatureEnv(env: NodeJS.ProcessEnv): PetsFeatureEnv {
+  const encryptedCustomPetSyncPolicy = PetsEncryptedCustomPetSyncPolicySchema.safeParse(
+    env[FEATURE_ENV_KEYS.petsSyncEncryptedCustomPetSyncPolicy]?.trim(),
+  );
+
+  return {
+    companionEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.petsCompanionEnabled], true),
+    syncEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.petsSyncEnabled], false),
+    maxManifestBytes: parseIntEnv(env[FEATURE_ENV_KEYS.petsSyncMaxManifestBytes], PET_PACKAGE_LIMITS_V1.maxManifestBytes, { min: 1 }),
+    maxCanonicalSpritesheetBytes: parseIntEnv(
+      env[FEATURE_ENV_KEYS.petsSyncMaxCanonicalSpritesheetBytes],
+      PET_PACKAGE_LIMITS_V1.maxCanonicalSpritesheetBytes,
+      { min: 1 },
+    ),
+    maxCanonicalPackageBytes: parseIntEnv(
+      env[FEATURE_ENV_KEYS.petsSyncMaxCanonicalPackageBytes],
+      PET_PACKAGE_LIMITS_V1.maxCanonicalPackageBytes,
+      { min: 1 },
+    ),
+    maxImportedPetsPerAccount: parseIntEnv(
+      env[FEATURE_ENV_KEYS.petsSyncMaxImportedPetsPerAccount],
+      PET_PACKAGE_LIMITS_V1.maxImportedPetsPerAccount,
+      { min: 1 },
+    ),
+    maxImportedPetBytesPerAccount: parseIntEnv(
+      env[FEATURE_ENV_KEYS.petsSyncMaxImportedPetBytesPerAccount],
+      PET_PACKAGE_LIMITS_V1.maxImportedPetBytesPerAccount,
+      { min: 1 },
+    ),
+    encryptedCustomPetSyncPolicy: encryptedCustomPetSyncPolicy.success ? encryptedCustomPetSyncPolicy.data : "disabled",
   };
 }
 

@@ -1,6 +1,7 @@
 type PermissionLike = Readonly<{
     status?: string | null;
     reason?: string | null;
+    decision?: string | null;
 }> | null | undefined;
 
 type ToolResultLike = Readonly<{

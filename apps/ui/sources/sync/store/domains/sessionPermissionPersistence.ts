@@ -4,6 +4,7 @@ import {
     saveSessionPermissionModeUpdatedAts,
     saveSessionPermissionModes,
 } from '../../domains/state/persistence';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 function extractSessionPermissionData(sessions: Record<string, Session>): {
     modes: Record<string, PermissionMode>;
@@ -26,15 +27,18 @@ function extractSessionPermissionData(sessions: Record<string, Session>): {
     return { modes, updatedAts };
 }
 
-export function persistSessionPermissionData(sessions: Record<string, Session>): {
+export function persistSessionPermissionData(
+    sessions: Record<string, Session>,
+    scope?: ServerAccountScope | null,
+): {
     modes: Record<string, PermissionMode>;
     updatedAts: Record<string, number>;
 } | null {
     const { modes, updatedAts } = extractSessionPermissionData(sessions);
 
     try {
-        saveSessionPermissionModes(modes);
-        saveSessionPermissionModeUpdatedAts(updatedAts);
+        saveSessionPermissionModes(modes, scope);
+        saveSessionPermissionModeUpdatedAts(updatedAts, scope);
         return { modes, updatedAts };
     } catch (e) {
         console.error('Failed to persist session permission data:', e);

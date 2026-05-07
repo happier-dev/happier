@@ -35,7 +35,7 @@ installAcpCatalogSettingsCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
-            pathname: '/(app)/settings/acp-catalog',
+            pathname: '/settings/acp-catalog',
             segments: ['(app)', 'settings', 'acp-catalog'],
             router: {
                 push: shared.routerPushSpy,
@@ -147,11 +147,11 @@ describe('AcpCatalogSettingsScreen', () => {
         screen.pressRow('settings.acpCatalog.addBackend');
         screen.pressRow('settings.acpCatalog.backend.custom-kiro');
 
-        expect(shared.routerPushSpy).toHaveBeenNthCalledWith(1, '/(app)/settings/acp-backend');
+        expect(shared.routerPushSpy).toHaveBeenNthCalledWith(1, '/settings/acp-backend');
         expect(shared.routerPushSpy).toHaveBeenNthCalledWith(
             2,
             expect.objectContaining({
-                pathname: '/(app)/settings/acp-backend',
+                pathname: '/settings/acp-backend',
                 params: { backendId: 'custom-kiro' },
             }),
         );

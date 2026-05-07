@@ -14,6 +14,7 @@ import {
 } from '../service/index.js';
 
 import { checkRelayRuntimeHealth, resolveRelayRuntimeDefaults } from './relayRuntime.js';
+import { resolveNonCollidingRelayPort } from './resolveNonCollidingRelayPort.js';
 import {
     mergeSelfHostServerEnvText,
     parseEnvText,
@@ -804,8 +805,31 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         const uiDir = platform === 'win32'
             ? win32Path.join(defaults.installRoot, 'ui-web', 'current')
             : join(defaults.installRoot, 'ui-web', 'current');
+
+        // Upstream callers (relayHostEngine.installLocal) inject the resolved
+        // PORT into params.env when they pick a non-default port to avoid
+        // sibling-channel collisions. Fall back here to an independent
+        // collision-avoidance pass for callers that invoke this function
+        // directly (tests, SSH installers, tooling) — the helper is cheap and
+        // idempotent when params.env.PORT is already set.
+        const existingEnvText = existsSync(configEnvPath) ? await readFile(configEnvPath, 'utf8').catch(() => '') : '';
+        const existingPortRaw = existingEnvText ? String((parseEnvText(existingEnvText).PORT ?? '')).trim() : '';
+        const overridePortRaw = String((params.env ?? {}).PORT ?? '').trim();
+        const configuredPortRaw = overridePortRaw || existingPortRaw;
+        const configuredPort = configuredPortRaw
+          ? (Number.isInteger(Number.parseInt(configuredPortRaw, 10)) ? Number.parseInt(configuredPortRaw, 10) : null)
+          : null;
+        const resolvedPort = await resolveNonCollidingRelayPort({
+          platform,
+          mode,
+          channel: params.channel,
+          homeDir,
+          defaultPort: defaults.serverPort,
+          configuredPort,
+        });
+
         const baseEnvText = renderSelfHostServerEnvText({
-            port: defaults.serverPort,
+            port: resolvedPort,
             host: defaults.serverHost,
             dataDir: defaults.dataDir,
             filesDir,
@@ -815,7 +839,6 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
             arch,
             platform,
         });
-        const existingEnvText = existsSync(configEnvPath) ? await readFile(configEnvPath, 'utf8').catch(() => '') : '';
         const envText = mergeSelfHostServerEnvText({
             baseEnvText,
             existingEnvText,

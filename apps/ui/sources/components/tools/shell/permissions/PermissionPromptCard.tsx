@@ -23,6 +23,12 @@ import {
 } from '@/components/tools/normalization/policy/resolveToolViewDetailDefaultsForChromeMode';
 import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 
+const PROMPT_CARD_HORIZONTAL_PADDING = 12;
+const PROMPT_CARD_ICON_SIZE = 18;
+const PROMPT_CARD_ICON_TEXT_GAP = 6;
+const PROMPT_CARD_TEXT_COLUMN_START =
+    PROMPT_CARD_HORIZONTAL_PADDING + PROMPT_CARD_ICON_SIZE + PROMPT_CARD_ICON_TEXT_GAP;
+
 export const PermissionPromptCard = React.memo(function PermissionPromptCard(props: {
     request: PendingPermissionRequest;
     location: PermissionToolCallMessageLocation | null;
@@ -146,6 +152,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
                             permissionDisabledReason: props.disabledReason,
                         }}
                         detailLevel={inlineDetailLevel === 'full' ? 'full' : 'summary'}
+                        sectionSpacing="compact"
                         setHeaderActions={setHeaderActions}
                     />
                 </View>
@@ -154,6 +161,7 @@ export const PermissionPromptCard = React.memo(function PermissionPromptCard(pro
             <View style={styles.actions}>
                 <PermissionFooter
                     embedded={true}
+                    alignFirstButtonToStart={true}
                     permission={{
                         id: props.request.id,
                         status: 'pending',
@@ -190,14 +198,15 @@ const styles = StyleSheet.create((theme) => ({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
-        paddingHorizontal: 12,
+        gap: PROMPT_CARD_ICON_TEXT_GAP,
+        paddingLeft: PROMPT_CARD_HORIZONTAL_PADDING,
+        paddingRight: PROMPT_CARD_HORIZONTAL_PADDING,
         paddingTop: 12,
-        paddingBottom: 10,
+        paddingBottom: 8,
     },
     icon: {
-        width: 18,
-        height: 18,
+        width: PROMPT_CARD_ICON_SIZE,
+        height: PROMPT_CARD_ICON_SIZE,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -228,11 +237,13 @@ const styles = StyleSheet.create((theme) => ({
         gap: 6,
     },
     preview: {
-        paddingHorizontal: 12,
-        paddingBottom: 10,
+        paddingLeft: PROMPT_CARD_TEXT_COLUMN_START,
+        paddingRight: PROMPT_CARD_HORIZONTAL_PADDING,
+        paddingBottom: 0,
     },
     actions: {
-        paddingHorizontal: 12,
+        paddingLeft: PROMPT_CARD_TEXT_COLUMN_START,
+        paddingRight: PROMPT_CARD_HORIZONTAL_PADDING,
         paddingBottom: 12,
     },
 }));

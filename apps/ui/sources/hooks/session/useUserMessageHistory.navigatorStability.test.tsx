@@ -27,6 +27,7 @@ describe('useUserMessageHistory', () => {
             latestThinkingMessageId: null,
             latestThinkingMessageActivityAtMs: null,
             messagesVersion: 1,
+            lastAppliedAgentStateVersion: null,
             isLoaded: true,
           },
         },

@@ -85,7 +85,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
         fallbackAction={{
           title: t('connectedServices.deviceAuth.usePasteInstead'),
           onPress: () => router.push({
-            pathname: '/(app)/settings/connected-services/oauth',
+            pathname: '/settings/connected-services/oauth',
             params: {
               serviceId: rawServiceId,
               profileId,
@@ -103,7 +103,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
         return {
           title: t('connectedServices.oauthPaste.tryDeviceInstead'),
           onPress: () => router.push({
-            pathname: '/(app)/settings/connected-services/oauth',
+            pathname: '/settings/connected-services/oauth',
             params: { serviceId: rawServiceId, profileId },
           }),
         };
@@ -112,7 +112,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
         return {
           title: t('connectedServices.oauthPaste.tryEmbeddedInstead'),
           onPress: () => router.push({
-            pathname: '/(app)/settings/connected-services/oauth',
+            pathname: '/settings/connected-services/oauth',
             params: { serviceId: rawServiceId, profileId, method: 'browser' },
           }),
         };
@@ -200,7 +200,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
       fallbackAction={{
         title: t('connectedServices.deviceAuth.usePasteInstead'),
         onPress: () => router.push({
-          pathname: '/(app)/settings/connected-services/oauth',
+          pathname: '/settings/connected-services/oauth',
           params: { serviceId: rawServiceId, profileId, method: 'paste' },
         }),
       }}

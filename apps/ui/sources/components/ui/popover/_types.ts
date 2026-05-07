@@ -1,8 +1,8 @@
 import type * as React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 
-export type PopoverPlacement = 'top' | 'bottom' | 'left' | 'right' | 'auto';
-export type ResolvedPopoverPlacement = Exclude<PopoverPlacement, 'auto'>;
+export type ResolvedPopoverPlacement = 'top' | 'bottom' | 'left' | 'right';
+export type PopoverPlacement = ResolvedPopoverPlacement | 'auto' | 'auto-vertical';
 export type PopoverBackdropEffect = 'none' | 'dim' | 'blur';
 
 type WindowRect = Readonly<{ x: number; y: number; width: number; height: number }>;
@@ -88,4 +88,3 @@ export type PopoverRenderProps = Readonly<{
     maxWidth: number;
     placement: ResolvedPopoverPlacement;
 }>;
-

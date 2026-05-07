@@ -11,6 +11,11 @@ export interface SessionClientPort {
   sendClaudeSessionMessage(message: RawJSONLines, meta?: Record<string, unknown>): void;
   sendAgentMessage(provider: ACPProvider, body: ACPMessageData, opts?: { localId?: string; meta?: Record<string, unknown> }): void;
   sendAgentMessageCommitted(provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }): Promise<void>;
+  sendAgentMessageEphemeral?(
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+  ): void;
 
   updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
   updateAgentState(updater: (state: AgentState) => AgentState): void | Promise<void>;

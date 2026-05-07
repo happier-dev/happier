@@ -138,8 +138,13 @@ installSessionShellCommonModuleMocks({
                 vi.fn<(value: LocalSettings[K]) => void>(),
             ],
             useSetting: <K extends keyof Settings>(key: K) => settingsDefaults[key],
+            useSettingMutable: <K extends keyof Settings>(key: K) => [
+                settingsDefaults[key],
+                vi.fn<(value: Settings[K]) => void>(),
+            ],
             useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
             useAutomations: () => [],
+            useAllMachines: () => [],
             useMachine: () => null,
         };
     },
@@ -253,6 +258,16 @@ vi.mock('@/sync/sync', () => ({
 
 const sessionViewModulePromise = import('./SessionView');
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
 describe('SessionView (data ready gating)', () => {
     afterEach(() => {
         routerPushSpy.mockClear();
@@ -281,6 +296,23 @@ describe('SessionView (data ready gating)', () => {
 
         expect(screen.findAllByTestId('session-composer-input')).toHaveLength(1);
         expect(screen.findAllByTestId('session-header-action-menu-trigger')).toHaveLength(1);
+    });
+
+    it('can render chat content without the legacy web bottom spacer when cockpit owns bottom chrome', async () => {
+        const { SessionView } = await sessionViewModulePromise;
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionView id="s1" chatBottomSpacing="none" />
+            </AppPaneProvider>,
+        );
+
+        const chatContentContainers = screen.tree.findAllByType('View' as never).filter((node) => {
+            const style = flattenStyle(node.props.style);
+            return style.flexBasis === 0 && style.flexGrow === 1;
+        });
+        expect(chatContentContainers).toHaveLength(1);
+        expect(Number(flattenStyle(chatContentContainers[0]?.props.style).paddingBottom ?? 0)).toBe(0);
     });
 
     it('surfaces auth sync errors as a restore-account action instead of generic retry', async () => {

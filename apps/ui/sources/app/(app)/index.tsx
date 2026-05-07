@@ -560,7 +560,7 @@ function NotAuthenticated() {
                     testID="welcome-change-relay"
                     size="normal"
                     title={t('setupOnboarding.changeRelayAction')}
-                    onPress={() => router.push('/server')}
+                    onPress={() => router.push('/settings/server')}
                 />
             </View>
             <View style={styles.buttonContainerSecondary}>

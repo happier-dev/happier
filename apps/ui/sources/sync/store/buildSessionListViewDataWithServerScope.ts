@@ -3,6 +3,7 @@ import { getActiveServerSnapshot } from '../domains/server/serverRuntime';
 import { buildSessionListViewData, type SessionListViewItem } from '../domains/session/listing/sessionListViewData';
 import type { MachineDisplayRenderable } from '../domains/machines/machineDisplayRenderable';
 import { resolveSessionMachineRpcTarget } from '../domains/session/resolveSessionReachableMachineId';
+import { resolveSessionMachineId } from '../domains/session/directSessions/resolveSessionMachineId';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
 import type { Machine, Session } from '../domains/state/storageTypes';
 
@@ -48,7 +49,7 @@ export function applyReachableTargetsToSessionListRenderables(
             id: session.id,
             active: session.active,
             updatedAt: session.updatedAt,
-            machineId: normalizeNonEmptyString(metadata?.machineId),
+            machineId: resolveSessionMachineId(metadata),
             hostHint: normalizeNonEmptyString(metadata?.host),
             path: normalizeNonEmptyString(metadata?.path),
             homeDir: normalizeNonEmptyString(metadata?.homeDir),
@@ -69,7 +70,8 @@ export function applyReachableTargetsToSessionListRenderables(
             const project = params.getProjectForSession?.(sessionId) ?? null;
             const target = resolveSessionMachineRpcTarget({
                 sessionId,
-                sessionMachineId: normalizeNonEmptyString(metadata?.machineId),
+                sessionActive: sessionRecord.active === true,
+                sessionMachineId: resolveSessionMachineId(metadata),
                 sessionHostHint: normalizeNonEmptyString(metadata?.host),
                 sessionPath: normalizeNonEmptyString(metadata?.path),
                 sessionHomeDir: normalizeNonEmptyString(metadata?.homeDir),

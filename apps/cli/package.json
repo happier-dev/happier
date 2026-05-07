@@ -1,9 +1,10 @@
 {
   "name": "@happier-dev/cli",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Mobile and Web client for Claude Code and Codex",
   "bin": {
     "happier": "./bin/happier.mjs",
+    "happier-dev": "./bin/happier-dev.mjs",
     "happier-mcp": "./bin/happier-mcp.mjs"
   },
   "author": "Leeroy Brun <leeroy.brun@gmail.com>",
@@ -134,7 +135,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.14.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.114",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.123",
     "@fastify/swagger": "9.7.0",
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/cli-common": "0.0.0",
@@ -172,6 +173,7 @@
     "qrcode-terminal": "^0.12.0",
     "react": "^19.2.0",
     "react-devtools-core": "^6.1.5",
+    "sharp": "^0.34.3",
     "socket.io-client": "^4.8.1",
     "tar": "^7.5.8",
     "tmp": "^0.2.5",

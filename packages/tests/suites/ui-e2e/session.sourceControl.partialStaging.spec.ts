@@ -141,6 +141,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
           CI: '1',
           HAPPIER_DISABLE_CAFFEINATE: '1',
           HAPPIER_VARIANT: 'dev',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
         },
       });
 
@@ -164,6 +165,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
           HAPPIER_WEBAPP_URL: uiBaseUrl,
           HAPPIER_DISABLE_CAFFEINATE: '1',
           HAPPIER_VARIANT: 'dev',
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
           // Machine-scoped RPC must be allowed to read the repo fixture directory.
           HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
@@ -212,6 +214,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
       const wholeFileToggle = rightPane.getByTestId(`scm-commit-selection-toggle-${toTestIdSafeValue(wholeFilePath)}`);
       await expect(wholeFileToggle).toHaveCount(1, { timeout: 60_000 });
       await wholeFileToggle.click({ force: true });
+      await expect(rightPane.getByTestId('scm-commit-selection-summary')).toContainText(/^2\b/, { timeout: 60_000 });
 
       // Open file details tab (pinned) and select a line from the first hunk.
       await twoHunksRow.focus();
@@ -228,6 +231,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
 
       await expect(detailsPaneLocator(page).getByTestId('file-details-apply-selected-lines')).toHaveCount(1, { timeout: 60_000 });
       await detailsPaneLocator(page).getByTestId('file-details-apply-selected-lines').click();
+      await expect(rightPane.getByTestId('scm-commit-selection-summary')).toContainText(/^2\b/, { timeout: 60_000 });
 
       // Commit selected changes.
       const commitMessage = page.getByTestId('scm-commit-message');

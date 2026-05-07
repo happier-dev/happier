@@ -52,8 +52,8 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
                 prompt: spies.prompt,
                 confirm: spies.confirm,
             },
-            ModalProvider: ({ children }: { children?: React.ReactNode }) =>
-                React.createElement('ModalProvider', null, children ?? null),
+            ModalProvider: ({ active, children }: { active?: boolean; children?: React.ReactNode }) =>
+                React.createElement('ModalProvider', { active }, children ?? null),
         },
     };
 }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { shouldShowDesktopUpdateBanner } from './state';
+import { shouldShowDesktopUpdateStatus } from './state';
 import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
 
 type DesktopUpdaterStatus =
@@ -19,6 +19,43 @@ type UpdateMetadata = {
 } | null;
 
 const DISMISS_KEY = 'desktop_update_dismissed_version';
+const UPDATE_CHECKS_ENABLED_ENV = 'EXPO_PUBLIC_HAPPIER_DESKTOP_UPDATES_ENABLED';
+
+function parseOptionalBoolean(raw: string | undefined): boolean | null {
+    const normalized = String(raw ?? '').trim().toLowerCase();
+    if (!normalized) return null;
+    if (['1', 'true', 'yes', 'on', 'enabled'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off', 'disabled'].includes(normalized)) return false;
+    return null;
+}
+
+function readDesktopUpdateChecksEnabledOverride(): boolean | null {
+    return parseOptionalBoolean(process.env[UPDATE_CHECKS_ENABLED_ENV]);
+}
+
+function isDevelopmentBundle(): boolean {
+    return (globalThis as { __DEV__?: unknown }).__DEV__ === true;
+}
+
+function shouldRunDesktopUpdateChecks(params: {
+    isDesktop: boolean;
+    isDevelopmentBundle: boolean;
+    enabledOverride: boolean | null;
+}): boolean {
+    if (!params.isDesktop) return false;
+    if (params.enabledOverride !== null) return params.enabledOverride;
+    return !params.isDevelopmentBundle;
+}
+
+function formatDesktopUpdaterErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message.trim().length > 0) {
+        return error.message;
+    }
+    if (typeof error === 'string' && error.trim().length > 0) {
+        return error.trim();
+    }
+    return 'Update failed';
+}
 
 function getDismissedVersion(): string | null {
     try {
@@ -49,13 +86,18 @@ export function useDesktopUpdater(): {
     // Capture the environment at mount time. In production the desktop/web context is stable, and
     // using a stable flag avoids test flakiness when other suites manipulate `window` concurrently.
     const isDesktop = React.useMemo(() => isTauriDesktop(), []);
+    const updateChecksEnabled = React.useMemo(() => shouldRunDesktopUpdateChecks({
+        isDesktop,
+        isDevelopmentBundle: isDevelopmentBundle(),
+        enabledOverride: readDesktopUpdateChecksEnabledOverride(),
+    }), [isDesktop]);
 
     const [status, setStatus] = React.useState<DesktopUpdaterStatus>('idle');
     const [availableVersion, setAvailableVersion] = React.useState<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
 
     const refresh = React.useCallback(async () => {
-        if (!isDesktop) {
+        if (!updateChecksEnabled) {
             return;
         }
 
@@ -70,7 +112,7 @@ export function useDesktopUpdater(): {
             }
 
             const dismissedVersion = getDismissedVersion();
-            const show = shouldShowDesktopUpdateBanner({
+            const show = shouldShowDesktopUpdateStatus({
                 availableVersion: update.version,
                 dismissedVersion
             });
@@ -78,11 +120,11 @@ export function useDesktopUpdater(): {
             setAvailableVersion(update.version);
             setStatus(show ? 'available' : 'dismissed');
         } catch (error) {
-            console.warn('Failed to check for desktop updates:', error);
             setAvailableVersion(null);
-            setStatus('idle');
+            setError(formatDesktopUpdaterErrorMessage(error));
+            setStatus('error');
         }
-    }, [isDesktop]);
+    }, [updateChecksEnabled]);
 
     React.useEffect(() => {
         void refresh();
@@ -96,7 +138,7 @@ export function useDesktopUpdater(): {
     }, [availableVersion]);
 
     const startInstall = React.useCallback(async () => {
-        if (!isDesktop) {
+        if (!updateChecksEnabled) {
             return;
         }
         if (!availableVersion) {
@@ -111,11 +153,11 @@ export function useDesktopUpdater(): {
                 setAvailableVersion(null);
                 setStatus('upToDate');
             }
-        } catch (e: any) {
-            setError(String(e?.message || e || 'Update failed'));
+        } catch (error: unknown) {
+            setError(formatDesktopUpdaterErrorMessage(error));
             setStatus('error');
         }
-    }, [availableVersion, isDesktop]);
+    }, [availableVersion, updateChecksEnabled]);
 
     return {
         status,

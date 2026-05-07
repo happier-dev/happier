@@ -85,4 +85,34 @@ describe('permission RPC routing', () => {
 
     expect(result).toEqual({ behavior: 'allow', updatedInput: { command: 'npm --version' } });
   });
+
+  it('does not let remote permission cleanup cancel local-bridge requests', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('s1');
+
+    const { ClaudeLocalPermissionBridge } = await import('../localPermissions/localPermissionBridge');
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: 5_000 });
+    bridge.activate();
+
+    const localPermission = bridge.handlePermissionHook({
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/local-bridge.txt', content: 'hello' },
+      tool_use_id: 'toolu_local_bridge_pending_1',
+    });
+
+    expect(client.getAgentStateSnapshot().requests.toolu_local_bridge_pending_1).toBeDefined();
+
+    const { PermissionHandler } = await import('./permissionHandler');
+    const remoteHandler = new PermissionHandler(session);
+    await remoteHandler.abortPendingRequestsAndFlush('Remote session ended');
+
+    expect(client.getAgentStateSnapshot().requests.toolu_local_bridge_pending_1).toBeDefined();
+    expect(client.getAgentStateSnapshot().completedRequests.toolu_local_bridge_pending_1).toBeUndefined();
+
+    bridge.dispose();
+    remoteHandler.dispose();
+    await expect(localPermission).resolves.toMatchObject({
+      hookSpecificOutput: { hookEventName: 'PermissionRequest' },
+    });
+  });
 });

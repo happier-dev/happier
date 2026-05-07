@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installServerSettingsHooksCommonModuleMocks } from './serverSettingsHooksTestHelpers';
 import { renderScreen } from '@/dev/testkit';
@@ -8,13 +9,48 @@ import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const activeServerRuntimeMock = vi.hoisted(() => {
+    type Snapshot = { serverId: string; serverUrl: string; generation: number };
+    let snapshot: Snapshot = { serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 };
+    const listeners = new Set<(snapshot: Snapshot) => void>();
+    const subscribe = (listener: (snapshot: Snapshot) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+    };
+    const api = {
+        getActiveServerSnapshot: vi.fn(() => snapshot),
+        subscribeActiveServer: vi.fn(subscribe),
+        setSnapshot: (next: Snapshot) => {
+            snapshot = next;
+            for (const listener of listeners) listener(next);
+        },
+        reset: () => {
+            snapshot = { serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 };
+            listeners.clear();
+            api.getActiveServerSnapshot.mockImplementation(() => snapshot);
+            api.subscribeActiveServer.mockImplementation(subscribe);
+            api.getActiveServerSnapshot.mockClear();
+            api.subscribeActiveServer.mockClear();
+        },
+    };
+    return api;
+});
+
 vi.mock('@/sync/domains/server/selection/serverSelectionResolution', () => ({
     getEffectiveServerSelectionFromRawSettings: vi.fn(() => ({ serverIds: ['server-a'] })),
 }));
 
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: activeServerRuntimeMock.getActiveServerSnapshot,
+    subscribeActiveServer: activeServerRuntimeMock.subscribeActiveServer,
+}));
+
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerSnapshot: vi.fn(() => ({ serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 })),
-    listServerProfiles: vi.fn(() => [{ id: 'server-a', name: 'Server A', serverUrl: 'https://a.example.test', lastUsedAt: 1 }]),
+    getActiveServerSnapshot: activeServerRuntimeMock.getActiveServerSnapshot,
+    listServerProfiles: vi.fn(() => [
+        { id: 'server-a', name: 'Server A', serverUrl: 'https://a.example.test', lastUsedAt: 1 },
+        { id: 'server-b', name: 'Server B', serverUrl: 'https://b.example.test', lastUsedAt: 2 },
+    ]),
 }));
 
 installServerSettingsHooksCommonModuleMocks({
@@ -32,6 +68,10 @@ installServerSettingsHooksCommonModuleMocks({
 type PrimaryMachineSelection = string | null;
 
 describe('usePrimaryMachineFromActiveSelection', () => {
+    beforeEach(() => {
+        activeServerRuntimeMock.reset();
+    });
+
     it('returns the first machine from the first visible machine group', async () => {
         const { usePrimaryMachineFromActiveSelection } = await import('./usePrimaryMachineFromActiveSelection');
         const { useAllMachines, useMachineListByServerId } = await import('@/sync/domains/state/storage');
@@ -136,5 +176,49 @@ describe('usePrimaryMachineFromActiveSelection', () => {
 
         const latest = captured.at(-1);
         expect(latest).toBe('m-b1');
+    });
+
+    it('updates when the active server changes', async () => {
+        const { usePrimaryMachineFromActiveSelection } = await import('./usePrimaryMachineFromActiveSelection');
+        const { useAllMachines, useMachineListByServerId } = await import('@/sync/domains/state/storage');
+        const { getEffectiveServerSelectionFromRawSettings } = await import('@/sync/domains/server/selection/serverSelectionResolution');
+
+        (useAllMachines as any).mockReturnValue([]);
+        (useMachineListByServerId as any).mockReturnValue({
+            'server-a': [
+                { id: 'm-a1', revokedAt: null, metadata: { displayName: 'Server A Machine 1' } },
+            ],
+            'server-b': [
+                { id: 'm-b1', revokedAt: null, metadata: { displayName: 'Server B Machine 1' } },
+            ],
+        });
+        (getEffectiveServerSelectionFromRawSettings as any).mockImplementation(({ activeServerId }: { activeServerId: string }) => ({
+            serverIds: activeServerId ? [activeServerId] : [],
+        }));
+
+        const captured: PrimaryMachineSelection[] = [];
+        function Probe() {
+            const value = usePrimaryMachineFromActiveSelection();
+            React.useEffect(() => {
+                captured.push(value);
+            }, [value]);
+
+            return null;
+        }
+
+        const screen = await renderScreen(<Probe />);
+
+        await act(async () => {
+            activeServerRuntimeMock.setSnapshot({
+                serverId: 'server-b',
+                serverUrl: 'https://b.example.test',
+                generation: 2,
+            });
+            screen.tree.update(<Probe />);
+            await Promise.resolve();
+        });
+
+        expect(captured).toContain('m-a1');
+        expect(captured.at(-1)).toBe('m-b1');
     });
 });

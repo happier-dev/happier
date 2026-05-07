@@ -10,6 +10,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
     storageKinds: [] as string[],
+    paneHookCalls: 0,
 }));
 const emptyStateState = vi.hoisted(() => ({
     hasHiddenInactiveSessions: false,
@@ -45,6 +46,15 @@ vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
         sessionListState.storageKinds.push(storageKind ?? 'all');
         return sessionListState.data;
     },
+    useVisibleSessionListPaneState: (storageKind?: string) => {
+        sessionListState.paneHookCalls += 1;
+        sessionListState.storageKinds.push(storageKind ?? 'all');
+        return {
+            sessionListViewData: sessionListState.data,
+            visibleSessionCount: sessionListState.data?.reduce((count, item) => count + (item.type === 'session' ? 1 : 0), 0) ?? 0,
+            hasHiddenInactiveSessions: emptyStateState.hasHiddenInactiveSessions,
+        };
+    },
     useHasHiddenInactiveSessions: () => emptyStateState.hasHiddenInactiveSessions,
     countVisibleSessionListSessions: (data: Array<{ type?: string }> | null) => (
         data?.reduce((count, item) => count + (item.type === 'session' ? 1 : 0), 0) ?? 0
@@ -68,12 +78,14 @@ vi.mock('@/components/sessions/guidance/HiddenInactiveSessionsEmptyState', () =>
 }));
 vi.mock('@/components/sessions/shell/SessionsList', () => ({
     SessionsList: (props: any) => React.createElement('SessionsList', props),
+    SessionsListContent: (props: any) => React.createElement('SessionsListContent', props),
 }));
 
 describe('SessionsListWrapper (empty state)', () => {
     beforeEach(() => {
         sessionListState.data = [];
         sessionListState.storageKinds = [];
+        sessionListState.paneHookCalls = 0;
         emptyStateState.hasHiddenInactiveSessions = false;
         featureDecisionState.enabled = false;
         storageKindState.storageKind = 'persisted';
@@ -110,7 +122,8 @@ describe('SessionsListWrapper (empty state)', () => {
         expect(sessionListState.storageKinds).toEqual(['direct']);
         expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
         expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
-        expect(screen.findByType('SessionsList' as any).props.storageKind).toBe('direct');
+        expect(screen.findByType('SessionsListContent' as any).props.storageKind).toBe('direct');
+        expect(screen.findByType('SessionsListContent' as any).props.data).toBe(sessionListState.data);
 
         await screen.unmount();
     });
@@ -146,7 +159,7 @@ describe('SessionsListWrapper (empty state)', () => {
         const screen = await renderScreen(<SessionsListWrapper />);
 
         expect(() => screen.findByType('HiddenInactiveSessionsEmptyState' as any)).not.toThrow();
-        expect(() => screen.findByType('SessionsList' as any)).toThrow();
+        expect(() => screen.findByType('SessionsListContent' as any)).toThrow();
 
         await screen.unmount();
     });
@@ -160,7 +173,21 @@ describe('SessionsListWrapper (empty state)', () => {
 
         expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
         expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
-        expect(screen.findByType('SessionsList' as any).props.storageKind).toBe('direct');
+        expect(screen.findByType('SessionsListContent' as any).props.storageKind).toBe('direct');
+
+        await screen.unmount();
+    });
+
+    it('passes the precomputed visible list to the rendered sessions list path', async () => {
+        featureDecisionState.enabled = true;
+        storageKindState.storageKind = 'direct';
+        sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
+
+        const screen = await renderScreen(<SessionsListWrapper />);
+
+        expect(sessionListState.paneHookCalls).toBe(1);
+        expect(sessionListState.storageKinds).toEqual(['direct']);
+        expect(screen.findByType('SessionsListContent' as any).props.data).toBe(sessionListState.data);
 
         await screen.unmount();
     });

@@ -209,6 +209,19 @@ Examples:
 - **Attachment:** “Here is the screenshot I just took on my desktop”
 - **Link file:** “Look at `src/auth/login.ts` and explain this bug”
 
+## Attachments together with review comments
+
+Review comments are separate from attachments, but they can be sent in the same prompt flow.
+
+Use them together when you want to hand the agent both:
+
+- a structured set of line-specific review comments, and
+- extra local files such as screenshots, logs, or exported artifacts.
+
+In a session, the composer shows review comments as their own **Review** chip/attachment badge when saved comments are available for the current workspace.
+
+In a new-session flow, Happier can also discover saved review comments for the selected machine and directory. If you keep the review-comments chip enabled, the matching review comments are sent with the first actionable message. Turning that chip off does not remove attachment drafts.
+
 ## Provider-specific note
 
 Regular session messages support attachments through Happier’s shared attachment flow.

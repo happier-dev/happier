@@ -1,5 +1,6 @@
 import { switchConnectionToActiveServer } from '../../runtime/orchestration/connectionManager';
 import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } from './serverRuntime';
+import { getDeviceDefaultServerId, getTabActiveServerId } from './serverProfiles';
 import type { ServerProfileSource } from './serverProfiles';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
 
@@ -24,6 +25,26 @@ export function isSameServerUrl(left: string, right: string): boolean {
     return leftKey === createServerUrlComparableKey(right);
 }
 
+function canSkipActiveServerUrlSwitch(params: Readonly<{
+    activeServerUrl: string;
+    targetServerUrl: string;
+    scope: 'device' | 'tab';
+}>): boolean {
+    if (!isSameServerUrl(params.activeServerUrl, params.targetServerUrl)) return false;
+    if (params.scope === 'tab') return true;
+    return !getTabActiveServerId();
+}
+
+function canSkipActiveServerIdSwitch(params: Readonly<{
+    activeServerId: string;
+    targetServerId: string;
+    scope: 'device' | 'tab';
+}>): boolean {
+    if (params.activeServerId !== params.targetServerId) return false;
+    if (params.scope === 'tab') return true;
+    return !getTabActiveServerId() && getDeviceDefaultServerId() === params.targetServerId;
+}
+
 export async function upsertActivateAndSwitchServer(params: Readonly<{
     serverUrl: string;
     source?: ServerProfileSource;
@@ -35,13 +56,14 @@ export async function upsertActivateAndSwitchServer(params: Readonly<{
     if (!targetServerUrl) return false;
 
     const active = getActiveServerSnapshot();
-    if (isSameServerUrl(active.serverUrl, targetServerUrl)) return false;
+    const scope = params.scope ?? 'device';
+    if (canSkipActiveServerUrlSwitch({ activeServerUrl: active.serverUrl, targetServerUrl, scope })) return false;
 
     upsertAndActivateServer({
         serverUrl: targetServerUrl,
         name: params.name ?? defaultServerNameFromUrl(targetServerUrl),
         source: params.source ?? 'url',
-        scope: params.scope ?? 'device',
+        scope,
     });
     await switchConnectionToActiveServer();
     if (params.refreshAuth) {
@@ -59,11 +81,12 @@ export async function setActiveServerAndSwitch(params: Readonly<{
     if (!targetServerId) return false;
 
     const active = getActiveServerSnapshot();
-    if (active.serverId === targetServerId) return false;
+    const scope = params.scope ?? 'device';
+    if (canSkipActiveServerIdSwitch({ activeServerId: active.serverId, targetServerId, scope })) return false;
 
     setActiveServer({
         serverId: targetServerId,
-        scope: params.scope ?? 'device',
+        scope,
     });
     await switchConnectionToActiveServer();
     if (params.refreshAuth) {

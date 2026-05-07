@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { INSTALLABLES_CATALOG } from '@happier-dev/protocol/installables';
+import { CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
 
 import { capabilities } from './extraCapabilities';
 
 describe('codex extraCapabilities installables parity', () => {
-  it('includes capabilities for all protocol installable deps', () => {
+  it('keeps Codex-owned installable deps scoped to Codex ACP', () => {
     const ids = capabilities.map((c) => c.descriptor.id);
-    expect(ids).toEqual(expect.arrayContaining(INSTALLABLES_CATALOG.map((e) => e.capabilityId)));
+    expect(ids).toEqual([CODEX_ACP_DEP_ID]);
   });
 });
-

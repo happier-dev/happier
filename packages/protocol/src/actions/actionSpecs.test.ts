@@ -163,6 +163,15 @@ describe('Action Spec Registry', () => {
     expect(spec.bindings?.voiceClientToolName).toBe('resetGlobalVoiceAgent');
   });
 
+  it('registers pet chooser slash aliases as a UI-only action', () => {
+    const spec = getActionSpec('ui.pet.choose');
+    expect(spec.slash?.tokens).toEqual(['/pet', '/h.pet']);
+    expect(spec.placements).toContain('slash_command');
+    expect(spec.surfaces.ui_slash_command).toBe(true);
+    expect(spec.surfaces.mcp).toBe(false);
+    expect(spec.surfaces.cli).toBe(false);
+  });
+
   it('binds voice teleport to teleportVoiceAgentToSessionRoot', () => {
     const spec = getActionSpec('ui.voice_agent.teleport');
     expect(spec.bindings?.voiceClientToolName).toBe('teleportVoiceAgentToSessionRoot');

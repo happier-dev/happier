@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, useWindowDimensions, InteractionManager } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAllMachines, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
+import { useAllMachines, useSessions, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useRouter, useLocalSearchParams, useNavigation, usePathname } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -31,6 +31,7 @@ import {
 
 import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { consumeProfileIdParam } from '@/profileRouteParams';
 import { normalizeOptionalParam } from '@/profileRouteParams';
 import { useFocusEffect } from '@react-navigation/native';
@@ -60,7 +61,6 @@ import {
     resolveNextSelectableBackendEntryForNewSession,
 } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useNewSessionConnectedServices } from '@/components/sessions/new/modules/useNewSessionConnectedServices';
@@ -102,7 +102,7 @@ import { NewSessionMachineSelectionContent } from '@/components/sessions/new/com
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
-import { useProfile as useAccountProfile } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useProfile as useAccountProfile } from '@/sync/store/hooks';
 import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/directSessions/browse/openDirectSessionsResumeIdPickerModal';
 import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/directSessions/browse/resolveDirectBrowseLockedSourceOption';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
@@ -229,12 +229,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const sessionDefaultPermissionModeByTargetKey = useSetting('sessionDefaultPermissionModeByTargetKey');
     const settings = useSettings() ?? settingsDefaults;
     const accountProfile = useAccountProfile();
-    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
-    React.useEffect(() => {
-        return subscribeActiveServer((snapshot) => {
-            setActiveServerSnapshot(snapshot);
-        });
-    }, []);
+    const activeServerSnapshot = useActiveServerSnapshot();
     const {
         serverProfiles,
         serverTargets,
@@ -270,7 +265,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [favoriteDirectories, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
+    const [favoriteModelSelections, setFavoriteModelSelections] = useSettingMutable('favoriteModelSelectionsV1');
     const [dismissedCLIWarnings, setDismissedCLIWarnings] = useSettingMutable('dismissedCLIWarnings');
+    const draftScope = useActiveServerAccountScope();
 
     // Try to get data from temporary store first
     const tempSessionData = React.useMemo(() => {
@@ -279,9 +276,15 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         return null;
     }, [dataId]);
+    const shouldReplacePersistedDraftSelections = tempSessionData?.replacePersistedDraftSelections === true;
+    const loadScopedNewSessionDraft = React.useCallback(() => {
+        return draftScope ? loadNewSessionDraft(draftScope) : null;
+    }, [draftScope]);
 
     // Load persisted draft state (survives remounts/screen navigation)
-    const [persistedDraft, setPersistedDraft] = React.useState(() => loadNewSessionDraft());
+    const [scopedPersistedDraft, setScopedPersistedDraft] = React.useState(() => loadScopedNewSessionDraft());
+    const persistedDraft = shouldReplacePersistedDraftSelections ? null : scopedPersistedDraft;
+    const previousDraftScopeRef = React.useRef(draftScope);
     const hydratedTempAuthoringDraft = React.useMemo(() => {
         return tempSessionData
             ? buildNewSessionAuthoringDraftFromTempData(tempSessionData)
@@ -292,6 +295,11 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             ? buildNewSessionAuthoringDraftFromPersistedDraft(persistedDraft)
             : null;
     }, [persistedDraft]);
+    const hydratedPersistedContentAuthoringDraft = React.useMemo(() => {
+        return scopedPersistedDraft
+            ? buildNewSessionAuthoringDraftFromPersistedDraft(scopedPersistedDraft)
+            : null;
+    }, [scopedPersistedDraft]);
     const hydratedResumeSessionId = React.useMemo(() => {
         if (typeof hydratedTempAuthoringDraft?.resumeSessionId === 'string') {
             return hydratedTempAuthoringDraft.resumeSessionId;
@@ -332,15 +340,23 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     useFocusEffect(
         React.useCallback(() => {
-            setPersistedDraft(loadNewSessionDraft());
+            setScopedPersistedDraft(loadScopedNewSessionDraft());
             // Ensure newly-registered machines show up without requiring an app restart.
             // Throttled to avoid spamming the server when navigating back/forth.
             // Defer until after interactions so the screen feels instant on iOS.
             InteractionManager.runAfterInteractions(() => {
                 fireAndForget(sync.refreshMachinesThrottled({ staleMs: 15_000 }), { tag: 'NewSessionScreenModel.refreshMachinesThrottled.focus' });
             });
-        }, [])
+        }, [loadScopedNewSessionDraft])
     );
+
+    React.useEffect(() => {
+        if (previousDraftScopeRef.current === draftScope) {
+            return;
+        }
+        previousDraftScopeRef.current = draftScope;
+        setScopedPersistedDraft(loadScopedNewSessionDraft());
+    }, [draftScope, loadScopedNewSessionDraft]);
 
     // (prefetch effect moved below, after machines/recent/favorites are defined)
 
@@ -352,6 +368,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const profileMap = useProfileMap(allProfiles);
     const machines = useAllMachines();
+    const sessions = useSessions();
     const hasExplicitSeededProfileSelection = React.useMemo(() => {
         if (!useProfiles) {
             return false;
@@ -491,6 +508,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     } = useNewSessionMachinePathState({
         machines,
         recentMachinePaths,
+        sessions,
         machineIdParam: effectiveMachineIdParam,
         pathParam: effectivePathParam,
         persistedMachineId: persistedDraft?.selectedMachineId ?? null,
@@ -580,7 +598,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         setSelectedProfileId(nextProfileId);
     }, [initialImplicitProfileId, selectedProfileId, useProfiles]);
-    const { preflightModels, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
+    const { preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
         backendTarget,
         selectedMachineId,
         capabilityServerId,
@@ -646,9 +664,9 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         automationTimezoneParam,
         automationEditIdParam,
         automationFeatureEnabled,
-        persistedDraftEntryIntent: persistedDraft?.entryIntent,
+        persistedDraftEntryIntent: scopedPersistedDraft?.entryIntent,
         hydratedTempAuthoringDraft,
-        hydratedPersistedAuthoringDraft,
+        hydratedPersistedAuthoringDraft: hydratedPersistedContentAuthoringDraft,
     });
     const [isCreating, setIsCreating] = React.useState(false);
     const [isResumeSupportChecking, setIsResumeSupportChecking] = React.useState(false);
@@ -834,6 +852,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         machines,
         recentMachinePaths,
+        sessions,
         favoriteMachines,
         useEnhancedSessionWizard,
         refreshMachineEnvPresence,
@@ -1135,18 +1154,25 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         const core = getAgentCore(agentType);
         const next = coerceNewSessionModelMode({
             modelMode: String(modelMode),
-            modelConfig: { defaultMode: core.model.defaultMode, allowedModes: core.model.allowedModes, supportsFreeform: core.model.supportsFreeform },
+            modelConfig: {
+                defaultMode: core.model.defaultMode,
+                allowedModes: core.model.allowedModes,
+                supportsFreeform: core.model.supportsFreeform,
+                dynamicProbe: core.model.dynamicProbe ?? 'auto',
+            },
             preflight: preflightModels
                 ? {
                     availableModels: preflightModels.availableModels.map((m) => ({ id: m.id })),
                     supportsFreeform: preflightModels.supportsFreeform === true,
+                    targetKey: preflightModelsTargetKey,
                 }
                 : null,
+            currentTargetKey: selectedBackendEntry?.targetKey ?? selectedBackendTargetKey,
         });
         if (next !== modelMode) {
             setModelMode(next as ModelMode);
         }
-    }, [agentType, modelMode, preflightModels]);
+    }, [agentType, modelMode, preflightModels, preflightModelsTargetKey, selectedBackendEntry?.targetKey, selectedBackendTargetKey]);
 
     const {
         agentPickerOptions,
@@ -1172,6 +1198,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         capabilityServerId,
         selectedPath,
         settings,
+        favoriteModelSelections,
+        setFavoriteModelSelections,
         refreshProbe: cliAvailabilityProbe ?? null,
     });
 
@@ -1306,6 +1334,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedSecretIdByProfileIdByEnvVarName,
         getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => getSessionOnlySecretValueEncByProfileIdByEnvVarName() ?? {},
         agentNewSessionOptionStateByAgentId,
+        draftScope,
     });
 
     const { handleCreateSession } = useCreateNewSession({
@@ -1598,6 +1627,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         connectionStatus,
         machineName: selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host,
         machinePopover,
+        selectedMachineId,
+        selectedMachineHomeDir: selectedMachine?.metadata?.homeDir ?? null,
         selectedPath,
         pathPopover,
         showResumePicker,

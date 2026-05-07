@@ -412,11 +412,80 @@ function readFileIfExists(filePath: string): string | null {
   }
 }
 
+function splitPrismaSchemaLineTokens(line: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  const pushCurrent = () => {
+    if (current.length > 0) {
+      tokens.push(current);
+      current = "";
+    }
+  };
+
+  for (const char of line) {
+    if (quote) {
+      current += char;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === "\"" || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+
+    if (char === "(" || char === "[" || char === "{") {
+      depth += 1;
+      current += char;
+      continue;
+    }
+
+    if (char === ")" || char === "]" || char === "}") {
+      depth = Math.max(0, depth - 1);
+      current += char;
+      continue;
+    }
+
+    if (/\s/.test(char) && depth === 0) {
+      pushCurrent();
+      continue;
+    }
+
+    current += char;
+  }
+
+  pushCurrent();
+  return tokens;
+}
+
+function normalizePrismaFieldAttributeOrder(line: string): string {
+  const tokens = splitPrismaSchemaLineTokens(line);
+  if (tokens.length < 4) return line;
+  const attributes = tokens.slice(2);
+  if (!attributes.every((token) => token.startsWith("@") && !token.startsWith("@@"))) {
+    return line;
+  }
+  return [...tokens.slice(0, 2), ...[...attributes].sort()].join(" ");
+}
+
 function normalizeGeneratedSchemaForFreshnessCheck(input: string): string {
   return input
     .replace(/\r\n/g, '\n')
     .split('\n')
-    .map((line) => line.trim().replace(/\s+/g, ' '))
+    .map((line) => normalizePrismaFieldAttributeOrder(line.trim().replace(/\s+/g, ' ')))
     .join('\n')
     .trim();
 }

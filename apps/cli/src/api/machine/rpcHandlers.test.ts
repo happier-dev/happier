@@ -5924,6 +5924,9 @@ describe('registerMachineRpcHandlers', () => {
 
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_LINK_ENSURE)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_ATTACH)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_DETACH)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_STATUS_GET)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER)).toBe(true);

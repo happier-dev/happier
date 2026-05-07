@@ -64,6 +64,14 @@ vi.mock('@/components/ui/lists/Item', () => ({
 
 vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
+    resolveScmChangeStatsColumnWidth: (files: readonly any[]) => {
+        const maxLabelLength = files.reduce((maxLength, file) => {
+            const added = Number.isFinite(file?.linesAdded) ? String(Math.max(0, Math.trunc(file.linesAdded))) : '0';
+            const removed = Number.isFinite(file?.linesRemoved) ? String(Math.max(0, Math.trunc(file.linesRemoved))) : '0';
+            return Math.max(maxLength, `+${added}/-${removed}`.length);
+        }, 0);
+        return Math.max(38, maxLabelLength * 7 + 4);
+    },
 }));
 
 describe('ChangedFilesList', () => {
@@ -105,6 +113,44 @@ describe('ChangedFilesList', () => {
         const rows = screen.findAllByType('ScmChangeRow' as any);
         expect(rows).toHaveLength(1);
         expect(rows[0].props.density).toBe('compact');
+    });
+
+    it('uses the largest visible change stats as a shared stats column width', async () => {
+        const { ChangedFilesList } = await import('./ChangedFilesList');
+        const largeStatsFile = {
+            ...file,
+            fileName: 'requestId.test.ts',
+            fullPath: 'src/middleware/requestId.test.ts',
+            linesAdded: 146,
+            linesRemoved: 10,
+        } as const;
+
+        const smallScreen = await renderScreen(<ChangedFilesList
+                    theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[file as any]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    onFilePress={vi.fn()}
+                />);
+        const mixedScreen = await renderScreen(<ChangedFilesList
+                    theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999', text: '#fff', dark: false } } as any}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[file as any, largeStatsFile as any]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    onFilePress={vi.fn()}
+                />);
+
+        const smallWidth = smallScreen.findByType('ScmChangeRow' as any).props.statsColumnWidth;
+        const mixedWidths = mixedScreen.findAllByType('ScmChangeRow' as any).map((row) => row.props.statsColumnWidth);
+
+        expect(new Set(mixedWidths).size).toBe(1);
+        expect(mixedWidths[0]).toBeGreaterThan(smallWidth);
     });
 
     it('supports injecting per-file actions for commit/stage flows', async () => {

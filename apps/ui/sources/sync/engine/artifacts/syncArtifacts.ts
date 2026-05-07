@@ -140,18 +140,22 @@ export async function fetchAndApplyArtifactsList(params: {
     encryption: Encryption;
     artifactDataKeys: Map<string, Uint8Array>;
     applyArtifacts: (artifacts: DecryptedArtifact[]) => void;
+    shouldContinue?: () => boolean;
 }): Promise<void> {
     const { credentials, encryption, artifactDataKeys, applyArtifacts } = params;
+    const shouldContinue = params.shouldContinue ?? (() => true);
 
     log.log('📦 fetchArtifactsList: Starting artifact sync');
     if (!credentials) {
         log.log('📦 fetchArtifactsList: No credentials, skipping');
         return;
     }
+    if (!shouldContinue()) return;
 
     try {
         log.log('📦 fetchArtifactsList: Fetching artifacts from server');
         const artifacts = await fetchArtifactsApi(credentials);
+        if (!shouldContinue()) return;
         log.log(`📦 fetchArtifactsList: Received ${artifacts.length} artifacts from server`);
         const decryptedArtifacts: DecryptedArtifact[] = [];
 
@@ -161,12 +165,14 @@ export async function fetchAndApplyArtifactsList(params: {
                 encryption,
                 artifactDataKeys,
             });
+            if (!shouldContinue()) return;
             if (decrypted) {
                 decryptedArtifacts.push(decrypted);
             }
         }
 
         log.log(`📦 fetchArtifactsList: Successfully decrypted ${decryptedArtifacts.length} artifacts`);
+        if (!shouldContinue()) return;
         applyArtifacts(decryptedArtifacts);
         log.log('📦 fetchArtifactsList: Artifacts applied to storage');
     } catch (error) {

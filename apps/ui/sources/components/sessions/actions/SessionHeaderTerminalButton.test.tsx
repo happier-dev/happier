@@ -26,6 +26,7 @@ const setBottomTabSpy = vi.fn();
 const openRightSpy = vi.fn();
 const closeRightSpy = vi.fn();
 const setRightTabSpy = vi.fn();
+const terminalFeatureScopeState = vi.hoisted(() => ({ enabledForServerId: 'server-session' as string | null }));
 
 const pane = {
     scopeId: 'session:s1',
@@ -55,7 +56,9 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
+    useFeatureEnabled: (_featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) =>
+        terminalFeatureScopeState.enabledForServerId == null
+        || (scope?.scopeKind === 'spawn' && scope.serverId === terminalFeatureScopeState.enabledForServerId),
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -73,12 +76,13 @@ describe('SessionHeaderTerminalButton', () => {
         setRightTabSpy.mockClear();
         pane.scopeState.bottom.isOpen = false;
         pane.scopeState.bottom.activeTabId = null;
+        terminalFeatureScopeState.enabledForServerId = 'server-session';
     });
 
     it('opens terminal in the bottom pane when docked to bottom', async () => {
         const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
 
-        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
+        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" serverId="server-session" />);
         expect(screen.findByTestId('session-header-terminal-button')).toBeTruthy();
 
         await screen.pressByTestIdAsync('session-header-terminal-button');
@@ -94,7 +98,7 @@ describe('SessionHeaderTerminalButton', () => {
 
         const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
 
-        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />);
+        const screen = await renderScreen(<SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" serverId="server-session" />);
         expect(screen.findByTestId('session-header-terminal-button')).toBeTruthy();
 
         await screen.pressByTestIdAsync('session-header-terminal-button');
@@ -109,10 +113,26 @@ describe('SessionHeaderTerminalButton', () => {
 
         const screen = await renderScreen(
             <SessionScreenTestIdsProvider enabled={false}>
-                <SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" />
+                <SessionHeaderTerminalButton sessionId="s1" scopeId="session:s1" serverId="server-session" />
             </SessionScreenTestIdsProvider>,
         );
 
         expect(screen.findByTestId('session-header-terminal-button')).toBeNull();
+    });
+
+    it('uses the viewed session server scope for terminal visibility', async () => {
+        terminalFeatureScopeState.enabledForServerId = 'server-session';
+        const { SessionHeaderTerminalButton } = await import('./SessionHeaderTerminalButton');
+        const ScreenScopedTerminalButton = SessionHeaderTerminalButton as any;
+
+        const screen = await renderScreen(
+            <ScreenScopedTerminalButton
+                sessionId="s1"
+                scopeId="session:s1"
+                serverId="server-session"
+            />,
+        );
+
+        expect(screen.findByTestId('session-header-terminal-button')).toBeTruthy();
     });
 });

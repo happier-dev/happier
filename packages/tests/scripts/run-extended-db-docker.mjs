@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import {
   buildDbContainerPlan,
   buildDatabaseUrlForContainer,
@@ -24,8 +25,8 @@ Examples:
 `.trim());
 }
 
-function resolveYarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
+export function resolveExtendedDbYarnInvocation(args, options = {}) {
+  return resolveYarnCommandInvocation(args, options);
 }
 
 export function resolveExtendedDbCommandTimeoutMs(raw, fallbackMs) {
@@ -230,10 +231,16 @@ export async function main(argv = process.argv) {
 
     const steps = buildExtendedDbCommandPlan({ db, mode, databaseUrl });
     for (const step of steps) {
-      const yarnCmd = resolveYarnCommand();
+      const invocation = resolveExtendedDbYarnInvocation(step.args);
       const env = { ...process.env, ...step.env };
       console.log(`[extended-db] Running: ${step.kind}`);
-      runOrThrow(yarnCmd, step.args, { env, timeoutMs: testStepTimeoutMs });
+      runOrThrow(invocation.command, invocation.args, {
+        env,
+        timeoutMs: testStepTimeoutMs,
+        ...(invocation.windowsVerbatimArguments
+          ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+          : {}),
+      });
     }
 
     // If the run succeeded and we're in keep mode, make that obvious.

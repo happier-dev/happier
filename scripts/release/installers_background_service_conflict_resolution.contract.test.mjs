@@ -124,6 +124,31 @@ test('PowerShell installer attempts doctor repair --report-only even before any 
   );
 });
 
+test('PowerShell installer treats doctor repair preflight crashes as non-fatal', async () => {
+  const powershellSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');
+
+  assert.match(
+    powershellSource,
+    /\$doctorPreflightResult\s*=\s*Invoke-NativeCommandCapturingOutput[\s\S]*@\("doctor",\s*"repair",\s*"--json"\)/,
+    'expected doctor repair preflight to be captured as a native command result',
+  );
+  assert.match(
+    powershellSource,
+    /if\s*\(\$doctorPreflightResult\.ExitCode\s*-eq\s*0\s*-and\s*\$preflightJsonIsSupported\s*-and\s*-not\s*\$preflightLooksLikePlainReport\)/,
+    'expected installer to parse doctor repair JSON only after a successful native exit AND the output passed the fail-closed shape checks (mirrors install.sh:835-862)',
+  );
+  assert.match(
+    powershellSource,
+    /Write-Warning\s+"Automatic startup inspection failed; continuing without blocking install/,
+    'expected installer to warn briefly instead of aborting when doctor repair preflight crashes',
+  );
+  assert.match(
+    powershellSource,
+    /\$serviceListResult\s*=\s*Invoke-NativeCommandCapturingOutput[\s\S]*@\("service",\s*"list",\s*"--json"\)/,
+    'expected installer to fall back to legacy service list preflight after doctor repair failure',
+  );
+});
+
 test('installers reuse --yes when auto-installing a background service after noninteractive repair', async () => {
   const bashSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.sh'), 'utf8');
   const powershellSource = await readFile(join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1'), 'utf8');

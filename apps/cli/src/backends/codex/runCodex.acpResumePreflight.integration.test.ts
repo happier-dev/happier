@@ -250,6 +250,7 @@ vi.mock('@/rpc/handlers/killSession', () => ({
 
 vi.mock('./utils/createCodexPermissionHandler', () => ({
   createCodexPermissionHandler: vi.fn(() => ({
+    abortPendingRequestsAndFlush: vi.fn(async () => {}),
     reset: vi.fn(),
     updateSession: vi.fn(),
     handleToolCall: vi.fn(async () => ({ decision: 'approved' })),
@@ -297,6 +298,8 @@ vi.mock('@/agent/runtime/initializeBackendApiContext', () => ({
         updateMetadata: vi.fn(),
         updateAgentState: vi.fn(async () => {}),
         keepAlive: vi.fn(),
+        sendAgentMessageCommitted: vi.fn(async () => {}),
+        sendAgentMessageEphemeral: vi.fn(),
         sendSessionDeath: vi.fn(),
         flush: vi.fn(async () => {}),
         close: vi.fn(async () => {}),
@@ -380,6 +383,7 @@ describe('runCodex CodexACP resume behavior', () => {
     waitForMessagesOrPendingImpl = null;
     codexLocalLauncherSpy.mockClear();
     codexLocalLauncherImpl = null;
+    vi.mocked(createCodexPermissionHandler).mockClear();
     registerSessionRpcHandlerMock.mockReset();
     modelSyncFlushPendingAfterStartSpy.mockClear();
     sessionModeSyncFlushPendingAfterStartSpy.mockClear();
@@ -783,8 +787,12 @@ describe('runCodex CodexACP resume behavior', () => {
     const runtimeArgs = createCodexAppServerRuntimeSpy.mock.calls[0]?.[0] as {
       processEnv?: NodeJS.ProcessEnv;
       configOverrides?: string[];
+      transcriptSession?: {
+        sendAgentMessageEphemeral?: unknown;
+      };
     } | undefined;
     expect(runtimeArgs?.processEnv).toBe(process.env);
+    expect(runtimeArgs?.transcriptSession?.sendAgentMessageEphemeral).toBeTypeOf('function');
     expect(runtimeArgs?.configOverrides).toEqual([
       'mcp_servers.happier.command="/tmp/happier-mcp-bridge"',
       'mcp_servers.happier.args=["--url","http://127.0.0.1:0"]',
@@ -871,6 +879,8 @@ describe('runCodex CodexACP resume behavior', () => {
 
     const abortHandler = registerSessionRpcHandlerMock.mock.calls.find((call) => call[0] === 'abort')?.[1];
     await expect(abortHandler?.()).resolves.toBeUndefined();
+    const createdPermissionHandler = (createCodexPermissionHandler as any).mock.results[0]?.value;
+    expect(createdPermissionHandler?.abortPendingRequestsAndFlush).toHaveBeenCalledTimes(1);
     expect(cancelSpy).toHaveBeenCalledTimes(1);
   });
 

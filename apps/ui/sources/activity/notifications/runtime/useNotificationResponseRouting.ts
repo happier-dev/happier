@@ -118,7 +118,7 @@ export function useNotificationResponseRouting(params: Readonly<{
             const route = parsed.route;
             const serverUrl = parsed.serverUrl;
             const routeToServerSettingsForUrl = (url: string) => {
-                router.push(`/server?url=${encodeURIComponent(url)}&source=notification`);
+                router.push(`/settings/server?url=${encodeURIComponent(url)}&source=notification`);
             };
 
             // Permission action buttons are security-sensitive. Only perform allow/deny when:

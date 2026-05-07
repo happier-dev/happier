@@ -22,7 +22,7 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock({
         theme: {
             colors: {
-                button: { primary: { background: '#000', tint: '#fff', disabled: '#666' } },
+                button: { primary: { background: '#000', tint: '#fff', disabled: '#666', gradient: { colors: ['#000', '#111'], start: { x: 0.5, y: 1 }, end: { x: 0.5, y: 0 } } } },
                 surfaceHigh: '#111',
                 surface: '#111',
                 divider: '#222',
@@ -52,6 +52,7 @@ describe('PrimaryCircleIconButton', () => {
             throw new Error('Expected primary circle icon button pressable to render');
         }
         expect(pressable.props.testID).toBe('circle-button');
+        expect(pressable.findByType('LinearGradient' as never).props.colors).toEqual(['#000', '#111']);
     });
 
     it('does not emit raw text nodes under Pressable when icon children render as text on web', async () => {

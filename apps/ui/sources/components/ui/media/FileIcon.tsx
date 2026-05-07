@@ -7,6 +7,7 @@ import { useUnistyles } from 'react-native-unistyles';
 interface FileIconProps {
     fileName: string;
     size?: number;
+    testID?: string;
 }
 
 const lightColorTheme: SetiTheme = {
@@ -40,6 +41,7 @@ const darkColorTheme: SetiTheme = {
 export const FileIcon: React.FC<FileIconProps> = ({ 
     fileName, 
     size = 24, 
+    testID,
 }) => {
     const { theme } = useUnistyles();
     
@@ -49,7 +51,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
     const iconData = themedGetIcon(fileName);
     
     return (
-        <View style={{ width: size, height: size }}>
+        <View testID={testID} style={{ width: size, height: size }}>
             <SvgXml
                 xml={iconData.svg}
                 width={size}

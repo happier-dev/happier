@@ -7,8 +7,9 @@ import { createServer } from 'node:net';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { readCredentials } from '@/persistence';
-import { isPidAlive, spawnDetachedInlineNodeTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
+import { spawnDetachedInlineNodeTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
 import { prepareIsolatedDaemonTestHome, type PreparedDaemonTestHome } from './testkit/realIntegration.testkit';
+import { isOpenCodeServerPidAlive } from '@/backends/opencode/server/openCodeServerProcessState';
 
 let preparedDaemonHome: PreparedDaemonTestHome | null = null;
 
@@ -17,6 +18,7 @@ async function prepareIsolatedHome(): Promise<void> {
     prefix: 'happier-daemon-opencode-cleanup-',
     extraEnv: ({ homeDir }) => ({
       HAPPIER_OPENCODE_SERVER_STATE_PATH: join(homeDir, 'opencode', `managed-server-${process.pid}.json`),
+      HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED: '0',
     }),
   });
 
@@ -155,6 +157,19 @@ async function startDaemonStartSync(): Promise<{ child: ReturnType<typeof spawnH
   return { child, output: () => output };
 }
 
+async function waitForOpenCodeServerPidExit(pid: number, opts: { timeoutMs?: number; intervalMs?: number } = {}): Promise<boolean> {
+  const timeoutMs = opts.timeoutMs ?? 5_000;
+  const intervalMs = opts.intervalMs ?? 50;
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    if (!isOpenCodeServerPidAlive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return !isOpenCodeServerPidAlive(pid);
+}
+
 describe('daemon OpenCode managed server cleanup', { timeout: 120_000 }, () => {
   beforeAll(async () => {
     await prepareIsolatedHome();
@@ -191,8 +206,8 @@ describe('daemon OpenCode managed server cleanup', { timeout: 120_000 }, () => {
 
       process.kill(daemonPid, 'SIGTERM');
 
-      await expect(waitForProcessExit(fake.pid, { timeoutMs: 10_000 })).resolves.toBe(true);
-      expect(isPidAlive(fake.pid)).toBe(false);
+      await expect(waitForOpenCodeServerPidExit(fake.pid, { timeoutMs: 10_000 })).resolves.toBe(true);
+      expect(isOpenCodeServerPidAlive(fake.pid)).toBe(false);
 
       const daemonExitCode: number | null =
         startedDaemon.child.exitCode !== null

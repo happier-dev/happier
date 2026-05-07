@@ -54,6 +54,7 @@ import { printDelegatedStackHelpIfAvailable } from './stack/stack_delegated_help
 import { runStackWorkspaceCommand } from './stack/stack_workspace_command.mjs';
 import { resolveRequestedRepoCheckoutDir } from './stack/repo_checkout_resolution.mjs';
 import { resolveTransientRepoOverrides } from './stack/transient_repo_overrides.mjs';
+import { runStackInstallCommand } from './stack/stack_install_command.mjs';
 import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { listAllStackNames, stackExistsSync } from './utils/stack/stacks.mjs';
 import { writeDevAuthKey } from './utils/auth/dev_key.mjs';
@@ -2402,6 +2403,10 @@ async function main() {
       process.exit(1);
     }
     await cmdRuntime({ rootDir, stackName, args: passthrough.slice(1) });
+    return;
+  }
+  if (cmd === 'install') {
+    await runStackInstallCommand({ rootDir, stackName, argv: passthrough, json });
     return;
   }
 

@@ -13,7 +13,6 @@ installAppPaneScopeHostCommonModuleMocks({
     getDimensions: () => ({ width: 390, height: 844 }),
     getLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return true;
-        if (key === 'editorFocusModeEnabled') return false;
         if (key === 'rightPaneWidthPx') return 360;
         if (key === 'rightPaneWidthBasisPx') return 2000;
         if (key === 'detailsPaneWidthPx') return 420;

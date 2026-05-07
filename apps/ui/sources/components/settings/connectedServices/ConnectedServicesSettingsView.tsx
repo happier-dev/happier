@@ -109,7 +109,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
               rightElement={badges.length > 0 ? <ConnectedServiceQuotaBadgesView badges={badges} /> : undefined}
               onPress={async () => {
                 try {
-                  router.push({ pathname: '/(app)/settings/connected-services/[serviceId]', params: { serviceId } });
+                  router.push({ pathname: '/settings/connected-services/[serviceId]', params: { serviceId } });
                 } catch {
                   // Fallback for environments without route support.
                   await Modal.alert(

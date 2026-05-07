@@ -1,8 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { encodeBase64 } from '@/encryption/base64';
 import { EncryptionCache } from './encryptionCache';
 import { SessionEncryption } from './sessionEncryption';
 import { AES256Encryption } from './encryptor';
+import type { ApiMessage } from '../api/types/apiTypes';
+import {
+  NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON,
+  type CryptoWorkerScope,
+  type NativeCryptoWorker,
+} from './nativeCryptoWorker/types';
 
 describe('SessionEncryption.decryptMessages (cache behavior)', () => {
   it('returns plaintext messages without decrypting and caches them', async () => {
@@ -177,6 +183,104 @@ describe('SessionEncryption.decryptMessages (cache behavior)', () => {
     const second = await correctSessionEnc.decryptMessages([msg as any]);
     expect(second[0]).toBeTruthy();
     expect(second[0]!.content).toEqual(payload);
+  });
+
+  it('retries decrypting encrypted messages when a cached null result is present', async () => {
+    const cache = new EncryptionCache();
+    const sessionId = 's_cached_null';
+    const key = new Uint8Array(32).fill(17);
+    const payload = { kind: 'user-text', text: 'hello from retry' };
+    const encryptor = new AES256Encryption(key);
+    const encrypted = await encryptor.encrypt([payload]);
+    const ciphertextB64 = encodeBase64(encrypted[0], 'base64');
+    const fingerprint = `enc:${ciphertextB64.length}:${ciphertextB64.slice(0, 24)}:${ciphertextB64.slice(Math.max(0, ciphertextB64.length - 24))}`;
+
+    cache.setCachedMessage('m_cached_null', {
+      id: 'm_cached_null',
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      content: null,
+    }, fingerprint);
+
+    const sessionEnc = new SessionEncryption(sessionId, encryptor, cache);
+    const message = {
+      id: 'm_cached_null',
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      content: { t: 'encrypted' as const, c: ciphertextB64 },
+    } satisfies ApiMessage;
+
+    const result = await sessionEnc.decryptMessages([message]);
+
+    expect(result[0]).toBeTruthy();
+    expect(result[0]!.content).toEqual(payload);
+  });
+
+  it('passes encrypted message base64 directly to native AES decrypt without re-encoding', async () => {
+    const cache = new EncryptionCache();
+    const sessionId = 's_native_direct_base64';
+    const key = new Uint8Array(32).fill(21);
+    const scope: CryptoWorkerScope = { accountId: 'account', serverId: 'server', generation: 1 };
+    const decryptAesGcmJson = vi.fn(async () => ({
+      status: 'ok' as const,
+      source: 'native' as const,
+      items: [{ role: 'user', content: { type: 'text', text: 'native' } }],
+    }));
+    const worker: NativeCryptoWorker = {
+      async probe() {
+        return {
+          available: true,
+          failureReason: NATIVE_CRYPTO_WORKER_PROBE_FAILURE_REASON.ok,
+          nativeVersion: 1,
+        };
+      },
+      async decryptDataKeyEnvelopeV1() {
+        throw new Error('decryptDataKeyEnvelopeV1 should not be called');
+      },
+      async decryptSecretboxJson() {
+        throw new Error('decryptSecretboxJson should not be called');
+      },
+      decryptAesGcmJson,
+    };
+    const encryptor = new AES256Encryption(key, {
+      nativeCryptoWorker: {
+        getWorker: () => worker,
+        getRouting: () => ({ mode: 'require', minPayloadBytes: 0 }),
+        getScope: () => scope,
+        isScopeCurrent: () => true,
+      },
+      decryptString: async () => {
+        throw new Error('decryptString should not be called when native worker handles base64 input');
+      },
+      encryptString: async () => {
+        throw new Error('encryptString should not be called');
+      },
+    });
+    const sessionEnc = new SessionEncryption(sessionId, encryptor, cache);
+    const apiCiphertextBase64 = 'AAE';
+
+    const message = {
+      id: 'm_native_direct_base64',
+      seq: 1,
+      localId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      content: { t: 'encrypted' as const, c: apiCiphertextBase64 },
+    } satisfies ApiMessage;
+
+    const result = await sessionEnc.decryptMessages([message]);
+
+    expect(result[0]?.content).toEqual({ role: 'user', content: { type: 'text', text: 'native' } });
+    expect(decryptAesGcmJson).toHaveBeenCalledWith({
+      scope,
+      items: [{
+        encryptedPayloadBase64: apiCiphertextBase64,
+        keyBase64: encodeBase64(key, 'base64'),
+      }],
+    });
   });
 
   it('re-decrypts when encrypted ciphertext changes for the same message id (streaming updates)', async () => {

@@ -19,7 +19,14 @@ type UsePublishBranchActionResult = Readonly<{
     publishBranch: () => Promise<boolean>;
 }>;
 
-function resolveCanPublish(input: UsePublishBranchActionInput): boolean {
+function resolvePublishRemote(snapshot: ScmWorkingSnapshot | null | undefined): string | null {
+    const remotes = snapshot?.repo.remotes ?? [];
+    if (remotes.length === 0) return null;
+    const origin = remotes.find((remote) => remote.name === 'origin');
+    return (origin ?? remotes[0])?.name ?? null;
+}
+
+function resolveCanPublish(input: UsePublishBranchActionInput, publishRemote: string | null): boolean {
     return Boolean(
         input.sessionId
         && input.writeEnabled === true
@@ -28,21 +35,23 @@ function resolveCanPublish(input: UsePublishBranchActionInput): boolean {
         && input.snapshot.repo.isRepo === true
         && input.snapshot.branch.detached !== true
         && input.snapshot.branch.head
-        && !input.snapshot.branch.upstream,
+        && !input.snapshot.branch.upstream
+        && publishRemote,
     );
 }
 
 // Shared publish-branch action so all SCM surfaces use the same capability gate, mutation flow, and error handling.
 export function usePublishBranchAction(input: UsePublishBranchActionInput): UsePublishBranchActionResult {
-    const canPublish = resolveCanPublish(input);
+    const publishRemote = resolvePublishRemote(input.snapshot);
+    const canPublish = resolveCanPublish(input, publishRemote);
     const [publishBusy, setPublishBusy] = React.useState(false);
 
     const publishBranch = React.useCallback(async (): Promise<boolean> => {
-        if (!input.sessionId || !canPublish || publishBusy) return false;
+        if (!input.sessionId || !canPublish || publishBusy || !publishRemote) return false;
 
         setPublishBusy(true);
         try {
-            const response = await sessionScmRemotePublish(input.sessionId, {});
+            const response = await sessionScmRemotePublish(input.sessionId, { remote: publishRemote });
             if (!response.success) {
                 Modal.alert(t('common.error'), response.error || t('files.branchMenu.publish.failed'));
                 return false;
@@ -52,7 +61,7 @@ export function usePublishBranchAction(input: UsePublishBranchActionInput): UseP
         } finally {
             setPublishBusy(false);
         }
-    }, [canPublish, input.sessionId, publishBusy]);
+    }, [canPublish, input.sessionId, publishBusy, publishRemote]);
 
     return React.useMemo(() => ({
         canPublish,

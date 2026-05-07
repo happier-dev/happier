@@ -38,7 +38,7 @@ export default React.memo(function ProviderSettingsIndexScreen() {
                             title={t(core.displayNameKey)}
                             subtitle={`${state} • ${channel}`}
                             icon={<Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.textSecondary} />}
-                            onPress={() => router.push(`/(app)/settings/providers/${agentId}` as any)}
+                            onPress={() => router.push(`/settings/providers/${agentId}` as any)}
                         />
                     );
                 })}

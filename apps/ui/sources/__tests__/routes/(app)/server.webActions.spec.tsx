@@ -63,7 +63,7 @@ describe('ServerConfigScreen (web row actions)', () => {
         const company = upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
         setActiveServerId(company.id, { scope: 'device' });
 
-        const Screen = (await import('@/app/(app)/server')).default;
+        const Screen = (await import('@/app/(app)/settings/server')).default;
         const screen = await renderScreen(React.createElement(Screen));
 
         const companyRow = findTestInstanceByTypeWithProps(screen.tree, 'ItemRowActions' as any, { title: 'Company' }) as any;

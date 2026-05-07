@@ -9,6 +9,40 @@ use build_support::{resolve_sidecar_update_action, SidecarSnapshot, SidecarUpdat
 use flate2;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use tauri_build::{AppManifest, Attributes};
+
+const APP_TAURI_COMMANDS: &[&str] = &[
+    "desktop_fetch_update",
+    "desktop_install_update",
+    "desktop_pick_ssh_identity_file",
+    "desktop_get_autostart_enabled",
+    "desktop_set_autostart_enabled",
+    "desktop_set_tray_state",
+    "sync_desktop_pet_overlay_state",
+    "desktop_pet_overlay_read_window_state",
+    "desktop_pet_overlay_set_input_locked",
+    "desktop_pet_overlay_sync_element_metrics",
+    "desktop_pet_overlay_start_drag_session",
+    "desktop_pet_overlay_apply_drag_delta",
+    "desktop_pet_overlay_release_drag_velocity",
+    "desktop_pet_overlay_apply_momentum_delta",
+    "desktop_pet_overlay_end_drag_session",
+    "desktop_pet_overlay_reset_position",
+    "emit_desktop_pet_overlay_interaction_result",
+    "desktop_pet_overlay_show_main_window",
+    "start_system_task",
+    "cancel_system_task",
+    "get_system_task_snapshot",
+    "system_tasks_open_log_path",
+    "respond_system_task_prompt",
+    "desktop_get_window_chrome_policy",
+    "desktop_get_window_state",
+    "desktop_minimize_window",
+    "desktop_toggle_window_maximize",
+    "desktop_close_window",
+    "desktop_show_main_window",
+    "desktop_start_window_dragging",
+];
 
 fn is_truthy_env(name: &str) -> bool {
     env::var(name)
@@ -38,7 +72,10 @@ fn main() {
     } else {
         build_hsetup_sidecar().expect("failed to build bundled hsetup sidecar");
     }
-    tauri_build::build()
+    tauri_build::try_build(
+        Attributes::new().app_manifest(AppManifest::new().commands(APP_TAURI_COMMANDS)),
+    )
+    .expect("failed to build tauri app ACLs")
 }
 
 fn ensure_hsetup_sidecar_stub() -> Result<(), String> {
@@ -168,10 +205,11 @@ fn write_linux_hsetup_gzip(source_path: &PathBuf) -> Result<(), String> {
     let bytes = fs::read(source_path).map_err(|error| error.to_string())?;
     let gzip_path = PathBuf::from(format!("{}.gz", source_path.display()));
 
-    let mut encoder =
-        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     use std::io::Write;
-    encoder.write_all(&bytes).map_err(|error| error.to_string())?;
+    encoder
+        .write_all(&bytes)
+        .map_err(|error| error.to_string())?;
     let gz = encoder.finish().map_err(|error| error.to_string())?;
     fs::write(&gzip_path, gz).map_err(|error| error.to_string())?;
     Ok(())

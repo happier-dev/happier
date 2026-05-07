@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { getHasAnyAgentInputActions, shouldShowSecondaryControlRow } from './actionBarLogic';
 
 describe('agentInput/actionBarLogic', () => {
-    it('shows the secondary controls row only in wrap mode when controls exist', () => {
+    it('shows the secondary controls row in wrap and scroll modes when controls exist', () => {
         expect(shouldShowSecondaryControlRow('wrap', true)).toBe(true);
         expect(shouldShowSecondaryControlRow('wrap', false)).toBe(false);
-        expect(shouldShowSecondaryControlRow('scroll', true)).toBe(false);
+        expect(shouldShowSecondaryControlRow('scroll', true)).toBe(true);
+        expect(shouldShowSecondaryControlRow('scroll', false)).toBe(false);
         expect(shouldShowSecondaryControlRow('collapsed', true)).toBe(false);
     });
 

@@ -14,6 +14,11 @@ const router = vi.hoisted(() => ({
     replace: vi.fn(),
 }));
 
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+
 vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('@/encryption/libsodium.lib', () => ({

@@ -1,5 +1,6 @@
 import { storage } from '@/sync/domains/state/storage';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
+import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
@@ -32,14 +33,22 @@ export function resolveRepoScmSessionRequest(input: Readonly<{
     }
 
     const workspaceContext = readSessionWorkspaceContext(state, sessionId);
-    const repoPath = workspaceContext.projectPath ?? workspaceContext.workspacePath;
-    const normalizedRepoPath = normalizeNonEmptyString(repoPath);
+    const machineTarget = readMachineTargetForSession(sessionId);
+    const sessionWorkspacePath = normalizeNonEmptyString(workspaceContext.workspacePath);
+    const projectPath = normalizeNonEmptyString(workspaceContext.projectPath);
+    const normalizedRepoPath =
+        normalizeNonEmptyString(machineTarget?.basePath)
+        ?? (
+            session.active === true
+                ? sessionWorkspacePath ?? projectPath
+                : projectPath ?? sessionWorkspacePath
+        );
     if (!normalizedRepoPath) {
         return null;
     }
 
-    const reachableMachineId = readMachineTargetForSession(sessionId)?.machineId ?? null;
-    const sessionMachineId = normalizeNonEmptyString(session.metadata?.machineId);
+    const reachableMachineId = machineTarget?.machineId ?? null;
+    const sessionMachineId = resolveSessionMachineId(session.metadata);
     const projectMachineId = normalizeNonEmptyString(workspaceContext.projectMachineId);
     const machineId =
         reachableMachineId

@@ -30,6 +30,7 @@ export interface NewSessionData {
     automationDraft?: NewSessionAutomationDraft | null;
     agentNewSessionOptionStateByAgentId?: Record<string, Record<string, unknown>>;
     resumeSessionId?: string;
+    replacePersistedDraftSelections?: boolean;
     taskId?: string;
     taskTitle?: string;
 }

@@ -32,6 +32,29 @@ function writeWorkspacePackageFixture({ repoRoot, packageName, relativeDir }) {
   writeFileSync(join(distDir, 'index.mjs'), `export const packageName = ${JSON.stringify(packageName)};\n`, 'utf8');
 }
 
+function writeNodePackageFixture({ repoRoot, packageName, packageJson = {}, files = { 'index.js': 'module.exports = {};\n' } }) {
+  const packageDir = join(repoRoot, 'node_modules', ...packageName.split('/'));
+  mkdirSync(packageDir, { recursive: true });
+  writeFileSync(
+    join(packageDir, 'package.json'),
+    JSON.stringify(
+      {
+        name: packageName,
+        version: '1.0.0',
+        ...packageJson,
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+  for (const [relativePath, content] of Object.entries(files)) {
+    const filePath = join(packageDir, ...relativePath.split('/'));
+    mkdirSync(join(filePath, '..'), { recursive: true });
+    writeFileSync(filePath, content, 'utf8');
+  }
+}
+
 function writeCliRuntimePackageFixture(
   repoRoot,
   bundledDependencies = [
@@ -870,6 +893,121 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
       readFileSync(join(payloadDir, 'node_modules', '@prisma', 'client', 'index.js'), 'utf8'),
       'module.exports = { PrismaClient: class PrismaClient {} };\n'
     );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('buildServerBinaryArtifactPayload stages sharp native runtime sidecars for the binary target', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-sharp-'));
+  try {
+    const repoRoot = join(tempRoot, 'repo');
+    const payloadDir = join(tempRoot, 'payload');
+    const serverSourcesDir = join(repoRoot, 'apps', 'server', 'sources');
+    const uiDistDir = join(repoRoot, 'apps', 'ui', 'dist');
+    const sqliteClientDir = join(repoRoot, 'apps', 'server', 'generated', 'sqlite-client');
+    const sqliteMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
+    const postgresClientDir = join(repoRoot, 'node_modules', '.prisma', 'client');
+
+    mkdirSync(serverSourcesDir, { recursive: true });
+    mkdirSync(uiDistDir, { recursive: true });
+    mkdirSync(sqliteClientDir, { recursive: true });
+    mkdirSync(sqliteMigrationsDir, { recursive: true });
+    mkdirSync(postgresClientDir, { recursive: true });
+
+    writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+    writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
+    writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
+    writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
+    writeServerPrismaEngineFixtures({
+      sqliteClientDir,
+      postgresClientDir,
+      providers: ['sqlite'],
+      platform: 'darwin',
+      arch: 'arm64',
+    });
+
+    writeNodePackageFixture({
+      repoRoot,
+      packageName: '@prisma/client',
+      files: { 'index.js': 'module.exports = { PrismaClient: class PrismaClient {} };\n' },
+    });
+    writeNodePackageFixture({
+      repoRoot,
+      packageName: 'sharp',
+      packageJson: {
+        dependencies: {
+          '@img/colour': '^1.0.0',
+          'detect-libc': '^2.1.2',
+          semver: '^7.7.3',
+        },
+        optionalDependencies: {
+          '@img/sharp-darwin-arm64': '0.34.5',
+          '@img/sharp-libvips-darwin-arm64': '1.2.4',
+          '@img/sharp-linux-x64': '0.34.5',
+        },
+      },
+      files: { 'lib/index.js': 'module.exports = require("@img/sharp-darwin-arm64");\n' },
+    });
+    writeNodePackageFixture({ repoRoot, packageName: '@img/colour' });
+    writeNodePackageFixture({ repoRoot, packageName: 'detect-libc' });
+    writeNodePackageFixture({ repoRoot, packageName: 'semver' });
+    writeNodePackageFixture({
+      repoRoot,
+      packageName: '@img/sharp-darwin-arm64',
+      packageJson: {
+        os: ['darwin'],
+        cpu: ['arm64'],
+        optionalDependencies: {
+          '@img/sharp-libvips-darwin-arm64': '1.2.4',
+        },
+      },
+    });
+    writeNodePackageFixture({
+      repoRoot,
+      packageName: '@img/sharp-libvips-darwin-arm64',
+      packageJson: {
+        os: ['darwin'],
+        cpu: ['arm64'],
+      },
+    });
+    writeNodePackageFixture({
+      repoRoot,
+      packageName: '@img/sharp-linux-x64',
+      packageJson: {
+        os: ['linux'],
+        cpu: ['x64'],
+      },
+    });
+
+    const artifacts = await import('../dist/componentArtifacts/index.js');
+    const compileCalls = [];
+    await artifacts.buildServerBinaryArtifactPayload({
+      repoRoot,
+      payloadDir,
+      entrypoint: join(serverSourcesDir, 'main.light.ts'),
+      buildDbProviders: 'sqlite',
+      target: artifacts.resolveCurrentBinaryTarget({
+        availableTargets: artifacts.SERVER_BINARY_TARGETS,
+        platform: 'darwin',
+        arch: 'arm64',
+      }),
+      commandProbe: () => true,
+      runCommand: () => {},
+      compileBinary: async ({ outfile, externals }) => {
+        compileCalls.push({ outfile, externals });
+        writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
+      },
+    });
+
+    assert.deepEqual(compileCalls[0]?.externals, ['redis']);
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', 'sharp', 'lib', 'index.js'), 'utf8'), 'module.exports = require("@img/sharp-darwin-arm64");\n');
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', '@img', 'colour', 'index.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', 'detect-libc', 'index.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', 'semver', 'index.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-darwin-arm64', 'index.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-libvips-darwin-arm64', 'index.js'), 'utf8'), 'module.exports = {};\n');
+    assert.equal(existsSync(join(payloadDir, 'node_modules', '@img', 'sharp-linux-x64')), false);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

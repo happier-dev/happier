@@ -9,6 +9,7 @@ import { showDaemonUnavailableAlert, tryShowDaemonUnavailableAlertForRpcError } 
 import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import { createAdvancedDebounce } from '@/utils/timing/debounce';
 import { sessionFileEditorDraftCache } from './sessionFileEditorDraftCache';
+import type { FileDisplayMode } from '@/components/sessions/files/file/FileActionToolbar';
 
 export type SessionFileEditorState = Readonly<{
     editorSurfaceEnabled: boolean;
@@ -32,7 +33,7 @@ export function useSessionFileEditorState(input: Readonly<{
     sessionId: string;
     sessionPath: string | null;
     filePath: string;
-    displayMode: 'file' | 'diff';
+    displayMode: FileDisplayMode;
     fileText: string | null;
     fileWriteSupported: boolean;
     setFileWriteSupported: (value: boolean) => void;

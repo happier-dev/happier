@@ -22,6 +22,13 @@ const routerReplaceSpy = vi.fn();
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
 let activeServerUrl = 'https://api.happier.dev';
+let activeServerSnapshot: { serverId: string; serverUrl: string; generation: number } | null = null;
+
+function readActiveServerSnapshot() {
+    if (activeServerSnapshot?.serverUrl === activeServerUrl) return activeServerSnapshot;
+    activeServerSnapshot = { serverId: 'server-a', serverUrl: activeServerUrl, generation: 1 };
+    return activeServerSnapshot;
+}
 
 vi.mock('expo-updates', () => ({
     checkForUpdateAsync: vi.fn(async () => ({ isAvailable: false })),
@@ -131,7 +138,9 @@ vi.mock('@/sync/domains/server/serverProfiles', async () => {
     return {
         ...actual,
         getActiveServerUrl: () => activeServerUrl,
-        getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: activeServerUrl, generation: 1 }),
+        getActiveServerSnapshot: readActiveServerSnapshot,
+        subscribeActiveServer: () => () => {},
+        getTabActiveServerId: () => null,
         listServerProfiles: () => [],
     };
 });
@@ -167,6 +176,7 @@ vi.mock('@/sync/api/capabilities/getReadyServerFeatures', () => ({
 
 afterEach(() => {
     activeServerUrl = 'https://api.happier.dev';
+    activeServerSnapshot = null;
     historyReplaceStateSpy.mockReset();
     routerPushSpy.mockReset();
     routerReplaceSpy.mockReset();

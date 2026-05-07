@@ -13,6 +13,16 @@ import type { AccountSettings } from '@happier-dev/protocol';
 type AgentStateRequestEntry = NonNullable<AgentState['requests']>[string];
 type AgentStateCompletedEntry = NonNullable<AgentState['completedRequests']>[string];
 
+export type AgentStateOutstandingRequest = Readonly<{
+    requestId: string;
+    toolName: string;
+    toolInput: unknown;
+    createdAt: number;
+    kind?: string;
+    source?: string;
+    permissionSuggestions?: unknown;
+}>;
+
 type SessionLike = Readonly<{
     sessionId: string;
     updateAgentState: (updater: (state: AgentState) => AgentState) => Promise<void> | void;
@@ -46,6 +56,32 @@ export class AgentStateRequestStore {
         this.session = session;
         this.permissionRequestPushNotifier?.dispose();
         this.permissionRequestPushNotifier = null;
+    }
+
+    hasOutstandingRequest(requestId: string): boolean {
+        return this.readOutstandingRequest(requestId) !== null;
+    }
+
+    readOutstandingRequest(requestId: string): AgentStateOutstandingRequest | null {
+        const entry = this.session.getAgentStateSnapshot?.()?.requests?.[requestId];
+        if (!entry) return null;
+
+        const extendedEntry = entry as AgentStateRequestEntry & {
+            source?: unknown;
+            permissionSuggestions?: unknown;
+        };
+
+        return {
+            requestId,
+            toolName: entry.tool,
+            toolInput: entry.arguments,
+            createdAt: entry.createdAt,
+            ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
+            ...(typeof extendedEntry.source === 'string' ? { source: extendedEntry.source } : {}),
+            ...(typeof extendedEntry.permissionSuggestions !== 'undefined'
+                ? { permissionSuggestions: extendedEntry.permissionSuggestions }
+                : {}),
+        };
     }
 
     publishRequest(params: Readonly<{
@@ -223,7 +259,7 @@ export class AgentStateRequestStore {
         this.markPermissionRequestCompletedBestEffort(params.requestId);
     }
 
-    cancelAllRequests(params: Readonly<{ reason: string }>): void {
+    cancelAllRequests(params: Readonly<{ reason: string; decision?: string }>): void {
         updateAgentStateBestEffort(
             this.session,
             (currentState) => {
@@ -236,6 +272,9 @@ export class AgentStateRequestStore {
                     entry.completedAt = now;
                     entry.status = 'canceled';
                     entry.reason = params.reason;
+                    if (typeof params.decision === 'string' && params.decision.length > 0) {
+                        entry.decision = params.decision;
+                    }
                     completedRequests[id] = entry as AgentStateCompletedEntry;
                     this.markPermissionRequestCompletedBestEffort(id);
                 }

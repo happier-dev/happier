@@ -7,7 +7,7 @@ import {
     renderScreen,
     standardCleanup,
 } from '@/dev/testkit';
-import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
+import { getStyleValue, installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,12 +18,16 @@ let sessionHydrated = true;
 let mockDetailsParam: string | undefined;
 let mockPathParam: string | undefined;
 let mockShaParam: string | undefined;
+let mockSourceSurfaceParam: string | undefined;
+let safeAreaInsets = { top: 47, right: 0, bottom: 34, left: 0 };
 const routerBackSpy = vi.fn();
 const routerReplaceSpy = vi.fn();
 const ensureSessionVisibleSpy = vi.fn((_sessionId: string, _options?: { serverId?: string }) => Promise.resolve());
 const closeDetailsSpy = vi.fn();
 const openDetailsTabSpy = vi.fn();
 let canGoBack = true;
+let deviceType: 'phone' | 'tablet' | 'desktop' = 'desktop';
+let mobileWorkspaceExperience: 'classic' | 'cockpit' = 'classic';
 const routerMock = createExpoRouterMock({
     router: {
         back: routerBackSpy,
@@ -48,12 +52,47 @@ type MockScopeState = Readonly<{
 let scopeState: MockScopeState = { details: null };
 
 installSessionRouteCommonModuleMocks({
+    safeAreaInsets: () => safeAreaInsets,
     router: () => ({
         ...routerMock.module,
-        useLocalSearchParams: () => ({ id: mockSessionId, serverId: mockServerId, details: mockDetailsParam, path: mockPathParam, sha: mockShaParam }),
-        useGlobalSearchParams: () => ({ id: mockSessionId, serverId: mockServerId, details: mockDetailsParam, path: mockPathParam, sha: mockShaParam }),
+        useLocalSearchParams: () => ({
+            id: mockSessionId,
+            serverId: mockServerId,
+            details: mockDetailsParam,
+            path: mockPathParam,
+            sha: mockShaParam,
+            sourceSurface: mockSourceSurfaceParam,
+        }),
+        useGlobalSearchParams: () => ({
+            id: mockSessionId,
+            serverId: mockServerId,
+            details: mockDetailsParam,
+            path: mockPathParam,
+            sha: mockShaParam,
+            sourceSurface: mockSourceSurfaceParam,
+        }),
         useNavigation: () => ({ canGoBack: () => canGoBack }),
     }),
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: ((key: string) => {
+                    if (key === 'mobileWorkspaceExperienceV1') return mobileWorkspaceExperience;
+                    return null;
+                }) as any,
+                useSettingMutable: ((key: string) => [
+                    key === 'mobileWorkspaceExperienceV1' ? mobileWorkspaceExperience : null,
+                    vi.fn(),
+                ]) as any,
+                useLocalSetting: ((key: string) => {
+                    if (key === 'sessionLastMobileSurfaceBySessionId') return {};
+                    return null;
+                }) as any,
+            },
+        });
+    },
 });
 
 vi.mock('@react-navigation/native', () => ({
@@ -97,6 +136,14 @@ vi.mock('@/components/sessions/panes/SessionDetailsPanel', () => ({
     SessionDetailsPanel: (props: any) => React.createElement('SessionDetailsPanel', props),
 }));
 
+vi.mock('@/components/workspaceCockpit/session/SessionCockpitShell', () => ({
+    SessionCockpitShell: (props: any) => React.createElement('SessionCockpitShell', props),
+}));
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => deviceType,
+}));
+
 vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
     parseSessionPaneUrlState: () => {
         if (mockDetailsParam === 'file' && mockPathParam) {
@@ -106,6 +153,17 @@ vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
             return { details: { kind: 'commit', sha: mockShaParam } };
         }
         return null;
+    },
+    buildActiveDetailsRouteParams: (detailsTabs: any[], activeDetailsKey: string | null) => {
+        const activeTab = detailsTabs.find((tab) => tab?.key === activeDetailsKey) ?? detailsTabs.at(-1) ?? null;
+        if (!activeTab) return {};
+        if (activeTab.kind === 'file') {
+            return { details: 'file', path: activeTab.resource?.path };
+        }
+        if (activeTab.kind === 'commit') {
+            return { details: 'commit', sha: activeTab.resource?.commitHash ?? activeTab.resource?.sha };
+        }
+        return {};
     },
     applySessionPaneUrlState: (pane: any, state: any) => {
         if (state?.details?.kind === 'file') {
@@ -158,7 +216,11 @@ describe('/session/[id]/details', () => {
         mockDetailsParam = undefined;
         mockPathParam = undefined;
         mockShaParam = undefined;
+        mockSourceSurfaceParam = undefined;
+        safeAreaInsets = { top: 47, right: 0, bottom: 34, left: 0 };
         canGoBack = true;
+        deviceType = 'desktop';
+        mobileWorkspaceExperience = 'classic';
         scopeState = { details: null };
         routerBackSpy.mockClear();
         routerReplaceSpy.mockClear();
@@ -170,6 +232,16 @@ describe('/session/[id]/details', () => {
 
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('keeps the fullscreen details surface inside the vertical safe area', async () => {
+        scopeState = { details: { tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md' } };
+        const screen = await renderScreen(<Screen />);
+        const surface = screen.findByTestId('session-details-screen');
+        if (!surface) throw new Error('Expected session details screen surface to render');
+
+        expect(getStyleValue(surface.props.style, 'paddingTop')).toBe(47);
+        expect(getStyleValue(surface.props.style, 'paddingBottom')).toBe(34);
     });
 
     it('restores file details from route params before falling back to the session route', async () => {
@@ -194,6 +266,25 @@ describe('/session/[id]/details', () => {
         expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1?serverId=server-b');
     });
 
+    it('keeps the details route alive as the cockpit tabs surface when details are empty', async () => {
+        deviceType = 'phone';
+        mobileWorkspaceExperience = 'cockpit';
+        mockServerId = 'server-b';
+
+        const screen = await renderScreen(<Screen />);
+
+        const cockpit = screen.findByType('SessionCockpitShell' as any);
+        expect(cockpit.props.sessionId).toBe('session-1');
+        expect(cockpit.props.scopeId).toBe('session:session-1');
+        expect(cockpit.props.surface).toBe('tabs');
+        expect(cockpit.props.safeAreaPadding).toBe(false);
+        expect(cockpit.props.routeServerId).toBe('server-b');
+        const routeSurface = screen.findByTestId('session-cockpit-route-screen');
+        expect(getStyleValue(routeSurface?.props.style, 'paddingTop')).toBe(0);
+        expect(getStyleValue(routeSurface?.props.style, 'paddingBottom')).toBe(34);
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
+    });
+
     it('does not redirect away before the session has hydrated', async () => {
         sessionHydrated = false;
         await renderScreen(<Screen />);
@@ -208,6 +299,7 @@ describe('/session/[id]/details', () => {
         const panel = screen.findByType('SessionDetailsPanel' as any);
         expect(panel.props.sessionId).toBe('session-1');
         expect(panel.props.scopeId).toBe('session:session-1');
+        expect(panel.props.presentation).toBe('screen');
     });
 
     it('hydrates the session for deep links by requesting session visibility', async () => {
@@ -242,5 +334,21 @@ describe('/session/[id]/details', () => {
 
         expect(routerBackSpy).not.toHaveBeenCalled();
         expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1');
+    });
+
+    it('falls back to the source surface when a sourced details route has no back stack', async () => {
+        canGoBack = false;
+        mockServerId = 'server-b';
+        mockSourceSurfaceParam = 'git';
+        scopeState = { details: { isOpen: true, tabs: [{ key: 'file:README.md' }], activeTabKey: 'file:README.md' } };
+        const screen = await renderScreen(<Screen />);
+
+        const panel = screen.findByType('SessionDetailsPanel' as any);
+        await act(async () => {
+            panel.props.onRequestClose();
+        });
+
+        expect(routerBackSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-1/git?serverId=server-b');
     });
 });

@@ -13,6 +13,13 @@ function createCredentialsStub(): Credentials {
   };
 }
 
+function createCredentialsWithToken(token: string): Credentials {
+  return {
+    ...createCredentialsStub(),
+    token,
+  };
+}
+
 function mutableConfigurationForTest(): {
   serverUrl: string;
   apiServerUrl: string;
@@ -142,6 +149,60 @@ describe('bootstrapAccountSettingsContext', () => {
       },
     });
 
+    expect(res2.settingsVersion).toBe(202);
+  });
+
+  it('resolves the disk cache path from the authenticated credentials', async () => {
+    const nowMs = 1_000_000;
+    const tokenA = 'token-account-a';
+    const tokenB = 'token-account-b';
+    const resolveCachePath = vi.fn((credentials: Credentials) => `/tmp/server/${credentials.token}/account.settings.cache.json`);
+
+    const res1 = await bootstrapAccountSettingsContext({
+      credentials: createCredentialsWithToken(tokenA),
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs,
+      ttlMs: 60_000,
+      deps: {
+        resolveCachePath,
+        readCache: async (path) => ({
+          version: 2,
+          cachedAt: nowMs - 1_000,
+          settingsContent: { t: 'plain', v: { schemaVersion: 6, accountMarker: path.includes(tokenA) ? 'a' : 'wrong' } },
+          settingsVersion: path.includes(tokenA) ? 101 : 999,
+        }),
+        decryptCiphertext: async () => null,
+        fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    });
+
+    const res2 = await bootstrapAccountSettingsContext({
+      credentials: createCredentialsWithToken(tokenB),
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs: nowMs + 1_000,
+      ttlMs: 60_000,
+      deps: {
+        resolveCachePath,
+        readCache: async (path) => ({
+          version: 2,
+          cachedAt: nowMs - 1_000,
+          settingsContent: { t: 'plain', v: { schemaVersion: 6, accountMarker: path.includes(tokenB) ? 'b' : 'wrong' } },
+          settingsVersion: path.includes(tokenB) ? 202 : 999,
+        }),
+        decryptCiphertext: async () => null,
+        fetchFromServer: async () => ({ settingsContent: null, settingsVersion: 999 }),
+        writeCache: async () => {},
+        applySideEffects: () => {},
+      },
+    });
+
+    expect(resolveCachePath).toHaveBeenCalledWith(expect.objectContaining({ token: tokenA }));
+    expect(resolveCachePath).toHaveBeenCalledWith(expect.objectContaining({ token: tokenB }));
+    expect(res1.settingsVersion).toBe(101);
     expect(res2.settingsVersion).toBe(202);
   });
 

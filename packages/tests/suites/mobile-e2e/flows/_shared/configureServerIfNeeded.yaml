@@ -29,23 +29,30 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
       id: welcome-hero
     timeout: 240000
 
-- openLink: happier:///server?auto=1&url=${HAPPIER_E2E_SERVER_URL}
+- runFlow:
+    when:
+      notVisible:
+        id: welcome-create-account
+    commands:
+      - openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///server?auto=1&url=${HAPPIER_E2E_SERVER_URL}
+      - runFlow:
+          file: acceptAndroidOpenWithPromptMaybe.yaml
 
-# Re-dismiss dev-only overlays in case the deep-link triggered them.
-- runFlow:
-    file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
-- runFlow:
-    file: dismissDeveloperMenuMaybe.yaml
-- runFlow:
-    file: dismissExpoDevMenuOverlayMaybe.yaml
+      # Re-dismiss dev-only overlays in case the deep-link triggered them.
+      - runFlow:
+          file: dismissAndroidSystemNotRespondingDialogMaybe.yaml
+      - runFlow:
+          file: dismissDeveloperMenuMaybe.yaml
+      - runFlow:
+          file: dismissExpoDevMenuOverlayMaybe.yaml
 
-# In `auto=1` mode, server auto-add happens in a background effect and the
-# screen redirects away on success. Wait for the Welcome hero to be visible
-# again, indicating we're back on `/`.
-- extendedWaitUntil:
-    visible:
-      id: welcome-hero
-    timeout: 240000
+      # In `auto=1` mode, server auto-add happens in a background effect and the
+      # screen redirects away on success. Wait for the Welcome hero to be
+      # visible again, indicating we're back on `/`.
+      - extendedWaitUntil:
+          visible:
+            id: welcome-hero
+          timeout: 240000
 
 # Sanity-check that the configured server is reachable/compatible by waiting
 # for the Welcome auth actions to become available again.

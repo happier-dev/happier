@@ -17,25 +17,33 @@ Status legend:
 | --- | --- | --- | --- |
 | Multi-server profiles + switching | Stable | App, Web, CLI | Accounts and runtime state are scoped per server. |
 | Session sharing + collaboration | Stable | App, Web | Share sessions with friends/teammates and manage access. |
+| Session read/unread state | Stable | App, Web, Mobile app | Unread badges plus Mark as unread/read actions in session lists, context menus, headers, and Session info. |
 | Synced sessions + resume | Stable | App, Web, CLI | Resume inactive Happier-managed sessions when the provider/backend supports vendor resume for that session. |
+| New session shortcuts | Stable | App, Web, Mobile app | Start a new session from a project or Session info while reusing the relevant session setup; existing composer draft content is preserved while launch selections are replaced. |
 | Session handoff between machines | Capability-driven | App, Web | Move a live session to another machine while keeping the same session id. Claude and OpenCode are supported; Codex is experimental. |
 | Direct provider sessions | Experimental | App, Web | Browse provider-native sessions, open them directly, and optionally sync them into Happier. |
+| Mobile session cockpit | Stable | Mobile app, mobile web | Default phone session layout with bottom tabs for agent chat, Files, Git, open details tabs, and Terminal when available. |
 | Embedded terminal | Experimental | App, Web, Mobile app | Session-owned terminal dockable to bottom/sidebar/details; requires a connected daemon and reachable machine. |
 | Pending queue | Stable | App, Web, CLI runtime | Queue, reorder, edit, remove, and send-now workflows. |
 | In-flight steering while busy | Capability-driven | App, Web, CLI runtime | When supported by backend/runtime, messages can steer an active turn instead of waiting in queue. |
-| Git/file manager | Stable | App, Web | Browse/search files, upload/download, rename/delete, open previews/editors, inspect metadata, and review changed files from the session UI. |
-| Git write operations | Experimental | App, Web | Stage/unstage/commit/pull/push/revert plus branch publish/switch/stash workflows behind the Git operations feature toggle. |
+| Git/file manager | Stable | App, Web, Mobile app | Browse/search files, upload/download, rename/delete, open previews/editors, inspect metadata, open markdown file links, initialize Git repositories, and review changed files from the session UI. |
+| Git write operations | Experimental | App, Web, Mobile app | Stage/unstage/commit/pull/push/revert plus selected-for-commit, branch publish/switch/stash, branch checkout recovery, and commit-message-generation workflows behind the Git operations feature toggle. |
+| Turn/session/selected changed-file scopes | Capability-driven | App, Web, Mobile app | Git changed-files scope dropdown can show repository changes, latest-turn changes, session-attributed changes, and selected-for-commit files when data is available. |
+| SCM hosting providers | Experimental | App, Web, daemon | Detect GitHub/GitLab/Bitbucket remotes, publish local repositories to GitHub, and open/reuse/checkout PRs or MRs where provider auth is available. |
+| Review comments | Experimental | App, Web | Add line-specific comments to file/diff lines, select which comments are sent, reuse saved workspace comments in new sessions, and jump back to commented files from the transcript. |
 | Tool timeline normalization | Stable | App, Web, CLI runtime | Provider tools are normalized to canonical UI tool types. |
 | Subagent timeline visibility | Capability-driven | App, Web | When providers expose subagents, Happier shows their activity in-session. |
 | Tool detail controls (title/summary/full) | Stable | App, Web | Configure default/per-tool timeline detail levels. |
 | Turn-level change summaries | Capability-driven | App, Web | Per-turn summary and diff rendering quality depends on provider/runtime payloads. |
 | Permission modes | Capability-driven | App, Web, CLI | Effective behavior varies by provider/backend capabilities. |
-| Model/mode selection | Capability-driven | App, Web, CLI | Availability and apply timing are provider-specific. |
-| Connected services | Stable | App, Web, CLI, daemon | Connect provider subscriptions / API keys once, then reuse them across supported backends and sessions. |
+| Model/mode selection + favorites | Capability-driven | App, Web, CLI | Model lists can be dynamic or static; favorites are available from the new-session engine picker. |
+| Connected services | Stable | App, Web, CLI, daemon | Connect provider subscriptions, API keys, and GitHub tokens once, then reuse them across supported backends, sessions, and source-control workflows. |
 | Connected-services auth picker | Stable | App, Web | New-session auth picker shows only backend-compatible connected services and profiles. |
 | Connected-services quotas | Capability-driven | App, Web, daemon | Quota badges and profile detail meters currently exist for `openai-codex`, `claude-subscription`, and `gemini`. |
 | Local memory search | Experimental | App, Web, daemon | Opt-in machine-local transcript search with light/deep indexing, backfill controls, and optional embeddings reranking. |
+| Pets | Experimental | App, Web, Mobile app, Desktop app, daemon | Optional pet companions with built-in pets, Codex-compatible imports, desktop overlay bubbles, mobile/native drag, per-device size, and server-side feature controls. |
 | ACP backends | Experimental | App, Web, CLI runtime | Add arbitrary ACP-compatible CLIs through Custom ACP and use each configured backend as a first-class backend choice. |
+| Installables | Stable | App, Web, daemon | Manage machine-local tools such as Codex ACP and optional GitHub CLI (`gh`) with per-machine install/update policy. |
 | Server feature flags | Stable | App, Web, Server | Server can disable features (for example social/voice/bug reports) and clients adapt UI accordingly. |
 | Notification routing to session/server | Stable | App, Web | Notification taps route to the correct session/server; mobile also supports permission `Allow` / `Deny` and action-request `Answer` buttons with safe server-aware routing. |
 | In-app bug reports + diagnostics | Stable | App | Submit issue reports with optional diagnostics; server can disable upload/report UI. |
@@ -63,7 +71,10 @@ Status legend:
 
 - [Permissions](/docs/features/permissions)
 - [ACP backends](/docs/features/acp-backends)
+- [Model and engine selection](/docs/features/model-and-engine-selection)
+- [New session shortcuts](/docs/features/new-session-shortcuts)
 - [Session handoff](/docs/features/session-handoff)
+- [Session read and unread state](/docs/features/session-read-state)
 - [Pending queue](/docs/features/pending-queue)
 - [Steering while busy](/docs/features/steering)
 - [Embedded terminal](/docs/features/embedded-terminal)
@@ -71,6 +82,10 @@ Status legend:
 - [Server feature flags](/docs/features/feature-flags)
 - [Bug reports](/docs/features/bug-reports)
 - [Git & file browser](/docs/features/git)
+- [Connected services](/docs/features/connected-services)
+- [Installables](/docs/features/installables)
+- [Review comments](/docs/features/review-comments)
 - [Local memory search](/docs/features/local-memory-search)
+- [Pets](/docs/features/pets)
 - [Notifications](/docs/advanced/notifications)
 - [Update channels and update behavior](/docs/advanced/updates)

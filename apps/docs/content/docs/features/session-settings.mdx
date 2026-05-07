@@ -33,8 +33,10 @@ From there, use the dedicated entries to open:
 The root Session screen keeps the controls that affect how you work day to day:
 
 - **Session list** behavior such as density, grouping, hidden inactive sessions, and tags
+- **New session shortcut** behavior such as whether project shortcuts reuse the newest project session selections
+- **Mobile session layout** for choosing the phone session cockpit or the classic focused-screen layout
 - **Message sending** behavior such as interrupt vs queue/pending strategies
-- **Web-only input behavior** such as **Enter to send**
+- **Composer input behavior** such as **Enter to Send**
 - **Message history** scope as a dropdown
 - **Input layout** preferences
 - **Replay / resume** defaults
@@ -167,6 +169,20 @@ The same screen can also show related permission/session-default controls such a
 
 Full guide: [Permissions](./permissions)
 
+## New session shortcut settings
+
+The **Permissions** screen also includes **New session shortcuts**.
+
+The **Remember last project session selections** setting controls what happens when you use the project **+** action in the session list.
+
+When it is on, Happier seeds the new-session screen from the newest session in that project group. This reuses selections such as machine, folder, engine, profile, permissions, model, session mode, MCP selection, connected services, and provider config options.
+
+When it is off, the project **+** action only preselects the project machine and folder. The rest of the new-session screen follows the normal draft/default behavior.
+
+Contextual shortcuts preserve typed draft content, such as an unsent prompt, while replacing launch selections with the shortcut source. This keeps your written intent without carrying stale choices from another project.
+
+Full guide: [New session shortcuts](./new-session-shortcuts)
+
 ## Transcript screen
 
 The **Transcript** screen controls how session conversations are presented:
@@ -204,15 +220,63 @@ For example, you might keep most tools compact in the timeline but still expand 
 
 Related guide: [Tool timeline & normalization](./tool-timeline)
 
-## Web-only session behavior
+## Composer input behavior
 
-On web, Session settings also includes input behavior that used to live elsewhere:
+Session settings also includes input behavior for the message composer.
 
-### Enter to send
+These controls change how you type and send prompts in the app. They do not change provider permissions, model behavior, or how transcripts are stored.
 
-Controls whether pressing Enter sends the current message directly.
+### Enter to Send
 
-Use this when you want more chat-like behavior on desktop/web.
+**Enter to Send** controls what the Return/Enter key does in the composer.
+
+When it is off:
+
+- pressing Enter inserts a new line in the composer
+- use the send button to send the message
+
+When it is on:
+
+- on web, pressing Enter sends the message
+- on web, pressing Shift+Enter inserts a new line
+- on iOS and iPadOS with a physical keyboard, pressing Enter sends the message
+- on iOS and iPadOS with a physical keyboard, pressing Shift+Enter still inserts a new line
+
+Happier only sends when the composer has sendable content. That can be typed text, attached files, or included review-comment context. Empty composers and disabled send states are ignored.
+
+Use **Enter to Send** when you prefer a chat-style workflow. Leave it off when you often write longer prompts, code blocks, or multi-line instructions.
+
+The web and native app settings are stored separately, so you can use Enter-to-send on one platform and keep Enter-for-new-line on another.
+
+On phones and tablets without a physical keyboard, the visible send button remains the clearest way to send a prompt.
+
+## Mobile session layout
+
+**Mobile session layout** controls how phone-sized session screens are organized.
+
+The setting is synced with your account and defaults to **Cockpit**.
+
+### Cockpit
+
+Cockpit is the default phone layout.
+
+It shows a bottom session tab bar with the session’s main work surfaces:
+
+- the current agent chat, labeled by backend such as **Claude**, **Codex**, or **OpenCode**
+- **Files**
+- **Git**
+- **Tabs** for open file previews, editors, Review, commit details, stash details, and other detail views
+- **Terminal** when the embedded terminal is enabled and available as a session tab
+
+Use Cockpit when you want mobile sessions to behave like a compact workspace instead of a single long chat screen.
+
+### Classic
+
+Classic keeps the older focused-screen layout for phone-sized sessions.
+
+Use Classic if you prefer opening Files, Git, Terminal, and details as separate focused routes instead of switching through the cockpit tab bar.
+
+You can change the setting at any time from **Settings → Session → Mobile session layout**.
 
 ### Message history
 
@@ -239,5 +303,6 @@ If you are looking for a setting and no longer see it inline on the root Session
 ## Related guides
 
 - [Session handoff](./session-handoff)
+- [New session shortcuts](./new-session-shortcuts)
 - [ACP backends](./acp-backends)
 - [Profiles](./profiles)

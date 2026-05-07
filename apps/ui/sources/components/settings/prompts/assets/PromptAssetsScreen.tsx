@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { type PromptAssetDiscoveryItemV1, type PromptAssetScopeV1, type PromptAssetTypeDescriptorV1 } from '@happier-dev/protocol';
@@ -241,14 +241,13 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
         setPromptExternalLinksV1(imported.nextLinks);
         router.push(
             imported.routeKind === 'doc'
-                ? `/(app)/settings/prompts/docs/${imported.artifactId}`
-                : `/(app)/settings/prompts/skills/${imported.artifactId}`,
+                ? `/settings/prompts/docs/${imported.artifactId}`
+                : `/settings/prompts/skills/${imported.artifactId}`,
         );
     }, [machineId, projectDirectory, promptExternalLinksV1, router, setPromptExternalLinksV1]);
 
     return (
         <View style={styles.container}>
-            <Stack.Screen options={{ title: t('promptLibrary.externalAssets') }} />
             <ItemList containerStyle={styles.content}>
                 <ItemGroup title={t('promptLibrary.externalAssetsContext')}>
                     <ContextBar
@@ -349,8 +348,8 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
                                                     onPress={() => {
                                                         if (linkedArtifact) {
                                                             router.push(item.libraryKind === 'bundle'
-                                                                ? `/(app)/settings/prompts/skills/${linkedArtifact.artifactId}`
-                                                                : `/(app)/settings/prompts/docs/${linkedArtifact.artifactId}`);
+                                                                ? `/settings/prompts/skills/${linkedArtifact.artifactId}`
+                                                                : `/settings/prompts/docs/${linkedArtifact.artifactId}`);
                                                             return;
                                                         }
                                                         void handleImport(item);
@@ -365,8 +364,8 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
                                                                     title: t('common.open'),
                                                                     icon: 'open-outline',
                                                                     onPress: () => router.push(item.libraryKind === 'bundle'
-                                                                        ? `/(app)/settings/prompts/skills/${linkedArtifact.artifactId}`
-                                                                        : `/(app)/settings/prompts/docs/${linkedArtifact.artifactId}`),
+                                                                        ? `/settings/prompts/skills/${linkedArtifact.artifactId}`
+                                                                        : `/settings/prompts/docs/${linkedArtifact.artifactId}`),
                                                                 },
                                                                 {
                                                                     id: 'manage',

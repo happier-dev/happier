@@ -139,6 +139,28 @@ function readSessionMachineRpcErrorMessage(error: unknown): string {
     return 'Unknown error';
 }
 
+function readInactiveSessionMachineFallbackRoute<TFailure extends SessionMachineRpcFailure>(input: Readonly<{
+    sessionId: string;
+    machineTarget: SessionMachineRpcTarget;
+    fallbackRoute: SessionMachineRpcFallbackResolution<TFailure>;
+    machineMethod: string;
+}>): SessionMachineRpcSessionRoute | null {
+    if (!shouldGuardMachineRpcDirectWithTransferPolicy(input.machineMethod)) {
+        return null;
+    }
+    if (input.fallbackRoute.kind !== 'unavailable') {
+        return null;
+    }
+    if (input.fallbackRoute.response.error !== INACTIVE_SESSION_RPC_UNAVAILABLE_ERROR) {
+        return null;
+    }
+
+    return {
+        kind: 'server_routed_stream',
+        serverId: resolvePreferredServerIdForSessionId(input.sessionId),
+    };
+}
+
 async function callMachineRoute<TResponse extends Readonly<{ success: boolean }>, TRequest>(
     route: SessionMachineRpcMachineRoute,
     callParams: SessionMachineRpcCallParams<TRequest>,
@@ -285,7 +307,21 @@ export function createSessionMachineRpcFallbackCaller<TFailure extends SessionMa
                         if (!allowed) {
                             const fallbackRoute = await params.resolveFallbackRoute();
                             if (fallbackRoute.kind === 'unavailable') {
-                                return fallbackRoute.response as unknown as TResponse;
+                                const inactiveMachineFallbackRoute = readInactiveSessionMachineFallbackRoute({
+                                    sessionId: params.sessionId,
+                                    machineTarget,
+                                    fallbackRoute,
+                                    machineMethod: callParams.machineMethod,
+                                });
+                                if (!inactiveMachineFallbackRoute) {
+                                    return fallbackRoute.response as unknown as TResponse;
+                                }
+
+                                return await sessionRouteCaller<TResponse, TRequest>({
+                                    sessionId: params.sessionId,
+                                    route: inactiveMachineFallbackRoute,
+                                    callParams,
+                                });
                             }
 
                             if (params.reuseResolvedRoute === true) {

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
-import { Platform } from 'react-native';
+import { InteractionManager, Platform } from 'react-native';
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 
 vi.mock('@/text', async () => {
@@ -28,6 +28,21 @@ describe('createAttachmentActionChip', () => {
         const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
         const originalOs = Platform.OS;
         (Platform as any).OS = 'ios';
+        const queuedInteractionCallbacks: Array<() => void> = [];
+        type RunAfterInteractionsTask = Parameters<typeof InteractionManager.runAfterInteractions>[0];
+        const createRunAfterInteractionsResult = (): ReturnType<typeof InteractionManager.runAfterInteractions> => ({
+            then: (onfulfilled, onrejected) => Promise.resolve().then(() => onfulfilled?.(), onrejected),
+            done: () => undefined,
+            cancel: () => undefined,
+        });
+        const runAfterInteractionsSpy = vi
+            .spyOn(InteractionManager, 'runAfterInteractions')
+            .mockImplementation((task?: RunAfterInteractionsTask) => {
+                if (typeof task === 'function') {
+                    queuedInteractionCallbacks.push(task);
+                }
+                return createRunAfterInteractionsResult();
+            });
 
         try {
             const onPickFile = vi.fn();
@@ -72,14 +87,21 @@ describe('createAttachmentActionChip', () => {
             );
 
             await contentScreen.pressByTestIdAsync('attachments-action-add-image');
-            expect(onPickImage).toHaveBeenCalled();
             expect(requestClose).toHaveBeenCalled();
+            expect(onPickImage).not.toHaveBeenCalled();
+            expect(runAfterInteractionsSpy).toHaveBeenCalledTimes(1);
+            queuedInteractionCallbacks.shift()?.();
+            expect(onPickImage).toHaveBeenCalledTimes(1);
 
             requestClose.mockClear();
             await contentScreen.pressByTestIdAsync('attachments-action-add-file');
-            expect(onPickFile).toHaveBeenCalled();
             expect(requestClose).toHaveBeenCalled();
+            expect(onPickFile).not.toHaveBeenCalled();
+            expect(runAfterInteractionsSpy).toHaveBeenCalledTimes(2);
+            queuedInteractionCallbacks.shift()?.();
+            expect(onPickFile).toHaveBeenCalledTimes(1);
         } finally {
+            runAfterInteractionsSpy.mockRestore();
             (Platform as any).OS = originalOs;
         }
     });

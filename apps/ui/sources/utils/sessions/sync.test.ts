@@ -42,6 +42,50 @@ describe('InvalidateSync.awaitQueue', () => {
     });
 });
 
+describe('InvalidateSync.invalidateAndAwait', () => {
+    it('resolves after its own refresh cycle when another invalidation is queued', async () => {
+        const firstRun = createDeferred<void>();
+        const secondRun = createDeferred<void>();
+        let runCount = 0;
+        const command = vi.fn(async () => {
+            runCount += 1;
+            if (runCount === 1) {
+                await firstRun.promise;
+                return;
+            }
+            await secondRun.promise;
+        });
+
+        const sync = new InvalidateSync(command);
+        let firstResolved = false;
+        let secondResolved = false;
+        const firstAwait = sync.invalidateAndAwait().then(() => {
+            firstResolved = true;
+        });
+
+        await vi.waitFor(() => {
+            expect(command).toHaveBeenCalledTimes(1);
+        });
+
+        const secondAwait = sync.invalidateAndAwait().then(() => {
+            secondResolved = true;
+        });
+
+        firstRun.resolve(undefined);
+        await vi.waitFor(() => {
+            expect(command).toHaveBeenCalledTimes(2);
+        });
+
+        expect(firstResolved).toBe(true);
+        expect(secondResolved).toBe(false);
+
+        secondRun.resolve(undefined);
+        await secondAwait;
+        await firstAwait;
+        expect(secondResolved).toBe(true);
+    });
+});
+
 describe('InvalidateSync.invalidateCoalesced', () => {
     it('does not schedule a second run when invalidated while a run is in flight', async () => {
         const started = createDeferred<void>();

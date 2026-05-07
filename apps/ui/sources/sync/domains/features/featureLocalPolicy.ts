@@ -7,6 +7,7 @@ type FeatureLocalPolicyResolver = (settings: Settings) => boolean;
 const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPolicyResolver>>> = {
     automations: (settings) => resolveUiFeatureToggleEnabled(settings, 'automations'),
     'execution.runs': (settings) => resolveUiFeatureToggleEnabled(settings, 'execution.runs'),
+    'pets.companion': (settings) => resolveUiFeatureToggleEnabled(settings, 'pets.companion'),
     voice: (settings) => resolveUiFeatureToggleEnabled(settings, 'voice'),
     'voice.agent': (settings) => resolveUiFeatureToggleEnabled(settings, 'voice.agent'),
     connectedServices: (settings) =>

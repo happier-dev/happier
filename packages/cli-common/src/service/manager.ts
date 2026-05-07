@@ -7,7 +7,7 @@ import { commandExistsOnPath } from '../process/index.js';
 import { buildLaunchdPlistXml } from './launchd.js';
 import { mergeServiceEnvWithPath } from './path.js';
 import { renderSystemdServiceUnit } from './systemd.js';
-import { renderWindowsScheduledTaskWrapperPs1 } from './windows.js';
+import { buildWindowsScheduledTaskPowerShellAction, renderWindowsScheduledTaskWrapperPs1 } from './windows.js';
 
 export type ServiceMode = 'user' | 'system';
 
@@ -304,7 +304,7 @@ export function planServiceAction(params: Readonly<{
     const mode: ServiceMode = backend === 'schtasks-system' ? 'system' : 'user';
     if (action === 'install') {
       if (!definitionPath) throw new Error('definitionPath is required for schtasks install');
-      const ps = `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${definitionPath}"`;
+      const ps = buildWindowsScheduledTaskPowerShellAction({ definitionPath });
       const schedule = persistent
         ? (mode === 'system' ? 'ONSTART' : 'ONLOGON')
         : 'ONCE';

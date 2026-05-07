@@ -106,10 +106,10 @@ describe('CustomAcpProviderSettingsSections', () => {
         expect(routerPushSpy).toHaveBeenNthCalledWith(
             1,
             expect.objectContaining({
-                pathname: '/(app)/settings/acp-backend',
+                pathname: '/settings/acp-backend',
                 params: { backendId: 'backend-1' },
             }),
         );
-        expect(routerPushSpy).toHaveBeenNthCalledWith(2, '/(app)/settings/acp-backend');
+        expect(routerPushSpy).toHaveBeenNthCalledWith(2, '/settings/acp-backend');
     });
 });

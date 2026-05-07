@@ -34,6 +34,8 @@ function withCleanEnv<T>(fn: () => T): T {
         'EXPO_APP_VERSION',
         'EXPO_APP_OWNER',
         'EXPO_APP_SLUG',
+        'EXPO_APP_BUNDLE_ID',
+        'EXPO_ANDROID_PACKAGE',
         'HAPPIER_EXPO_RUNTIME_VERSION',
         'EXPO_APP_LOCAL_CONFIG_PATH',
         'EXPO_PUBLIC_HAPPIER_FEATURE_POLICY_ENV',
@@ -44,6 +46,8 @@ function withCleanEnv<T>(fn: () => T): T {
         'HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH',
         'HAPPIER_EXPO_USE_NATIVE_DEBUG',
         'EX_UPDATES_NATIVE_DEBUG',
+        'EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON',
+        'HAPPIER_SYNC_TUNING_JSON',
     ] as const;
 
     const previous: Partial<Record<(typeof keys)[number], string | undefined>> = {};
@@ -110,6 +114,27 @@ describe('app.config.js', () => {
         expect(exp.updates?.requestHeaders?.['expo-channel-name']).toBe('dev');
     });
 
+    it('does not use iOS bundle id overrides as Android package overrides', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_APP_BUNDLE_ID = 'com.happier.local.leeroy.dev';
+            return getPublicConfig();
+        });
+
+        expect(exp.ios?.bundleIdentifier).toBe('com.happier.local.leeroy.dev');
+        expect(exp.android?.package).toBe('dev.happier.app.internaldev');
+    });
+
+    it('uses explicit Android package overrides independently from iOS bundle id overrides', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_APP_BUNDLE_ID = 'com.happier.local.leeroy.dev';
+            process.env.EXPO_ANDROID_PACKAGE = 'dev.happier.app.internaldev.devclient';
+            return getPublicConfig();
+        });
+
+        expect(exp.ios?.bundleIdentifier).toBe('com.happier.local.leeroy.dev');
+        expect(exp.android?.package).toBe('dev.happier.app.internaldev.devclient');
+    });
+
     it('enables Android cleartext traffic by default through expo-build-properties so native manifests allow LAN/local HTTP relays', () => {
         const exp = withCleanEnv(() => getPublicConfig());
         expect(getPluginOptions(exp, 'expo-build-properties')).toEqual(
@@ -119,6 +144,13 @@ describe('app.config.js', () => {
                 }),
             })
         );
+    });
+
+    it('enables enriched markdown native math dependencies', () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        expect(getPluginOptions(exp, 'react-native-enriched-markdown')).toEqual({
+            enableMath: true,
+        });
     });
 
     it('allows disabling Android cleartext traffic explicitly via env override', () => {
@@ -193,6 +225,14 @@ describe('app.config.js', () => {
         expect(exp.runtimeVersion).toEqual({ policy: 'fingerprint' });
     });
 
+    it('uses Expo fingerprint runtime policy for the publicdev lane', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'publicdev';
+            return getPublicConfig();
+        });
+        expect(exp.runtimeVersion).toEqual({ policy: 'fingerprint' });
+    });
+
     it('uses Expo appVersion runtime policy for preview lane OTA updates', () => {
         const exp = withCleanEnv(() => {
             process.env.APP_ENV = 'preview';
@@ -229,6 +269,19 @@ describe('app.config.js', () => {
 
         expect(exp.extra?.eas?.projectId).toBe('public-project-id');
         expect(exp.updates?.url).toBe('https://u.expo.dev/public-project-id');
+    });
+
+    it('forwards sync tuning JSON into extra.app for native release builds', () => {
+        const tuningJson = JSON.stringify({
+            syncPerformanceTelemetryEnabled: true,
+            nativeCryptoWorkerMode: 'auto',
+        });
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON = tuningJson;
+            return getPublicConfig();
+        });
+
+        expect(exp.extra?.app?.syncTuningJson).toBe(tuningJson);
     });
 
     it('uses EAS_PROJECT_ID when EXPO_PUBLIC_EAS_PROJECT_ID is unset', () => {

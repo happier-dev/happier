@@ -117,6 +117,14 @@ export function shouldAdoptOccupiedRuntimePortsForRecovery(existingRuntimeStatus
   );
 }
 
+export function buildAlreadyRunningMobileMetroArgs(args = []) {
+  const out = ['--metro'];
+  if (Array.isArray(args) && args.includes('--expo-tailscale')) {
+    out.push('--expo-tailscale');
+  }
+  return out;
+}
+
 export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false }) {
   await withStackEnv({
     stackName,
@@ -225,7 +233,10 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           // This is important for workflows like re-running `setup-pr` with --mobile after the stack is already up.
           const wantsMobile = args.includes('--mobile') || args.includes('--with-mobile');
           if (wantsMobile) {
-            await run(process.execPath, [join(rootDir, 'scripts', 'mobile.mjs'), '--metro'], { cwd: rootDir, env });
+            await run(process.execPath, [join(rootDir, 'scripts', 'mobile.mjs'), ...buildAlreadyRunningMobileMetroArgs(args)], {
+              cwd: rootDir,
+              env,
+            });
           }
           return;
         }

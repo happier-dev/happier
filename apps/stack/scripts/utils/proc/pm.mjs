@@ -8,6 +8,7 @@ import { pathExists } from '../fs/fs.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
 import { run, runCapture, spawnProc } from './proc.mjs';
 import { commandExists } from './commands.mjs';
+import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
 import {
   coerceHappyMonorepoRootFromPath,
   getDefaultAutostartPaths,
@@ -486,7 +487,16 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       }
     };
 
-    const componentPkgMtimeMs = async () => {
+    const workspacePkgMtimeMs = async () => {
+      if (monorepoRoot && installDir === monorepoRoot) {
+        const workspacePkgJsonPaths = await collectWorkspacePackageJsonPaths(monorepoRoot);
+        let max = 0;
+        for (const pkgJsonPath of workspacePkgJsonPaths) {
+          const m = await mtimeMs(pkgJsonPath);
+          if (m > max) max = m;
+        }
+        return max;
+      }
       if (installDir === componentDir) return 0;
       return await mtimeMs(componentPkgJson);
     };
@@ -516,14 +526,14 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     if (pm.name === 'yarn' && (await pathExists(yarnLock))) {
       const lockM = await mtimeMs(yarnLock);
       const pkgM = await mtimeMs(installPkgJson);
-      const componentPkgM = await componentPkgMtimeMs();
+      const workspacePkgM = await workspacePkgMtimeMs();
       const intM = await mtimeMs(yarnIntegrity);
       const patchM = await patchesMtimeMs();
       const nodeModulesM = intM || await mtimeMs(nodeModules);
-      if (!nodeModulesM || lockM > nodeModulesM || pkgM > nodeModulesM || componentPkgM > nodeModulesM || patchM > nodeModulesM) {
+      if (!nodeModulesM || lockM > nodeModulesM || pkgM > nodeModulesM || workspacePkgM > nodeModulesM || patchM > nodeModulesM) {
         if (!quiet) {
           // eslint-disable-next-line no-console
-          console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/patches changed)...`);
+          console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/workspace package.json/patches changed)...`);
         }
         await run(pm.cmd, installArgs, { cwd: installDir, stdio, env });
       }
@@ -583,6 +593,29 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
   const expectedFiles = collectExpectedPackageFilesFromPackageJson(pkgJson).map((p) => join(pkgDir, p));
   if (expectedFiles.length === 0) return { built: false, reason: 'no-expected-files' };
 
+  const lockPath = resolveWorkspacePackageBuildLockPath(pkgDir, pkgJson);
+  return await withCliDistBuildLock(
+    () => ensureWorkspacePackageBuiltUnderLock({ pkgDir, pkgJson, expectedFiles, quiet, env, stdio, lockPath }),
+    { lockPath },
+  );
+}
+
+function workspacePackageLockSlug(pkgDir, pkgJson) {
+  const raw = String(pkgJson?.name ?? '').trim() || resolve(pkgDir);
+  const slug = raw.replace(/^@/, '').replace(/[^a-zA-Z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug || sha256Hex(resolve(pkgDir)).slice(0, 16);
+}
+
+function resolveWorkspacePackageBuildLockPath(pkgDir, pkgJson) {
+  const monorepoRoot = coerceHappyMonorepoRootFromPath(pkgDir);
+  const slug = workspacePackageLockSlug(pkgDir, pkgJson);
+  if (monorepoRoot) {
+    return join(monorepoRoot, '.project', 'tmp', 'workspace-dist-builds', `${slug}.lock`);
+  }
+  return join(pkgDir, `.dist-build-${slug}.lock`);
+}
+
+async function ensureWorkspacePackageBuiltUnderLock({ pkgDir, pkgJson, expectedFiles, quiet, env, stdio, lockPath }) {
   const missingBefore = expectedFiles.filter((p) => !existsSync(p));
 
   const distDir = join(pkgDir, 'dist');
@@ -623,9 +656,17 @@ async function ensureWorkspacePackageBuilt(pkgDir, { quiet = false, env: envIn =
   const pm = await getComponentPm(pkgDir, env);
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: pkgDir, env, quiet });
-    await run(pm.cmd, ['-s', 'build'], { cwd: pkgDir, stdio, env });
+    await run(pm.cmd, ['-s', 'build'], {
+      cwd: pkgDir,
+      stdio,
+      env: { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: lockPath },
+    });
   } else {
-    await run(pm.cmd, ['run', '-s', 'build'], { cwd: pkgDir, stdio, env });
+    await run(pm.cmd, ['run', '-s', 'build'], {
+      cwd: pkgDir,
+      stdio,
+      env: { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: lockPath },
+    });
   }
 
   const missingAfter = expectedFiles.filter((p) => !existsSync(p));

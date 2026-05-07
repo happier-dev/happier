@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
@@ -354,7 +353,6 @@ export const PromptAssetExportScreen = React.memo((props: Readonly<{
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: t('promptLibrary.externalAssetsExportTitle') }} />
       <ItemList containerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <ItemGroup title={t('promptLibrary.externalAssetsContext')}>
           <ContextBar

@@ -7,6 +7,8 @@ import Fuse from 'fuse.js';
 import { listActionSpecs } from '@happier-dev/protocol';
 import { storage } from '../state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
+import { BUILT_IN_PROMPTS } from './slashCommands/builtInPrompts';
+import { t } from '@/text';
 
 export interface CommandItem {
     command: string;        // The command without slash (e.g., "compact")
@@ -67,6 +69,7 @@ function describeActionSlashToken(token: string, fallbackTitle: string): string 
     if (token === '/h.voice') return 'Start a voice agent run';
     if (token === '/h.runs') return 'List execution runs';
     if (token === '/h.voice.reset') return 'Reset the global voice agent';
+    if (token === '/pet' || token === '/h.pet') return t('commandPalette.pets.chooseSubtitle');
     return fallbackTitle;
 }
 
@@ -87,6 +90,16 @@ function buildActionSlashCommands(state: any): CommandItem[] {
                 description: describeActionSlashToken(token, spec.title),
             });
         }
+    }
+    return out;
+}
+
+function buildBuiltInSlashCommands(): CommandItem[] {
+    const out: CommandItem[] = [];
+    for (const entry of BUILT_IN_PROMPTS) {
+        const command = entry.token.startsWith('/') ? entry.token.slice(1) : entry.token;
+        if (command.trim().length === 0) continue;
+        out.push({ command, description: entry.title });
     }
     return out;
 }
@@ -141,9 +154,15 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
 function getCommandsFromSession(sessionId: string): CommandItem[] {
     const state = storage.getState();
     const session = state.sessions[sessionId];
-    const commands: CommandItem[] = [...buildActionSlashCommands(state), ...DEFAULT_COMMANDS];
+    // Built-in core slash commands (e.g. /happier-diagnose) are always available
+    // and cannot be shadowed by user templates or session-provided commands.
+    const commands: CommandItem[] = [
+        ...buildActionSlashCommands(state),
+        ...buildBuiltInSlashCommands(),
+        ...DEFAULT_COMMANDS,
+    ];
 
-    // Add prompt template tokens (never overriding action/default commands).
+    // Add prompt template tokens (never overriding action/built-in/default commands).
     for (const invocation of buildPromptInvocationSlashCommands(state)) {
         if (commands.find((c) => c.command === invocation.command)) continue;
         commands.push(invocation);

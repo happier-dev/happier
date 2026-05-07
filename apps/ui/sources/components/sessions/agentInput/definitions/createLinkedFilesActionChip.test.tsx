@@ -38,6 +38,7 @@ describe('createLinkedFilesActionChip', () => {
         });
 
         expect(chip.collapsedContentPopover).toBeTruthy();
+        expect(chip.collapsedContentPopover?.scrollEnabled).toBe(false);
 
         const toggleCollapsedPopover = vi.fn();
         const screen = await renderScreen(

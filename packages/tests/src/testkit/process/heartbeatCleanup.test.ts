@@ -19,6 +19,11 @@ type WrapperCase = {
   extraEnv?: Record<string, string>;
 };
 
+type FakeToolchain = Readonly<{
+  commandPath: string;
+  sharedScriptPath: string;
+}>;
+
 const WRAPPER_CASES: WrapperCase[] = [
   {
     name: 'run-vitest-with-heartbeat',
@@ -89,7 +94,7 @@ async function createFakeToolchain(
   commandName: string,
   markerPath: string,
   opts?: Readonly<{ exitAfterSpawn?: boolean; signalAfterSpawn?: NodeJS.Signals }>,
-): Promise<void> {
+): Promise<FakeToolchain> {
   const commandPath = join(toolDir, process.platform === 'win32' ? `${commandName}.cmd` : commandName);
   const sharedScriptPath = join(toolDir, 'fake-yarn.cjs');
   const exitAfterSpawn = opts?.exitAfterSpawn === true;
@@ -138,6 +143,20 @@ async function createFakeToolchain(
     );
     await chmod(commandPath, 0o755);
   }
+
+  return { commandPath, sharedScriptPath };
+}
+
+function createWrapperEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  caseItem: WrapperCase,
+  fakeToolchain: FakeToolchain,
+): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  if (caseItem.toolCommandName === 'yarn') {
+    env.npm_execpath = fakeToolchain.sharedScriptPath;
+  }
+  return env;
 }
 
 async function runWrapperCleanupScenario(
@@ -150,16 +169,15 @@ async function runWrapperCleanupScenario(
     const toolDir = tempPathBin.dir;
     const markerPath = join(toolDir, 'process-marker.json');
     const configPath = join(toolDir, caseItem.configName);
-    const env = {
+    await writeFile(configPath, '// test config\n', 'utf8');
+    const fakeToolchain = await createFakeToolchain(toolDir, caseItem.toolCommandName, markerPath, opts);
+    const env = createWrapperEnv({
       ...tempPathBin.env,
       HAPPIER_HEARTBEAT_MARKER: markerPath,
       HAPPIER_TEST_HEARTBEAT_MS: '1000',
       HAPPIER_HEARTBEAT_EXIT_AFTER_SPAWN: opts?.exitAfterSpawn === true ? '1' : '',
       ...caseItem.extraEnv,
-    };
-
-    await writeFile(configPath, '// test config\n', 'utf8');
-    await createFakeToolchain(toolDir, caseItem.toolCommandName, markerPath, opts);
+    }, caseItem, fakeToolchain);
 
     const child = spawn(process.execPath, [wrapperPath, ...caseItem.buildArgs(configPath)], {
       env,
@@ -223,16 +241,15 @@ async function runWrapperParentExitCleanupScenario(caseItem: WrapperCase): Promi
     const wrapperPidPath = join(toolDir, 'wrapper-pid.json');
     const configPath = join(toolDir, caseItem.configName);
     const launcherPath = join(toolDir, 'launcher.cjs');
-    const env = {
+    await writeFile(configPath, '// test config\n', 'utf8');
+    const fakeToolchain = await createFakeToolchain(toolDir, caseItem.toolCommandName, markerPath);
+    const env = createWrapperEnv({
       ...tempPathBin.env,
       HAPPIER_HEARTBEAT_MARKER: markerPath,
       HAPPIER_TEST_HEARTBEAT_MS: '1000',
       HAPPIER_WRAPPER_PID_PATH: wrapperPidPath,
       ...caseItem.extraEnv,
-    };
-
-    await writeFile(configPath, '// test config\n', 'utf8');
-    await createFakeToolchain(toolDir, caseItem.toolCommandName, markerPath);
+    }, caseItem, fakeToolchain);
     await writeFile(
       launcherPath,
       [

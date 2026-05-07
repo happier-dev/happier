@@ -8,6 +8,8 @@ import { promptInput } from '@/terminal/prompts/promptInput';
 import { buildConnectedServiceCredentialRecord, sealConnectedServiceCredentialCiphertext, type ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { CommandContext } from '@/cli/commandRegistry';
+import { buildConnectedAccountOauthCredentialRecord } from '@/daemon/connectedServices/descriptors/buildConnectedAccountCredentialRecord';
+import { githubConnectedAccountTarget } from '@/daemon/connectedServices/github/githubConnectedAccountTarget';
 import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConnectArgs';
 import { resolveConnectAuthIntent } from './connect/resolveConnectAuthIntent';
 import { resolveConnectTargetServiceIds } from './connect/resolveConnectTargetServiceIds';
@@ -57,7 +59,7 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
 }
 
 async function loadConnectTargets(params: Readonly<{ includeExperimental: boolean }>): Promise<CloudConnectTarget[]> {
-  const targets: CloudConnectTarget[] = [];
+  const targets: CloudConnectTarget[] = [githubConnectedAccountTarget];
   for (const entry of Object.values(AGENTS)) {
     if (!entry.getCloudConnectTarget) continue;
     targets.push(await entry.getCloudConnectTarget());
@@ -85,6 +87,7 @@ ${targetLines}
   happier connect claude --api-key             Store an Anthropic API key (not Claude subscription)
   happier connect claude --setup-token         Store a Claude setup-token (default for claude)
   happier connect claude --oauth               Store Claude subscription OAuth (advanced)
+  happier connect github --token               Store a GitHub access token
   happier connect <target> --no-open           Do not attempt to open a browser
   happier connect <target> --timeout <seconds> Override OAuth timeout
 
@@ -108,10 +111,6 @@ ${chalk.bold('Notes:')}
 function formatTargetLine(target: CloudConnectTarget): string {
   const statusSuffix = target.status === 'wired' ? '' : chalk.gray(' (experimental)');
   return `  happier connect ${target.id.padEnd(12)} ${target.vendorDisplayName}${statusSuffix}`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 async function handleConnectVendor(target: CloudConnectTarget, options: ConnectParsedOptions): Promise<void> {
@@ -138,11 +137,21 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
         const promptLabel =
           authIntent.tokenKind === 'setup-token'
             ? 'Paste Claude setup-token (from `claude setup-token`): '
-            : serviceId === 'openai'
-              ? 'Paste OpenAI API key: '
-              : 'Paste Anthropic API key: ';
+            : authIntent.tokenKind === 'access-token'
+              ? 'Paste GitHub access token: '
+              : serviceId === 'openai'
+                ? 'Paste OpenAI API key: '
+                : 'Paste Anthropic API key: ';
         const token = (await promptInput(promptLabel)).trim();
-        if (!token) throw new Error(authIntent.tokenKind === 'setup-token' ? 'Missing setup-token' : 'Missing API key');
+        if (!token) {
+          throw new Error(
+            authIntent.tokenKind === 'setup-token'
+              ? 'Missing setup-token'
+              : authIntent.tokenKind === 'access-token'
+                ? 'Missing access token'
+                : 'Missing API key',
+          );
+        }
         return buildConnectedServiceCredentialRecord({
           now,
           serviceId,
@@ -160,85 +169,12 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
       });
       postConnectPayload = oauth;
 
-      if (target.id === 'codex') {
-        const t = isRecord(oauth) ? oauth : {};
-        const expiresAt = (() => {
-          const explicit = t.expires_at;
-          if (typeof explicit === 'number' && Number.isFinite(explicit) && explicit > 0) return explicit;
-          const expiresIn = t.expires_in;
-          if (typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0) {
-            return now + Math.trunc(expiresIn) * 1000;
-          }
-          return null;
-        })();
-        return buildConnectedServiceCredentialRecord({
-          now,
-          serviceId,
-          profileId: options.profileId,
-          kind: 'oauth',
-          expiresAt,
-          oauth: {
-            accessToken: String(t.access_token ?? ''),
-            refreshToken: String(t.refresh_token ?? ''),
-            idToken: typeof t.id_token === 'string' ? t.id_token : null,
-            scope: null,
-            tokenType: null,
-            providerAccountId: typeof t.account_id === 'string' ? t.account_id : null,
-            providerEmail: null,
-          },
-        });
-      }
-
-      if (target.id === 'claude') {
-        const t = isRecord(oauth) ? oauth : {};
-        const expiresAt = (() => {
-          const expiresIn = t.expires_in;
-          if (typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0) {
-            return now + Math.trunc(expiresIn) * 1000;
-          }
-          return null;
-        })();
-        const account = isRecord(t.account) ? t.account : null;
-        return buildConnectedServiceCredentialRecord({
-          now,
-          serviceId,
-          profileId: options.profileId,
-          kind: 'oauth',
-          expiresAt,
-          oauth: {
-            accessToken: String(t.access_token ?? ''),
-            refreshToken: String(t.refresh_token ?? ''),
-            idToken: null,
-            scope: typeof t.scope === 'string' ? t.scope : null,
-            tokenType: typeof t.token_type === 'string' ? t.token_type : null,
-            providerAccountId: account && typeof account.uuid === 'string' ? account.uuid : null,
-            providerEmail: account && typeof account.email_address === 'string' ? account.email_address : null,
-          },
-        });
-      }
-
-      if (target.id === 'gemini') {
-        const t = isRecord(oauth) ? oauth : {};
-        const expiresAt = typeof t.expires_in === 'number' ? now + t.expires_in * 1000 : null;
-        return buildConnectedServiceCredentialRecord({
-          now,
-          serviceId,
-          profileId: options.profileId,
-          kind: 'oauth',
-          expiresAt,
-          oauth: {
-            accessToken: String(t.access_token ?? ''),
-            refreshToken: String(t.refresh_token ?? ''),
-            idToken: typeof t.id_token === 'string' ? t.id_token : null,
-            scope: typeof t.scope === 'string' ? t.scope : null,
-            tokenType: typeof t.token_type === 'string' ? t.token_type : null,
-            providerAccountId: null,
-            providerEmail: null,
-          },
-        });
-      }
-
-      throw new Error(`Unsupported connect target: ${target.id}`);
+      return buildConnectedAccountOauthCredentialRecord({
+        now,
+        serviceId,
+        profileId: options.profileId,
+        payload: oauth,
+      });
     })();
 
     const sealedCiphertext = sealConnectedServiceCredentialCiphertext({

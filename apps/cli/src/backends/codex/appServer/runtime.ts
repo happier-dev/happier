@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
+import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 import { configuration } from '@/configuration';
 import {
     resolveSessionRollbackPlan,
@@ -160,6 +161,27 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
+const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE =
+    'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.';
+const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_RECOVERY_STATUS_MESSAGE =
+    'Codex detected that the signed-in account changed and refused to continue in the current process. Restarting the Codex process and resuming this session...';
+
+type CodexAppServerErrorPayload = Readonly<{
+    message: string | null;
+    additionalDetails: string | null;
+    codexErrorInfo: string | null;
+}>;
+
+class CodexAppServerTurnFailure extends Error {
+    readonly isAuthAccountChanged: boolean;
+
+    constructor(message: string, options: Readonly<{ isAuthAccountChanged: boolean }>) {
+        super(message);
+        this.name = 'CodexAppServerTurnFailure';
+        this.isAuthAccountChanged = options.isAuthAccountChanged;
+    }
+}
+
 function readModelId(value: unknown): string | null {
     const record = readRecord(value);
     return record ? trimStringValue(record.model) : null;
@@ -194,7 +216,7 @@ function readCodexTurnStatus(value: unknown): string | null {
     return trimStringValue(turn?.status);
 }
 
-function readCodexAppServerErrorMessage(value: unknown): string | null {
+function readCodexAppServerErrorPayload(value: unknown): CodexAppServerErrorPayload | null {
     const record = readRecord(value);
     if (!record) return null;
 
@@ -204,16 +226,42 @@ function readCodexAppServerErrorMessage(value: unknown): string | null {
     const error = directError ?? turnError;
     if (!error) return null;
 
-    const message = trimStringValue(error.message);
-    const additionalDetails = trimStringValue(error.additionalDetails ?? error.additional_details);
-    if (message && additionalDetails) {
-        return `${message}\n\n${additionalDetails}`;
+    return {
+        message: trimStringValue(error.message),
+        additionalDetails: trimStringValue(error.additionalDetails ?? error.additional_details),
+        codexErrorInfo: trimStringValue(error.codexErrorInfo ?? error.codex_error_info),
+    };
+}
+
+function formatCodexAppServerErrorPayloadMessage(payload: CodexAppServerErrorPayload): string | null {
+    if (payload.message && payload.additionalDetails) {
+        return `${payload.message}\n\n${payload.additionalDetails}`;
     }
-    return message ?? additionalDetails;
+    return payload.message ?? payload.additionalDetails;
+}
+
+function isCodexAppServerAuthAccountChangedPayload(payload: CodexAppServerErrorPayload): boolean {
+    const codexErrorInfo = payload.codexErrorInfo?.toLowerCase() ?? null;
+    const hasAuthAccountChangedMessage = [payload.message, payload.additionalDetails].some((value) =>
+        value?.includes(CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE),
+    );
+    return hasAuthAccountChangedMessage && (!codexErrorInfo || codexErrorInfo === 'unauthorized');
+}
+
+function isCodexAppServerAuthAccountChangedError(error: unknown): boolean {
+    if (error instanceof CodexAppServerTurnFailure) {
+        return error.isAuthAccountChanged;
+    }
+    if (!(error instanceof Error)) return false;
+    return error.message.includes(CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE);
 }
 
 function createCodexAppServerTurnFailure(value: unknown): Error {
-    return new Error(readCodexAppServerErrorMessage(value) ?? 'Codex app-server turn failed');
+    const payload = readCodexAppServerErrorPayload(value);
+    return new CodexAppServerTurnFailure(
+        payload ? formatCodexAppServerErrorPayloadMessage(payload) ?? 'Codex app-server turn failed' : 'Codex app-server turn failed',
+        { isAuthAccountChanged: payload ? isCodexAppServerAuthAccountChangedPayload(payload) : false },
+    );
 }
 
 function formatCodexAppServerErrorForUi(error: Error): string {
@@ -276,6 +324,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     processEnv?: NodeJS.ProcessEnv;
     configOverrides?: ReadonlyArray<string>;
     session: RuntimeSession;
+    transcriptSession?: StreamedTranscriptWriterSession;
     onThinkingChange: (thinking: boolean) => void;
     permissionHandler?: PermissionHandlerSubset | null;
     getPermissionMode?: (() => PermissionMode) | null;
@@ -323,7 +372,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         sidechainId: string | null;
     }>({
         provider: 'codex',
-        createSessionForStream: () => params.session,
+        createSessionForStream: () => params.transcriptSession ?? params.session,
     });
     const assistantTextByItemId = new Map<string, string>();
     const reasoningTextByItemId = new Map<string, string>();
@@ -750,6 +799,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         if (!record) return null;
 
         const invocation = readRecord(record.invocation) ?? record;
+        const meta = readRecord(record._meta) ?? readRecord(record.meta) ?? null;
         const server =
             trimStringValue(invocation.server) ??
             trimStringValue(invocation.mcpServer) ??
@@ -769,9 +819,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
             trimStringValue(invocation.name) ??
             trimStringValue(invocation.toolName) ??
             trimStringValue(invocation.tool_name) ??
-            toolFromMessage;
+            toolFromMessage ??
+            (meta ? trimStringValue(meta.tool_title) ?? trimStringValue(meta.toolTitle) : null);
 
-        const meta = readRecord(record._meta) ?? readRecord(record.meta) ?? null;
         const metaToolParams = meta ? (meta.tool_params ?? meta.toolParams ?? null) : null;
         const input = invocation.arguments ?? invocation.input ?? invocation.args ?? metaToolParams ?? {};
 
@@ -799,38 +849,24 @@ export function createCodexAppServerRuntime(params: Readonly<{
         return { toolCallId, toolName, input };
     };
 
-    type CodexElicitationAction = 'accept' | 'decline' | 'cancel';
-    type CodexElicitationDecision = 'approved' | 'approved_for_session' | 'denied' | 'abort';
+    type CodexAppServerMcpElicitationAction = 'accept' | 'decline' | 'cancel';
 
-    const mapMcpElicitationDecision = (result: PermissionResult): Readonly<Record<string, unknown>> => {
-        const decision: CodexElicitationDecision = (() => {
+    const mapMcpElicitationResponse = (result: PermissionResult): Readonly<Record<string, unknown>> => {
+        const action: CodexAppServerMcpElicitationAction = (() => {
             switch (result.decision) {
                 case 'approved_for_session':
-                    return 'approved_for_session';
                 case 'approved_execpolicy_amendment':
                 case 'approved':
-                    return 'approved';
+                    return 'accept';
                 case 'abort':
-                    return 'abort';
+                    return 'cancel';
                 case 'denied':
                 default:
-                    return 'denied';
+                    return 'decline';
             }
         })();
 
-        const action: CodexElicitationAction = (() => {
-            if (decision === 'approved' || decision === 'approved_for_session') {
-                return 'accept';
-            }
-            if (decision === 'abort') {
-                return 'cancel';
-            }
-            return 'decline';
-        })();
-
-        // Codex app-server MCP elicitations follow the same `action`/`decision` response shape as MCP `elicitation/create`.
-        // Include an empty `content` object for compatibility with newer Codex builds that expect both.
-        return { action, decision, content: {} };
+        return action === 'accept' ? { action, content: {} } : { action };
     };
 
     const handleMcpElicitationRequest = async (
@@ -839,14 +875,14 @@ export function createCodexAppServerRuntime(params: Readonly<{
     ): Promise<unknown> => {
         const invocation = readMcpElicitationInvocation(requestParams, message);
         if (!invocation) {
-            return { decision: 'decline' };
+            return mapMcpElicitationResponse({ decision: 'denied' });
         }
 
         const result = params.permissionHandler
             ? await params.permissionHandler.handleToolCall(invocation.toolCallId, invocation.toolName, invocation.input)
             : { decision: 'denied' as const };
 
-        return mapMcpElicitationDecision(result);
+        return mapMcpElicitationResponse(result);
     };
 
     const handleServerRequest = async (method: string, requestParams: unknown): Promise<unknown> => {
@@ -1141,7 +1177,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
                             params.session.sendCodexMessage({
                                 type: 'token_count',
                                 tokens: totalBreakdown,
-                                used: totalBreakdown.total,
                                 ...(contextWindowTokens !== null ? { size: contextWindowTokens } : {}),
                                 ...(currentModelId ? { model: currentModelId } : {}),
                                 ...(threadId ? { key: `codex-app-server:${threadId}` } : {}),
@@ -1154,7 +1189,16 @@ export function createCodexAppServerRuntime(params: Readonly<{
                             if (!notificationMatchesPendingTurn(notificationParams)) return;
                             const notificationRecord = readRecord(notificationParams);
                             if (notificationRecord?.willRetry === true) return;
-                            await abortPendingTurnWithFailure(createCodexAppServerTurnFailure(notificationParams));
+                            const failure = createCodexAppServerTurnFailure(notificationParams);
+                            if (isCodexAppServerAuthAccountChangedError(failure)) {
+                                await finishPendingTurn({
+                                    error: failure,
+                                    flushReason: 'abort',
+                                    insideBridgeWork: true,
+                                });
+                                return;
+                            }
+                            await abortPendingTurnWithFailure(failure);
                         });
                     });
                     registerActiveTurnStreamNotificationHandler(client, 'item/agentMessage/delta');
@@ -1181,7 +1225,16 @@ export function createCodexAppServerRuntime(params: Readonly<{
                             await runBridgeWork(async () => {
                                 if (notificationMatchesPendingTurn(notificationParams)) {
                                     if (method === 'turn/completed' && readCodexTurnStatus(notificationParams) === 'failed') {
-                                        await abortPendingTurnWithFailure(createCodexAppServerTurnFailure(notificationParams));
+                                        const failure = createCodexAppServerTurnFailure(notificationParams);
+                                        if (isCodexAppServerAuthAccountChangedError(failure)) {
+                                            await finishPendingTurn({
+                                                error: failure,
+                                                flushReason: 'abort',
+                                                insideBridgeWork: true,
+                                            });
+                                            return;
+                                        }
+                                        await abortPendingTurnWithFailure(failure);
                                         return;
                                     }
                                     schedulePendingTurnFinalization(
@@ -1229,52 +1282,30 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
     };
 
-    const startOrLoad = async (options: CodexAppServerStartOrLoadOptions = {}): Promise<void> => {
-        const resumeId = trimSessionId(options.resumeId);
-        const existingSessionId = trimSessionId(options.existingSessionId);
-        const client = await ensureClient();
-        let startOrLoadResponse: unknown = null;
-        const nextThreadId = await (async (): Promise<string> => {
-            if (resumeId) {
-                const policy = resolveCurrentPolicy();
-                const response = await client.request('thread/resume', {
-                    threadId: resumeId,
-                    ...(currentModelId ? { model: currentModelId } : {}),
-                    ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
-                    ...(policy ? { approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox } : {}),
-                    persistExtendedHistory: true,
-                });
-                startOrLoadResponse = response;
-                return readThreadId(response) ?? resumeId;
-            }
-            if (existingSessionId) {
-                const policy = resolveCurrentPolicy();
-                const response = await client.request('thread/resume', {
-                    threadId: existingSessionId,
-                    ...(currentModelId ? { model: currentModelId } : {}),
-                    ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
-                    ...(policy ? { approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox } : {}),
-                    persistExtendedHistory: true,
-                });
-                startOrLoadResponse = response;
-                return readThreadId(response) ?? existingSessionId;
-            }
-            const policy = resolveCurrentPolicy();
-            const response = await client.request('thread/start', {
-                cwd: params.directory,
-                ...(currentModelId ? { model: currentModelId } : {}),
-                ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
-                ...(policy ? { approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox } : {}),
-                experimentalRawEvents: true,
-                persistExtendedHistory: true,
-            });
-            startOrLoadResponse = response;
-            const startedThreadId = readThreadId(response);
-            if (!startedThreadId) {
-                throw new Error('Codex app-server thread/start returned no thread id');
-            }
-            return startedThreadId;
-        })();
+    const resumeThread = async (
+        client: DisposableCodexAppServerClient,
+        requestedThreadId: string,
+        options: Readonly<{ preserveRequestedThreadId: boolean }>,
+    ): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
+        const policy = resolveCurrentPolicy();
+        const response = await client.request('thread/resume', {
+            threadId: requestedThreadId,
+            ...(currentModelId ? { model: currentModelId } : {}),
+            ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
+            ...(policy ? { approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox } : {}),
+            persistExtendedHistory: true,
+        });
+        return {
+            nextThreadId: options.preserveRequestedThreadId ? requestedThreadId : readThreadId(response) ?? requestedThreadId,
+            response,
+        };
+    };
+
+    const applyStartOrLoadResponse = async (
+        client: DisposableCodexAppServerClient,
+        nextThreadId: string,
+        startOrLoadResponse: unknown,
+    ): Promise<void> => {
         threadId = nextThreadId;
         currentModelId = readModelId(startOrLoadResponse) ?? currentModelId;
         const serviceTierFromResponse = readServiceTier(startOrLoadResponse);
@@ -1288,6 +1319,35 @@ export function createCodexAppServerRuntime(params: Readonly<{
         await finishPendingTurn({ flushReason: 'abort' });
         publishThreadId();
         await publishSessionControls(client);
+    };
+
+    const startOrLoad = async (options: CodexAppServerStartOrLoadOptions = {}): Promise<void> => {
+        const resumeId = trimSessionId(options.resumeId);
+        const existingSessionId = trimSessionId(options.existingSessionId);
+        const client = await ensureClient();
+        const startOrLoadResult = await (async (): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
+            if (resumeId) {
+                return await resumeThread(client, resumeId, { preserveRequestedThreadId: false });
+            }
+            if (existingSessionId) {
+                return await resumeThread(client, existingSessionId, { preserveRequestedThreadId: false });
+            }
+            const policy = resolveCurrentPolicy();
+            const response = await client.request('thread/start', {
+                cwd: params.directory,
+                ...(currentModelId ? { model: currentModelId } : {}),
+                ...buildThreadServiceTierParams(currentServiceTier, hasServiceTierOverride),
+                ...(policy ? { approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox } : {}),
+                experimentalRawEvents: true,
+                persistExtendedHistory: true,
+            });
+            const startedThreadId = readThreadId(response);
+            if (!startedThreadId) {
+                throw new Error('Codex app-server thread/start returned no thread id');
+            }
+            return { nextThreadId: startedThreadId, response };
+        })();
+        await applyStartOrLoadResponse(client, startOrLoadResult.nextThreadId, startOrLoadResult.response);
     };
 
     return {
@@ -1421,51 +1481,76 @@ export function createCodexAppServerRuntime(params: Readonly<{
             }
         },
         sendPrompt: async (prompt: string) => {
-            const activeThreadId = threadId;
-            if (!activeThreadId) {
-                throw new Error('Codex app-server sendPrompt requires an active thread');
-            }
-            if (pendingTurn) {
-                throw new Error('Codex app-server already has a turn in flight');
-            }
-            const client = await ensureClient();
-            pendingTurnStartSeqInclusive = readLastObservedMessageSeq(params.session);
-            turnChangeCollector.beginTurn();
-            const activeTurn = createPendingTurn(activeThreadId);
-            pendingTurn = activeTurn;
-            latestPendingTurnId = null;
-            turnInFlight = true;
-            setThinking(true);
-            try {
-                const policy = resolveCurrentPolicy();
-                const collaborationMode = currentModeId
-                    ? resolveCodexAppServerCollaborationModeSelection({
-                        modesResponse: await client.request('collaborationMode/list', {}),
-                        modelsResponse: await client.request('model/list', {}),
-                        modeId: currentModeId,
-                        currentModelId,
-                        currentReasoningEffort,
-                    })?.payload
-                    : null;
-                const response = await client.request('turn/start', {
-                    threadId: activeThreadId,
-                    input: [{ type: 'text', text: prompt }],
-                    ...(currentModelId ? { model: currentModelId } : {}),
-                    ...(currentReasoningEffort ? { effort: currentReasoningEffort } : {}),
-                    ...(hasServiceTierOverride ? (currentServiceTier === 'fast' ? { serviceTier: 'fast' } : { serviceTier: null }) : {}),
-                    ...(policy ? { approvalPolicy: policy.approvalPolicy, sandboxPolicy: policy.sandboxPolicy } : {}),
-                    ...(collaborationMode ? { collaborationMode } : {}),
-                });
-                const startedTurnId = readTurnId(response);
-                if (startedTurnId) {
-                    pendingTurn = { ...activeTurn, turnId: startedTurnId };
-                    latestPendingTurnId = startedTurnId;
+            let recoveredAuthAccountChange = false;
+            while (true) {
+                const activeThreadId = threadId;
+                if (!activeThreadId) {
+                    throw new Error('Codex app-server sendPrompt requires an active thread');
                 }
-                await (pendingTurn ?? activeTurn).promise;
-            } catch (error) {
-                const failure = error instanceof Error ? error : new Error(String(error));
-                await finishPendingTurn({ error: failure, flushReason: 'abort' });
-                throw failure;
+                if (pendingTurn) {
+                    throw new Error('Codex app-server already has a turn in flight');
+                }
+                const client = await ensureClient();
+                pendingTurnStartSeqInclusive = readLastObservedMessageSeq(params.session);
+                turnChangeCollector.beginTurn();
+                const activeTurn = createPendingTurn(activeThreadId);
+                pendingTurn = activeTurn;
+                latestPendingTurnId = null;
+                turnInFlight = true;
+                setThinking(true);
+                try {
+                    const policy = resolveCurrentPolicy();
+                    const collaborationMode = currentModeId
+                        ? resolveCodexAppServerCollaborationModeSelection({
+                            modesResponse: await client.request('collaborationMode/list', {}),
+                            modelsResponse: await client.request('model/list', {}),
+                            modeId: currentModeId,
+                            currentModelId,
+                            currentReasoningEffort,
+                        })?.payload
+                        : null;
+                    const response = await client.request('turn/start', {
+                        threadId: activeThreadId,
+                        input: [{ type: 'text', text: prompt }],
+                        ...(currentModelId ? { model: currentModelId } : {}),
+                        ...(currentReasoningEffort ? { effort: currentReasoningEffort } : {}),
+                        ...(hasServiceTierOverride ? (currentServiceTier === 'fast' ? { serviceTier: 'fast' } : { serviceTier: null }) : {}),
+                        ...(policy ? { approvalPolicy: policy.approvalPolicy, sandboxPolicy: policy.sandboxPolicy } : {}),
+                        ...(collaborationMode ? { collaborationMode } : {}),
+                    });
+                    const startedTurnId = readTurnId(response);
+                    if (startedTurnId) {
+                        pendingTurn = { ...activeTurn, turnId: startedTurnId };
+                        latestPendingTurnId = startedTurnId;
+                    }
+                    await (pendingTurn ?? activeTurn).promise;
+                    return;
+                } catch (error) {
+                    const failure = error instanceof Error ? error : new Error(String(error));
+                    await finishPendingTurn({ error: failure, flushReason: 'abort' });
+                    if (!recoveredAuthAccountChange && isCodexAppServerAuthAccountChangedError(failure)) {
+                        recoveredAuthAccountChange = true;
+                        params.session.sendSessionEvent({
+                            type: 'message',
+                            message: CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_RECOVERY_STATUS_MESSAGE,
+                        });
+                        logger.debug('[codex-app-server] restarting process after Codex auth account changed', {
+                            threadId: activeThreadId,
+                        });
+                        await disposeClient();
+                        const resumedClient = await ensureClient();
+                        const resumedThread = await resumeThread(resumedClient, activeThreadId, {
+                            preserveRequestedThreadId: true,
+                        });
+                        await applyStartOrLoadResponse(
+                            resumedClient,
+                            resumedThread.nextThreadId,
+                            resumedThread.response,
+                        );
+                        continue;
+                    }
+                    throw failure;
+                }
             }
         },
         flushTurn: async () => {

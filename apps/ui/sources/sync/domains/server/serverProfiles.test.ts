@@ -75,6 +75,38 @@ describe('serverProfiles', () => {
         expect(profiles.getActiveServerUrl()).toBe('https://tab.example.test');
     });
 
+    it('clears the current tab override when setting a device active server', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        stubWebRuntime('https://origin.example.test');
+
+        const profiles = await importFresh();
+
+        const firstDeviceProfile = profiles.upsertServerProfile({
+            serverUrl: 'https://device.example.test',
+            name: 'Device',
+        });
+        const tabProfile = profiles.upsertServerProfile({
+            serverUrl: 'https://tab.example.test',
+            name: 'Tab',
+        });
+        const nextDeviceProfile = profiles.upsertServerProfile({
+            serverUrl: 'https://next-device.example.test',
+            name: 'Next Device',
+        });
+
+        profiles.setActiveServerId(firstDeviceProfile.id, { scope: 'device' });
+        profiles.setActiveServerId(tabProfile.id, { scope: 'tab' });
+
+        expect(profiles.getActiveServerUrl()).toBe('https://tab.example.test');
+
+        profiles.setActiveServerId(nextDeviceProfile.id, { scope: 'device' });
+
+        expect(profiles.getTabActiveServerId()).toBeNull();
+        expect(profiles.getActiveServerId()).toBe(nextDeviceProfile.id);
+        expect(profiles.getActiveServerUrl()).toBe('https://next-device.example.test');
+    });
+
     it('returns a stable active server snapshot reference until the store changes', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;

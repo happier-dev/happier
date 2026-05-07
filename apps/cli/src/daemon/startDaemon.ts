@@ -105,6 +105,7 @@ import {
   buildWindowsHostedTerminalArgs,
   buildWindowsHostedTerminalAttachment,
   buildWindowsTerminalWindowIdentity,
+  resolveWindowsTerminalWindowName,
 } from './platform/windows/windowsHostedSessionRuntime';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import { buildHappySessionControlArgs } from './sessionSpawnArgs';
@@ -116,7 +117,6 @@ import { resolveDaemonDiagnosticSubsystemGates } from './startup/diagnosticSubsy
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
 import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
 import { buildSpawnChildProcessEnv } from './spawn/buildSpawnChildProcessEnv';
-import { resolveDarwinBackgroundServiceSpawnDirectoryFailure } from './spawn/resolveDarwinBackgroundServiceSpawnDirectoryFailure';
 import { resolveStackProcessKindOverrideForSessionSpawn } from './spawn/resolveStackProcessKindOverrideForSessionSpawn';
 import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 import { computeDaemonSpawnRequestKey, createSpawnRequestCoalescer } from './spawn/spawnRequestCoalescer';
@@ -606,6 +606,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 hasResume: typeof normalizedOptions.resume === 'string' && normalizedOptions.resume.trim().length > 0,
                 windowsRemoteSessionLaunchMode: normalizedOptions.windowsRemoteSessionLaunchMode,
                 windowsRemoteSessionConsole: normalizedOptions.windowsRemoteSessionConsole,
+                windowsTerminalWindowName: normalizedOptions.windowsTerminalWindowName,
                 environmentVariableCount: envKeysPreview.length,
                 environmentVariableKeys: envKeysPreview,
                 environmentVariablesValid: environmentVariablesValidation.ok,
@@ -732,23 +733,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 return ensuredDirectory.response;
               }
               directoryCreated = ensuredDirectory.directoryCreated;
-
-              const darwinBackgroundServiceDirectoryFailure = resolveDarwinBackgroundServiceSpawnDirectoryFailure({
-                directory: resolvedDirectory,
-                startupSource,
-                env: process.env,
-              });
-              if (darwinBackgroundServiceDirectoryFailure) {
-                logger.warn('[DAEMON RUN] Blocked background-service spawn for protected macOS directory', {
-                  directory: resolvedDirectory,
-                  startupSource,
-                });
-                return {
-                  type: 'error',
-                  errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                  errorMessage: darwinBackgroundServiceDirectoryFailure,
-                };
-              }
 
               try {
 
@@ -1177,6 +1161,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   existingSessionId: normalizedExistingSessionId,
                   reservedSessionId: typeof sessionId === 'string' ? sessionId : undefined,
                   agentCommand,
+                  windowName: resolveWindowsTerminalWindowName({
+                    requested: normalizedOptions.windowsTerminalWindowName,
+                    env: process.env,
+                  }),
                 });
 
                 const tryConsoleLaunch = async (params: {
@@ -1189,7 +1177,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     requestedMode: params.requested,
                     fallbackReason: params.fallbackReason,
                   });
-                  const launchSpec = buildHappyCliSubprocessLaunchSpec(consoleArgs);
+                  const launchSpec = buildHappyCliSubprocessLaunchSpec(consoleArgs, {
+                    preferWindowsPackagedBinary: true,
+                  });
                   const started = await startHappySessionInVisibleWindowsConsole({
                     filePath: launchSpec.filePath,
                     args: launchSpec.args,
@@ -1231,7 +1221,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     requestedMode: 'windows_terminal',
                     windowId: windowsTerminalIdentity.windowId,
                   });
-                  const launchSpec = buildHappyCliSubprocessLaunchSpec(windowsTerminalArgs);
+                  const launchSpec = buildHappyCliSubprocessLaunchSpec(windowsTerminalArgs, {
+                    preferWindowsPackagedBinary: true,
+                  });
                   const started = await startHappySessionInWindowsTerminal({
                     filePath: launchSpec.filePath,
                     args: launchSpec.args,
@@ -1307,7 +1299,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     },
                   },
                 )
-                : spawnHappyCLI(args, spawnOptions);
+                : spawnHappyCLI(args, spawnOptions, {
+                  preferWindowsPackagedBinary: true,
+                });
 
               if (!happyProcess.pid) {
                 logger.debug('[DAEMON RUN] Failed to spawn process - no PID returned');
@@ -1457,7 +1451,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 };
 
             const stopSessionCore = createStopSession({ pidToTrackedSession });
-        const sessionRespawnEnabled = parseBooleanEnv(process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED, true);
+        const sessionRespawnEnabled = parseBooleanEnv(process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED, false);
         const sessionRespawnMaxAttempts = resolvePositiveIntEnv(
           process.env.HAPPIER_DAEMON_SESSION_RESPAWN_MAX_ATTEMPTS,
           10,
@@ -1519,7 +1513,19 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 
         const stopSession = async (sessionId: string): Promise<boolean> => {
           sessionRunnerRespawnManager.markStopRequested(sessionId, { reason: 'daemon_stop_session', requestedAtMs: Date.now() });
-          return await stopSessionCore(sessionId);
+          const stopped = await stopSessionCore(sessionId);
+          if (!stopped) return false;
+          if (configuration.daemonStopSessionWaitForExitMs > 0) {
+            await waitForExistingSessionExitIfStopRequested({
+              sessionId,
+              pidToTrackedSession,
+              isSessionRunnerActive,
+              timeoutMs: configuration.daemonStopSessionWaitForExitMs,
+              pollIntervalMs: configuration.daemonStopSessionWaitForExitPollIntervalMs,
+              onExitObserved: (pid, exit) => onChildExited(pid, exit),
+            });
+          }
+          return true;
         };
 
     const controlToken = randomBytes(32).toString('base64url');

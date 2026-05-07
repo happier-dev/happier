@@ -199,4 +199,29 @@ describe('updateAccountSettingsV2WithRetry', () => {
       }),
     );
   });
+
+  it('writes the refreshed disk cache under a credentials-derived path', async () => {
+    const credentials = { ...createLegacyCredentialsStub(), token: 'token-account-a' };
+    const writtenPaths: string[] = [];
+    const resolveCachePath = vi.fn((pathCredentials: Credentials) => `/tmp/server/${pathCredentials.token}/account.settings.cache.json`);
+
+    await updateAccountSettingsV2WithRetry({
+      credentials,
+      mutate: (settings) => ({ ...settings, hello: 'world' }),
+      deps: {
+        fetchSettings: async () => ({
+          content: { t: 'plain', v: accountSettingsParse({ schemaVersion: 6 }) },
+          version: 5,
+        }),
+        updateSettings: async () => ({ success: true, version: 6 }),
+        resolveCachePath,
+        writeCache: async (path) => {
+          writtenPaths.push(path);
+        },
+      },
+    });
+
+    expect(resolveCachePath).toHaveBeenCalledWith(expect.objectContaining({ token: 'token-account-a' }));
+    expect(writtenPaths).toEqual(['/tmp/server/token-account-a/account.settings.cache.json']);
+  });
 });

@@ -1,0 +1,7 @@
+{
+    "name": "HappierHardwareKeyboardShortcuts",
+    "platforms": ["ios"],
+    "ios": {
+        "modules": ["HappierHardwareKeyboardShortcutsModule"]
+    }
+}

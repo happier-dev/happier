@@ -50,7 +50,7 @@ echo Linux
   await writeFile(minisignStubPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
   await chmod(minisignStubPath, 0o755);
 
-  const version = '0.1.2';
+  const version = '0.1.2-dev.123';
   const artifactStem = `happier-server-v${version}-linux-x64`;
   const artifactName = `${artifactStem}.tar.gz`;
   const artifactDir = join(fixtureDir, artifactStem);
@@ -153,4 +153,3 @@ printf '%s' '${releaseJson}'
 
   await rm(root, { recursive: true, force: true });
 });
-

@@ -93,6 +93,47 @@ test('patchIosXcodeProjectsForSigningAndIdentity patches both Happydev + Happy p
   assert.match(pbxprojDev, /PRODUCT_BUNDLE_IDENTIFIER = dev\.happier\.stack\.stack\.user\.pre-pr272;/);
 });
 
+test('patchIosXcodeProjectsForSigningAndIdentity patches generated Happier app projects', async (t) => {
+  const uiDir = await withTempUiDir(t);
+  const iosDir = join(uiDir, 'ios');
+  await mkdir(join(iosDir, 'Happierinternaldev.xcodeproj'), { recursive: true });
+  await mkdir(join(iosDir, 'Happierinternaldev'), { recursive: true });
+
+  const pbxprojPath = join(iosDir, 'Happierinternaldev.xcodeproj', 'project.pbxproj');
+  await writeFile(
+    pbxprojPath,
+    [
+      'DevelopmentTeam = L86V3EF623;',
+      'ProvisioningStyle = Automatic;',
+      'CODE_SIGN_IDENTITY = "Apple Development";',
+      'DEVELOPMENT_TEAM = L86V3EF623;',
+      'PRODUCT_BUNDLE_IDENTIFIER = "dev.happier.app.dev.internal";',
+      'PRODUCT_NAME = Happierinternaldev;',
+      '',
+    ].join('\n'),
+    'utf-8'
+  );
+
+  const infoPlistPath = join(iosDir, 'Happierinternaldev', 'Info.plist');
+  await writeFile(infoPlistPath, '<key>CFBundleDisplayName</key><string>Happier</string>\n', 'utf-8');
+
+  await patchIosXcodeProjectsForSigningAndIdentity({
+    uiDir,
+    iosBundleId: 'dev.happier.app.dev.remotedev-devclient',
+    iosAppName: 'Happier (remote-dev)',
+  });
+
+  const pbxproj = await readFile(pbxprojPath, 'utf-8');
+  assert.match(pbxproj, /PRODUCT_BUNDLE_IDENTIFIER = dev\.happier\.app\.dev\.remotedev-devclient;/);
+  assert.doesNotMatch(pbxproj, /DevelopmentTeam\s*=/);
+  assert.doesNotMatch(pbxproj, /DEVELOPMENT_TEAM\s*=/);
+  assert.doesNotMatch(pbxproj, /CODE_SIGN_IDENTITY\s*=/);
+  assert.match(pbxproj, /PRODUCT_NAME = Happier-remote-dev;/);
+
+  const plist = await readFile(infoPlistPath, 'utf-8');
+  assert.match(plist, /<key>CFBundleDisplayName<\/key><string>Happier \(remote-dev\)<\/string>/);
+});
+
 test('patchIosXcodeProjectsForSigningAndIdentity tolerates missing Info.plist and leaves pre-patched pbxproj unchanged', async (t) => {
   const uiDir = await withTempUiDir(t);
   const iosDir = join(uiDir, 'ios');

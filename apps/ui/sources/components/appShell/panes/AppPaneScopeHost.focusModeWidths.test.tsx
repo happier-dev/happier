@@ -13,7 +13,6 @@ installAppPaneScopeHostCommonModuleMocks({
     getDimensions: () => ({ width: 1200, height: 800 }),
     getLocalSetting: (key) => {
         if (key === 'uiMultiPanePanelsEnabled') return true;
-        if (key === 'editorFocusModeEnabled') return true;
         if (key === 'rightPaneWidthPx') return 360;
         if (key === 'rightPaneWidthBasisPx') return 1200;
         if (key === 'detailsPaneWidthPx') return 420;
@@ -39,6 +38,8 @@ vi.mock('./AppPaneProvider', () => ({
     useAppPaneContext: () => ({
         dispatch: vi.fn(),
         state: {
+            activeScopeId: 'scope1',
+            focusMode: { scopeId: 'scope1' },
             scopes: {
                 scope1: {
                     right: { isOpen: true },

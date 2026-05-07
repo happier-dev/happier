@@ -256,18 +256,21 @@ describe('happier attach', () => {
     }) => {
       expect(rows).toHaveLength(3);
       expect(rows[0]).toMatchObject({
+        sessionId: 'sid_attachable_1',
+        disabled: false,
+      });
+      expect(rows[1]).toMatchObject({
         sessionId: 'sid_remote_opencode_1',
         disabled: true,
         annotation: 'remote',
         disabledReason: 'Press P to check remote reachability.',
         probeable: true,
       });
-      expect(rows[1]).toMatchObject({ sessionId: 'sid_attachable_1', disabled: false });
       expect(rows[2]).toMatchObject({
         sessionId: 'sid_not_attachable_1',
         disabled: true,
-        disabledReason: 'Session was not started in tmux.',
       });
+      expect(String(rows[2].disabledReason)).toMatch(/outside tmux|not started in tmux/i);
 
       await expect(probeSessionIdFn?.('sid_remote_opencode_1')).resolves.toMatchObject({
         reachable: true,
@@ -486,6 +489,61 @@ describe('happier attach', () => {
         mode: 'tmux',
         tmux: expect.objectContaining({ target: 'happy:session-1' }),
       }),
+    }));
+  });
+
+  it('requests a remote-control banner refresh when attaching to daemon-started tmux sessions', async () => {
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_daemon_claude_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-local',
+        path: '/tmp/claude-workspace',
+        host: 'test',
+        flavor: 'claude',
+        startedBy: 'daemon',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: {
+            target: 'happy:session-1',
+            tmpDir: '/tmp/happy-tmux',
+          },
+        },
+      }),
+    });
+    const runTmuxAttachFn = vi.fn(async () => 0);
+
+    await (handleAttachCommand as any)(['sid_daemon_claude_1'], {
+      readCredentialsFn: async () => credentials,
+      readSettingsFn: async () => localSettings,
+      fetchSessionByIdFn: async () => rawSession,
+      readTerminalAttachmentInfoFn: async () => ({
+        version: 1,
+        sessionId: 'sid_daemon_claude_1',
+        updatedAt: Date.now(),
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: {
+            target: 'happy:session-1',
+            tmpDir: '/tmp/happy-tmux',
+          },
+        },
+      }),
+      isTmuxAvailableFn: async () => true,
+      runProviderAttachFn: vi.fn(async () => false),
+      runTmuxAttachFn,
+    });
+
+    expect(runTmuxAttachFn).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sid_daemon_claude_1',
+      refreshRemoteControl: true,
     }));
   });
 

@@ -63,7 +63,7 @@ describe('expo-router route hygiene', () => {
         expect(unexpected).toEqual([]);
     });
 
-    it('does not allow .ts modules inside sources/app (they become routes and should be .tsx screens)', () => {
+    it('does not allow non-route implementation modules inside sources/app', () => {
         const appRoot = resolve(__dirname, '../app');
 
         const walk = (dir: string): string[] => {
@@ -80,7 +80,11 @@ describe('expo-router route hygiene', () => {
             return out;
         };
 
-        const unexpected = walk(appRoot).filter((filePath) => filePath.endsWith('.ts'));
+        const unexpected = walk(appRoot).filter((filePath) => {
+            if (filePath.endsWith('.ts')) return true;
+            const fileName = filePath.split(/[\\/]/u).pop() ?? '';
+            return /^[A-Z].*\.tsx$/u.test(fileName);
+        });
         expect(unexpected).toEqual([]);
     });
 });

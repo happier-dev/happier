@@ -10,6 +10,7 @@ Common examples:
 - disable social/friends features,
 - disable voice features,
 - disable bug report upload features,
+- disable pet companions or synced custom pet libraries,
 - disable connected services entirely,
 - disable only connected-services quota surfaces while keeping basic connected auth enabled.
 
@@ -27,8 +28,30 @@ Clients (mobile/web/desktop) adapt to advertised flags so disabled features do n
 2. Restart/redeploy server if required by your deployment setup.
 3. Reopen Happier clients so they refresh capabilities from the server.
 
+## Pets
+
+Pet companions use two server flags:
+
+- `pets.companion` controls whether pet companion surfaces and local pet package actions are available.
+- `pets.sync` controls synced account pet libraries.
+
+The server allows `pets.companion` by default, but each user still has to enable pets in **Settings -> Pets** before a pet appears. This lets self-hosted and company-managed servers expose the setting without forcing pets on for everyone.
+
+To disable pets for every connected client:
+
+```bash
+HAPPIER_FEATURE_PETS_COMPANION__ENABLED=0
+```
+
+To disable account pet library sync while still allowing built-in and local pets:
+
+```bash
+HAPPIER_FEATURE_PETS_SYNC__ENABLED=0
+```
+
 ## Related pages
 
+- [Pets](/docs/features/pets)
 - [Connected services](/docs/features/connected-services)
 - [Friends](/docs/features/friends)
 - [Voice](/docs/features/voice)

@@ -142,6 +142,11 @@ vi.mock('@/agents/catalog/catalog', () => ({
             acpApplyBehavior: 'none',
         },
     }),
+    getAgentBehavior: (agentId: string) => ({
+        sessionUsage: {
+            supportsExactContextUsageBadge: agentId !== 'codex' && agentId !== 'gemini',
+        },
+    }),
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({

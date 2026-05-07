@@ -10,6 +10,8 @@ import {
   installVersionedPayload,
   resolveInstalledFirstPartyComponentPaths,
   resolveFirstPartyComponentPublicReleaseVariant,
+  resolveManagedCliReleaseChannelSync,
+  resolveManagedCliToolNameForRing,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import type { FirstPartyComponentId } from '@happier-dev/cli-common/firstPartyRuntime';
 import { createStepPrinter } from '@happier-dev/cli-common/output';
@@ -27,7 +29,6 @@ import {
   normalizePublicReleaseRingId,
   type PublicReleaseRingId,
 } from '@happier-dev/release-runtime/releaseRings';
-import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
 import {
   resolveCliBinaryAssetBundleFromReleaseAssets,
   updateInstalledCliPayloadFromReleaseAssets,
@@ -108,8 +109,48 @@ function resolveSelfNpmDistTag(channel: SelfChannel): 'latest' | 'next' {
   return channel === 'stable' ? 'latest' : 'next';
 }
 
+/**
+ * The `next` npm dist-tag is shared by both preview and dev channels. When
+ * `npm view @happier-dev/cli@next version` returns a version, it might be from
+ * either channel. Verify the fetched version's prerelease identifier matches
+ * the channel we're on — otherwise we'd announce "update available" across
+ * channels (e.g. dev 0.2.5 being "updated" to preview 0.2.2).
+ *
+ * Prerelease tag contracts:
+ *  - stable:  no prerelease identifier (e.g. "0.2.3")
+ *  - preview: "-preview." prerelease (e.g. "0.2.3-preview.17...")
+ *  - dev:     "-dev." prerelease     (e.g. "0.2.5-dev.17...")
+ */
+export function doesVersionMatchChannel(version: string | null, channel: SelfChannel): boolean {
+  const v = String(version ?? '').trim();
+  if (!v) return false;
+  const prereleaseIndex = v.indexOf('-');
+  const prerelease = prereleaseIndex >= 0 ? v.slice(prereleaseIndex + 1) : '';
+  if (channel === 'stable') {
+    return prerelease === '';
+  }
+  if (channel === 'preview') {
+    return prerelease.startsWith('preview.') || prerelease === 'preview';
+  }
+  // publicdev
+  return prerelease.startsWith('dev.') || prerelease === 'dev';
+}
+
+function resolveSelfReleaseChannel(params: Readonly<{
+  args: readonly string[];
+  rawArgv?: readonly string[];
+  invokedPath?: string | null;
+}>): ReturnType<typeof resolveManagedCliReleaseChannelSync> {
+  return resolveManagedCliReleaseChannelSync({
+    args: params.args,
+    argv: params.rawArgv ?? process.argv,
+    invokedPath: params.invokedPath ?? process.argv[1] ?? '',
+    processEnv: process.env,
+  });
+}
+
 export function parseSelfChannel(args: string[], invokedPath = process.argv[1] ?? ''): SelfChannel {
-  return resolvePublicReleaseRingIdFromCliArgs({ args, invokedPath });
+  return resolveSelfReleaseChannel({ args, invokedPath }).ringId;
 }
 
 export function computeSelfUpdateSpec(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
@@ -207,8 +248,9 @@ async function runSelfUpdateStep<T>(
   }
 }
 
-async function cmdCheck(argv: string[]): Promise<void> {
-  const channel = parseSelfChannel(argv);
+async function cmdCheck(argv: string[], rawArgv: readonly string[] = process.argv): Promise<void> {
+  const channelResolution = resolveSelfReleaseChannel({ args: argv, rawArgv });
+  const channel = channelResolution.ringId;
   const quiet = argv.includes('--quiet');
   const installSource = detectInstallSource(process.argv[1] ?? '');
 
@@ -243,7 +285,7 @@ async function cmdCheck(argv: string[]): Promise<void> {
 
     if (updateAvailable) {
       console.log(chalk.yellow(`Update available: ${current ?? 'current'} → ${latest}`));
-      console.log(chalk.gray('Run:'), chalk.cyan('happier self update'));
+      console.log(chalk.gray('Run:'), chalk.cyan(`${resolveManagedCliToolNameForRing(channel)} self update`));
       return;
     }
     console.log(chalk.green('Up to date.'));
@@ -257,7 +299,9 @@ async function cmdCheck(argv: string[]): Promise<void> {
   const invokerVersion = configuration.currentCliVersion;
   const current = runtimeVersion || invokerVersion || null;
 
-  const latest = readNpmDistTagVersion({ packageName: pkgName, distTag, cwd: process.cwd(), env: process.env });
+  const rawLatest = readNpmDistTagVersion({ packageName: pkgName, distTag, cwd: process.cwd(), env: process.env });
+  // Reject cross-channel results (preview/dev share the `next` dist-tag).
+  const latest = doesVersionMatchChannel(rawLatest, channel) ? rawLatest : null;
   const updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
 
   const existing = readUpdateCache(updateCachePath(channel));
@@ -280,14 +324,15 @@ async function cmdCheck(argv: string[]): Promise<void> {
   }
   if (updateAvailable) {
     console.log(chalk.yellow(`Update available: ${current ?? 'current'} → ${latest}`));
-    console.log(chalk.gray('Run:'), chalk.cyan('happier self update'));
+    console.log(chalk.gray('Run:'), chalk.cyan(`${resolveManagedCliToolNameForRing(channel)} self update`));
     return;
   }
   console.log(chalk.green('Up to date.'));
 }
 
-async function cmdUpdate(argv: string[]): Promise<void> {
-  const channel = parseSelfChannel(argv);
+async function cmdUpdate(argv: string[], rawArgv: readonly string[] = process.argv): Promise<void> {
+  const channelResolution = resolveSelfReleaseChannel({ args: argv, rawArgv });
+  const channel = channelResolution.ringId;
   const steps = createStepPrinter({ enabled: true });
   const toArg = (() => {
     const i = argv.indexOf('--to');
@@ -366,13 +411,14 @@ async function cmdUpdate(argv: string[]): Promise<void> {
           : []),
     ]);
   });
-  console.log(chalk.green(`✓ Updated happier to ${result.updatedTo}`));
+  const updatedToolName = resolveManagedCliToolNameForRing(effective.channel);
+  console.log(chalk.green(`✓ Updated ${updatedToolName} to ${result.updatedTo}`));
   const migrationRan = await maybeRunVersionGatedRuntimeMigration({
     fromVersion: result.previousVersionId,
     toVersion: result.updatedTo,
     hadLegacyCurrentInstallWithoutVersionMarkers: result.hadLegacyCurrentInstallWithoutVersionMarkers,
     argv: ['repair'],
-    commandPath: 'happier doctor',
+    commandPath: `${updatedToolName} doctor`,
   });
   await maybeRunDoctorRepair({
     migrationRan,
@@ -429,11 +475,12 @@ async function withInstalledCliMigrationRuntime<T>(params: Readonly<{
   }
 }
 
-async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
+async function cmdInternalInstallPayload(argv: string[], rawArgv: readonly string[] = process.argv): Promise<void> {
   const componentId = parseFirstPartyComponentId(resolveInternalInstallPayloadArgValue(argv, '--component'));
   const payloadRoot = resolveInternalInstallPayloadArgValue(argv, '--payload-root');
   const versionId = resolveInternalInstallPayloadArgValue(argv, '--version');
-  const channel = normalizePublicReleaseRingId(resolveInternalInstallPayloadArgValue(argv, '--channel')) || parseSelfChannel(argv);
+  const channel = normalizePublicReleaseRingId(resolveInternalInstallPayloadArgValue(argv, '--channel'))
+    || resolveSelfReleaseChannel({ args: argv, rawArgv }).ringId;
 
   if (!payloadRoot) {
     throw new Error('--payload-root is required');
@@ -466,6 +513,9 @@ async function cmdInternalInstallPayload(argv: string[]): Promise<void> {
         hadLegacyCurrentInstallWithoutVersionMarkers: promotion.hadLegacyCurrentInstallWithoutVersionMarkers,
         argv: ['repair'],
         commandPath: 'happier doctor',
+        // Install-payload promotion is spawned by installer scripts with no
+        // controlling TTY — migration must run headlessly here.
+        forceNonInteractive: true,
       }),
     });
     return;
@@ -481,11 +531,11 @@ export async function handleSelfCliCommand(context: CommandContext): Promise<voi
       return;
     }
     if (sub === 'check') {
-      await cmdCheck(argv.slice(1));
+      await cmdCheck(argv.slice(1), context.rawArgv);
       return;
     }
     if (sub === 'update') {
-      await cmdUpdate(argv.slice(1));
+      await cmdUpdate(argv.slice(1), context.rawArgv);
       return;
     }
     if (sub === 'migrate') {
@@ -493,7 +543,7 @@ export async function handleSelfCliCommand(context: CommandContext): Promise<voi
       return;
     }
     if (sub === '__install-payload') {
-      await cmdInternalInstallPayload(argv.slice(1));
+      await cmdInternalInstallPayload(argv.slice(1), context.rawArgv);
       return;
     }
     console.error(chalk.red('Error:'), `Unknown self subcommand: ${sub}`);

@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 
 import { buildCodeLinesFromTextDiff } from '@/components/ui/code/model/buildCodeLinesFromTextDiff';
 import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
 import { useCodeLinesSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
+import { HorizontalOverflowScrollView } from '@/components/ui/scroll/HorizontalOverflowScrollView';
 import type { TextDiffViewerProps } from '../diffViewerTypes';
 
 export const HappierTextDiffViewer = React.memo<TextDiffViewerProps>((props) => {
@@ -44,12 +45,11 @@ export const HappierTextDiffViewer = React.memo<TextDiffViewerProps>((props) => 
     if (wrapLines) return view;
 
     return (
-        <ScrollView
-            horizontal
+        <HorizontalOverflowScrollView
             showsHorizontalScrollIndicator={true}
             contentContainerStyle={{ flexGrow: 1 }}
         >
             {view}
-        </ScrollView>
+        </HorizontalOverflowScrollView>
     );
 });

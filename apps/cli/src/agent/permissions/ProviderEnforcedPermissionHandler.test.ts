@@ -33,6 +33,19 @@ class FakeSession {
   }
 }
 
+async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfilled' | 'rejected'> {
+  await Promise.resolve();
+  await Promise.resolve();
+
+  return Promise.race([
+    promise.then(
+      () => 'fulfilled' as const,
+      () => 'rejected' as const,
+    ),
+    new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 0)),
+  ]);
+}
+
 describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () => {
   afterEach(() => {
     delete process.env.HAPPIER_STACK_TOOL_TRACE;
@@ -121,6 +134,78 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     await respond?.({ id: 'perm-1', approved: true, decision: 'approved' });
     await expect(pending).resolves.toEqual({ decision: 'approved' });
     expect(session.agentState.requests['perm-1']).toBeFalsy();
+  });
+
+  it('resolves every duplicate same-id waiter from one permission response', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const input = { command: 'echo hello' };
+
+    const first = handler.handleToolCall('perm-duplicate', 'bash', input);
+    const second = handler.handleToolCall('perm-duplicate', 'bash', input);
+
+    expect(Object.keys(session.agentState.requests)).toEqual(['perm-duplicate']);
+
+    const respond = session.rpcHandlerManager.handlers.get('permission');
+    expect(respond).toBeTruthy();
+    await respond?.({ id: 'perm-duplicate', approved: true, decision: 'approved' });
+
+    await expect(second).resolves.toEqual({ decision: 'approved' });
+    expect(await settledState(first)).toBe('fulfilled');
+    await expect(first).resolves.toEqual({ decision: 'approved' });
+    expect(session.agentState.requests['perm-duplicate']).toBeFalsy();
+    expect(session.agentState.completedRequests['perm-duplicate']).toMatchObject({
+      tool: 'bash',
+      status: 'approved',
+      decision: 'approved',
+    });
+  });
+
+  it('rejects every duplicate same-id waiter when the session is explicitly aborted', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const input = { command: 'pwd' };
+
+    const first = handler.handleToolCall('perm-abort-duplicate', 'bash', input);
+    const second = handler.handleToolCall('perm-abort-duplicate', 'bash', input);
+
+    expect(Object.keys(session.agentState.requests)).toEqual(['perm-abort-duplicate']);
+
+    await expect(
+      (handler as unknown as { abortPendingRequestsAndFlush: (reason?: string) => Promise<void> }).abortPendingRequestsAndFlush('Aborted by user'),
+    ).resolves.toBeUndefined();
+
+    await expect(second).rejects.toThrow('Aborted by user');
+    expect(await settledState(first)).toBe('rejected');
+    await expect(first).rejects.toThrow('Aborted by user');
+    expect(session.agentState.requests['perm-abort-duplicate']).toBeFalsy();
+    expect(session.agentState.completedRequests['perm-abort-duplicate']).toMatchObject({
+      tool: 'bash',
+      status: 'canceled',
+      reason: 'Aborted by user',
+      decision: 'abort',
+    });
+  });
+
+  it('terminalizes pending requests as aborts when the session is explicitly aborted', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+
+    const pending = handler.handleToolCall('perm-abort-1', 'bash', { command: 'pwd' });
+    expect(session.agentState.requests['perm-abort-1']).toBeTruthy();
+
+    await expect(
+      (handler as unknown as { abortPendingRequestsAndFlush: (reason?: string) => Promise<void> }).abortPendingRequestsAndFlush('Aborted by user'),
+    ).resolves.toBeUndefined();
+
+    await expect(pending).rejects.toThrow('Aborted by user');
+    expect(session.agentState.requests['perm-abort-1']).toBeFalsy();
+    expect(session.agentState.completedRequests['perm-abort-1']).toMatchObject({
+      tool: 'bash',
+      status: 'canceled',
+      reason: 'Aborted by user',
+      decision: 'abort',
+    });
   });
 
   it('records permission-request tool trace events when enabled', async () => {

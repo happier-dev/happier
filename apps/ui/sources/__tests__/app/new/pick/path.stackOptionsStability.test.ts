@@ -5,7 +5,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import type { SessionListItem } from '@/sync/store/types';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     createNavigationMock,
     createRouterMock,
@@ -31,7 +31,7 @@ const stableMachines = [
         metadata: pickerMachineMetadata,
     }),
 ];
-const stableSessions: SessionListItem[] = [];
+const stableSessions: Session[] = [];
 const stableRecentMachinePaths: string[] = [];
 const stableFavoriteDirectories: string[] = [];
 let localSearchParams: { machineId: string; selectedPath: string } = { machineId: 'm1', selectedPath: '' };

@@ -352,18 +352,17 @@ describe('RelayHostEngine (local health)', () => {
     });
   });
 
-  it('fails closed when another relay lane is already installed on the same local base URL', async () => {
+  it('fails closed when another relay lane is explicitly pinned to the same URL via env override', async () => {
+    // New contract: installing a second channel's relay WITHOUT an explicit
+    // PORT override auto-assigns a free port (see separate test). This test
+    // covers the remaining conflict case: user explicitly pins the preview
+    // relay to stable's port via `--env PORT=3005`. In that case we should
+    // still error, because the user is asking for a collision.
     await withTemporaryHome(async (homeDir) => {
       const stableDefaults = resolveRelayRuntimeDefaults({
         platform: 'linux',
         mode: 'user',
         channel: 'stable',
-        homeDir,
-      });
-      const previewDefaults = resolveRelayRuntimeDefaults({
-        platform: 'linux',
-        mode: 'user',
-        channel: 'preview',
         homeDir,
       });
 
@@ -403,8 +402,62 @@ describe('RelayHostEngine (local health)', () => {
         target: { kind: 'local' },
         channel: 'preview',
         mode: 'user',
+        env: { PORT: '3005' },
         selfHostRelayBinaryOverride: previewBinaryPath,
       })).rejects.toThrow(/stable/i);
+    });
+  });
+
+  it('auto-assigns a free port when another relay lane is already on the default port', async () => {
+    await withTemporaryHome(async (homeDir) => {
+      const stableDefaults = resolveRelayRuntimeDefaults({
+        platform: 'linux',
+        mode: 'user',
+        channel: 'stable',
+        homeDir,
+      });
+
+      await mkdir(stableDefaults.configDir, { recursive: true });
+      await mkdir(stableDefaults.installRoot, { recursive: true });
+      await writeFile(join(stableDefaults.configDir, 'server.env'), 'PORT=3005\nHAPPIER_SERVER_HOST=127.0.0.1\n', 'utf8');
+      await writeFile(join(stableDefaults.installRoot, 'self-host-state.json'), JSON.stringify({ version: '0.1.2' }), 'utf8');
+
+      const payloadRoot = join(homeDir, 'payload');
+      await mkdir(payloadRoot, { recursive: true });
+      await mkdir(join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init'), { recursive: true });
+      await writeFile(join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init', 'migration.sql'), '-- init\n', 'utf8');
+      const previewBinaryPath = join(payloadRoot, 'happier-server');
+      await writeFile(previewBinaryPath, '#!/usr/bin/env bash\n', 'utf8');
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      vi.doMock('node:os', async () => {
+        const actual = await vi.importActual<typeof import('node:os')>('node:os');
+        return {
+          ...actual,
+          homedir: () => homeDir,
+        };
+      });
+
+      const { createRelayHostEngine } = await import('./relayHostEngine.js');
+      const engine = createRelayHostEngine({
+        localInstallPolicy: {
+          runServiceCommands: false,
+          skipHealthCheck: true,
+        },
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        copyLocalDirectoryToRemote: async () => {},
+        installRemoteComponent: async () => ({ binaryPath: '$HOME/.happier/happier-server/current/happier-server', versionId: 'publicdev-1' }),
+      });
+
+      const result = await engine.installOrUpdate({
+        target: { kind: 'local' },
+        channel: 'preview',
+        mode: 'user',
+        selfHostRelayBinaryOverride: previewBinaryPath,
+      });
+
+      expect(result.relayUrl).not.toMatch(/:3005(\/|$)/);
+      expect(result.relayUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+/);
     });
   });
 

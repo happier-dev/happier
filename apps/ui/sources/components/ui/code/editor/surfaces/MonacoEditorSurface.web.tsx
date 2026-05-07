@@ -8,6 +8,8 @@ import type { CodeEditorHandle } from '../codeEditorTypes';
 import { TextInput } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/store/hooks';
 import { resolveCodeEditorFontMetrics } from '../codeEditorFontMetrics';
+import { buildMonacoEditorThemeData, resolveCodeEditorTheme } from '../editorTheme';
+import type { CodeEditorTheme } from '../editorTheme';
 
 
 type MonacoType = any;
@@ -119,6 +121,13 @@ async function ensureMonaco(): Promise<MonacoType> {
     return window.monaco;
 }
 
+function applyMonacoEditorTheme(monaco: MonacoType, editorTheme: CodeEditorTheme): void {
+    const editorApi = monaco?.editor;
+    if (!editorApi?.defineTheme || !editorApi?.setTheme) return;
+    editorApi.defineTheme(editorTheme.monacoThemeName, buildMonacoEditorThemeData(editorTheme));
+    editorApi.setTheme(editorTheme.monacoThemeName);
+}
+
 export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditorProps>(function MonacoEditorSurface(
     props,
     ref,
@@ -128,6 +137,24 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     const fontMetrics = React.useMemo(
         () => resolveCodeEditorFontMetrics({ uiFontScale }),
         [uiFontScale],
+    );
+    const editorTheme = React.useMemo(
+        () => resolveCodeEditorTheme(theme),
+        [
+            theme.dark,
+            theme.colors.accent.blue,
+            theme.colors.divider,
+            theme.colors.surfaceHigh,
+            theme.colors.surfaceHighest,
+            theme.colors.syntaxComment,
+            theme.colors.syntaxDefault,
+            theme.colors.syntaxFunction,
+            theme.colors.syntaxKeyword,
+            theme.colors.syntaxNumber,
+            theme.colors.syntaxString,
+            theme.colors.text,
+            theme.colors.textTertiary,
+        ],
     );
     const containerRef = React.useRef<any>(null);
     const editorRef = React.useRef<any>(null);
@@ -141,6 +168,7 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     const latestWrapLinesRef = React.useRef(props.wrapLines ?? true);
     const latestShowLineNumbersRef = React.useRef(props.showLineNumbers ?? true);
     const latestFontMetricsRef = React.useRef(resolveCodeEditorFontMetrics({ uiFontScale }));
+    const latestEditorThemeRef = React.useRef(editorTheme);
     const pendingChangeRef = React.useRef<string | null>(null);
     const changeTimerRef = React.useRef<number | null>(null);
     const disposablesRef = React.useRef<Array<{ dispose?: () => void }> | null>(null);
@@ -182,6 +210,17 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     React.useEffect(() => {
         latestFontMetricsRef.current = fontMetrics;
     }, [fontMetrics]);
+
+    React.useEffect(() => {
+        latestEditorThemeRef.current = editorTheme;
+        const monaco = window.monaco;
+        if (!editorRef.current || !monaco) return;
+        try {
+            applyMonacoEditorTheme(monaco, editorTheme);
+        } catch {
+            // ignore
+        }
+    }, [editorTheme]);
 
     const flushPendingChange = React.useCallback(() => {
         if (changeTimerRef.current != null) {
@@ -241,12 +280,15 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                 const initialShowLineNumbers = latestShowLineNumbersRef.current;
                 const initialReadOnly = latestReadOnlyRef.current;
                 const initialLanguage = latestLanguageRef.current;
+                const initialEditorTheme = latestEditorThemeRef.current;
 
                 const model = monaco.editor.createModel(latestValueRef.current, initialLanguage);
                 modelRef.current = model;
+                applyMonacoEditorTheme(monaco, initialEditorTheme);
 
                 const editor = monaco.editor.create(node, {
                     model,
+                    theme: initialEditorTheme.monacoThemeName,
                     readOnly: initialReadOnly,
                     minimap: { enabled: false },
                     scrollBeyondLastLine: false,
@@ -354,9 +396,10 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     const borderStyle = {
         flex: 1,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: editorTheme.dividerColor,
         borderRadius: 10,
         overflow: 'hidden' as const,
+        backgroundColor: editorTheme.backgroundColor,
     };
 
     // Monaco mounts into a DOM node; RN web renders View to a div. The container must be rendered
@@ -364,7 +407,7 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     // cannot boot (leaving the editor stuck on the fallback textarea).
     return (
         <View style={borderStyle}>
-            <View testID={props.testID} ref={containerRef} style={{ flex: 1 }} />
+            <View testID={props.testID} ref={containerRef} style={{ flex: 1, backgroundColor: editorTheme.backgroundColor }} />
             {ready ? null : (
                 <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
                     <TextInput
@@ -376,8 +419,8 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                         style={{
                             flex: 1,
                             padding: 10,
-                            color: theme.colors.text,
-                            backgroundColor: theme.colors.surfaceHighest,
+                            color: editorTheme.syntax.defaultColor,
+                            backgroundColor: editorTheme.backgroundColor,
                             fontFamily:
                                 'Menlo, ui-monospace, SFMono-Regular, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                             fontSize: fontMetrics.fontSize,

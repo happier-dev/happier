@@ -1,6 +1,7 @@
 import { logger } from "@/ui/logger";
 import { claudeLocal, ExitCodeError } from "./claudeLocal";
 import { Session, type SessionFoundInfo } from "./session";
+import type { EnhancedMode } from './loop';
 import { Future } from "@/utils/future";
 import { createSessionScanner } from "./utils/sessionScanner";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
@@ -16,6 +17,13 @@ import { configuration } from '@/configuration';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
 import { resolveClaudeCodeExperimentalEnvOverlay } from './spawn/resolveClaudeCodeExperimentalEnvOverlay';
 import { createClaudeRawMessageTurnDiffBridge } from './utils/createClaudeRawMessageTurnDiffBridge';
+import {
+    createDeferredRemoteSwitchController,
+    createLocalTurnLifecycleController,
+} from '@/agent/localControl/turnLifecycle';
+import { startLocalPendingQueueRemoteSwitchWatcher } from '@/agent/localControl/pendingQueue/startLocalPendingQueueRemoteSwitchWatcher';
+import { createClaudeLocalLifecycleTracker } from './localControl/claudeLocalLifecycleTracker';
+import type { SessionHookData } from './utils/startHookServer';
 
 function upsertClaudePermissionModeArgs(
     args: string[] | undefined,
@@ -79,6 +87,10 @@ export async function claudeLocalLauncher(
                 session.client.sendClaudeSessionMessage(message);
             },
         });
+        const turnLifecycle = createLocalTurnLifecycleController({
+            completionQuiescenceMs: configuration.claudeLocalTurnCompletionQuiescenceMs,
+        });
+        const lifecycleTracker = createClaudeLocalLifecycleTracker({ lifecycle: turnLifecycle });
 
         // Create scanner
             const scanner = await createSessionScanner({
@@ -87,6 +99,7 @@ export async function claudeLocalLauncher(
         claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
         workingDirectory: session.path,
         onMessage: (message) => {
+            lifecycleTracker.observeTranscript(message);
             const bridged = turnDiffBridge.observe(message);
             if (bridged) {
                 session.client.sendClaudeSessionMessage(bridged);
@@ -108,6 +121,10 @@ export async function claudeLocalLauncher(
         scanner.onNewSession({ sessionId: info.sessionId, transcriptPath: info.transcriptPath });
     };
     session.addSessionFoundCallback(scannerSessionCallback);
+    const lifecycleHookCallback = (data: SessionHookData) => {
+        lifecycleTracker.observeHook(data);
+    };
+    session.addClaudeSessionHookCallback(lifecycleHookCallback);
 
     // Handle abort
     let exitReason: LauncherResult | null = null;
@@ -115,6 +132,8 @@ export async function claudeLocalLauncher(
 	    const processAbortController = new AbortController();
 	    let exitFuture = new Future<void>();
 	    let syncLastPermissionModeFromMetadata: (() => void) | null = null;
+    let deferredRemoteSwitch: { dispose: () => void } | null = null;
+    let pendingQueueWatcher: { stop: () => void } | null = null;
 	    try {
         const clientEmitter = session.client as unknown as {
             getMetadataSnapshot?: () => Metadata | null | undefined;
@@ -185,6 +204,19 @@ export async function claudeLocalLauncher(
             await abort();
         }
 
+        const remoteSwitchController = createDeferredRemoteSwitchController<EnhancedMode>({
+            lifecycle: turnLifecycle,
+            providerLabel: 'Claude',
+            requestSwitchToRemote: async () => {
+                await doSwitch();
+                return true;
+            },
+            onQueuedMessageMode: (mode) => {
+                session.setLastPermissionMode(mode.permissionMode);
+            },
+        });
+        deferredRemoteSwitch = remoteSwitchController;
+
         // When to abort
         session.client.rpcHandlerManager.registerHandler('abort', doAbort); // Abort current process, clean queue and switch to remote mode
         session.client.rpcHandlerManager.registerHandler('switch', async (params: any) => {
@@ -192,14 +224,11 @@ export async function claudeLocalLauncher(
             // Local launcher is already in local mode, so {to:'local'} is a no-op.
             const to = resolveSwitchRequestTarget(params);
             if (to === 'local') return true;
-            await doSwitch();
-            return true;
+            return await remoteSwitchController.requestRemoteSwitch('rpc_switch');
         }); // When user wants to switch to remote mode
         session.queue.setOnMessage((message: string, mode) => {
-            session.setLastPermissionMode(mode.permissionMode);
-            // Switch to remote mode when message received
-            void doSwitch();
-        }); // When any message is received, abort current process, clean queue and switch to remote mode
+            remoteSwitchController.onQueuedMessage(message, mode);
+        }); // When any message is received, wait for a safe local-turn boundary, then switch to remote mode
 
         if (entry === 'switch') {
             const autoConfirmDiscardForE2e =
@@ -234,6 +263,12 @@ export async function claudeLocalLauncher(
                 return { type: 'switch' };
             }
         }
+
+        pendingQueueWatcher = startLocalPendingQueueRemoteSwitchWatcher({
+            peekPendingCount: () => session.client.peekPendingMessageQueueV2Count(),
+            pollIntervalMs: configuration.pendingQueueIdleWakePollIntervalMs,
+            requestRemoteSwitch: () => remoteSwitchController.requestRemoteSwitch('server_pending_queue'),
+        });
 
         // Handle session start
         const handleSessionStart = (sessionId: string) => {
@@ -282,21 +317,26 @@ export async function claudeLocalLauncher(
 
                 const { mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
 
-                await claudeLocal({
-                    path: session.path,
-                    sessionId: resumeFromSessionId,
-                    onSessionFound: handleSessionStart,
-                    onThinkingChange: session.onThinkingChange,
-                    abort: processAbortController.signal,
-                    claudeArgs: session.claudeArgs,
-                    systemPromptText: session.defaultSystemPromptText,
-                    envOverlay: resolveClaudeCodeExperimentalEnvOverlay({
-                        claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
-                    }),
-                    happierMcpConfigJson: baseMcpConfigJson,
-                    hookSettingsPath: session.hookSettingsPath,
-                    hookPluginDir: session.hookPluginDir,
-                });
+                try {
+                    await claudeLocal({
+                        path: session.path,
+                        sessionId: resumeFromSessionId,
+                        onSessionFound: handleSessionStart,
+                        onThinkingChange: session.onThinkingChange,
+                        abort: processAbortController.signal,
+                        claudeArgs: session.claudeArgs,
+                        systemPromptText: session.defaultSystemPromptText,
+                        envOverlay: resolveClaudeCodeExperimentalEnvOverlay({
+                            claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
+                        }),
+                        happierMcpConfigJson: baseMcpConfigJson,
+                        hookSettingsPath: session.hookSettingsPath,
+                        hookPluginDir: session.hookPluginDir,
+                    });
+                } finally {
+                    lifecycleTracker.observeProcessExit();
+                    await Promise.resolve();
+                }
 
                 // Consume one-time Claude flags after spawn
                 // For example we don't want to pass --resume flag after first spawn
@@ -372,6 +412,10 @@ export async function claudeLocalLauncher(
         
         // Remove session found callback
         session.removeSessionFoundCallback(scannerSessionCallback);
+        session.removeClaudeSessionHookCallback(lifecycleHookCallback);
+        pendingQueueWatcher?.stop();
+        deferredRemoteSwitch?.dispose();
+        turnLifecycle.dispose();
 
         // Cleanup
         await scanner.cleanup();

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const {
   ensureJavaScriptRuntimeExecutableMock,
@@ -147,5 +150,40 @@ describe('installDaemonService runtime resolution', () => {
       explicitNodePath: process.execPath,
     });
     expect(ensureJavaScriptRuntimeExecutableMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the persisted default release channel when daemon service install has no explicit channel', async () => {
+    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-service-default-channel-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    writeFileSync(
+      join(homeDir, 'default-cli-release-channel.json'),
+      `${JSON.stringify({ releaseChannel: 'publicdev' })}\n`,
+      'utf8',
+    );
+
+    try {
+      const { previewDaemonServiceInstall } = await import('./installer');
+
+      await previewDaemonServiceInstall({
+        platform: 'linux',
+        uid: 123,
+        userHomeDir: '/home/test',
+        happierHomeDir: '/home/test/.happier',
+        instanceId: 'cloud',
+        targetMode: 'pinned',
+      });
+
+      expect(planDaemonServiceInstallMock).toHaveBeenCalledWith(expect.objectContaining({
+        channel: 'publicdev',
+      }));
+    } finally {
+      if (previousHomeDir === undefined) {
+        delete process.env.HAPPIER_HOME_DIR;
+      } else {
+        process.env.HAPPIER_HOME_DIR = previousHomeDir;
+      }
+      rmSync(homeDir, { recursive: true, force: true });
+    }
   });
 });

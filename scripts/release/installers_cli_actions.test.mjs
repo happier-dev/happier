@@ -441,6 +441,89 @@ test('install.sh --uninstall (stable) switches default happier shim to preview w
   await rm(root, { recursive: true, force: true });
 });
 
+test('install.sh --rollback restores the previous CLI version without network or current binary execution', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-rollback-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  const tracePath = join(root, 'current-invocation.log');
+  const cliRoot = join(installDir, 'cli');
+  const currentVersion = '2.0.0';
+  const previousVersion = '1.2.3';
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(installDir, 'bin'), { recursive: true });
+  await mkdir(join(cliRoot, 'versions', currentVersion), { recursive: true });
+  await mkdir(join(cliRoot, 'versions', previousVersion), { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(curlStubPath, '#!/usr/bin/env bash\necho "curl should not run in --rollback" >&2\nexit 88\n', 'utf8');
+  await chmod(curlStubPath, 0o755);
+
+  await writeFile(
+    join(cliRoot, 'versions', currentVersion, 'happier'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> ${JSON.stringify(tracePath)}
+exit 77
+`,
+    'utf8',
+  );
+  await chmod(join(cliRoot, 'versions', currentVersion, 'happier'), 0o755);
+  await writeFile(
+    join(cliRoot, 'versions', previousVersion, 'happier'),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" = "--version" ]]; then
+  echo "${previousVersion}"
+  exit 0
+fi
+exit 0
+`,
+    'utf8',
+  );
+  await chmod(join(cliRoot, 'versions', previousVersion, 'happier'), 0o755);
+
+  await symlink(`versions/${currentVersion}`, join(cliRoot, 'current'));
+  await symlink(`versions/${previousVersion}`, join(cliRoot, 'previous'));
+  await writeFile(join(cliRoot, 'current.version'), `${currentVersion}\n`, 'utf8');
+  await writeFile(join(cliRoot, 'previous.version'), `${previousVersion}\n`, 'utf8');
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_CHANNEL: 'stable',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--rollback'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+  assert.equal(res.status, 0, `rollback failed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+
+  const versionRes = spawnSync(join(outBinDir, 'happier'), ['--version'], { env, encoding: 'utf8' });
+  assert.equal(versionRes.status, 0, `rolled-back shim failed: ${String(versionRes.stderr ?? '')}`);
+  assert.match(String(versionRes.stdout ?? ''), new RegExp(previousVersion.replaceAll('.', '[.]')));
+
+  const currentLink = spawnSync('readlink', [join(cliRoot, 'current')], { encoding: 'utf8' });
+  assert.equal(currentLink.status, 0, `expected current pointer to be a symlink: ${String(currentLink.stderr ?? '')}`);
+  assert.match(String(currentLink.stdout ?? ''), /versions\/1\.2\.3/);
+  assert.equal((await readFile(join(cliRoot, 'current.version'), 'utf8')).trim(), previousVersion);
+  assert.equal((await readFile(join(cliRoot, 'previous.version'), 'utf8')).trim(), currentVersion);
+  assert.equal(await readFile(tracePath, 'utf8').catch(() => ''), '', 'expected rollback to avoid invoking the broken current binary');
+
+  await rm(root, { recursive: true, force: true });
+});
+
 test('install.sh --reset purges the install directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-reset-'));
   const homeDir = join(root, 'home');

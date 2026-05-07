@@ -3,6 +3,7 @@ import {
   type DirectSessionProviderOps,
 } from '@/backends/directSessions/providerOps';
 
+import { createPollingDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createPollingDirectSessionFollowLease';
 import { getOpenCodeDirectSessionActivity } from './getOpenCodeDirectSessionActivity';
 import { getOpenCodeDirectSessionWorkingDirectory } from './getOpenCodeDirectSessionWorkingDirectory';
 import { listOpenCodeSessionCandidates } from './listOpenCodeSessionCandidates';
@@ -35,6 +36,10 @@ export const openCodeDirectSessionProviderOps: DirectSessionProviderOps = {
     const res = await readAfterOpenCodeTranscript({ source, remoteSessionId, cursor, maxBytes, maxItems });
     return { items: res.items, nextCursor: res.nextCursor ?? null, truncated: res.truncated === true };
   },
+  acquireFollowLease: async ({ source, remoteSessionId }) => createPollingDirectSessionFollowLease({
+    readAfterTranscript: ({ cursor, maxBytes, maxItems }) =>
+      readAfterOpenCodeTranscript({ source, remoteSessionId, cursor, maxBytes, maxItems }),
+  }),
   resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
     const directory =
       linked.sessionPath ??

@@ -97,7 +97,7 @@ describe('PromptStackPromptPickerScreen', () => {
         await act(async () => {
             editPromptAction?.onPress?.();
         });
-        expect(promptStacksRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1');
+        expect(promptStacksRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/docs/doc-1');
 
         const addPromptItem = tree.findByTestId('promptStackPicker.addPrompt');
         const addSkillItem = tree.findByTestId('promptStackPicker.addSkill');

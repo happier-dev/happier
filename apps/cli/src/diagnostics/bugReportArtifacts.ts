@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   hasAcceptedBugReportArtifactKind,
   inferBugReportDeploymentTypeFromServerUrl,
@@ -27,6 +27,11 @@ import { normalizeBaseUrl, withAbortTimeout } from '@/diagnostics/httpClient';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { buildDoctorSnapshot } from '@/ui/doctorSnapshot';
 
+export type BugReportExtraAttachmentInput = {
+  path: string;
+  sourceKind: 'attachment' | 'session-log' | 'provider-transcript';
+};
+
 export type CollectBugReportDiagnosticsArtifactsInput = {
   includeDiagnostics: boolean;
   acceptedKinds: string[];
@@ -35,6 +40,7 @@ export type CollectBugReportDiagnosticsArtifactsInput = {
   serverUrl: string;
   activeServerId: string;
   rawArgs: string[];
+  extraAttachments?: BugReportExtraAttachmentInput[];
 };
 
 export type CollectBugReportDiagnosticsArtifactsResult = {
@@ -202,6 +208,7 @@ export async function collectBugReportDiagnosticsArtifacts(
     daemonLogTails: { status: 'skipped', detail: 'source kind not accepted' },
     stackLogTails: { status: 'skipped', detail: 'source kind not accepted' },
     serverDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
+    extraAttachments: { status: 'skipped', detail: 'no attachments provided' },
   };
 
   try {
@@ -344,6 +351,51 @@ export async function collectBugReportDiagnosticsArtifacts(
       }
     } catch (error) {
       diagnosticsCollection.serverDiagnostics = { status: 'error', detail: formatDiagnosticsCollectionError(error) };
+    }
+  }
+
+  const extraAttachments = input.extraAttachments ?? [];
+  if (extraAttachments.length > 0) {
+    let collected = 0;
+    let skippedKinds = 0;
+    let errors = 0;
+    for (let attachIndex = 0; attachIndex < extraAttachments.length; attachIndex += 1) {
+      const entry = extraAttachments[attachIndex];
+      if (!entry) continue;
+      if (!hasAcceptedBugReportArtifactKind(input.acceptedKinds, entry.sourceKind)) {
+        skippedKinds += 1;
+        continue;
+      }
+      try {
+        const tail = await readBugReportLogTail(entry.path, Math.min(input.maxArtifactBytes, 1_000_000));
+        if (!tail || !tail.trim()) continue;
+        const fileSegment = sanitizeBugReportArtifactFileSegment(basename(entry.path));
+        const filename = fileSegment || `${entry.sourceKind}-${attachIndex + 1}`;
+        pushBugReportArtifact(artifacts, {
+          filename,
+          sourceKind: entry.sourceKind,
+          contentType: 'text/plain',
+          content: tail,
+        }, limits);
+        collected += 1;
+      } catch (error) {
+        errors += 1;
+        diagnosticsCollection.extraAttachments = {
+          status: 'error',
+          detail: formatDiagnosticsCollectionError(error),
+        };
+      }
+    }
+    if (collected > 0) {
+      diagnosticsCollection.extraAttachments = {
+        status: 'collected',
+        detail: `collected=${collected}, skippedKinds=${skippedKinds}, errors=${errors}`,
+      };
+    } else if (errors === 0) {
+      diagnosticsCollection.extraAttachments = {
+        status: 'skipped',
+        detail: skippedKinds > 0 ? `skippedKinds=${skippedKinds}` : 'no readable content',
+      };
     }
   }
 

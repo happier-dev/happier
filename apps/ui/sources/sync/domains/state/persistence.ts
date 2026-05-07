@@ -30,6 +30,11 @@ import {
     type BackendTargetRefV1,
     type SessionMcpSelectionV1,
 } from '@happier-dev/protocol';
+import {
+    serverAccountScopeKeySuffix,
+    type ServerAccountScope,
+} from '../scope/serverAccountScope';
+import type { LocalPetSourceMetadata } from '../pets/localPetSourceMetadata';
 var persistedStorage: MMKV | null = null;
 
 const pendingSettingsSchemaByKey: Readonly<Record<string, z.ZodTypeAny>> = Object.freeze({
@@ -41,12 +46,24 @@ function deviceAnalyticsIdKey(): string {
     return 'device-analytics-id-v1';
 }
 
-function newSessionDraftKey(): string {
-    return 'new-session-draft-v1';
+function newSessionDraftKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('new-session-draft-v1', scope);
 }
 
-function sessionMaterializedMaxSeqKey(): string {
-    return 'session-materialized-max-seq-v1';
+function sessionMaterializedMaxSeqKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-materialized-max-seq-v1', scope);
+}
+
+function sessionModelModesKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-model-modes', scope);
+}
+
+function syncReliabilityEventsKey(): string {
+    return 'sync-reliability-events-v1';
+}
+
+function localPetSourcesKey(): string {
+    return 'local-pet-sources-v1';
 }
 
 function lastChangesCursorByAccountIdKey(): string {
@@ -61,16 +78,49 @@ function changesCursorByServerScopeAndAccountIdPrefix(): string {
     return 'changes-cursor-by-server-scope-and-account-id-v1:';
 }
 
-function sessionModelModeUpdatedAtsKey(): string {
-    return 'session-model-mode-updated-ats-v1';
+function changesCursorByServerScopeAccountIdAndInstancePrefix(): string {
+    return 'changes-cursor-by-server-scope-account-id-and-instance-v1:';
 }
 
-function sessionReviewCommentsDraftsKey(): string {
-    return 'session-review-comments-draft-v1';
+function directSessionTailCursorPrefix(): string {
+    return 'direct-session-tail-cursor-v1:';
 }
 
-function sessionActionDraftsKey(): string {
-    return 'session-action-drafts-v1';
+function sessionModelModeUpdatedAtsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-model-mode-updated-ats-v1', scope);
+}
+
+function sessionReviewCommentsDraftsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-review-comments-draft-v1', scope);
+}
+
+function workspaceReviewCommentsDraftsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('workspace-review-comments-draft-v1', scope);
+}
+
+function sessionActionDraftsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-action-drafts-v1', scope);
+}
+
+function sessionDraftsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-drafts', scope);
+}
+
+function sessionPermissionModesKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-permission-modes', scope);
+}
+
+function sessionPermissionModeUpdatedAtsKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-permission-mode-updated-ats', scope);
+}
+
+function sessionLastViewedKey(scope?: ServerAccountScope | null): string {
+    return scopedSessionLocalStateKey('session-last-viewed', scope);
+}
+
+function scopedSessionLocalStateKey(baseKey: string, scope?: ServerAccountScope | null): string {
+    if (!scope) return baseKey;
+    return `${baseKey}:scope:v2:${serverAccountScopeKeySuffix(scope)}`;
 }
 
 function isWebRuntime(): boolean {
@@ -96,7 +146,7 @@ function buildScopedStorageId(baseId: string, scope: string | null): string {
     return scope ? `${baseId}__${scope}` : baseId;
 }
 
-function getPersistenceStorage(): MMKV {
+export function getPersistenceStorage(): MMKV {
     if (persistedStorage) return persistedStorage;
     // Keep storage-scope bootstrap local here to avoid import-cycle TDZ hazards during Sync initialization.
     const storageScope = isWebRuntime() ? null : readScopedStorageScopeFromEnv();
@@ -268,7 +318,7 @@ export function saveSettings(settings: Settings, version: number) {
     mmkv.set('settings', JSON.stringify({ settings, version }));
 }
 
-function parsePendingSettings(raw: unknown): Partial<Settings> {
+export function parsePendingSettings(raw: unknown): Partial<Settings> {
     // CRITICAL: Pending settings must represent ONLY user-intended deltas.
     // We must NOT apply schema defaults here (otherwise `{}` becomes a non-empty delta,
     // causing a POST on every startup and potentially overwriting server settings).
@@ -351,6 +401,71 @@ export function saveLocalSettings(settings: LocalSettings) {
     mmkv.set('local-settings', JSON.stringify(settings));
 }
 
+const LocalPetSourceMetadataSchema = z
+    .object({
+        kind: z.enum(['detectedCodexHome', 'happierManagedLocal']),
+        sourceKey: z.string().min(1).max(500),
+        petId: z.string().min(1).max(200),
+        displayName: z.string().min(1).max(200),
+        mediaType: z.enum(['image/png', 'image/webp']).optional(),
+        digest: z.string().min(1).max(500).optional(),
+        sizeBytes: z.number().int().min(0).optional(),
+        daemonTarget: z.object({
+            machineId: z.string().min(1).max(500),
+            serverId: z.string().min(1).max(500),
+        }),
+    })
+    .strip();
+
+export function loadLocalPetSourcesBySourceKey(): Record<string, LocalPetSourceMetadata> {
+    const mmkv = getPersistenceStorage();
+    const key = localPetSourcesKey();
+    const raw = mmkv.getString(key);
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            mmkv.delete(key);
+            return {};
+        }
+
+        const out: Record<string, LocalPetSourceMetadata> = {};
+        for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+            const result = LocalPetSourceMetadataSchema.safeParse(value);
+            if (!result.success) continue;
+            if (result.data.sourceKey !== key) continue;
+            out[key] = result.data;
+        }
+        const nextRaw = JSON.stringify(out);
+        if (Object.keys(out).length === 0) {
+            mmkv.delete(key);
+        } else if (nextRaw !== raw) {
+            mmkv.set(key, nextRaw);
+        }
+        return out;
+    } catch (e) {
+        console.error('Failed to parse local pet sources', e);
+        mmkv.delete(key);
+        return {};
+    }
+}
+
+export function saveLocalPetSourcesBySourceKey(sources: Record<string, LocalPetSourceMetadata>): void {
+    const mmkv = getPersistenceStorage();
+    const safeSources: Record<string, LocalPetSourceMetadata> = {};
+    for (const [key, source] of Object.entries(sources)) {
+        const result = LocalPetSourceMetadataSchema.safeParse(source);
+        if (!result.success) continue;
+        if (result.data.sourceKey !== key) continue;
+        safeSources[key] = result.data;
+    }
+    if (Object.keys(safeSources).length === 0) {
+        mmkv.delete(localPetSourcesKey());
+        return;
+    }
+    mmkv.set(localPetSourcesKey(), JSON.stringify(safeSources));
+}
+
 export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
     const mmkv = getPersistenceStorage();
     const localSettings = mmkv.getString('local-settings');
@@ -387,9 +502,9 @@ export function savePurchases(purchases: Purchases) {
     mmkv.set('purchases', JSON.stringify(purchases));
 }
 
-export function loadSessionDrafts(): Record<string, string> {
+export function loadSessionDrafts(scope?: ServerAccountScope | null): Record<string, string> {
     const mmkv = getPersistenceStorage();
-    const drafts = mmkv.getString('session-drafts');
+    const drafts = mmkv.getString(sessionDraftsKey(scope));
     if (drafts) {
         try {
             return JSON.parse(drafts);
@@ -401,16 +516,18 @@ export function loadSessionDrafts(): Record<string, string> {
     return {};
 }
 
-export function saveSessionDrafts(drafts: Record<string, string>) {
+export function saveSessionDrafts(drafts: Record<string, string>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set('session-drafts', JSON.stringify(drafts));
+    mmkv.set(sessionDraftsKey(scope), JSON.stringify(drafts));
 }
 
 export type SessionReviewCommentDraftsBySessionId = Record<string, z.infer<typeof ReviewCommentDraftSchema>[]>;
 
-export function loadSessionReviewCommentsDrafts(): SessionReviewCommentDraftsBySessionId {
+export type WorkspaceReviewCommentDraftsByWorkspaceCacheKey = Record<string, z.infer<typeof ReviewCommentDraftSchema>[]>;
+
+export function loadSessionReviewCommentsDrafts(scope?: ServerAccountScope | null): SessionReviewCommentDraftsBySessionId {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionReviewCommentsDraftsKey());
+    const raw = mmkv.getString(sessionReviewCommentsDraftsKey(scope));
     if (!raw) return {};
     try {
         const parsed = JSON.parse(raw);
@@ -435,20 +552,65 @@ export function loadSessionReviewCommentsDrafts(): SessionReviewCommentDraftsByS
     }
 }
 
-export function saveSessionReviewCommentsDrafts(drafts: SessionReviewCommentDraftsBySessionId): void {
+export function saveSessionReviewCommentsDrafts(
+    drafts: SessionReviewCommentDraftsBySessionId,
+    scope?: ServerAccountScope | null,
+): void {
     const mmkv = getPersistenceStorage();
+    const key = sessionReviewCommentsDraftsKey(scope);
     if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(sessionReviewCommentsDraftsKey());
+        mmkv.delete(key);
         return;
     }
-    mmkv.set(sessionReviewCommentsDraftsKey(), JSON.stringify(drafts));
+    mmkv.set(key, JSON.stringify(drafts));
+}
+
+export function loadWorkspaceReviewCommentsDrafts(scope?: ServerAccountScope | null): WorkspaceReviewCommentDraftsByWorkspaceCacheKey {
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(workspaceReviewCommentsDraftsKey(scope));
+    if (!raw) return {};
+    try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+        const out: WorkspaceReviewCommentDraftsByWorkspaceCacheKey = {};
+        for (const [rawWorkspaceCacheKey, rawDrafts] of Object.entries(parsed as Record<string, unknown>)) {
+            const workspaceCacheKey = typeof rawWorkspaceCacheKey === 'string' ? rawWorkspaceCacheKey.trim() : '';
+            if (!workspaceCacheKey) continue;
+            if (!Array.isArray(rawDrafts)) continue;
+
+            const drafts: z.infer<typeof ReviewCommentDraftSchema>[] = [];
+            for (const entry of rawDrafts) {
+                const entryParsed = ReviewCommentDraftSchema.safeParse(entry);
+                if (entryParsed.success) drafts.push(entryParsed.data);
+            }
+            if (drafts.length > 0) out[workspaceCacheKey] = drafts;
+        }
+        return out;
+    } catch (e) {
+        console.error('Failed to parse workspace review comment drafts', e);
+        return {};
+    }
+}
+
+export function saveWorkspaceReviewCommentsDrafts(
+    drafts: WorkspaceReviewCommentDraftsByWorkspaceCacheKey,
+    scope?: ServerAccountScope | null,
+): void {
+    const mmkv = getPersistenceStorage();
+    const key = workspaceReviewCommentsDraftsKey(scope);
+    if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
+        mmkv.delete(key);
+        return;
+    }
+    mmkv.set(key, JSON.stringify(drafts));
 }
 
 export type SessionActionDraftsBySessionId = Record<string, z.infer<typeof SessionActionDraftSchema>[]>;
 
-export function loadSessionActionDrafts(): SessionActionDraftsBySessionId {
+export function loadSessionActionDrafts(scope?: ServerAccountScope | null): SessionActionDraftsBySessionId {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionActionDraftsKey());
+    const raw = mmkv.getString(sessionActionDraftsKey(scope));
     if (!raw) return {};
     try {
         const parsed = JSON.parse(raw);
@@ -473,18 +635,22 @@ export function loadSessionActionDrafts(): SessionActionDraftsBySessionId {
     }
 }
 
-export function saveSessionActionDrafts(drafts: SessionActionDraftsBySessionId): void {
+export function saveSessionActionDrafts(
+    drafts: SessionActionDraftsBySessionId,
+    scope?: ServerAccountScope | null,
+): void {
     const mmkv = getPersistenceStorage();
+    const key = sessionActionDraftsKey(scope);
     if (!drafts || typeof drafts !== 'object' || Object.keys(drafts).length === 0) {
-        mmkv.delete(sessionActionDraftsKey());
+        mmkv.delete(key);
         return;
     }
-    mmkv.set(sessionActionDraftsKey(), JSON.stringify(drafts));
+    mmkv.set(key, JSON.stringify(drafts));
 }
 
-export function loadNewSessionDraft(): NewSessionDraft | null {
+export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessionDraft | null {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(newSessionDraftKey());
+    const raw = mmkv.getString(newSessionDraftKey(scope));
     if (!raw) {
         return null;
     }
@@ -584,19 +750,19 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
     }
 }
 
-export function saveNewSessionDraft(draft: NewSessionDraft) {
+export function saveNewSessionDraft(draft: NewSessionDraft, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(newSessionDraftKey(), JSON.stringify(draft));
+    mmkv.set(newSessionDraftKey(scope), JSON.stringify(draft));
 }
 
-export function clearNewSessionDraft() {
+export function clearNewSessionDraft(scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.delete(newSessionDraftKey());
+    mmkv.delete(newSessionDraftKey(scope));
 }
 
-export function loadSessionPermissionModes(): Record<string, PermissionMode> {
+export function loadSessionPermissionModes(scope?: ServerAccountScope | null): Record<string, PermissionMode> {
     const mmkv = getPersistenceStorage();
-    const modes = mmkv.getString('session-permission-modes');
+    const modes = mmkv.getString(sessionPermissionModesKey(scope));
     if (modes) {
         try {
             return JSON.parse(modes);
@@ -608,14 +774,14 @@ export function loadSessionPermissionModes(): Record<string, PermissionMode> {
     return {};
 }
 
-export function saveSessionPermissionModes(modes: Record<string, PermissionMode>) {
+export function saveSessionPermissionModes(modes: Record<string, PermissionMode>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set('session-permission-modes', JSON.stringify(modes));
+    mmkv.set(sessionPermissionModesKey(scope), JSON.stringify(modes));
 }
 
-export function loadSessionPermissionModeUpdatedAts(): Record<string, number> {
+export function loadSessionPermissionModeUpdatedAts(scope?: ServerAccountScope | null): Record<string, number> {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString('session-permission-mode-updated-ats');
+    const raw = mmkv.getString(sessionPermissionModeUpdatedAtsKey(scope));
     if (raw) {
         try {
             const parsed = JSON.parse(raw);
@@ -638,14 +804,17 @@ export function loadSessionPermissionModeUpdatedAts(): Record<string, number> {
     return {};
 }
 
-export function saveSessionPermissionModeUpdatedAts(updatedAts: Record<string, number>) {
+export function saveSessionPermissionModeUpdatedAts(
+    updatedAts: Record<string, number>,
+    scope?: ServerAccountScope | null,
+) {
     const mmkv = getPersistenceStorage();
-    mmkv.set('session-permission-mode-updated-ats', JSON.stringify(updatedAts));
+    mmkv.set(sessionPermissionModeUpdatedAtsKey(scope), JSON.stringify(updatedAts));
 }
 
-export function loadSessionLastViewed(): Record<string, number> {
+export function loadSessionLastViewed(scope?: ServerAccountScope | null): Record<string, number> {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString('session-last-viewed');
+    const raw = mmkv.getString(sessionLastViewedKey(scope));
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -668,14 +837,14 @@ export function loadSessionLastViewed(): Record<string, number> {
     return {};
 }
 
-export function saveSessionLastViewed(data: Record<string, number>) {
+export function saveSessionLastViewed(data: Record<string, number>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set('session-last-viewed', JSON.stringify(data));
+    mmkv.set(sessionLastViewedKey(scope), JSON.stringify(data));
 }
 
-export function loadSessionModelModes(): Record<string, ModelMode> {
+export function loadSessionModelModes(scope?: ServerAccountScope | null): Record<string, ModelMode> {
     const mmkv = getPersistenceStorage();
-    const modes = mmkv.getString('session-model-modes');
+    const modes = mmkv.getString(sessionModelModesKey(scope));
     if (modes) {
         try {
             const parsed: unknown = JSON.parse(modes);
@@ -699,14 +868,14 @@ export function loadSessionModelModes(): Record<string, ModelMode> {
     return {};
 }
 
-export function saveSessionModelModes(modes: Record<string, ModelMode>) {
+export function saveSessionModelModes(modes: Record<string, ModelMode>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set('session-model-modes', JSON.stringify(modes));
+    mmkv.set(sessionModelModesKey(scope), JSON.stringify(modes));
 }
 
-export function loadSessionModelModeUpdatedAts(): Record<string, number> {
+export function loadSessionModelModeUpdatedAts(scope?: ServerAccountScope | null): Record<string, number> {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionModelModeUpdatedAtsKey());
+    const raw = mmkv.getString(sessionModelModeUpdatedAtsKey(scope));
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -729,14 +898,14 @@ export function loadSessionModelModeUpdatedAts(): Record<string, number> {
     return {};
 }
 
-export function saveSessionModelModeUpdatedAts(data: Record<string, number>) {
+export function saveSessionModelModeUpdatedAts(data: Record<string, number>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(sessionModelModeUpdatedAtsKey(), JSON.stringify(data));
+    mmkv.set(sessionModelModeUpdatedAtsKey(scope), JSON.stringify(data));
 }
 
-export function loadSessionMaterializedMaxSeqById(): Record<string, number> {
+export function loadSessionMaterializedMaxSeqById(scope?: ServerAccountScope | null): Record<string, number> {
     const mmkv = getPersistenceStorage();
-    const raw = mmkv.getString(sessionMaterializedMaxSeqKey());
+    const raw = mmkv.getString(sessionMaterializedMaxSeqKey(scope));
     if (raw) {
         try {
             const parsed: unknown = JSON.parse(raw);
@@ -759,33 +928,276 @@ export function loadSessionMaterializedMaxSeqById(): Record<string, number> {
     return {};
 }
 
-export function saveSessionMaterializedMaxSeqById(data: Record<string, number>) {
+export function saveSessionMaterializedMaxSeqById(data: Record<string, number>, scope?: ServerAccountScope | null) {
     const mmkv = getPersistenceStorage();
-    mmkv.set(sessionMaterializedMaxSeqKey(), JSON.stringify(data));
+    mmkv.set(sessionMaterializedMaxSeqKey(scope), JSON.stringify(data));
 }
 
-function normalizeChangesCursorScope(scopeRaw?: string | null): string | null {
-    const scope = String(scopeRaw ?? '').trim();
-    if (!scope) return null;
-    return scope.toLowerCase();
+export function prepareSessionLocalStateScopeForActivation(scope: ServerAccountScope): void {
+    const mmkv = getPersistenceStorage();
+    const migrateLegacyMapIfNeeded = <T>(
+        scopedKey: string,
+        loadLegacy: () => Record<string, T>,
+        saveScoped: (data: Record<string, T>, scope: ServerAccountScope) => void,
+    ): void => {
+        if (typeof mmkv.getString(scopedKey) === 'string') {
+            return;
+        }
+
+        const legacyData = loadLegacy();
+        if (Object.keys(legacyData).length > 0) {
+            saveScoped(legacyData, scope);
+        }
+    };
+
+    // Active-session drafts are recoverable user text, so legacy values migrate once.
+    // Launch drafts include machine/profile/secret intent and are dropped below instead.
+    if (typeof mmkv.getString(sessionDraftsKey(scope)) !== 'string') {
+        const legacyDrafts = loadSessionDrafts();
+        if (Object.keys(legacyDrafts).length > 0) {
+            saveSessionDrafts(legacyDrafts, scope);
+        }
+    }
+
+    if (typeof mmkv.getString(sessionReviewCommentsDraftsKey(scope)) !== 'string') {
+        const legacyReviewDrafts = loadSessionReviewCommentsDrafts();
+        if (Object.keys(legacyReviewDrafts).length > 0) {
+            saveSessionReviewCommentsDrafts(legacyReviewDrafts, scope);
+        }
+    }
+
+    if (typeof mmkv.getString(workspaceReviewCommentsDraftsKey(scope)) !== 'string') {
+        const legacyWorkspaceReviewDrafts = loadWorkspaceReviewCommentsDrafts();
+        if (Object.keys(legacyWorkspaceReviewDrafts).length > 0) {
+            saveWorkspaceReviewCommentsDrafts(legacyWorkspaceReviewDrafts, scope);
+        }
+    }
+
+    if (typeof mmkv.getString(sessionActionDraftsKey(scope)) !== 'string') {
+        const legacyActionDrafts = loadSessionActionDrafts();
+        if (Object.keys(legacyActionDrafts).length > 0) {
+            saveSessionActionDrafts(legacyActionDrafts, scope);
+        }
+    }
+
+    migrateLegacyMapIfNeeded(sessionPermissionModesKey(scope), loadSessionPermissionModes, saveSessionPermissionModes);
+    migrateLegacyMapIfNeeded(sessionPermissionModeUpdatedAtsKey(scope), loadSessionPermissionModeUpdatedAts, saveSessionPermissionModeUpdatedAts);
+    migrateLegacyMapIfNeeded(sessionModelModesKey(scope), loadSessionModelModes, saveSessionModelModes);
+    migrateLegacyMapIfNeeded(sessionModelModeUpdatedAtsKey(scope), loadSessionModelModeUpdatedAts, saveSessionModelModeUpdatedAts);
+    migrateLegacyMapIfNeeded(sessionLastViewedKey(scope), loadSessionLastViewed, saveSessionLastViewed);
+    migrateLegacyMapIfNeeded(sessionMaterializedMaxSeqKey(scope), loadSessionMaterializedMaxSeqById, saveSessionMaterializedMaxSeqById);
+
+    mmkv.delete(sessionDraftsKey());
+    mmkv.delete(sessionReviewCommentsDraftsKey());
+    mmkv.delete(workspaceReviewCommentsDraftsKey());
+    mmkv.delete(sessionActionDraftsKey());
+    mmkv.delete(newSessionDraftKey());
+    mmkv.delete(sessionPermissionModesKey());
+    mmkv.delete(sessionPermissionModeUpdatedAtsKey());
+    mmkv.delete(sessionModelModesKey());
+    mmkv.delete(sessionModelModeUpdatedAtsKey());
+    mmkv.delete(sessionLastViewedKey());
+    mmkv.delete(sessionMaterializedMaxSeqKey());
+}
+
+export type SyncReliabilityEventFieldValue = string | number | boolean | null;
+
+export type PersistedSyncReliabilityEvent = Readonly<{
+    id: string;
+    name: string;
+    atMs: number;
+    fields: Readonly<Record<string, SyncReliabilityEventFieldValue>>;
+}>;
+
+function sanitizeSyncReliabilityEventFields(value: unknown): Record<string, SyncReliabilityEventFieldValue> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+    }
+    const fields: Record<string, SyncReliabilityEventFieldValue> = {};
+    for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+        const fieldKey = key.trim();
+        if (!fieldKey) continue;
+        if (typeof raw === 'string') {
+            fields[fieldKey] = raw.slice(0, 500);
+            continue;
+        }
+        if (typeof raw === 'number' && Number.isFinite(raw)) {
+            fields[fieldKey] = raw;
+            continue;
+        }
+        if (typeof raw === 'boolean' || raw === null) {
+            fields[fieldKey] = raw;
+        }
+    }
+    return fields;
+}
+
+function sanitizeSyncReliabilityEvent(value: unknown): PersistedSyncReliabilityEvent | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return null;
+    }
+    const record = value as Record<string, unknown>;
+    const id = typeof record.id === 'string' ? record.id.trim() : '';
+    const name = typeof record.name === 'string' ? record.name.trim() : '';
+    const atMs = typeof record.atMs === 'number' && Number.isFinite(record.atMs)
+        ? Math.max(0, Math.trunc(record.atMs))
+        : null;
+    if (!id || !name || atMs === null) {
+        return null;
+    }
+    return {
+        id,
+        name,
+        atMs,
+        fields: sanitizeSyncReliabilityEventFields(record.fields),
+    };
+}
+
+export function loadSyncReliabilityEvents(): PersistedSyncReliabilityEvent[] {
+    const mmkv = getPersistenceStorage();
+    const raw = mmkv.getString(syncReliabilityEventsKey());
+    if (!raw) return [];
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.flatMap((entry) => {
+            const event = sanitizeSyncReliabilityEvent(entry);
+            return event ? [event] : [];
+        });
+    } catch {
+        return [];
+    }
+}
+
+export function appendSyncReliabilityEvent(
+    event: PersistedSyncReliabilityEvent,
+    opts?: { maxEvents?: number },
+): void {
+    const maxEvents = typeof opts?.maxEvents === 'number' && Number.isFinite(opts.maxEvents)
+        ? Math.max(1, Math.trunc(opts.maxEvents))
+        : 100;
+    const sanitized = sanitizeSyncReliabilityEvent(event);
+    if (!sanitized) return;
+    const mmkv = getPersistenceStorage();
+    const next = [...loadSyncReliabilityEvents(), sanitized].slice(-maxEvents);
+    mmkv.set(syncReliabilityEventsKey(), JSON.stringify(next));
+}
+
+export function clearSyncReliabilityEvents(): void {
+    const mmkv = getPersistenceStorage();
+    mmkv.delete(syncReliabilityEventsKey());
+}
+
+export type ChangesCursorScope =
+    | string
+    | Readonly<{
+        accountId?: string | null;
+        serverScope?: string | null;
+        instanceId?: string | null;
+        nowMs?: number;
+    }>;
+
+type NormalizedChangesCursorScope = Readonly<{
+    accountId: string | null;
+    serverScope: string | null;
+    instanceId: string | null;
+    nowMs: number | null;
+}>;
+
+function normalizeChangesCursorScope(scopeRaw?: ChangesCursorScope | null): NormalizedChangesCursorScope {
+    if (typeof scopeRaw === 'string' || scopeRaw == null) {
+        const scope = String(scopeRaw ?? '').trim();
+        return {
+            accountId: null,
+            serverScope: scope ? scope.toLowerCase() : null,
+            instanceId: null,
+            nowMs: null,
+        };
+    }
+
+    const accountId = String(scopeRaw.accountId ?? '').trim();
+    const serverScope = String(scopeRaw.serverScope ?? '').trim();
+    const instanceId = String(scopeRaw.instanceId ?? '').trim();
+    const nowMs = typeof scopeRaw.nowMs === 'number' && Number.isFinite(scopeRaw.nowMs)
+        ? Math.max(0, Math.trunc(scopeRaw.nowMs))
+        : null;
+
+    return {
+        accountId: accountId || null,
+        serverScope: serverScope ? serverScope.toLowerCase() : null,
+        instanceId: instanceId || null,
+        nowMs,
+    };
+}
+
+function encodeChangesCursorKeyPart(value: string): string {
+    return encodeURIComponent(value);
 }
 
 function scopedChangesCursorKey(accountId: string, scope: string): string {
-    return `${changesCursorByServerScopeAndAccountIdPrefix()}${scope}:${accountId}`;
+    return `${changesCursorByServerScopeAndAccountIdPrefix()}${encodeChangesCursorKeyPart(scope)}:${encodeChangesCursorKeyPart(accountId)}`;
+}
+
+function instanceScopedChangesCursorKey(accountId: string, scope: string, instanceId: string): string {
+    return `${changesCursorByServerScopeAccountIdAndInstancePrefix()}${encodeChangesCursorKeyPart(scope)}:${encodeChangesCursorKeyPart(accountId)}:${encodeChangesCursorKeyPart(instanceId)}`;
 }
 
 function unscopedChangesCursorKey(accountId: string): string {
-    return `${changesCursorByAccountIdPrefix()}${accountId}`;
+    return `${changesCursorByAccountIdPrefix()}${encodeChangesCursorKeyPart(accountId)}`;
 }
 
-export function loadChangesCursor(scopeRaw?: string | null): string | null {
+function directSessionTailCursorKey(accountId: string, sessionId: string, scope: string, instanceId: string | null): string {
+    const instancePart = instanceId ? `:${encodeChangesCursorKeyPart(instanceId)}` : ':no-instance';
+    return `${directSessionTailCursorPrefix()}${encodeChangesCursorKeyPart(scope)}:${encodeChangesCursorKeyPart(accountId)}:${encodeChangesCursorKeyPart(sessionId)}${instancePart}`;
+}
+
+function parseInstanceChangesCursorRecord(raw: string | undefined): string | null {
+    if (typeof raw !== 'string' || raw.length === 0) return null;
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return null;
+        }
+        const cursor = (parsed as { cursor?: unknown }).cursor;
+        return typeof cursor === 'string' && cursor.trim().length > 0 ? cursor.trim() : null;
+    } catch {
+        return raw;
+    }
+}
+
+function parseInstanceChangesCursorLastWriteMs(raw: string | undefined): number | null {
+    if (typeof raw !== 'string' || raw.length === 0) return null;
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return null;
+        }
+        const lastWriteMs = (parsed as { lastWriteMs?: unknown }).lastWriteMs;
+        return typeof lastWriteMs === 'number' && Number.isFinite(lastWriteMs) && lastWriteMs >= 0
+            ? Math.trunc(lastWriteMs)
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+export function loadChangesCursor(scopeRaw?: ChangesCursorScope | null): string | null {
     const mmkv = getPersistenceStorage();
-    const accountId = readPersistedProfileId(mmkv);
+    const scope = normalizeChangesCursorScope(scopeRaw);
+    const accountId = scope.accountId;
     if (!accountId) return null;
 
-    const scope = normalizeChangesCursorScope(scopeRaw);
-    if (scope) {
-        const scoped = mmkv.getString(scopedChangesCursorKey(accountId, scope));
+    if (scope.serverScope) {
+        if (scope.instanceId) {
+            const instanceScoped = parseInstanceChangesCursorRecord(
+                mmkv.getString(instanceScopedChangesCursorKey(accountId, scope.serverScope, scope.instanceId)),
+            );
+            if (instanceScoped) {
+                return instanceScoped;
+            }
+        }
+
+        const scoped = mmkv.getString(scopedChangesCursorKey(accountId, scope.serverScope));
         if (typeof scoped === 'string' && scoped.length > 0) {
             return scoped;
         }
@@ -808,17 +1220,53 @@ export function loadChangesCursor(scopeRaw?: string | null): string | null {
     return null;
 }
 
-export function saveChangesCursor(cursor: string, scopeRaw?: string | null): void {
+export function pruneStaleInstanceChangesCursors(params: {
+    nowMs: number;
+    retentionMs: number;
+    maxKeys?: number;
+}): number {
     const mmkv = getPersistenceStorage();
-    const accountId = readPersistedProfileId(mmkv);
+    const getAllKeys = (mmkv as unknown as { getAllKeys?: () => string[] }).getAllKeys;
+    if (typeof getAllKeys !== 'function') return 0;
+
+    const nowMs = typeof params.nowMs === 'number' && Number.isFinite(params.nowMs)
+        ? Math.max(0, Math.trunc(params.nowMs))
+        : Date.now();
+    const retentionMs = typeof params.retentionMs === 'number' && Number.isFinite(params.retentionMs)
+        ? Math.max(0, Math.trunc(params.retentionMs))
+        : 7 * 24 * 60 * 60 * 1000;
+    const maxKeys = typeof params.maxKeys === 'number' && Number.isFinite(params.maxKeys)
+        ? Math.max(1, Math.trunc(params.maxKeys))
+        : 500;
+    const cutoffMs = nowMs - retentionMs;
+    let pruned = 0;
+
+    for (const key of getAllKeys.call(mmkv).slice(0, maxKeys)) {
+        if (!key.startsWith(changesCursorByServerScopeAccountIdAndInstancePrefix())) continue;
+        const lastWriteMs = parseInstanceChangesCursorLastWriteMs(mmkv.getString(key));
+        if (lastWriteMs === null || lastWriteMs >= cutoffMs) continue;
+        mmkv.delete(key);
+        pruned += 1;
+    }
+
+    return pruned;
+}
+
+export function saveChangesCursor(cursor: string, scopeRaw?: ChangesCursorScope | null): void {
+    const mmkv = getPersistenceStorage();
+    const scope = normalizeChangesCursorScope(scopeRaw);
+    const accountId = scope.accountId;
     if (!accountId) return;
 
-    const scope = normalizeChangesCursorScope(scopeRaw);
-    const key = scope ? scopedChangesCursorKey(accountId, scope) : unscopedChangesCursorKey(accountId);
+    const key = scope.serverScope && scope.instanceId
+        ? instanceScopedChangesCursorKey(accountId, scope.serverScope, scope.instanceId)
+        : scope.serverScope
+            ? scopedChangesCursorKey(accountId, scope.serverScope)
+            : unscopedChangesCursorKey(accountId);
     const trimmed = typeof cursor === 'string' ? cursor.trim() : '';
     if (!trimmed) {
         mmkv.delete(key);
-        if (!scope) {
+        if (!scope.serverScope && !scope.instanceId) {
             const legacy = loadLastChangesCursorByAccountId();
             if (Object.prototype.hasOwnProperty.call(legacy, accountId)) {
                 delete legacy[accountId];
@@ -829,10 +1277,14 @@ export function saveChangesCursor(cursor: string, scopeRaw?: string | null): voi
     }
 
     // Store cursor as-is to support future BigInt/string cursors.
-    mmkv.set(key, trimmed);
+    if (scope.serverScope && scope.instanceId) {
+        mmkv.set(key, JSON.stringify({ cursor: trimmed, lastWriteMs: scope.nowMs ?? Date.now() }));
+    } else {
+        mmkv.set(key, trimmed);
+    }
 
     // Best-effort: keep legacy numeric map in sync for older code paths.
-    if (!scope) {
+    if (!scope.serverScope && !scope.instanceId) {
         const asNumber = Number(trimmed);
         if (Number.isFinite(asNumber) && asNumber >= 0) {
             const legacy = loadLastChangesCursorByAccountId();
@@ -840,6 +1292,41 @@ export function saveChangesCursor(cursor: string, scopeRaw?: string | null): voi
             saveLastChangesCursorByAccountId(legacy);
         }
     }
+}
+
+export function loadDirectSessionTailCursor(sessionIdRaw: string, scopeRaw?: ChangesCursorScope | null): string | null {
+    const mmkv = getPersistenceStorage();
+    const scope = normalizeChangesCursorScope(scopeRaw);
+    const accountId = scope.accountId;
+    const sessionId = String(sessionIdRaw ?? '').trim();
+    if (!accountId || !sessionId) return null;
+
+    if (!scope.serverScope) return null;
+
+    const raw = mmkv.getString(directSessionTailCursorKey(accountId, sessionId, scope.serverScope, scope.instanceId));
+    return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
+}
+
+export function saveDirectSessionTailCursor(
+    sessionIdRaw: string,
+    cursorRaw: string | null | undefined,
+    scopeRaw?: ChangesCursorScope | null,
+): void {
+    const mmkv = getPersistenceStorage();
+    const scope = normalizeChangesCursorScope(scopeRaw);
+    const accountId = scope.accountId;
+    const sessionId = String(sessionIdRaw ?? '').trim();
+    if (!accountId || !sessionId) return;
+
+    if (!scope.serverScope) return;
+
+    const key = directSessionTailCursorKey(accountId, sessionId, scope.serverScope, scope.instanceId);
+    const cursor = typeof cursorRaw === 'string' ? cursorRaw.trim() : '';
+    if (!cursor) {
+        mmkv.delete(key);
+        return;
+    }
+    mmkv.set(key, cursor);
 }
 
 export function loadLastChangesCursorByAccountId(): Record<string, number> {
@@ -870,18 +1357,6 @@ export function loadLastChangesCursorByAccountId(): Record<string, number> {
 export function saveLastChangesCursorByAccountId(data: Record<string, number>) {
     const mmkv = getPersistenceStorage();
     mmkv.set(lastChangesCursorByAccountIdKey(), JSON.stringify(data));
-}
-
-function readPersistedProfileId(mmkv: MMKV): string | null {
-    const rawProfile = mmkv.getString('profile');
-    if (!rawProfile) return null;
-
-    try {
-        const parsed = JSON.parse(rawProfile) as { id?: unknown } | null;
-        return typeof parsed?.id === 'string' && parsed.id.trim().length > 0 ? parsed.id : null;
-    } catch {
-        return null;
-    }
 }
 
 export function loadProfile(): Profile {

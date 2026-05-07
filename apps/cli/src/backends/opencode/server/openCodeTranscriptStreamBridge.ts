@@ -1,6 +1,9 @@
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
-import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
+import {
+  createOpenCodeTranscriptStreamSession,
+  type OpenCodeTranscriptStreamSessionSource,
+} from './createOpenCodeTranscriptStreamSession';
 
 type FlushReason = 'tool-call-boundary' | 'turn-end' | 'abort';
 
@@ -31,7 +34,7 @@ function buildSidechainMeta(params: {
 
 export function createOpenCodeTranscriptStreamBridge(params: {
   provider: ACPProvider;
-  session: Pick<ApiSessionClient, 'sendAgentMessage' | 'sendAgentMessageCommitted'>;
+  session: OpenCodeTranscriptStreamSessionSource;
   checkpointIntervalMs?: number | null;
   checkpointMinChars?: number | null;
 }) {
@@ -46,24 +49,10 @@ export function createOpenCodeTranscriptStreamBridge(params: {
     checkpointMinChars: params.checkpointMinChars,
     createSessionForStream: (args) => {
       const baseMeta = buildSidechainMeta(args);
-      return {
-        sendAgentMessage: (provider, body, opts) =>
-          params.session.sendAgentMessage(provider, body, {
-            ...opts,
-            meta: {
-              ...baseMeta,
-              ...(opts?.meta ?? {}),
-            },
-          }),
-        sendAgentMessageCommitted: (provider, body, opts) =>
-          params.session.sendAgentMessageCommitted(provider, body, {
-            ...opts,
-            meta: {
-              ...baseMeta,
-              ...(opts.meta ?? {}),
-            },
-          }),
-      };
+      return createOpenCodeTranscriptStreamSession({
+        session: params.session,
+        baseMeta,
+      });
     },
   });
 }

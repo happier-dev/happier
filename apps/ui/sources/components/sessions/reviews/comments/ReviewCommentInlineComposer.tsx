@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
@@ -46,9 +46,9 @@ export function ReviewCommentInlineComposer(props: {
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        marginLeft: 46,
+        marginLeft: 0,
         marginRight: 8,
-        marginTop: 6,
+        marginTop: 0,
         marginBottom: 8,
         padding: 10,
         borderRadius: 10,
@@ -65,6 +65,18 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 13,
         lineHeight: 18,
+        ...(Platform.select({
+            web: {
+                outline: 'none',
+                outlineStyle: 'none',
+                outlineWidth: 0,
+                outlineColor: 'transparent',
+                boxShadow: 'none',
+                WebkitBoxShadow: 'none',
+                WebkitAppearance: 'none',
+            },
+            default: {},
+        }) as object),
     },
     actions: {
         flexDirection: 'row',

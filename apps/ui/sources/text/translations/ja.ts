@@ -468,6 +468,7 @@ export const ja: TranslationStructure = {
     emptyDescription: "現在、保留中のリクエストや更新はありません。",
     approvals: "承認",
     permissions: "権限",
+    unreadSessions: "未読のセッション",
     updates: "アクティビティ",
   },
 
@@ -1925,6 +1926,8 @@ localTailscale: {
     channelBridgesSubtitle: "外部チャット（Telegram）をセッションに接続",
     featuresTitle: "機能",
     featuresSubtitle: "アプリ機能の有効/無効を切り替え",
+    pets: "ペット",
+    petsSubtitle: "Blink とこのデバイスのペットコンパニオンを選択",
     developer: "開発者",
     developerTools: "開発者ツール",
     about: "このアプリについて",
@@ -2367,6 +2370,7 @@ localTailscale: {
       openai: "OpenAI API キー",
       anthropic: "Anthropic API キー",
       gemini: "Google Gemini（Google）",
+      github: "GitHub",
     },
     title: "接続済みサービス",
     authChip: {
@@ -2485,6 +2489,10 @@ localTailscale: {
       connectApiKeySubtitle: "Anthropic の API キーを貼り付け",
       connectSetupTokenTitle: "setup-token で接続",
       connectSetupTokenSubtitle: "Claude の setup-token（claude setup-token）を貼り付け",
+      connectAccessTokenTitle: "アクセストークンで接続",
+      connectAccessTokenSubtitle: "GitHub personal access token を貼り付け",
+      openGithubTokenTemplateTitle: "GitHub トークンを作成",
+      openGithubTokenTemplateSubtitle: "Happier に必要な権限を事前入力して GitHub を開く",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `「${service}（${profileId}）」を切断しますか？`,
       prompts: {
@@ -2496,6 +2504,9 @@ localTailscale: {
         setupTokenTitle: "セットアップトークン",
         setupTokenBody: "Claude の setup-token（claude setup-token）を貼り付けてください。",
         setupTokenPlaceholder: "例: sk-ant-oat01-…",
+        accessTokenTitle: "アクセストークン",
+        accessTokenBody: "GitHub personal access token を貼り付けてください。PR とリポジトリ公開フローを実行できるように、Contents、Pull requests、Administration を読み取り/書き込みにした fine-grained token を使用してください。",
+        accessTokenPlaceholder: "github_pat_…",
         profileLabelTitle: "プロファイルラベル",
         profileLabelBody: "任意。認証ピッカーに表示されます。",
         profileLabelPlaceholder: "仕事用アカウント",
@@ -2507,6 +2518,7 @@ localTailscale: {
         unknownProfileTitle: "不明なプロファイル",
         unknownProfileBody: ({ profileId, service }: { profileId: string; service: string }) =>
           `「${profileId}」というプロファイルは ${service} に存在しません。`,
+        failedToOpenTokenSetupUrl: "GitHub トークン設定を開けませんでした。",
       },
       profiles: {
         empty: "プロファイルはまだありません。",
@@ -2665,19 +2677,13 @@ localTailscale: {
       title: "リモート操作の確認",
       footer:
         "pull/push 操作に確認が必要かどうかを制御します。",
-      options: {
-        always: {
-          title: "常に pull/push を確認",
-          subtitle: "pull と push の操作で確認ダイアログを表示します。",
-        },
-        pushOnly: {
-          title: "push のみ確認",
-          subtitle: "pull はすぐ実行され、push は確認が必要です。",
-        },
-        never: {
-          title: "確認しない",
-          subtitle: "pull と push をすぐに実行します。",
-        },
+      pull: {
+        title: "pull の前に確認",
+        subtitle: "リモート変更を取り込む前に確認を表示します。",
+      },
+      push: {
+        title: "push の前に確認",
+        subtitle: "ローカルコミットを送信する前に確認を表示します。",
       },
     },
     pushRejectionRecovery: {
@@ -2805,6 +2811,86 @@ localTailscale: {
     footer: 'このコンピューター上の Tauri デスクトップ連携を管理します。',
     startOnLoginTitle: 'ログイン時に起動',
     startOnLoginSubtitle: 'このコンピューターにサインインしたときに Happier を自動的に起動します。',
+  },
+
+  settingsPets: {
+    title: 'ペット',
+    previewTitle: 'Blink コンパニオン',
+    previewSubtitle: 'セッション状態とレビューの注意事項を知らせる小さなコンパニオンです。',
+    disabledTitle: 'ペットは無効です',
+    disabledSubtitle: 'このデバイスでコンパニオンを使うには、機能でペットを有効にしてください。',
+    disabledByServerTitle: 'このサーバーではペットが無効です',
+    disabledByServerSubtitle: '管理者がこのサーバーのペットコンパニオンを無効にしています。',
+    accountTitle: 'アカウントの既定値',
+    enabledTitle: 'ペットを有効化',
+    enabledSubtitle: 'このアカウントでコンパニオン画面を表示します。',
+    companionSizeTitle: 'ペットのサイズ',
+    companionSizeSubtitle: 'このデバイスでのコンパニオンのサイズを調整します。',
+    companionSizeValue: ({ percent }: { percent: number }) => `${percent}%`,
+    deviceOverrideTitle: 'このデバイスで使用',
+    deviceOverrideSubtitle: 'アカウントのペット設定をローカルで上書きします。',
+    sourceTitle: 'ペットのソース',
+    builtInSubtitle: 'Happier に組み込まれています。',
+    builtInBlinkSubtitle: 'セッションの合図を落ち着いた小さなステータスライトに変えます。',
+    builtInFurySubtitle: '本番に届く前に難しいワークフローをストレステストします。',
+    builtInMiloSubtitle: 'UI を整え、失敗したテストの上で昼寝します。',
+    builtInOliSubtitle: 'ビルドが気づく前にこっそり修正を出荷します。',
+    builtInTitiSubtitle: 'シニアスタッフ並みの集中力でリリースノートを仕分けます。',
+    localLibraryTitle: 'このデバイス',
+    localLibraryFooter: 'ローカルのペットは、アカウントにインポートしない限りこのデバイスに留まります。',
+    helpDocsTitle: 'ペットのヘルプ',
+    helpDocsSubtitle: 'セットアップとトラブルシューティング用の Happier ドキュメントを開きます。',
+    detectCodexPetsTitle: 'Codex ペットを検出',
+    detectCodexPetsSubtitle: 'ローカルの Codex homes から互換ペットを探します。',
+    detectedCodexPetsTileSubtitle: 'Codex で見つかり、このデバイスに参加する準備ができています。',
+    detectedCodexPetsEmptyTitle: 'Codex ペットが見つかりません',
+    detectedCodexPetsEmptySubtitle: 'Codex で作成してから、もう一度検出してください。',
+    detectedCodexPetsErrorTitle: 'Codex ペットを検出できませんでした',
+    detectedCodexPetsErrorSubtitle: 'daemon が接続されていることを確認してから、もう一度お試しください。',
+    detectedCodexPetsNoTargetTitle: '利用できる daemon がありません',
+    detectedCodexPetsNoTargetSubtitle: 'このコンピュータで Happier を起動してから、Codex ペットをもう一度検出してください。',
+    detectedCodexPetsDaemonMismatchTitle: 'ペット検出のため daemon を更新してください',
+    detectedCodexPetsDaemonMismatchSubtitle: 'この daemon はまだペット検出を公開していません。スタックを更新してからもう一度お試しください。',
+    useOnThisDeviceTitle: 'このデバイスで使用',
+    useOnThisDeviceSubtitle: 'アカウント既定値を変えずにローカルペットを選択します。',
+    importedLocalSubtitle: 'このデバイスの Codex からインポート済み。',
+    removeFromDeviceTitle: 'デバイスから削除',
+    removeFromDeviceSubtitle: 'このローカルペットをこのデバイスから削除します。',
+    accountLibraryTitle: 'アカウントライブラリ',
+    accountLibraryFooter: '同期済みペットはサインイン済みデバイスで利用できます。',
+    accountPetTileSubtitle: 'アカウントから同期済みです。',
+    removeFromDeviceDaemonErrorTitle: 'ローカルでは削除済みですが、デーモンのクリーンアップに失敗しました',
+    removeFromDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `このデバイスの一覧からペットを削除しましたが、デーモンのクリーンアップで ${code} が返されました。`,
+    importToDeviceDaemonErrorTitle: 'ペットをインポートできませんでした',
+    importToDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `デーモンがこのペットをインポートできませんでした。Codex ペットを再検出してからもう一度お試しください。(${code})`,
+    importToAccountTitle: 'アカウントへインポート',
+    importToAccountSubtitle: '互換性のあるローカルペットをアップロードして複数デバイスで使います。',
+    desktopOverlayTitle: 'デスクトップオーバーレイ',
+    overlayTrayTitle: 'ペットのアクティビティ',
+    overlayStatusWaiting: '待機中',
+    overlayStatusFailed: '失敗',
+    overlayStatusReview: 'レビュー',
+    overlayStatusRunning: '実行中',
+    overlayQuickReplyPlaceholder: 'クイック返信',
+    overlayReplyAction: '返信',
+    overlayQuickReplyAction: 'クイック返信を送信',
+    overlayDismissAction: 'アクティビティを閉じる',
+    overlayTuckAction: 'しまう',
+    overlayClosePetAction: 'ペットを閉じる',
+    desktopOverlayEnabledTitle: 'デスクトップオーバーレイを有効化',
+    desktopOverlayEnabledSubtitle: '透明なデスクトップコンパニオンウィンドウにペットを表示します。',
+    desktopOverlayDeviceOverrideTitle: 'このデバイスのデスクトップオーバーレイ',
+    desktopOverlayVisibilityModeTitle: 'このデバイスのオーバーレイ表示',
+    desktopOverlayVisibilityModeSubtitle: 'デスクトップペットをローカルで表示するタイミングを選びます。',
+    desktopOverlayResetPositionTitle: '位置をリセット',
+    desktopOverlayResetPositionSubtitle: 'オーバーレイを右下隅に戻します。',
+    overrideInherit: 'アカウント値',
+    overrideEnabled: '有効',
+    overrideDisabled: '無効',
+    visibilityModeInherit: 'アカウント値',
+    visibilityModeAlwaysWhenEnabled: '有効時は常に表示',
+    visibilityModeAttentionOrActive: '注意またはアクティブ時',
+    visibilityModeAttentionOnly: '注意時のみ',
   },
 
   settingsNotifications: {
@@ -3366,6 +3452,12 @@ localTailscale: {
     },
   },
 
+  workspaceCockpit: {
+    openCockpit: 'コックピットを開く',
+    openClassicView: 'クラシック表示を開く',
+    tabs: 'タブ',
+  },
+
   settingsAppearance: {
     ...settingsAppearanceTranslationExtension,
     // Appearance settings screen
@@ -3396,9 +3488,6 @@ localTailscale: {
       preview: "プレビュータブ",
       persistent: "固定タブ",
     },
-    editorFocusMode: "エディタ集中モード",
-    editorFocusModeDescription:
-      "ファイル確認中は会話とサイドバーを隠します（Web/タブレット）",
     inlineToolCalls: "ツール呼び出しをインライン表示",
     inlineToolCallsDescription:
       "チャットメッセージ内にツール呼び出しを直接表示",
@@ -3437,6 +3526,23 @@ localTailscale: {
       pixelated: "ピクセル",
       gradient: "グラデーション",
       brutalist: "ブルータリスト",
+      meshGradient: "メッシュグラデーション",
+      meshGradientOrganic: "メッシュグラデーション: オーガニック",
+      meshGradientRows: "メッシュグラデーション: 行",
+      meshGradientColumns: "メッシュグラデーション: 列",
+      meshGradientDiagonal: "メッシュグラデーション: 斜め",
+      meshGradientOval: "メッシュグラデーション: 楕円",
+      meshGradientWaves: "メッシュグラデーション: 波",
+      meshGradientSoftNoise: "メッシュグラデーション: ソフトノイズ",
+      photoGradient: "レイヤーグラデーション",
+      photoGradientRows: "レイヤーグラデーション: 行",
+      photoGradientColumns: "レイヤーグラデーション: 列",
+      photoGradientDiagonal: "レイヤーグラデーション: 斜め",
+      photoGradientWaves: "レイヤーグラデーション: 波",
+      photoGradientOval: "レイヤーグラデーション: 楕円",
+      photoGradientValueNoise: "レイヤーグラデーション: ソフトノイズ",
+      photoGradientVoronoi: "レイヤーグラデーション: セル",
+      photoGradientMeshGrid: "レイヤーグラデーション: グリッド",
     },
     showFlavorIcons: "AIプロバイダーアイコンを表示",
     showFlavorIconsDescription:
@@ -3561,6 +3667,8 @@ localTailscale: {
     expMemorySearchSubtitle: "ローカルメモリ検索の画面と設定を有効化",
     expSessionsDirect: "ダイレクトセッション",
     expSessionsDirectSubtitle: "サイドバーでプロバイダー直結のダイレクトセッションを一覧表示して開く",
+    expPetsCompanion: "ペット",
+    expPetsCompanionSubtitle: "Blink コンパニオン画面とローカルペット選択を有効化",
     expFriends: "友だち",
     expFriendsSubtitle: "友だち機能（受信箱タブとセッション共有）を有効化",
     webFeatures: "Web機能",
@@ -3724,6 +3832,9 @@ localTailscale: {
       },
       codexAcp: {
         title: "Codex ACP アダプター",
+      },
+      githubCli: {
+        title: "GitHub コマンドライン",
       },
     },
     ui: {
@@ -3972,6 +4083,19 @@ localTailscale: {
       description:
         "これはスレッドの読み込み/再開に対応した、Codex 向けの実験的な ACP アダプターをインストールします。",
     },
+        githubCliBanner: {
+            title: 'GitHub CLI',
+            install: 'インストール',
+            update: '更新',
+            reinstall: '再インストール',
+        },
+    githubCliInstallModal: {
+      installTitle: "GitHub CLI をインストールしますか？",
+      updateTitle: "GitHub CLI を更新しますか？",
+      reinstallTitle: "GitHub CLI を再インストールしますか？",
+      description:
+        "Happier が pull request ワークフローでローカルの GitHub 認証を使用できるように GitHub CLI をインストールします。",
+    },
   },
 
   sessionHistory: {
@@ -3988,6 +4112,11 @@ localTailscale: {
 
   session: {
     inputPlaceholder: "メッセージを入力...",
+    rightPanel: {
+      tabs: {
+        git: "Git",
+      },
+    },
     toolCalls: "ツール呼び出し",
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} 件…`,
     forking: {
@@ -4123,8 +4252,8 @@ localTailscale: {
           unpinTabA11y: "タブの固定を解除",
           pinnedTabA11y: "固定されたタブ",
           closeTabA11y: "タブを閉じる",
-          enterFocusModeA11y: "エディタ集中モードに入る",
-          exitFocusModeA11y: "エディタ集中モードを終了",
+          enterFocusModeA11y: "ペイン集中モードに入る",
+          exitFocusModeA11y: "ペイン集中モードを終了",
       },
   
       actionsDraft: {
@@ -4322,6 +4451,19 @@ localTailscale: {
   commandPalette: {
     placeholder: "コマンドを入力または検索...",
     noCommandsFound: "コマンドが見つかりません",
+    pets: {
+      category: "ペット",
+      wakeTitle: "ペットを起こす",
+      wakeSubtitle: "このサーフェスにコンパニオンを表示します。",
+      tuckTitle: "ペットをしまう",
+      tuckSubtitle: "このサーフェスでコンパニオンを非表示にします。",
+      resetPositionTitle: "ペットの位置をリセット",
+      resetPositionSubtitle: "コンパニオンを既定の場所へ戻します。",
+      chooseTitle: "ペットを選択",
+      chooseSubtitle: "ペット設定を開きます。",
+      refreshCodexTitle: "Codex ペットを更新",
+      refreshCodexSubtitle: "設定を開き、ローカルの Codex ペットを検出します。",
+    },
   },
 
   commandView: {
@@ -4567,6 +4709,7 @@ localTailscale: {
   directSessions: {
     browseTitle: "プロバイダー セッションを参照",
     browseOpenExisting: "プロバイダー セッションを参照",
+    browseActionSubtitle: "ここで開くマシン、プロバイダー、セッションを選択します。",
     browseFiltersTitle: "ソースを選択",
     browseMachines: "マシン",
     browseProviders: "プロバイダー",
@@ -4674,6 +4817,10 @@ localTailscale: {
     lastUpdated: "最終更新",
     sequence: "シーケンス",
     quickActions: "クイックアクション",
+    markSessionRead: "既読にする",
+    markSessionReadSubtitle: "このセッションの未読表示を解除",
+    markSessionUnread: "未読にする",
+    markSessionUnreadSubtitle: "このセッションを未読リストに残します",
     executionRunsSubtitle: "このセッションの実行を表示",
     automationsTitle: "オートメーション",
     automationsSubtitle: "このセッションのスケジュール済みメッセージを管理",
@@ -4740,7 +4887,11 @@ localTailscale: {
     renameSessionPlaceholder: "セッション名を入力...",
     forkSession: "セッションを分岐",
     forkSessionSubtitle: "最新のコンテキストから新しいセッションを作成します",
+    newSessionSameSetup: "同じ設定で新しいセッション",
+    newSessionSameSetupSubtitle: "このセッションのマシン、フォルダ、エンジン、モデル、セッションオプションを再利用します。",
     failedToRenameSession: "セッション名の変更に失敗しました",
+    failedToMarkSessionRead: "セッションを既読にできませんでした",
+    failedToMarkSessionUnread: "セッションを未読にできませんでした",
     sessionRenamed: "セッション名を変更しました",
   },
 
@@ -5294,6 +5445,24 @@ localTailscale: {
         removeFailed: "ワークツリーの削除に失敗しました。",
         pruneFailed: "ワークツリーの整理に失敗しました。",
       },
+      pullRequests: {
+        checkoutLocalTitle: "プルリクエストをチェックアウト",
+        checkoutLocalSubtitle: "PR またはマージリクエストの URL、番号、または checkout コマンドを貼り付けます。",
+        openWorktreeTitle: "プルリクエストを worktree で開く",
+        openWorktreeSubtitle: "プルリクエストを別の worktree に準備し、そこでセッションを開始します。",
+        promptTitle: "プルリクエスト参照",
+        promptBody: "プルリクエストまたはマージリクエストの URL、番号、または checkout コマンドを貼り付けます。",
+        promptPlaceholder: "https://github.com/owner/repo/pull/123",
+        invalidReferenceBody: "有効なプルリクエストまたはマージリクエストの参照を入力してください。",
+        checkoutFailed: "プルリクエストのチェックアウトに失敗しました。",
+        worktreeFailed: "プルリクエストの worktree の準備に失敗しました。",
+      },
+      indexLock: {
+        title: "古い Git ロックを削除しますか？",
+        body: "Git がインデックスロックを報告しました。他の Git コマンドが実行中でなければ、Happier が古いロックを削除して再試行できます。",
+        confirm: "ロックを削除して再試行",
+        recoveryFailed: "Git インデックスロックの削除に失敗しました。",
+      },
       stashOverwrite: {
         title: "ブランチのスタッシュを上書きしますか？",
         body: ({ branch }: { branch: string }) =>
@@ -5360,6 +5529,8 @@ localTailscale: {
       `セッションに紐づく変更 (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `直近のターンの変更（${count}）`,
+    selectedForCommitChanges: ({ count }: { count: number }) =>
+      `コミット対象として選択（${count}）`,
     latestTurnDescription:
       '直近で完了したターンのプロバイダ由来の変更です。',
     otherRepositoryChanges: ({ count }: { count: number }) =>
@@ -5379,6 +5550,15 @@ localTailscale: {
       "直近のターンの変更は検出されていません。",
     notRepo: "ソース管理リポジトリではありません",
     notUnderSourceControl: "このディレクトリはソース管理下にありません",
+    repositoryInit: {
+      initialize: "リポジトリを初期化",
+      initializing: "初期化中…",
+      confirmTitle: "リポジトリを初期化しますか?",
+      confirmBody: "このフォルダーに Git リポジトリを作成します。既存のファイルはステージングもコミットもされません。",
+      errors: {
+        failed: "リポジトリを初期化できませんでした。",
+      },
+    },
     searching: "ファイルを検索中...",
       noFilesFound: "ファイルが見つかりません",
       noFilesInProject: "プロジェクトにファイルがありません",
@@ -5426,6 +5606,13 @@ localTailscale: {
           addCommentA11y: "コメントを追加",
           closeCommentA11y: "コメントを閉じる",
           draftsChipLabel: ({ count }: { count: number }) => `レビュー (${count})`,
+          modalSubtitle: "次のメッセージで送信するコメントを確認します。",
+          modalSummary: ({ included, count }: { included: number; count: number }) =>
+            `${count} 件中 ${included} 件を次のプロンプトに選択中`,
+          detachOrDiscardTitle: "レビューコメントを外しますか？",
+          detachOrDiscardBody:
+            "切り離すとコメントは保存したまま次のプロンプトから除外されます。破棄すると削除されます。",
+          detachFromPrompt: "プロンプトから切り離す",
           errors: {
             empty: "コメントを空にできません",
             couldNotMapSelection: "選択範囲を差分行に対応付けできませんでした",
@@ -5458,6 +5645,17 @@ localTailscale: {
 	          generateFailed: "コミットメッセージを生成できませんでした",
 	          generatorDisabled: "コミットメッセージ生成が無効です",
 	        },
+      commitAdjacentPush: {
+        accessibilityLabel: ({ target }: { target: string }) => `${target} に push`,
+        confirm: {
+          title: "ローカルコミットを push しますか？",
+          body: ({ target }: { target: string }) =>
+            `ローカルコミットを ${target} に push します。`,
+          push: "はい",
+          notNow: "いいえ",
+          pushAndDontAskAgain: "Push して今後確認しない",
+        },
+      },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `${fileName}を読み込み中...`,
         binaryFile: "バイナリファイル",
@@ -5465,6 +5663,7 @@ localTailscale: {
         cannotDisplayBinary: "バイナリファイルの内容を表示できません",
         diff: "差分",
       file: "ファイル",
+      markdown: "Markdown",
     diffModes: {
       pending: "保留中",
       included: "含めた",
@@ -5491,10 +5690,12 @@ localTailscale: {
 	      upload: "アップロード",
 	      uploadFiles: "ファイルをアップロード",
 	      uploadFolder: "フォルダーをアップロード",
-	      allRepositoryFiles: "リポジトリ内のすべてのファイル",
+      allRepositoryFiles: "リポジトリ内のすべてのファイル",
       repositoryView: "リポジトリ表示",
+      selectedForCommitView: "コミット対象として選択",
       turnView: "ターン表示",
       sessionView: "セッション表示",
+      view: "表示",
       review: "レビュー",
       list: "一覧",
       scm: "Git",
@@ -5579,6 +5780,120 @@ localTailscale: {
         commitBlocked: "コミットがブロック",
         pullBlocked: "プルがブロック",
         pushBlocked: "プッシュがブロック",
+      },
+      update: {
+        remotes: {
+          title: "リモート",
+          empty: "このリポジトリにはリモートが設定されていません。",
+          addTitle: "リモートを追加",
+          editTitle: ({ name }: { name: string }) => `${name}を編集`,
+          add: "リモートを追加",
+          remove: "削除",
+          nameLabel: "リモート名",
+          fetchUrlLabel: "フェッチ URL",
+          pushUrlLabel: "プッシュ URL",
+          namePlaceholder: "origin",
+          fetchUrlPlaceholder: "フェッチ URL",
+          pushUrlPlaceholder: "Push URL（任意）",
+          noFetchUrl: "Fetch URLなし",
+          removeConfirmTitle: "リモートを削除しますか？",
+          removeConfirmBody: ({ name }: { name: string }) =>
+            `${name}をこのリポジトリから削除しますか？`,
+          errors: {
+            nameRequired: "リモート名を入力してください。",
+            fetchUrlRequired: "Fetch URLを入力してください。",
+            addFailed: "リモートを追加できませんでした。",
+            saveFailed: "リモートを更新できませんでした。",
+            removeFailed: "リモートを削除できませんでした。",
+          },
+        },
+        publishRepository: {
+          title: "GitHub に公開",
+          body: "GitHub リポジトリを作成し、origin として追加します。",
+          ownerLabel: "所有者",
+          repositoryNameLabel: "リポジトリ名",
+          repositoryNamePlaceholder: "リポジトリ名",
+          visibilityLabel: "公開範囲",
+          private: "非公開",
+          public: "公開",
+          internal: "内部",
+          remoteKindLabel: "リモート URL",
+          httpsRemote: "HTTPS リモート",
+          sshRemote: "SSH リモート",
+          originConflictLabel: "既存の origin",
+          keepOrigin: "置き換えない",
+          setOriginUrl: "origin URL を設定",
+          pushCurrentBranch: "現在のブランチをプッシュ",
+          publish: "リポジトリを公開",
+          publishing: "公開中…",
+          noTargets: "このリポジトリを公開するには GitHub を接続するか gh CLI でサインインしてください。",
+          errors: {
+            targetRequired: "GitHub アカウントまたは組織を選択してください。",
+            nameRequired: "リポジトリ名を入力してください。",
+            loadTargetsFailed: "GitHub の公開先を読み込めませんでした。",
+            publishFailed: "リポジトリを公開できませんでした。",
+          },
+        },
+        branchIntegration: {
+          title: "マージとリベース",
+          sourceLabel: "ソースブランチ",
+          sourcePlaceholder: "ブランチまたはリモート参照",
+          merge: "マージ",
+          rebase: "リベース",
+          continue: "続行",
+          abort: "中止",
+          operationInProgress: ({ operation, source }: { operation: string; source: string }) =>
+            `${source}からの${operation}が進行中`,
+          errors: {
+            sourceRequired: "ソースブランチまたは参照を入力してください。",
+            mergeFailed: "ブランチをマージできませんでした。",
+            rebaseFailed: "ブランチをリベースできませんでした。",
+            continueFailed: "操作を続行できませんでした。",
+            abortFailed: "操作を中止できませんでした。",
+          },
+        },
+        pullRequests: {
+          title: "プルリクエスト",
+          readyTitle: "プルリクエストを開けます",
+          view: "PRを表示",
+          openOrReuse: "PRを開く/再利用",
+          pushAndOpen: "プッシュしてPRを開く",
+          createFeatureBranch: "機能ブランチを作成",
+          createFeatureBranchAndOpen: "ブランチを作成してPRを開く",
+          featureBranchPromptTitle: "機能ブランチ名",
+          featureBranchPromptBody: "Happier は続行する前にこのブランチをチェックアウトします。",
+          defaultBranchRequiresFeature: "デフォルトブランチからプルリクエストを開く前に、機能ブランチを作成してください。",
+          defaultBranchDenied: "デフォルトブランチから直接プルリクエストを開くことはできません。",
+          states: {
+            ready: "準備完了",
+            open: "オープン",
+            closed: "クローズ",
+            merged: "マージ済み",
+          },
+          status: {
+            creating: "プルリクエストを開いています…",
+            creatingFeatureBranch: "機能ブランチを作成しています…",
+            creatingFeatureBranchPullRequest: "機能ブランチを作成してプルリクエストを開いています…",
+            pushingAndCreating: "ブランチをプッシュしてプルリクエストを開いています…",
+          },
+          unavailable: {
+            notRepositoryTitle: "リポジトリが検出されていません",
+            notRepositoryBody: "このセッションがソース管理リポジトリに接続されると、プルリクエスト操作が表示されます。",
+            unknownProviderTitle: "ホスティングプロバイダーが検出されていません",
+            unknownProviderBody: "GitHub、GitLab、またはBitbucketのリモートを追加すると、プルリクエスト操作を有効にできます。",
+            noBranchTitle: "ブランチが選択されていません",
+            noBranchBody: "プルリクエストを開く前にブランチをチェックアウトしてください。",
+            detachedHeadTitle: "切り離された HEAD",
+            detachedHeadBody: "プルリクエストを開く前にブランチをチェックアウトしてください。",
+          },
+          errors: {
+            featureBranchRequired: "プルリクエストを開く前に機能ブランチを作成してください。",
+            openFailed: "プルリクエストを開けませんでした。",
+            branchNameRequired: "機能ブランチ名を入力してください。",
+            createBranchFailed: "機能ブランチを作成できませんでした。",
+            stackedFailed: "プルリクエストのワークフローを完了できませんでした。",
+          },
+        },
       },
     },
   },
@@ -5732,17 +6047,27 @@ localTailscale: {
     },
 
 settingsSession: {
-    sessionList: {
-        title: 'セッション一覧',
-        footer: '各セッション行に表示する内容をカスタマイズします。',
-        tagsTitle: 'セッションタグ',
-        tagsEnabledSubtitle: 'セッション一覧にタグ操作を表示',
-        tagsDisabledSubtitle: 'タグ操作を非表示',
-    },
-    input: {
-        title: '入力の外観',
-        footer: 'エージェント入力バーの外観を設定します。',
-    },
+	    sessionList: {
+	        title: 'セッション一覧',
+	        footer: '各セッション行に表示する内容をカスタマイズします。',
+	        tagsTitle: 'セッションタグ',
+	        tagsEnabledSubtitle: 'セッション一覧にタグ操作を表示',
+	        tagsDisabledSubtitle: 'タグ操作を非表示',
+	    },
+	    mobileWorkspaceExperience: {
+	        title: 'モバイルセッションレイアウト',
+	        subtitle: 'セッション内で使うスマートフォン向けレイアウトを選択します。',
+	        options: {
+	            cockpitTitle: 'コックピット',
+	            cockpitSubtitle: 'チャット、ファイル、Git、タブ、ターミナルを下部タブで切り替えます。',
+	            classicTitle: 'クラシック',
+	            classicSubtitle: '従来のセッション画面レイアウトを使います。',
+	        },
+	    },
+	    input: {
+	        title: '入力の外観',
+	        footer: 'エージェント入力バーの外観を設定します。',
+	    },
     inputBehavior: {
         title: '入力の動作',
         footer: 'Enterで送信とメッセージ履歴の動作を設定します。',
@@ -5751,6 +6076,9 @@ settingsSession: {
     windows: {
         title: 'Windows',
         defaultModeTitle: 'Windows リモートセッションの既定モード',
+        windowNameTitle: 'Windows Terminal のウィンドウ名',
+        windowNamePlaceholder: 'happier',
+        windowNameHint: 'Windows Terminal で開くセッションはこの名前付きウィンドウを使い、新しいセッションをタブとして表示できます。',
     },
     advanced: {
         title: '詳細',
@@ -5910,6 +6238,9 @@ settingsSession: {
             coalesceMaxBatchPromptTitle: "最大バッチサイズ",
             coalesceMaxBatchPromptBody:
               "1 回のフラッシュで適用するメッセージ数の上限を設定します。",
+            streamingPartialOutputTitle: "ストリーミングの途中結果を表示",
+            streamingPartialOutputSubtitle:
+              "オフにすると、アシスタントのメッセージは完了後にのみ表示されます。",
             thinkingPulseStaleTitle: "思考の失効ウィンドウ",
             thinkingPulseStaleSubtitle: ({ value }: { value: string }) => `現在: ${value}ms`,
             thinkingPulseStalePromptTitle: "思考の失効ウィンドウ（ms）",
@@ -6026,6 +6357,15 @@ settingsSession: {
         openSubtitle: "サブエージェント設定を開く",
       },
       handoff: settingsSessionHandoffTranslationExtensions.ja,
+      sessionCreation: {
+        title: "新しいセッションのショートカット",
+        footer: "プロジェクトのショートカットが新しいセッション画面に何を反映するかを選びます。",
+        rememberLastProjectSelectionsTitle: "プロジェクトの最後のセッション選択を記憶",
+        rememberLastProjectSelectionsEnabledSubtitle:
+          "プロジェクトのショートカットは、最新セッションのマシン、フォルダ、エンジン、モデル、セッションオプションを再利用します。",
+        rememberLastProjectSelectionsDisabledSubtitle:
+          "プロジェクトのショートカットは、プロジェクトのマシンとフォルダだけを事前選択します。",
+      },
       defaultPermissions: {
         title: "デフォルト権限",
         footer:
@@ -6112,7 +6452,7 @@ settingsSession: {
     hiddenSubtitle: "ターミナルウィンドウを開かず、バックグラウンドでセッションを開始します。",
     windowsTerminal: "Windows Terminal",
     shortWindowsTerminal: "WT",
-    windowsTerminalSubtitle: "専用の Windows Terminal ウィンドウでセッションを開きます。",
+    windowsTerminalSubtitle: "共有 Windows Terminal ウィンドウのタブとしてセッションを開きます。",
     console: "コンソール",
     shortConsole: "コンソール",
     consoleSubtitle: "標準の Windows コンソールウィンドウでセッションを開きます。",
@@ -7514,7 +7854,6 @@ settingsSession: {
     sessionRunningLocallyAndRemotely:
       "このセッションは OpenCode にローカル接続されたままで、アプリからも引き続き操作できます。",
     switchingToRemote: "リモートモードに切り替え中…",
-    switchToLocal: "ローカルに切り替え",
     switchToRemote: "リモートに切り替え",
     detachLocalTerminal: "ターミナルを切り離す",
     directSessionTakeoverAvailable:
@@ -7720,6 +8059,10 @@ settingsSession: {
     usageOverTime: "使用量の推移",
     byModel: "モデル別",
     noData: "使用データがありません",
+    errors: {
+      notAuthenticated: "使用状況を表示するにはサインインしてください。",
+      failedToLoad: "使用状況を読み込めませんでした。",
+    },
   },
 
   secrets: {

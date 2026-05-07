@@ -24,6 +24,16 @@ export type LocalSettings = z.infer<typeof LocalSettingsSchema>;
 export const localSettingsDefaults: LocalSettings = LOCAL_SETTING_ARTIFACTS.defaults;
 Object.freeze(localSettingsDefaults);
 
+const deprecatedLocalSettingKeys = ['editorFocusModeEnabled'] as const;
+
+function stripDeprecatedLocalSettingsKeys(settings: Readonly<Record<string, unknown>>): Record<string, unknown> {
+    const next: Record<string, unknown> = { ...settings };
+    for (const key of deprecatedLocalSettingKeys) {
+        delete next[key];
+    }
+    return next;
+}
+
 //
 // Parsing
 //
@@ -49,7 +59,7 @@ export function localSettingsParse(settings: unknown): LocalSettings {
     const UI_FONT_SCALE_MIN = 0.5;
     const UI_FONT_SCALE_MAX = 2.5;
 
-    const data: LocalSettingsParseInput = parsed.data;
+    const data = stripDeprecatedLocalSettingsKeys(parsed.data) as LocalSettingsParseInput;
     const nextUiFontScaleRaw =
         typeof data.uiFontScale === 'number'
             ? data.uiFontScale
@@ -60,13 +70,13 @@ export function localSettingsParse(settings: unknown): LocalSettings {
             ? clamp(nextUiFontScaleRaw, UI_FONT_SCALE_MIN, UI_FONT_SCALE_MAX)
             : localSettingsDefaults.uiFontScale;
 
-    return { ...localSettingsDefaults, ...parsed.data, uiFontScale: nextUiFontScale };
+    return { ...localSettingsDefaults, ...data, uiFontScale: nextUiFontScale };
 }
 
 //
 // Applying changes
 //
 
-export function applyLocalSettings(settings: LocalSettings, delta: Partial<LocalSettings>): LocalSettings {
-    return { ...localSettingsDefaults, ...settings, ...delta };
+export function applyLocalSettings(settings: LocalSettings, delta: Partial<LocalSettings> | Readonly<Record<string, unknown>>): LocalSettings {
+    return stripDeprecatedLocalSettingsKeys({ ...localSettingsDefaults, ...settings, ...delta }) as LocalSettings;
 }

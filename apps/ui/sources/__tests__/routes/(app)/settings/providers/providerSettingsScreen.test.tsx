@@ -817,7 +817,7 @@ describe('ProviderSettingsScreen', () => {
         mockProviderId = 'customAcp';
         const screen = await renderProviderSettingsScreen();
         const redirect = screen.findByType('Redirect' as any);
-        expect(redirect.props.href).toBe('/(app)/settings/providers');
+        expect(redirect.props.href).toBe('/settings/providers');
     });
 
     it('reads and writes the OpenCode server url per active server', async () => {

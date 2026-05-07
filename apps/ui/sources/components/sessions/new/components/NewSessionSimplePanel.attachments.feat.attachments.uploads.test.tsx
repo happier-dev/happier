@@ -21,6 +21,22 @@ const attachmentDraftState = vi.hoisted(() => ({
 const uploadAttachmentDraftsToSessionSpy = vi.hoisted(() => vi.fn());
 const formatAttachmentsBlockSpy = vi.hoisted(() => vi.fn(() => ''));
 const followUpSpawnedSessionWithServerScopeSpy = vi.hoisted(() => vi.fn());
+const workspaceReviewDraftsState = vi.hoisted(() => ({
+    draftsByRootPath: new Map<string, Array<{
+        id: string;
+        filePath: string;
+        source: 'file' | 'diff';
+        anchor: Record<string, unknown>;
+        snapshot: {
+            selectedLines: string[];
+            beforeContext: string[];
+            afterContext: string[];
+        };
+        body: string;
+        includeInPrompt?: boolean;
+        createdAt: number;
+    }>>(),
+}));
 
 installNewSessionComponentsCommonModuleMocks({
     icons: () => ({
@@ -46,6 +62,14 @@ installNewSessionComponentsCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
+    },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useWorkspaceReviewCommentsDrafts: (scope: { rootPath?: string } | null | undefined) => (
+                scope?.rootPath ? (workspaceReviewDraftsState.draftsByRootPath.get(scope.rootPath) ?? []) : []
+            ),
+        });
     },
 });
 
@@ -122,10 +146,11 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'attachments.uploads',
+    useFeatureEnabled: (featureId: string) => featureId === 'attachments.uploads' || featureId === 'files.reviewComments',
 }));
 
 afterEach(() => {
+    workspaceReviewDraftsState.draftsByRootPath.clear();
     standardCleanup();
 });
 
@@ -371,5 +396,73 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
             },
         });
         expect(attachmentDraftState.clearDrafts).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows review comments saved for the selected workspace', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+
+        AgentInputMock.mockClear();
+        workspaceReviewDraftsState.draftsByRootPath.set('/repo/workspace', [{
+            id: 'draft-1',
+            filePath: 'src/a.ts',
+            source: 'diff',
+            anchor: {
+                kind: 'diffLine',
+                startLine: 1,
+                side: 'after',
+                oldLine: 1,
+                newLine: 1,
+            },
+            snapshot: {
+                selectedLines: ['+export const a = 2;'],
+                beforeContext: [],
+                afterContext: [],
+            },
+            body: 'Please verify this project change.',
+            createdAt: 1,
+        }]);
+
+        const props = {
+            popoverBoundaryRef: { current: null } as unknown as React.RefObject<any>,
+            headerHeight: 44,
+            safeAreaTop: 0,
+            safeAreaBottom: 0,
+            newSessionTopPadding: 0,
+            newSessionSidePadding: 0,
+            newSessionBottomPadding: 0,
+            containerStyle: {},
+            sessionPrompt: '',
+            setSessionPrompt: () => {},
+            handleCreateSession: () => {},
+            canCreate: true,
+            isCreating: false,
+            emptyAutocompletePrefixes: [],
+            emptyAutocompleteSuggestions: async () => [],
+            sessionPromptInputMaxHeight: 200,
+            agentInputExtraActionChips: [],
+            agentType: 'codex',
+            handleAgentClick: () => {},
+            permissionMode: 'default',
+            handlePermissionModeChange: () => {},
+            modelMode: 'default',
+            setModelMode: () => {},
+            modelOptions: [{ value: 'default', label: 'Default', description: '' }],
+            connectionStatus: undefined,
+            machineName: undefined,
+            selectedMachineId: 'machine-1',
+            selectedPath: '/repo/workspace',
+            showResumePicker: false,
+            resumeSessionId: null,
+            isResumeSupportChecking: false,
+            useProfiles: false,
+            selectedProfileId: null,
+            targetServerId: 'server-b',
+        } satisfies React.ComponentProps<typeof NewSessionSimplePanel> & { selectedMachineId: string };
+
+        await renderScreen(React.createElement(NewSessionSimplePanel, props));
+
+        const inputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+        const reviewCommentsChip = inputProps.extraActionChips.find((chip: any) => chip?.key === 'review-comments');
+        expect(reviewCommentsChip).toBeTruthy();
     });
 });

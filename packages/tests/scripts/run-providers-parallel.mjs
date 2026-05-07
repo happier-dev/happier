@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import {
   filterProviderIdsForScenarioSelection,
   parseMaxParallel,
@@ -102,8 +103,8 @@ function usage(exitCode) {
   return exitCode;
 }
 
-function yarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
+export function resolveProviderRunYarnInvocation(args, options = {}) {
+  return resolveYarnCommandInvocation(args, options);
 }
 
 function signalExitCode(signal) {
@@ -272,7 +273,8 @@ async function runProvider(params, state) {
   const reportPath = join(reportDir, 'failure-report.json');
   return new Promise((resolveResult) => {
     const startedAt = Date.now();
-    const child = spawn(yarnCommand(), buildProviderRunArgs(params), {
+    const invocation = resolveProviderRunYarnInvocation(buildProviderRunArgs(params));
+    const child = spawn(invocation.command, invocation.args, {
       stdio: 'inherit',
       env: buildProviderChildEnv({
         baseEnv: process.env,
@@ -281,6 +283,9 @@ async function runProvider(params, state) {
         tokenLedgerPath: params.tokenLedgerPath ?? null,
       }),
       detached: process.platform !== 'win32',
+      ...(invocation.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : {}),
     });
     state.activeChildren.add(child);
 
@@ -318,10 +323,14 @@ async function prewarmServerGenerateProviders(state) {
 
   const serverWorkspace = await resolveServerAppWorkspaceName();
   await new Promise((resolveResult, rejectResult) => {
-    const child = spawn(yarnCommand(), ['-s', 'workspace', serverWorkspace, 'generate:providers'], {
+    const invocation = resolveProviderRunYarnInvocation(['-s', 'workspace', serverWorkspace, 'generate:providers']);
+    const child = spawn(invocation.command, invocation.args, {
       stdio: 'inherit',
       env,
       detached: process.platform !== 'win32',
+      ...(invocation.windowsVerbatimArguments
+        ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+        : {}),
     });
     state.activeChildren.add(child);
     child.once('exit', () => state.activeChildren.delete(child));

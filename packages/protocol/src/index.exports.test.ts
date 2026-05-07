@@ -75,6 +75,14 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DaemonMcpServersDetectResponseSchema?.safeParse).toBe('function');
     });
 
+    it('exports pet package and daemon RPC schemas', () => {
+        expect((protocol as any).PET_ATLAS_V1?.width).toBe(1536);
+        expect(typeof (protocol as any).PetPackageManifestV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).PetPackageSourceV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonPetDiscoverRequestV1Schema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonPetImportResponseV1Schema?.safeParse).toBe('function');
+    });
+
     it('exports direct sessions daemon RPC schemas', () => {
         expect(typeof (protocol as any).DirectSessionsProviderIdSchema?.safeParse).toBe('function');
         expect((protocol as any).DirectSessionsProviderIdSchema.parse('codex')).toBe('codex');

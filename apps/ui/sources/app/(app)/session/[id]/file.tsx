@@ -46,19 +46,21 @@ export default function FileScreen() {
     React.useEffect(() => {
         if (!isUnsafeFilePath) return;
         if (!sessionId) return;
-        router.replace({ pathname: '/session/[id]', params: routeScope.withParams({ id: sessionId }) } as any);
+        router.replace(routeScope.buildHref(sessionId) as any);
     }, [isUnsafeFilePath, routeScope, router, sessionId]);
 
     React.useEffect(() => {
         if (!shouldRedirect) return;
         const fileName = filePath.split('/').at(-1) ?? filePath;
+        pane.openRight({ tabId: 'files' });
+        pane.setRightTab('files');
         pane.openDetailsTab({
             key: `file:${filePath}`,
             kind: 'file',
             title: fileName,
             resource: { kind: 'file', path: filePath, deepLinkAnchor },
         }, { intent: 'preview' });
-        router.replace({ pathname: '/session/[id]', params: routeScope.withParams({ id: sessionId }) } as any);
+        router.replace(routeScope.buildHref(sessionId) as any);
     }, [deepLinkAnchor, filePath, pane, routeScope, router, sessionId, shouldRedirect]);
 
     React.useEffect(() => {
@@ -70,6 +72,8 @@ export default function FileScreen() {
         if (shouldRedirect) return;
         hasRedirectedToDetailsRef.current = true;
         const fileName = filePath.split('/').at(-1) ?? filePath;
+        pane.openRight({ tabId: 'files' });
+        pane.setRightTab('files');
         pane.openDetailsTab(
             {
                 key: `file:${filePath}`,
@@ -79,13 +83,10 @@ export default function FileScreen() {
             },
             { intent: 'preview' },
         );
-        router.replace({
-            pathname: '/session/[id]/details',
-            params: routeScope.withParams({
-                id: sessionId,
-                ...serializeSessionPaneUrlState({ details: { kind: 'file', path: filePath } }),
-            }),
-        } as any);
+        router.replace(routeScope.buildHref(sessionId, {
+            suffix: '/details',
+            query: serializeSessionPaneUrlState({ details: { kind: 'file', path: filePath } }),
+        }) as any);
     }, [deepLinkAnchor, filePath, isUnsafeFilePath, pane, routeScope, router, sessionId, shouldRedirect, shouldUseDetailsScreen]);
 
     if (!sessionId || (!filePath && !isUnsafeFilePath)) {

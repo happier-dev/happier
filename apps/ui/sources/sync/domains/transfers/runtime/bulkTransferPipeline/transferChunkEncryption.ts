@@ -4,6 +4,7 @@ import {
     openEncryptedDataKeyEnvelopeV1,
     sealEncryptedDataKeyEnvelopeV1,
 } from '@happier-dev/protocol';
+import { gcm } from '@noble/ciphers/aes.js';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -23,12 +24,8 @@ function toWebCryptoBuffer(bytes: Uint8Array): ArrayBuffer {
     return copy.buffer;
 }
 
-function getSubtleCrypto(): SubtleCrypto {
-    const subtle = globalThis.crypto?.subtle;
-    if (!subtle) {
-        throw new Error('WebCrypto SubtleCrypto is unavailable for transfer chunk encryption');
-    }
-    return subtle;
+function getSubtleCrypto(): SubtleCrypto | null {
+    return globalThis.crypto?.subtle ?? null;
 }
 
 function buildTransferChunkAad(params: Readonly<{
@@ -46,13 +43,63 @@ function parseRecipientPublicKeyBase64(recipientPublicKeyBase64: string): Uint8A
     return recipientPublicKey;
 }
 
-async function importAesGcmKey(dataKey: Uint8Array): Promise<CryptoKey> {
-    return await getSubtleCrypto().importKey(
+async function importAesGcmKey(subtle: SubtleCrypto, dataKey: Uint8Array): Promise<CryptoKey> {
+    return await subtle.importKey(
         'raw',
         toWebCryptoBuffer(dataKey),
         { name: 'AES-GCM' },
         false,
         ['encrypt', 'decrypt'],
+    );
+}
+
+async function encryptAesGcm(params: Readonly<{
+    dataKey: Uint8Array;
+    nonce: Uint8Array;
+    aad: Uint8Array;
+    payload: Uint8Array;
+}>): Promise<Uint8Array> {
+    const subtle = getSubtleCrypto();
+    if (!subtle) {
+        return gcm(params.dataKey, params.nonce, params.aad).encrypt(params.payload);
+    }
+
+    const key = await importAesGcmKey(subtle, params.dataKey);
+    return new Uint8Array(
+        await subtle.encrypt(
+            {
+                name: 'AES-GCM',
+                iv: toWebCryptoBuffer(params.nonce),
+                additionalData: toWebCryptoBuffer(params.aad),
+            },
+            key,
+            toWebCryptoBuffer(params.payload),
+        ),
+    );
+}
+
+async function decryptAesGcm(params: Readonly<{
+    dataKey: Uint8Array;
+    nonce: Uint8Array;
+    aad: Uint8Array;
+    ciphertext: Uint8Array;
+}>): Promise<Uint8Array> {
+    const subtle = getSubtleCrypto();
+    if (!subtle) {
+        return gcm(params.dataKey, params.nonce, params.aad).decrypt(params.ciphertext);
+    }
+
+    const key = await importAesGcmKey(subtle, params.dataKey);
+    return new Uint8Array(
+        await subtle.decrypt(
+            {
+                name: 'AES-GCM',
+                iv: toWebCryptoBuffer(params.nonce),
+                additionalData: toWebCryptoBuffer(params.aad),
+            },
+            key,
+            toWebCryptoBuffer(params.ciphertext),
+        ),
     );
 }
 
@@ -93,21 +140,15 @@ export async function createEncryptedTransferChunkEnvelope(params: Readonly<{
         throw new Error(`Invalid transfer chunk nonce length: ${nonce.length}`);
     }
 
-    const key = await importAesGcmKey(dataKey);
-    const ciphertext = new Uint8Array(
-        await getSubtleCrypto().encrypt(
-            {
-                name: 'AES-GCM',
-                iv: toWebCryptoBuffer(nonce),
-                additionalData: toWebCryptoBuffer(buildTransferChunkAad({
-                    transferId: params.transferId,
-                    sequence: params.sequence,
-                })),
-            },
-            key,
-            toWebCryptoBuffer(params.payload),
-        ),
-    );
+    const ciphertext = await encryptAesGcm({
+        dataKey,
+        nonce,
+        aad: buildTransferChunkAad({
+            transferId: params.transferId,
+            sequence: params.sequence,
+        }),
+        payload: params.payload,
+    });
 
     const encryptedChunk = new Uint8Array(1 + nonce.length + ciphertext.length);
     encryptedChunk[0] = TRANSFER_CHUNK_BUNDLE_VERSION;
@@ -155,23 +196,16 @@ export async function decryptEncryptedTransferChunkEnvelope(params: Readonly<{
     const ciphertextStart = nonceStart + TRANSFER_CHUNK_NONCE_BYTES;
     const nonce = encryptedChunk.slice(nonceStart, ciphertextStart);
     const ciphertext = encryptedChunk.slice(ciphertextStart);
-    const key = await importAesGcmKey(dataKey);
-
     try {
-        return new Uint8Array(
-            await getSubtleCrypto().decrypt(
-                {
-                    name: 'AES-GCM',
-                    iv: toWebCryptoBuffer(nonce),
-                    additionalData: toWebCryptoBuffer(buildTransferChunkAad({
-                        transferId: params.transferId,
-                        sequence: params.sequence,
-                    })),
-                },
-                key,
-                toWebCryptoBuffer(ciphertext),
-            ),
-        );
+        return await decryptAesGcm({
+            dataKey,
+            nonce,
+            aad: buildTransferChunkAad({
+                transferId: params.transferId,
+                sequence: params.sequence,
+            }),
+            ciphertext,
+        });
     } catch {
         throw new Error(`Failed to decrypt transfer chunk for ${params.transferId}`);
     }

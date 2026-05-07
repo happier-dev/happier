@@ -31,6 +31,7 @@ import {
   parseBugReportArgs,
 } from '@/diagnostics/bugReportCommandArgs';
 import {
+  DEFAULT_BUG_REPORT_FEATURE,
   fetchBugReportsFeatureFromServer,
   type BugReportsFeature,
 } from '@/diagnostics/bugReportFeatureClient';
@@ -52,6 +53,10 @@ type BugReportFallbackResult = {
   mode: 'fallback';
   issueUrl: string;
   diagnosticsIncluded: boolean;
+  /** Set when fallback was triggered by a runtime failure (network, server error). */
+  reason?: 'feature-disabled' | 'feature-fetch-failed' | 'submit-failed';
+  /** Underlying error message when reason is *-failed. Sanitized for display only. */
+  errorMessage?: string;
 };
 
 export type BugReportCommandResult = BugReportSubmittedResult | BugReportFallbackResult;
@@ -173,7 +178,14 @@ export async function runBugReportCommand(
 
   const interactive = deps.isInteractiveTerminal();
   const activeServer = await deps.getActiveServerProfile();
-  const feature = await deps.fetchBugReportsFeature(activeServer.serverUrl);
+  let feature: BugReportsFeature;
+  let featureFetchError: string | null = null;
+  try {
+    feature = await deps.fetchBugReportsFeature(activeServer.serverUrl);
+  } catch (error) {
+    feature = { ...DEFAULT_BUG_REPORT_FEATURE };
+    featureFetchError = error instanceof Error ? error.message : String(error ?? 'unknown error');
+  }
   let includeDiagnostics = parsed.includeDiagnostics ?? feature.defaultIncludeDiagnostics;
 
   const title = await resolveRequiredField({
@@ -192,7 +204,10 @@ export async function runBugReportCommand(
     interactive,
     promptInputFn: deps.promptInput,
   });
-  const summaryWithReporter = appendBugReportReporterToSummary(summary, parsed.githubUsername);
+  const summaryWithSessionId = parsed.sessionId
+    ? `${summary}\n\nHappier session id: ${parsed.sessionId}`
+    : summary;
+  const summaryWithReporter = appendBugReportReporterToSummary(summaryWithSessionId, parsed.githubUsername);
   const currentBehavior = parsed.currentBehavior.trim() || undefined;
   const expectedBehavior = parsed.expectedBehavior.trim() || undefined;
 
@@ -234,7 +249,11 @@ export async function runBugReportCommand(
     cliOverride: parsed.providerUrl,
     featureProviderUrl: feature.providerUrl,
   });
-  if (!feature.enabled || !providerUrl) {
+
+  const buildFallback = (
+    reason: NonNullable<BugReportFallbackResult['reason']>,
+    errorMessage: string | null,
+  ): BugReportFallbackResult => {
     const fallbackBody = formatFallbackIssueBody({
       summary: summaryWithReporter,
       currentBehavior,
@@ -246,7 +265,7 @@ export async function runBugReportCommand(
       whatChangedRecently: parsed.whatChangedRecently || undefined,
       diagnosticsIncluded: includeDiagnostics,
     });
-    return {
+    const result: BugReportFallbackResult = {
       mode: 'fallback',
       issueUrl: buildFallbackIssueUrl({
         owner: BUG_REPORT_DEFAULT_ISSUE_OWNER,
@@ -255,7 +274,19 @@ export async function runBugReportCommand(
         body: fallbackBody,
       }),
       diagnosticsIncluded: includeDiagnostics,
+      reason,
     };
+    if (errorMessage) {
+      result.errorMessage = errorMessage;
+    }
+    return result;
+  };
+
+  if (!feature.enabled || !providerUrl) {
+    return buildFallback(
+      featureFetchError ? 'feature-fetch-failed' : 'feature-disabled',
+      featureFetchError,
+    );
   }
 
   let existingIssueNumber: number | undefined = parsed.existingIssueNumber ?? undefined;
@@ -297,6 +328,7 @@ export async function runBugReportCommand(
         serverUrl: activeServer.serverUrl,
         activeServerId: activeServer.id,
         rawArgs: args,
+        extraAttachments: parsed.attachments.length > 0 ? parsed.attachments : undefined,
       })
     : { artifacts: [], environment: baseEnvironment };
 
@@ -323,16 +355,22 @@ export async function runBugReportCommand(
     },
   };
 
-  const submitted = await deps.submitBugReport({
-    providerUrl,
-    timeoutMs: feature.uploadTimeoutMs,
-    form,
-    artifacts: diagnostics.artifacts,
-    maxArtifactBytes: feature.maxArtifactBytes,
-    issueOwner: BUG_REPORT_DEFAULT_ISSUE_OWNER,
-    issueRepo: BUG_REPORT_DEFAULT_ISSUE_REPO,
-    existingIssueNumber,
-  });
+  let submitted: { reportId: string; issueNumber: number; issueUrl: string };
+  try {
+    submitted = await deps.submitBugReport({
+      providerUrl,
+      timeoutMs: feature.uploadTimeoutMs,
+      form,
+      artifacts: diagnostics.artifacts,
+      maxArtifactBytes: feature.maxArtifactBytes,
+      issueOwner: BUG_REPORT_DEFAULT_ISSUE_OWNER,
+      issueRepo: BUG_REPORT_DEFAULT_ISSUE_REPO,
+      existingIssueNumber,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error ?? 'unknown error');
+    return buildFallback('submit-failed', message);
+  }
 
   return {
     mode: 'submitted',

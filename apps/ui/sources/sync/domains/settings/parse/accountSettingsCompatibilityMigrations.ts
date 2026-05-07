@@ -192,6 +192,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
         next.alwaysShowContextSize = true;
     }
 
+    if (inputSchemaVersion < 8 && next.avatarStyle === 'brutalist') {
+        next.avatarStyle = 'meshGradientColumns';
+    }
+
     next.featureToggles = migrateAccountFeatureToggles({
         featureToggles: next.featureToggles,
         inputSchemaVersion,

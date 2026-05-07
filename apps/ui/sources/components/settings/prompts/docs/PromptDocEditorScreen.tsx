@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Stack, useNavigation, useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 
 import { PromptDocBodyV1Schema } from '@happier-dev/protocol';
 
@@ -146,7 +146,6 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: props.artifactId ? t('promptLibrary.editPrompt') : t('promptLibrary.newPrompt') }} />
       <ItemList containerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <ItemGroup title={t('promptLibrary.general')}>
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>

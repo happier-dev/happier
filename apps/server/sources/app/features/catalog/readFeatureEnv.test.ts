@@ -6,6 +6,7 @@ import {
   readChannelBridgesFeatureEnv,
   readConnectedServicesFeatureEnv,
   readMachineTransferFeatureEnv,
+  readPetsFeatureEnv,
   readSessionHandoffFeatureEnv,
   readTerminalFeatureEnv,
 } from './readFeatureEnv';
@@ -29,6 +30,17 @@ describe('readChannelBridgesFeatureEnv', () => {
     const env: NodeJS.ProcessEnv = {};
     const res = readChannelBridgesFeatureEnv(env);
     expect(res.telegramEnabled).toBe(true);
+  });
+});
+
+describe('readPetsFeatureEnv', () => {
+  it('reads the encrypted custom pet sync policy from env', () => {
+    const env: NodeJS.ProcessEnv = {
+      HAPPIER_FEATURE_PETS_SYNC__ENCRYPTED_CUSTOM_PET_SYNC_POLICY: 'allowedWithClientValidation',
+    };
+    const res = readPetsFeatureEnv(env);
+
+    expect(res.encryptedCustomPetSyncPolicy).toBe('allowedWithClientValidation');
   });
 });
 

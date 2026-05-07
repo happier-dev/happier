@@ -1,0 +1,104 @@
+---
+title: Session read and unread state
+description: Understand unread session badges, Mark as unread, Mark as read, and what happens when the session is already open.
+---
+
+Happier tracks whether each session has transcript activity you have not viewed yet.
+
+Unread state is intentionally simple:
+
+- if a session has committed transcript activity after your last viewed position, it is **unread**
+- if your last viewed position is current, it is **read**
+- empty sessions do not show manual read-state actions
+
+This state drives unread badges, unread session filtering, and the **Mark as unread** / **Mark as read** actions in the app.
+
+## Where to find the actions
+
+You can change a session's read state from the same places you manage other session actions:
+
+- the session row **...** menu in the session list
+- the session row long-press/context menu on mobile
+- the session header action menu
+- the Session info screen quick actions
+
+When the session is currently read, Happier shows **Mark as unread**.
+
+When the session is currently unread, Happier shows **Mark as read**.
+
+## What Mark as unread does
+
+Use **Mark as unread** when you want a session to stay visible as something to revisit.
+
+For example:
+
+- you opened a session but want to come back later
+- you read enough to know it still needs attention
+- you want to keep a session in your unread workflow after triaging it
+
+When you mark a session unread, Happier moves your read position to just before the latest committed transcript activity. The transcript does not change, and no message is created or deleted.
+
+## What Mark as read does
+
+Use **Mark as read** when the session no longer needs unread attention.
+
+Happier moves your read position to the latest committed transcript activity. The unread badge clears for that session unless newer activity arrives afterwards.
+
+## When the session is already open
+
+Opening a session normally marks it read because viewing the transcript is treated as read intent.
+
+Manual **Mark as unread** is different. If you mark the session unread while you are already inside it, Happier keeps it unread for that current view instead of immediately marking it read again.
+
+That means this flow works as expected:
+
+1. Open a session.
+2. Choose **Mark as unread** from the header or list action.
+3. Stay on that session.
+4. The session remains unread until you explicitly mark it read, leave/reopen it, or another active view marks it read.
+
+This avoids the common problem where marking the current item unread is instantly undone by the fact that it is still visible.
+
+## Closing and reopening a session
+
+Closing the session view ends that viewing activation.
+
+If you later reopen the same session directly, by deep link, notification, browser refresh, or from the session list, Happier treats that as a new viewing activation. If the session is visible and focused, it can be marked read again.
+
+This is deliberate: reopening a session is a new read intent.
+
+## New activity after marking unread
+
+Unread state is based on committed transcript activity.
+
+If new transcript activity arrives after you marked a session unread, the session remains unread. Marking it read later advances to the newest committed transcript activity at that time.
+
+Pending queued messages do not by themselves make a session unread. The unread badge is about transcript activity that has actually been committed to the session.
+
+## Multi-device and multi-window behavior
+
+Read state belongs to the session on the server, so it syncs across your devices and browser windows for the same account.
+
+If you mark a session unread on one device, other connected views receive that update. If another active device then opens or views the same session, that device may mark the session read again because read state is session-wide, not per-device or per-pane.
+
+For split views, each visible pane has its own viewing activation, but the final read state is still global for the session. A different focused pane can legitimately mark the same session read.
+
+## Sessions where the action is hidden
+
+Happier hides manual read-state actions when they would not make sense or when you do not have the right access:
+
+- empty sessions
+- archived sessions
+- view-only shared sessions
+
+Archived sessions do not contribute to the normal unread activity badge, so showing read-state actions there would be misleading.
+
+For shared sessions, only people with edit/admin-style access can change the read state. View-only access can read the transcript but cannot change the session's read cursor.
+
+## Related guides
+
+- [App](/docs/clients/app)
+- [Notifications](/docs/clients/notifications)
+- [Notification routing](/docs/features/notifications-routing)
+- [Session settings](/docs/features/session-settings)
+- [Multi-server](/docs/features/multi-server)

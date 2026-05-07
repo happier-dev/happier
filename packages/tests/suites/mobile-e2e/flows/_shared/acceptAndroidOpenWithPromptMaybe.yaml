@@ -1,0 +1,15 @@
+# Best-effort acceptance of Android's app chooser after opening an app-scheme
+# deep link.
+#
+# Android can surface an "Open with ..." chooser when multiple local Happier
+# app variants handle the same scheme. The flow taps "Just once" so test runs do
+# not persist a default app choice on shared emulators.
+#
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- runFlow:
+    when:
+      platform: Android
+      visible: "(Open with .*|Just once)"
+    commands:
+      - tapOn: "Just once"

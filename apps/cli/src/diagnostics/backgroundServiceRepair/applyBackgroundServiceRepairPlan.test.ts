@@ -53,8 +53,6 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
     });
 
     expect(uninstallDaemonServiceMock).toHaveBeenCalledWith({
@@ -74,13 +72,15 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
       mode: 'user',
       channel: 'preview',
       targetMode: 'default-following',
       strategy: 'replace-ring',
       runCommands: true,
+    }));
+    expect(installDaemonServiceMock).toHaveBeenCalledWith(expect.not.objectContaining({
+      nodePath: expect.anything(),
+      entryPath: expect.anything(),
     }));
 
     const uninstallOrder = uninstallDaemonServiceMock.mock.invocationCallOrder[0];
@@ -124,8 +124,6 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
     })).rejects.toThrow(replacementError);
 
     expect(uninstallDaemonServiceMock).toHaveBeenCalledWith({
@@ -156,8 +154,6 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
       mode: 'user',
       channel: 'preview',
       targetMode: 'default-following',
@@ -169,8 +165,6 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
       mode: 'user',
       channel: 'publicdev',
       targetMode: 'default-following',
@@ -218,8 +212,6 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
     })).rejects.toThrow(replacementError);
 
     expect(installDaemonServiceMock).toHaveBeenCalledTimes(1);
@@ -275,8 +267,6 @@ describe('applyBackgroundServiceRepairPlan', () => {
       uid: 501,
       userHomeDir: '/home/tester',
       happierHomeDir: '/home/tester/.happier',
-      nodePath: '/home/tester/.happier/cli-preview/current/happier',
-      entryPath: '',
     })).rejects.toThrow(laterFailure);
 
     expect(installDaemonServiceMock).toHaveBeenCalledTimes(1);

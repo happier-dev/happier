@@ -22,6 +22,13 @@ const teleportVoiceAgentToSessionRootMock = vi.hoisted(() => vi.fn());
 const resolveSessionActionDefaultBackendMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const setManualReadStateMock = vi.hoisted(() =>
+  vi.fn(async (
+    _sessionId: string,
+    _readState: 'read' | 'unread',
+    _opts?: Readonly<{ serverId?: string | null }>,
+  ) => ({ success: true })),
+);
 const voiceSettingState = vi.hoisted(() => ({
   current: null as any,
 }));
@@ -194,6 +201,14 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: (...args: unknown[]) => readMachineTargetForSessionMock(...args),
 }));
 
+vi.mock('@/sync/ops', () => ({
+  sessionSetManualReadStateWithServerScope: (
+    sessionId: string,
+    readState: 'read' | 'unread',
+    opts?: Readonly<{ serverId?: string | null }>,
+  ) => setManualReadStateMock(sessionId, readState, opts),
+}));
+
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
   machineRpcWithServerScope: (...args: unknown[]) => machineRpcWithServerScopeMock(...args),
 }));
@@ -233,6 +248,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     resolveSessionActionDefaultBackendMock.mockReset();
     readMachineTargetForSessionMock.mockReset();
     machineRpcWithServerScopeMock.mockReset();
+    setManualReadStateMock.mockReset();
     readMachineTargetForSessionMock.mockReturnValue(null);
     machineRpcWithServerScopeMock.mockRejectedValue(new Error('unreachable'));
     serverSnapshotState.current = { status: 'ready', features: { features: { sessions: { enabled: true, handoff: { enabled: true } }, machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: false } } } }, capabilities: {} } } as any;
@@ -325,6 +341,72 @@ describe('SessionHeaderActionMenu handoff', () => {
       serverId: 'server_a',
       placement: 'session_action_menu',
     });
+  });
+
+  it('shows mark-unread for a read session and uses the selected server scope', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_read"
+          session={{
+            id: 'sess_read',
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            archivedAt: null,
+            metadata: null,
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.some((item: any) => item?.id === 'session.mark-unread')).toBe(true);
+
+    await act(async () => {
+      dropdown.props.onSelect('session.mark-unread');
+    });
+
+    expect(setManualReadStateMock).toHaveBeenCalledWith('sess_read', 'unread', { serverId: 'server_a' });
+  });
+
+  it('shows mark-read for an unread session and uses the selected server scope', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_unread"
+          session={{
+            id: 'sess_unread',
+            seq: 2,
+            lastViewedSessionSeq: 1,
+            archivedAt: null,
+            metadata: null,
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.some((item: any) => item?.id === 'session.mark-read')).toBe(true);
+
+    await act(async () => {
+      dropdown.props.onSelect('session.mark-read');
+    });
+
+    expect(setManualReadStateMock).toHaveBeenCalledWith('sess_unread', 'read', { serverId: 'server_a' });
+  });
+
+  it('does not show read-state actions for archived sessions', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_archived"
+          session={{
+            id: 'sess_archived',
+            seq: 2,
+            lastViewedSessionSeq: 2,
+            archivedAt: 123,
+            metadata: null,
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.some((item: any) => item?.id === 'session.mark-read' || item?.id === 'session.mark-unread')).toBe(false);
   });
 
   it('fails closed (does not surface session.handoff) when machine transfer is disabled on the selected server', async () => {

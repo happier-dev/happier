@@ -17,7 +17,17 @@ export const RefreshControl = 'RefreshControl' as any;
 export const TextInput = 'TextInput' as any;
 export const ActivityIndicator = 'ActivityIndicator' as any;
 export const Switch = 'Switch' as any;
-export const Touchable = { Mixin: {} } as any;
+export const Touchable = {
+    Mixin: {
+        touchableHandleStartShouldSetResponder: () => true,
+        touchableHandleResponderTerminationRequest: () => true,
+        touchableHandleResponderGrant: () => {},
+        touchableHandleResponderMove: () => {},
+        touchableHandleResponderRelease: () => {},
+        touchableHandleResponderTerminate: () => {},
+        touchableGetInitialState: () => ({}),
+    },
+} as any;
 export const PanResponder = { create: () => ({ panHandlers: {} }) } as any;
 export const AccessibilityInfo = {
     isReduceMotionEnabled: async () => false,

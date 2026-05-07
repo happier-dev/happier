@@ -110,6 +110,14 @@ Important Codex behavior:
 
 If you manually switch Codex to plain `mcp` in settings, new sessions can still run, but vendor resume is not available on that plain MCP path.
 
+Codex local control is exclusive. When the Codex TUI owns the session, Happier watches Codex turn boundaries and process state so it can tell when it is safe to resume remote processing. Completed turns, aborted turns, and provider process exit are treated as safe boundaries for handing control back to Happier.
+
+Codex model availability depends on the active Codex backend, installed runtime, and account state. The new-session engine picker can show the currently available Codex models, model-specific options such as reasoning effort, and favorite Codex model shortcuts when those models are available for the selected backend.
+
+For the full model guide, see:
+
+- [Model and engine selection](/docs/features/model-and-engine-selection)
+
 For the full user-facing MCP guide in Happier, see:
 
 - [MCP servers](/docs/features/mcp-servers)
@@ -162,6 +170,10 @@ Codex supports Happier’s attach flow for app-started sessions:
 - switch into local control when you want to use Codex’s terminal UI directly.
 
 You can later switch back to remote control and keep using the same session from Happier.
+
+Local control starts from the terminal. Use `happier attach <session-id>` on the owning machine.
+
+If you send a message from the app while Codex is locally controlled, Happier stores it in the pending queue first. If Codex is idle, Happier can switch back to remote control and process it. If Codex is still running a local turn, Happier waits for that turn to finish, abort, or exit before switching, which avoids interrupting the current Codex TUI turn.
 
 On machines with `tmux`, this is usually a tmux-backed attach flow. On Windows, use Happier’s Windows remote session mode (`Windows Terminal`, `Console`, or `Hidden`) instead of relying on tmux.
 

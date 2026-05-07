@@ -24,9 +24,9 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     id: new-session-composer-send
 
 # Navigation smoke: can deep-link to Settings and back to home without breaking layout.
-- openLink: happier:///settings
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings
 - assertVisible:
     id: settings-connect-terminal-scan
-- openLink: happier:///
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///
 - assertVisible:
     id: main-header-start-new-session

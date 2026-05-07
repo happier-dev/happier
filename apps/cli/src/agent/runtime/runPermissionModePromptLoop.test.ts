@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata } from '@/api/types';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -39,7 +40,7 @@ function createRuntime() {
   return {
     beginTurn: vi.fn(),
     startOrLoad: vi.fn(async () => {}),
-    sendPrompt: vi.fn(async () => {}),
+    sendPrompt: vi.fn<(message: string) => Promise<void>>(async () => {}),
     sendPromptWithMeta: undefined as any,
     flushTurn: vi.fn(),
     reset: vi.fn(async () => {}),
@@ -918,8 +919,15 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, { resumeId: 'resume-from-runtime', importHistory: false });
   });
 
-  it('drops vendor resume when permission settings change on a runtime that requires a fresh session', async () => {
-    const session = createPromptLoopSession();
+  it('drops vendor resume without transcript replay when permission settings change on a runtime that requires a fresh session', async () => {
+    const fetchRecentTranscriptTextItemsForAcpImport = vi.fn(async () => [
+      { role: 'user' as const, text: 'Remember project codename CONTEXT-ALPHA.' },
+      { role: 'agent' as const, text: 'I will keep CONTEXT-ALPHA in mind.' },
+      { role: 'user' as const, text: 'second' },
+    ]);
+    const session = createMutableApiSessionClientFixture<PromptLoopMetadata>({
+      overrides: { fetchRecentTranscriptTextItemsForAcpImport } satisfies Partial<ApiSessionClient>,
+    });
     const queue = createModeQueue();
     const runtime = createRuntime();
     runtime.shouldResumeAfterPermissionModeChange = vi.fn(() => false);
@@ -959,7 +967,9 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     expect(runtime.sendPrompt).toHaveBeenNthCalledWith(1, 'first');
-    expect(runtime.sendPrompt).toHaveBeenNthCalledWith(2, 'second');
+    const secondPrompt = String(runtime.sendPrompt.mock.calls[1]?.[0] ?? '');
+    expect(secondPrompt).toBe('second');
+    expect(fetchRecentTranscriptTextItemsForAcpImport).not.toHaveBeenCalled();
     expect(runtime.reset).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(1, {});
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, {});

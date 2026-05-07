@@ -46,6 +46,21 @@ function createScopeState() {
 
 let scopeState = createScopeState();
 
+function getStyleValue(style: unknown, key: string): unknown {
+    if (!style) return undefined;
+    if (Array.isArray(style)) {
+        for (let i = style.length - 1; i >= 0; i -= 1) {
+            const value = getStyleValue(style[i], key);
+            if (value !== undefined) return value;
+        }
+        return undefined;
+    }
+    if (typeof style === 'object' && style !== null && key in style) {
+        return (style as Record<string, unknown>)[key];
+    }
+    return undefined;
+}
+
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -71,7 +86,6 @@ installSessionDetailsPanelCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useLocalSetting: (key: string) => {
-                if (key === 'editorFocusModeEnabled') return false;
                 return null;
             },
             useLocalSettingMutable: () => [false, vi.fn()],
@@ -201,6 +215,46 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
 
         expect(aIcon).toBeTruthy();
         expect(reviewIcon).toBeTruthy();
+    });
+
+    it('hides pane-level header actions when embedded in mobile cockpit chrome', async () => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const DetailsPanelWithChromeOptions = SessionDetailsPanel as React.ComponentType<
+            React.ComponentProps<typeof SessionDetailsPanel> & { showHeaderActions?: boolean }
+        >;
+
+        const screen = await renderScreen(
+            <DetailsPanelWithChromeOptions sessionId="s1" scopeId="session:s1" showHeaderActions={false} />,
+        );
+
+        expect(screen.findByTestId('session-details-focus-toggle')).toBeNull();
+        expect(screen.findByTestId('session-details-close')).toBeNull();
+        expect(screen.findByTestId('session-details-tab-file_a')).toBeTruthy();
+    });
+
+    it('reserves a stable width for detail tabs so native headers render tab titles', async () => {
+        const screen = await renderSessionDetailsPanel();
+
+        const tab = screen.findByTestId('session-details-tab-file_a');
+        if (!tab) {
+            throw new Error('Unable to find file details tab');
+        }
+
+        const minWidth = getStyleValue(tab.props.style, 'minWidth');
+        expect(typeof minWidth).toBe('number');
+        expect(minWidth).toBeGreaterThanOrEqual(120);
+    });
+
+    it('uses the concrete file icon in file detail tabs', async () => {
+        const screen = await renderSessionDetailsPanel();
+
+        const tab = screen.findByTestId('session-details-tab-file_a');
+        if (!tab) {
+            throw new Error('Unable to find file details tab');
+        }
+
+        expect(screen.findByTestId('session-details-tab-file-icon-file_a')).toBeTruthy();
+        expect(findTestInstanceByTypeWithProps(tab, 'Octicons', { name: 'file' })).toBeUndefined();
     });
 
     it('renders preview tab pin action as a pin icon (not pin-slash)', async () => {

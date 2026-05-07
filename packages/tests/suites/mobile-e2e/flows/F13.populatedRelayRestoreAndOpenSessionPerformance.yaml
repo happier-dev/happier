@@ -1,0 +1,91 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+
+- runFlow:
+    file: _shared/connectUsingLaunchUrl.yaml
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/server?auto=1&url=${HAPPIER_E2E_SERVER_URL}
+- runFlow:
+    file: _shared/acceptAndroidOpenWithPromptMaybe.yaml
+
+- extendedWaitUntil:
+    visible: ".*${HAPPIER_E2E_SERVER_VISIBLE_HOST_PATTERN}.*"
+    timeout: 240000
+
+- runFlow:
+    file: _shared/dismissExpoDevMenuOverlayMaybe.yaml
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///restore/manual
+- runFlow:
+    file: _shared/acceptAndroidOpenWithPromptMaybe.yaml
+
+- extendedWaitUntil:
+    visible:
+      id: restore-manual-secret-input
+    timeout: 240000
+
+- tapOn:
+    id: restore-manual-secret-input
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_01}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_02}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_03}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_04}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_05}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_06}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_07}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_08}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_09}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_10}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_11}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_12}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_13}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_14}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_15}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_16}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_17}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_18}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_19}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_20}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_21}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_22}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_23}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_24}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_25}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_26}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_27}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_28}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_29}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_30}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_31}
+- inputText: ${HAPPIER_E2E_RESTORE_KEY_CHUNK_32}
+- hideKeyboard
+- tapOn:
+    id: restore-manual-submit
+
+- extendedWaitUntil:
+    visible:
+      id: "session-list-item-.*"
+    timeout: 240000
+
+- waitForAnimationToEnd:
+    timeout: 15000
+
+- tapOn:
+    id: "session-list-item-.*"
+    index: 0
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+- extendedWaitUntil:
+    visible:
+      id: "session-cockpit-tabbar-.*"
+    timeout: 240000
+
+- waitForAnimationToEnd:
+    timeout: 15000

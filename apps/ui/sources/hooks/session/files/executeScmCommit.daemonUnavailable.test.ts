@@ -55,6 +55,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
       commitSelectionPaths: [],
       commitSelectionPatches: [],
       loadCommitHistory: vi.fn(async () => {}),
+      refreshScmData: vi.fn(async () => {}),
       setScmOperationBusy: vi.fn(),
       setScmOperationStatus: vi.fn(),
       tracking: null,
@@ -88,6 +89,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
       commitSelectionPaths: [],
       commitSelectionPatches: [],
       loadCommitHistory: vi.fn(async () => {}),
+      refreshScmData: vi.fn(async () => {}),
       setScmOperationBusy: vi.fn(),
       setScmOperationStatus: vi.fn(),
       tracking: null,
@@ -105,7 +107,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
     expect(sessionScmCommitCreate).toHaveBeenCalledTimes(1);
   });
 
-  it('omits a broader commit scope when atomic line-selection patches are present', async () => {
+  it('keeps selected full-file paths when atomic line-selection patches are present', async () => {
     modalAlert.mockReset();
     sessionScmCommitCreate.mockReset();
 
@@ -120,7 +122,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
       sessionId: 's1',
       commitMessage: 'feat: test',
       scmCommitStrategy: 'atomic',
-      commitSelectionPaths: ['a.txt'],
+      commitSelectionPaths: ['b.txt'],
       commitSelectionPatches: [
         {
           path: 'a.txt',
@@ -137,6 +139,7 @@ describe('executeScmCommit (daemon unavailable)', () => {
         },
       ],
       loadCommitHistory: vi.fn(async () => {}),
+      refreshScmData: vi.fn(async () => {}),
       setScmOperationBusy: vi.fn(),
       setScmOperationStatus: vi.fn(),
       tracking: null,
@@ -148,9 +151,54 @@ describe('executeScmCommit (daemon unavailable)', () => {
       's1',
       expect.objectContaining({
         message: 'feat: test',
+        scope: {
+          kind: 'paths',
+          include: ['b.txt'],
+        },
         patches: expect.any(Array),
       }),
     );
-    expect(sessionScmCommitCreate.mock.calls[0]?.[1]).not.toHaveProperty('scope');
+  });
+
+  it('refreshes repository data through the caller refresh path before finishing a successful commit', async () => {
+    modalAlert.mockReset();
+    sessionScmCommitCreate.mockReset();
+    const events: string[] = [];
+    const refreshScmData = vi.fn(async () => {
+      events.push('refresh');
+    });
+    const loadCommitHistory = vi.fn(async () => {
+      events.push('history');
+    });
+    const setScmOperationBusy = vi.fn((busy: boolean) => {
+      events.push(`busy:${String(busy)}`);
+    });
+
+    sessionScmCommitCreate.mockResolvedValueOnce({
+      success: true,
+      commitSha: 'abc123',
+    });
+
+    const { executeScmCommit } = await import('./executeScmCommit');
+
+    const result = await executeScmCommit({
+      sessionId: 's1',
+      commitMessage: 'feat: test',
+      scmCommitStrategy: 'git_staging',
+      commitSelectionPaths: ['a.txt'],
+      commitSelectionPatches: [],
+      loadCommitHistory,
+      refreshScmData,
+      setScmOperationBusy,
+      setScmOperationStatus: vi.fn(),
+      tracking: null,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(refreshScmData).toHaveBeenCalledTimes(1);
+    expect(loadCommitHistory).toHaveBeenCalledTimes(1);
+    expect(events.indexOf('refresh')).toBeGreaterThan(events.indexOf('busy:true'));
+    expect(events.indexOf('history')).toBeGreaterThan(events.indexOf('refresh'));
+    expect(events.at(-1)).toBe('busy:false');
   });
 });

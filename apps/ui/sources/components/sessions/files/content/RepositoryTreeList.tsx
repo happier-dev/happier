@@ -41,6 +41,8 @@ type RepositoryTreeListProps = {
     onOpenFile: (fullPath: string) => void;
     onOpenFilePinned?: (fullPath: string) => void;
     scmSnapshot?: ScmWorkingSnapshot | null;
+    showInlineLoadingHeader?: boolean;
+    onRootLoadingChange?: (loading: boolean) => void;
     onLayout?: ScrollViewProps['onLayout'];
     onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
     onScroll?: ScrollViewProps['onScroll'];
@@ -105,6 +107,10 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
         reloadToken: props.reloadToken,
     });
 
+    React.useEffect(() => {
+        props.onRootLoadingChange?.(rootLoading);
+    }, [props.onRootLoadingChange, rootLoading]);
+
     const badgeIndex = useScmTreeBadgeIndex(props.scmSnapshot ?? null);
     const rowActions = useRepositoryTreeRowActions({
         sessionId,
@@ -132,6 +138,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
         <FilesystemBrowser
             nodes={nodes}
             rootLoading={rootLoading}
+            showInlineLoadingHeader={props.showInlineLoadingHeader}
             rootError={rootError}
             retryRoot={retryRoot}
             loadingLabel={t('common.loading')}
@@ -273,6 +280,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                         density="tight"
                         rightElement={right}
                         testID={rowTestId}
+                        webRole={Platform.OS === 'web' ? 'treeitem' : undefined}
                         errorTitle={t('files.repositoryFolderLoadFailed')}
                         errorSubtitle={t('errors.tryAgain')}
                         onRetryError={(errorNode) => {

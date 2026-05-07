@@ -142,17 +142,40 @@ describe("startServerLight planning helpers", () => {
 
     writeFileSync(resolve(rootDir, "apps", "server", "prisma", "schema.prisma"), "datasource db { provider = \"postgresql\" }\n", "utf8");
     writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), "datasource db { provider = \"sqlite\" }\n", "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "mysql", "schema.prisma"), "datasource db { provider = \"mysql\" }\n", "utf8");
+    writeFileSync(
+      resolve(rootDir, "apps", "server", "prisma", "mysql", "schema.prisma"),
+      [
+        "datasource db { provider = \"mysql\" }",
+        "model PublicSessionShare {",
+        "  id String @id",
+        "  tokenHash Bytes @db.VarBinary(32) @unique",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
 
     writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "index.js"), "export {};\n", "utf8");
     writeFileSync(resolve(rootDir, "apps", "server", "generated", "mysql-client", "index.js"), "export {};\n", "utf8");
     writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "default.js"), "module.exports={};\n", "utf8");
 
     writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "schema.prisma"), "datasource db { provider = \"sqlite\" }\n", "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "mysql-client", "schema.prisma"), "datasource db { provider = \"mysql\" }\n", "utf8");
+    writeFileSync(
+      resolve(rootDir, "apps", "server", "generated", "mysql-client", "schema.prisma"),
+      [
+        "datasource db { provider = \"mysql\" }",
+        "model PublicSessionShare {",
+        "  id String @id",
+        "  tokenHash Bytes @unique @db.VarBinary(32)",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
     writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "schema.prisma"), "datasource db { provider = \"postgresql\" }\n", "utf8");
 
     expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
+    expect(hasServerGeneratedProviderOutputs(rootDir, "mysql")).toBe(true);
 
     writeFileSync(resolve(rootDir, "apps", "server", "generated", "mysql-client", "schema.prisma"), "stale mysql\n", "utf8");
     expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);

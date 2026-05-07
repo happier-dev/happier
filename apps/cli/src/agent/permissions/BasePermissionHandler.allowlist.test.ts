@@ -28,15 +28,31 @@ class TestPermissionHandler extends BasePermissionHandler {
   }
 
   request(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
+    return this.requestPermissionDecision(toolCallId, toolName, input);
+  }
+
+  requestLegacyWithoutAgentState(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
     return new Promise<PermissionResult>((resolve, reject) => {
       this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
-      this.addPendingRequestToState(toolCallId, toolName, input);
     });
   }
 
   isAllowed(toolName: string, input: unknown): boolean {
     return this.isAllowedForSession(toolName, input);
   }
+}
+
+async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfilled' | 'rejected'> {
+  await Promise.resolve();
+  await Promise.resolve();
+
+  return Promise.race([
+    promise.then(
+      () => 'fulfilled' as const,
+      () => 'rejected' as const,
+    ),
+    new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 0)),
+  ]);
 }
 
 describe('BasePermissionHandler allowlist', () => {
@@ -113,6 +129,24 @@ describe('BasePermissionHandler allowlist', () => {
     );
   });
 
+  it('ignores legacy pending responses that are not correlated with agentState', async () => {
+    const session = new FakeSession();
+    const input = { command: ['bash', '-lc', 'echo hello'] };
+    const handler = new TestPermissionHandler(session as any);
+    const pending = handler.requestLegacyWithoutAgentState('legacy-missing-state', 'bash', input);
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+
+    await rpc!({ id: 'legacy-missing-state', approved: true, decision: 'approved_for_session' });
+
+    expect(handler.isAllowed('bash', input)).toBe(false);
+    expect(session.agentState.completedRequests['legacy-missing-state']).toBeUndefined();
+    expect(await settledState(pending)).toBe('pending');
+    handler.reset();
+    await expect(pending).rejects.toThrow('Session reset');
+  });
+
   it('remembers approved_for_session tool identifiers and clears them on reset', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);
@@ -130,6 +164,33 @@ describe('BasePermissionHandler allowlist', () => {
 
     handler.reset();
     expect(handler.isAllowed('bash', input)).toBe(false);
+  });
+
+  it('resolves every duplicate same-id waiter from one permission response', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const input = { command: ['bash', '-lc', 'echo hello'] };
+
+    const first = handler.request('perm-duplicate', 'bash', input);
+    const second = handler.request('perm-duplicate', 'bash', input);
+
+    expect(Object.keys(session.agentState.requests)).toEqual(['perm-duplicate']);
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({ id: 'perm-duplicate', approved: true, decision: 'approved' });
+
+    await expect(second).resolves.toEqual({ decision: 'approved' });
+    expect(await settledState(first)).toBe('fulfilled');
+    await expect(first).resolves.toEqual({ decision: 'approved' });
+    expect(session.agentState.requests['perm-duplicate']).toBeUndefined();
+    expect(session.agentState.completedRequests['perm-duplicate']).toEqual(
+      expect.objectContaining({
+        tool: 'bash',
+        status: 'approved',
+        decision: 'approved',
+      }),
+    );
   });
 
   it('applies updatedPermissions addRules to the allowlist (for Claude-style permission updates)', async () => {

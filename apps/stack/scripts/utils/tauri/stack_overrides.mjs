@@ -4,14 +4,38 @@ function getTrimmedEnv(env, key) {
   return String(raw).trim();
 }
 
+export function normalizeStackTauriSlug(rawValue) {
+  const slug = String(rawValue ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+  return slug || '';
+}
+
+export function resolveStackTauriIdentity({ env = {}, baseProductName = 'Happier' } = {}) {
+  const stackSlug = normalizeStackTauriSlug(getTrimmedEnv(env, 'HAPPIER_STACK_STACK'));
+  const explicitIdentifier = getTrimmedEnv(env, 'HAPPIER_STACK_TAURI_IDENTIFIER');
+  const explicitProductName = getTrimmedEnv(env, 'HAPPIER_STACK_TAURI_PRODUCT_NAME');
+  const shouldScope = stackSlug && stackSlug !== 'main';
+  return {
+    stackSlug,
+    identifier: explicitIdentifier || (shouldScope ? `com.happier.stack.${stackSlug}` : 'com.happier.stack'),
+    productName: explicitProductName || (shouldScope ? `${baseProductName || 'Happier'} (${stackSlug})` : baseProductName || 'Happier'),
+  };
+}
+
 export function applyStackTauriOverrides({ tauriConfig, env }) {
-  const identifierOverride = getTrimmedEnv(env, 'HAPPIER_STACK_TAURI_IDENTIFIER');
-  const productNameOverride = getTrimmedEnv(env, 'HAPPIER_STACK_TAURI_PRODUCT_NAME');
   const createUpdaterArtifactsOverride = getTrimmedEnv(env, 'HAPPIER_STACK_TAURI_CREATE_UPDATER_ARTIFACTS');
   const signingPrivateKey = getTrimmedEnv(env, 'TAURI_SIGNING_PRIVATE_KEY');
+  const identity = resolveStackTauriIdentity({
+    env,
+    baseProductName: tauriConfig.productName || 'Happier',
+  });
 
-  tauriConfig.identifier = identifierOverride || 'com.happier.stack';
-  tauriConfig.productName = productNameOverride || tauriConfig.productName || 'Happier';
+  tauriConfig.identifier = identity.identifier;
+  tauriConfig.productName = identity.productName;
 
   if (tauriConfig.app?.windows?.length) {
     tauriConfig.app.windows = tauriConfig.app.windows.map((w) => ({

@@ -59,13 +59,14 @@ describe('Item web testID forwarding', () => {
         expect(row?.props.accessibilityRole).toBe('button');
     });
 
-    it('keeps right-side actions inside the row pressable on web', async () => {
+    it('allows right-side actions inside a non-button web row role', async () => {
         const { Item } = await import('./Item');
         const screen = await renderScreen(
             <Item
                 testID="item-with-actions"
                 title="Relay"
                 onPress={() => {}}
+                webRole="treeitem"
                 rightElement={(
                     <Pressable testID="item-right-action" onPress={() => {}}>
                         <Text>Action</Text>
@@ -77,6 +78,7 @@ describe('Item web testID forwarding', () => {
         const row = screen.findByTestId('item-with-actions');
         const action = screen.findByTestId('item-right-action');
 
+        expect(row?.props.role).toBe('treeitem');
         expect(findClosestPressableAncestor(action as renderer.ReactTestInstance)).toBe(row);
     });
 

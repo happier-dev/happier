@@ -145,4 +145,35 @@ describe('git branch operations safety', () => {
         expect(res.errorCode).toBe(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
         expect(runScmCommand).not.toHaveBeenCalled();
     });
+
+    it('blocks no-stash branch checkout when local changes would be overwritten', async () => {
+        vi.resetModules();
+        runScmCommand.mockReset();
+
+        runScmCommand.mockImplementation(async (input: { args: string[] }) => {
+            const args = input.args;
+            if (args[0] === 'switch') {
+                return {
+                    success: false,
+                    stdout: '',
+                    stderr: 'error: Your local changes to the following files would be overwritten by checkout',
+                };
+            }
+            if (args[0] === 'stash') {
+                throw new Error('no-stash checkout must not run git stash');
+            }
+            return { success: true, stdout: '', stderr: '' };
+        });
+
+        const { gitBranchCheckoutWithoutStash } = await import('./branchOperations');
+
+        const res = await gitBranchCheckoutWithoutStash({
+            context: { cwd: '/tmp' } as any,
+            name: 'feature/pr',
+        });
+
+        expect(res.success).toBe(false);
+        expect(res.errorCode).toBe(SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE);
+        expect(runScmCommand).toHaveBeenCalledOnce();
+    });
 });

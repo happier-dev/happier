@@ -6,6 +6,11 @@ function resolveLanIp({ env = process.env } = {}) {
   return raw || pickLanIpv4() || '';
 }
 
+function resolveReachableHost({ env = process.env, preferredHost = '' } = {}) {
+  const preferred = String(preferredHost ?? '').trim();
+  return preferred || resolveLanIp({ env });
+}
+
 function isLocalHostName(hostname) {
   const h = String(hostname ?? '').trim().toLowerCase();
   if (!h) return false;
@@ -28,6 +33,7 @@ export function resolveMobileReachableServerUrl({
   env = process.env,
   serverUrl,
   serverPort,
+  preferredHost = '',
 } = {}) {
   const raw = String(serverUrl ?? '').trim();
   const fallbackPort = Number(serverPort);
@@ -50,11 +56,11 @@ export function resolveMobileReachableServerUrl({
     return normalizeUrlNoTrailingSlash(parsed.toString());
   }
 
-  const lanIp = resolveLanIp({ env });
-  if (!lanIp) {
+  const reachableHost = resolveReachableHost({ env, preferredHost });
+  if (!reachableHost) {
     return normalizeUrlNoTrailingSlash(parsed.toString());
   }
 
-  parsed.hostname = lanIp;
+  parsed.hostname = reachableHost;
   return normalizeUrlNoTrailingSlash(parsed.toString());
 }

@@ -5,6 +5,8 @@ import { reattachTrackedSessionsFromMarkers } from './reattachFromMarkers';
 import { findAllHappyProcesses } from '../doctor';
 import { adoptSessionsFromMarkers } from '../reattach';
 import { hashProcessCommand, listSessionMarkers, removeSessionMarker, writeSessionMarker } from '../sessionRegistry';
+import type { HappyProcessInfo } from '../doctor';
+import type { TrackedSession } from '../types';
 import type { Credentials } from '@/persistence';
 
 const emptyAdoptResult = {
@@ -37,6 +39,7 @@ vi.mock('../sessionRegistry', () => ({
 describe('reattachTrackedSessionsFromMarkers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED;
     isOwnedLiveDaemonSessionProcessCommandMock.mockReturnValue(true);
   });
 
@@ -152,6 +155,27 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         },
       },
     });
+  });
+
+  it('skips markerless daemon-spawned session recovery when disabled by environment', async () => {
+    process.env.HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED = '0';
+    const markerlessDaemonSessionProcess = {
+      pid: 12345,
+      type: 'daemon-spawned-session',
+      cwd: '/tmp/project',
+      command:
+        '/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --resume vendor-1 --existing-session session-123',
+    } satisfies HappyProcessInfo;
+
+    vi.mocked(listSessionMarkers).mockResolvedValue([]);
+    vi.mocked(findAllHappyProcesses).mockResolvedValue([markerlessDaemonSessionProcess]);
+    vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+    const pidToTrackedSession = new Map<number, TrackedSession>();
+    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+
+    expect(pidToTrackedSession.size).toBe(0);
+    expect(writeSessionMarker).not.toHaveBeenCalled();
   });
 
   it('recovers a live daemon-spawned process when its live marker is missing process identity fields', async () => {

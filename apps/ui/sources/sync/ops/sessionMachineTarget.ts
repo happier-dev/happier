@@ -1,24 +1,8 @@
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
 import { resolveSessionMachineRpcTarget } from '@/sync/domains/session/resolveSessionReachableMachineId';
+import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 import { storage } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-
-type MachineTargetLikeState = Readonly<{
-  sessions?: Record<string, {
-    active?: boolean;
-    updatedAt?: number;
-    metadata?: {
-      machineId?: string | null;
-      path?: string | null;
-      host?: string | null;
-      homeDir?: string | null;
-    } | null;
-  }>;
-  machines?: Record<string, { id?: string; active?: boolean; activeAt?: number; metadata?: { host?: string | null } | null }>;
-  getProjectForSession?: (sessionId: string) => { key?: { machineId?: string; path?: string } } | null;
-}>;
-
-export type SessionMachineTargetState = MachineTargetLikeState;
 
 type SessionTargetMetadataLike = Readonly<{
   machineId?: string | null;
@@ -32,6 +16,18 @@ type SessionTargetMetadataLike = Readonly<{
     remoteSessionId?: string | null;
   }> | null;
 }> | null | undefined;
+
+type MachineTargetLikeState = Readonly<{
+  sessions?: Record<string, {
+    active?: boolean;
+    updatedAt?: number;
+    metadata?: SessionTargetMetadataLike;
+  }>;
+  machines?: Record<string, { id?: string; active?: boolean; activeAt?: number; metadata?: { host?: string | null } | null }>;
+  getProjectForSession?: (sessionId: string) => { key?: { machineId?: string; path?: string } } | null;
+}>;
+
+export type SessionMachineTargetState = MachineTargetLikeState;
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -60,7 +56,7 @@ export function resolveMachineTargetForSessionFromState(
       updatedAt: typeof (candidateSession as { updatedAt?: unknown }).updatedAt === 'number'
         ? (candidateSession as { updatedAt: number }).updatedAt
         : 0,
-      machineId: normalizeNonEmptyString(candidateMetadata?.machineId),
+      machineId: resolveSessionMachineId(candidateMetadata),
       hostHint: normalizeNonEmptyString(candidateMetadata?.host),
       path: normalizeNonEmptyString(candidateMetadata?.path),
       homeDir: normalizeNonEmptyString(candidateMetadata?.homeDir),
@@ -70,7 +66,8 @@ export function resolveMachineTargetForSessionFromState(
   });
   return resolveSessionMachineRpcTarget({
     sessionId,
-    sessionMachineId: normalizeNonEmptyString(metadata?.machineId),
+    sessionActive: session?.active === true,
+    sessionMachineId: resolveSessionMachineId(metadata),
     sessionHostHint: normalizeNonEmptyString(metadata?.host),
     sessionPath: normalizeNonEmptyString(metadata?.path),
     sessionHomeDir: normalizeNonEmptyString(metadata?.homeDir),
@@ -100,8 +97,7 @@ export function resolveDisplayMachineIdForSessionFromState(input: Readonly<{
     return reachableMachineId;
   }
   return (
-    normalizeNonEmptyString(input.metadata?.machineId)
-    ?? normalizeNonEmptyString(input.metadata?.directSessionV1?.machineId)
+    resolveSessionMachineId(input.metadata)
     ?? ''
   );
 }

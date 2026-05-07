@@ -27,22 +27,51 @@ vi.mock('./elevenlabs/elevenLabsApi', () => ({
   getElevenLabsApiTimeoutMs: () => 25,
 }));
 
-const conversationStartSession = vi.fn(async (..._args: any[]) => 'conv_1');
-const conversationGetId = vi.fn((..._args: any[]) => null);
-const conversationEndSession = vi.fn(async (..._args: any[]) => {});
-let lastConversationOptions: any = null;
+const conversationEndSession = vi.fn<() => Promise<void>>(async () => {});
+const conversationGetId = vi.fn<() => string | null>(() => 'conv_1');
+const conversationSendUserMessage = vi.fn<(message: string) => void>();
+const conversationSendContextualUpdate = vi.fn<(update: string) => void>();
+const conversationInstance = {
+  endSession: conversationEndSession,
+  getId: conversationGetId,
+  sendUserMessage: conversationSendUserMessage,
+  sendContextualUpdate: conversationSendContextualUpdate,
+};
+const conversationStartSession = vi.fn<(opts: unknown) => Promise<typeof conversationInstance>>(async () => conversationInstance);
+const legacyHookStartSession = vi.fn<(config: unknown) => Promise<string>>(async () => 'legacy_hook_conv');
+let lastStartSessionOptions: any = null;
+let lastLegacyHookOptions: any = null;
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
 
 const useConversationMock = vi.fn((_opts: any) => ({
-  startSession: conversationStartSession,
+  startSession: legacyHookStartSession,
   getId: conversationGetId,
   endSession: conversationEndSession,
-  sendUserMessage: vi.fn(),
-  sendContextualUpdate: vi.fn(),
+  sendUserMessage: conversationSendUserMessage,
+  sendContextualUpdate: conversationSendContextualUpdate,
+}));
+
+vi.mock('@elevenlabs/client', () => ({
+  Conversation: {
+    startSession: (opts: any) => {
+      lastStartSessionOptions = opts;
+      return conversationStartSession(opts);
+    },
+  },
 }));
 
 vi.mock('@elevenlabs/react-native', () => ({
   useConversation: (opts: any) => {
-    lastConversationOptions = opts;
+    lastLegacyHookOptions = opts;
     return useConversationMock(opts);
   },
 }));
@@ -123,11 +152,19 @@ vi.mock('@/sync/sync', () => ({
 describe('RealtimeVoiceSession (native) sessionId tracking', () => {
   beforeEach(() => {
     modalAlert.mockReset();
-    conversationStartSession.mockClear();
-    conversationGetId.mockClear();
-    conversationEndSession.mockClear();
+    conversationStartSession.mockReset();
+    legacyHookStartSession.mockReset();
+    conversationGetId.mockReset();
+    conversationEndSession.mockReset();
+    conversationSendUserMessage.mockReset();
+    conversationSendContextualUpdate.mockReset();
+    conversationStartSession.mockImplementation(async () => conversationInstance);
+    legacyHookStartSession.mockImplementation(async () => 'legacy_hook_conv');
+    conversationGetId.mockImplementation(() => 'conv_1');
+    conversationEndSession.mockImplementation(async () => {});
     useConversationMock.mockClear();
-    lastConversationOptions = null;
+    lastStartSessionOptions = null;
+    lastLegacyHookOptions = null;
     appendRealtimeVoiceTranscriptEvent.mockReset();
     getBindingByControlSessionId.mockReset();
     getBindingByControlSessionId.mockReturnValue(null);
@@ -170,6 +207,13 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
     await startRealtimeSessionWithTimeout(startRealtimeSession, '', 'ctx');
+
+    expect(conversationStartSession).toHaveBeenCalledWith(expect.objectContaining({
+      conversationToken: 'token_1',
+      connectionType: 'webrtc',
+      textOnly: false,
+    }));
+    expect(legacyHookStartSession).not.toHaveBeenCalled();
 
     const { realtimeClientTools } = await import('./realtimeClientTools');
     await realtimeClientTools.sendSessionMessage({ message: 'hello' });
@@ -234,21 +278,25 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     useVoiceQaStore.getState().setStatus('running');
 
     const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
+    const { startRealtimeSession } = await import('./RealtimeSession');
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
 
-    expect(lastConversationOptions).toBeTruthy();
+    await startRealtimeSessionWithTimeout(startRealtimeSession, 's1', 'ctx');
+    expect(lastStartSessionOptions).toBeTruthy();
 
     await act(async () => {
-      lastConversationOptions.onMessage?.({
-        type: 'agent_response',
-        transcript: 'I found the available backends.',
+      lastStartSessionOptions.onMessage?.({
+        source: 'ai',
+        role: 'agent',
+        message: 'I found the available backends.',
+        event_id: 1,
       });
     });
 
     const entries = useVoiceQaStore.getState().entries;
-    expect(entries.some((entry) => entry.kind === 'provider.raw' && entry.text.includes('transcript: I found the available backends.'))).toBe(true);
+    expect(entries.some((entry) => entry.kind === 'provider.raw' && entry.text.includes('message: I found the available backends.'))).toBe(true);
 
     await act(async () => {
       tree.unmount();
@@ -269,21 +317,78 @@ describe('RealtimeVoiceSession (native) sessionId tracking', () => {
     await startRealtimeSessionWithTimeout(startRealtimeSession, 's3', 'ctx');
 
     await act(async () => {
-      lastConversationOptions.onMessage?.({
-        type: 'agent_response',
-        agent_response_event: {
-          agent_response: 'Hello from ElevenLabs',
-          event_id: 1,
-        },
+      lastStartSessionOptions.onMessage?.({
+        source: 'ai',
+        role: 'agent',
+        message: 'Hello from ElevenLabs',
+        event_id: 1,
       });
     });
 
     expect(appendRealtimeVoiceTranscriptEvent).toHaveBeenCalledWith({
       conversationSessionId: 'carrier-s1',
       payload: expect.objectContaining({
-        type: 'agent_response',
+        role: 'agent',
+        message: 'Hello from ElevenLabs',
       }),
     });
+
+    await act(async () => {
+      tree.unmount();
+    });
+  });
+
+  it('keeps the newer conversation active when an older native start resolves later', async () => {
+    type MockConversation = typeof conversationInstance;
+    const firstDeferred = createDeferred<MockConversation>();
+    const secondDeferred = createDeferred<MockConversation>();
+    const firstConversation = {
+      endSession: vi.fn<() => Promise<void>>(async () => {}),
+      getId: vi.fn<() => string | null>(() => 'conv_old'),
+      sendUserMessage: vi.fn<(message: string) => void>(),
+      sendContextualUpdate: vi.fn<(update: string) => void>(),
+    };
+    const secondConversation = {
+      endSession: vi.fn<() => Promise<void>>(async () => {}),
+      getId: vi.fn<() => string | null>(() => 'conv_new'),
+      sendUserMessage: vi.fn<(message: string) => void>(),
+      sendContextualUpdate: vi.fn<(update: string) => void>(),
+    };
+    conversationStartSession
+      .mockImplementationOnce(async () => firstDeferred.promise)
+      .mockImplementationOnce(async () => secondDeferred.promise);
+
+    const { RealtimeVoiceSession } = await import('./RealtimeVoiceSession');
+    const { getVoiceSession } = await import('./RealtimeSession');
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<RealtimeVoiceSession />)).tree;
+    const session = getVoiceSession();
+    expect(session).not.toBeNull();
+
+    const firstStart = session!.startSession({
+      sessionId: 's-old',
+      token: 'token_old',
+      initialContext: '',
+    });
+    const secondStart = session!.startSession({
+      sessionId: 's-new',
+      token: 'token_new',
+      initialContext: '',
+    });
+
+    secondDeferred.resolve(secondConversation);
+    await expect(secondStart).resolves.toBe('conv_new');
+
+    firstDeferred.resolve(firstConversation);
+    await expect(firstStart).resolves.toBeNull();
+
+    session!.sendTextMessage('still active');
+
+    expect(firstConversation.endSession).toHaveBeenCalledTimes(1);
+    expect(firstConversation.sendUserMessage).not.toHaveBeenCalled();
+    expect(secondConversation.endSession).not.toHaveBeenCalled();
+    expect(secondConversation.sendUserMessage).toHaveBeenCalledWith('still active');
 
     await act(async () => {
       tree.unmount();

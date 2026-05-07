@@ -14,7 +14,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: _shared/loginCreateAccount.yaml
 
 # Deep-link into Settings (more stable than relying on responsive sidebar UI on small screens).
-- openLink: happier:///settings
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings
 
 # Smoke: the terminal connect entrypoints should be visible on mobile.
 - assertVisible:

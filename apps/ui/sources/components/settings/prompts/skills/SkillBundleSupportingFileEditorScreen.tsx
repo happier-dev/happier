@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { Stack, useNavigation, useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
@@ -94,7 +94,6 @@ export const SkillBundleSupportingFileEditorScreen = React.memo(function SkillBu
 
     return (
         <View style={styles.container}>
-            <Stack.Screen options={{ title: props.path ? t('promptLibrary.editSupportingFile') : t('promptLibrary.newSupportingFile') }} />
             <ItemList containerStyle={styles.content} keyboardShouldPersistTaps="handled">
                 <ItemGroup title={t('promptLibrary.general')}>
                     <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>

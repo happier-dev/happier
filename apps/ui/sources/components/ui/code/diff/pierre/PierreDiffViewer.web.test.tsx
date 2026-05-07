@@ -69,6 +69,42 @@ vi.mock('@pierre/diffs/react', async () => {
     };
 });
 
+function clickPierreHoverUtility(utility: any, nativeEvent: Record<string, unknown> = {}) {
+    const clickEvent = {
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
+        nativeEvent: {
+            stopImmediatePropagation: vi.fn(),
+            ...nativeEvent,
+        },
+    };
+    if (typeof utility?.props?.onClick === 'function') {
+        utility.props.onClick(clickEvent);
+        return;
+    }
+    utility?.props?.onPress?.(clickEvent);
+    if (typeof utility?.props?.onPress === 'function') return;
+
+    const rendered = renderer.create(utility);
+    const button = rendered.root.findByType('button');
+    button.props.onClick(clickEvent);
+    rendered.unmount();
+}
+
+async function findPierreHoverUtilityButtonProps(utility: any): Promise<any> {
+    if (utility?.type === 'button') return utility.props;
+    let rendered!: renderer.ReactTestRenderer;
+    await renderer.act(async () => {
+        rendered = renderer.create(utility);
+    });
+    const button = rendered.root.findByType('button');
+    const props = button.props;
+    await renderer.act(async () => {
+        rendered.unmount();
+    });
+    return props;
+}
+
 describe('PierreDiffViewer (web)', () => {
     beforeEach(() => {
         resetSettingValues();
@@ -365,6 +401,7 @@ describe('PierreDiffViewer (web)', () => {
 
     it('provides a hover utility when onPressAddComment is enabled', async () => {
         fileDiffSpy.mockClear();
+        const onPressAddComment = vi.fn();
 
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
 
@@ -384,12 +421,192 @@ describe('PierreDiffViewer (web)', () => {
                     wrapLines={true}
                     showLineNumbers={true}
                     showPrefix={true}
-                    onPressAddComment={() => {}}
+                    onPressAddComment={onPressAddComment as any}
                 />);
         });
 
         const call = fileDiffSpy.mock.calls[0]?.[0];
         expect(typeof call?.renderHoverUtility).toBe('function');
+        expect(call?.options?.unsafeCSS).toContain('[data-hover-slot]');
+        expect(call?.options?.unsafeCSS).toContain('left: 0');
+        expect(call?.options?.unsafeCSS).toContain('right: auto');
+        expect(call?.options?.unsafeCSS).toContain('padding-left: calc(var(--happier-review-comment-affordance-width) + 2ch)');
+
+        const utility = call.renderHoverUtility(() => ({ lineNumber: 1, side: 'additions' }));
+        const buttonProps = await findPierreHoverUtilityButtonProps(utility);
+        expect(buttonProps.testID ?? buttonProps['data-testid']).toBe('review-comment-line-affordance');
+        expect(buttonProps['data-active']).toBeUndefined();
+
+        await renderer.act(async () => {
+            clickPierreHoverUtility(utility);
+        });
+
+        expect(onPressAddComment).toHaveBeenCalledTimes(1);
+        const lineArg = onPressAddComment.mock.calls[0]?.[0];
+        expect(lineArg?.newLine).toBe(1);
+        expect(lineArg?.renderPrefixText).toBe('+');
+    });
+
+    it('keeps the hover utility mounted before Pierre reports a hovered line', async () => {
+        fileDiffSpy.mockClear();
+        const onPressAddComment = vi.fn();
+
+        const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
+                    mode="unified"
+                    filePath="src/a.ts"
+                    unifiedDiff={[
+                        'diff --git a/a.ts b/a.ts',
+                        '--- a/a.ts',
+                        '+++ b/a.ts',
+                        '@@ -1,0 +1,1 @@',
+                        '+bar',
+                        '',
+                    ].join('\n')}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    onPressAddComment={onPressAddComment as any}
+                />);
+        });
+
+        const call = fileDiffSpy.mock.calls[0]?.[0];
+        expect(typeof call?.renderHoverUtility).toBe('function');
+
+        const utility = call.renderHoverUtility(() => undefined);
+        const buttonProps = await findPierreHoverUtilityButtonProps(utility);
+
+        expect(buttonProps.testID ?? buttonProps['data-testid']).toBe('review-comment-line-affordance');
+    });
+
+    it('uses a native click handler for the Pierre hover slot', async () => {
+        fileDiffSpy.mockClear();
+        const onPressAddComment = vi.fn();
+
+        const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
+                    mode="unified"
+                    filePath="src/a.ts"
+                    unifiedDiff={[
+                        'diff --git a/a.ts b/a.ts',
+                        '--- a/a.ts',
+                        '+++ b/a.ts',
+                        '@@ -1,0 +1,1 @@',
+                        '+bar',
+                        '',
+                    ].join('\n')}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    onPressAddComment={onPressAddComment as any}
+                />);
+        });
+
+        const call = fileDiffSpy.mock.calls[0]?.[0];
+        const utility = call.renderHoverUtility(() => undefined);
+        const buttonProps = await findPierreHoverUtilityButtonProps(utility);
+
+        expect(typeof buttonProps.onClick).toBe('function');
+    });
+
+    it('resolves the hover utility target at press time', async () => {
+        fileDiffSpy.mockClear();
+        const onPressAddComment = vi.fn();
+
+        const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
+                    mode="unified"
+                    filePath="src/a.ts"
+                    unifiedDiff={[
+                        'diff --git a/a.ts b/a.ts',
+                        '--- a/a.ts',
+                        '+++ b/a.ts',
+                        '@@ -1,1 +1,2 @@',
+                        '+first',
+                        '+second',
+                        '',
+                    ].join('\n')}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    onPressAddComment={onPressAddComment as any}
+                />);
+        });
+
+        const call = fileDiffSpy.mock.calls[0]?.[0];
+        expect(typeof call?.renderHoverUtility).toBe('function');
+
+        let hovered = { lineNumber: 1, side: 'additions' as const };
+        const getHoveredLine = () => hovered;
+        const utility = call.renderHoverUtility(getHoveredLine);
+        hovered = { lineNumber: 2, side: 'additions' };
+
+        await renderer.act(async () => {
+            clickPierreHoverUtility(utility);
+        });
+
+        expect(onPressAddComment).toHaveBeenCalledTimes(1);
+        const lineArg = onPressAddComment.mock.calls[0]?.[0];
+        expect(lineArg?.newLine).toBe(2);
+        expect(lineArg?.renderCodeText).toBe('second');
+    });
+
+    it('falls back to the press event path when Pierre clears the hovered line before icon press', async () => {
+        fileDiffSpy.mockClear();
+        const onPressAddComment = vi.fn();
+
+        const { PierreDiffViewer } = await import('./PierreDiffViewer.web');
+
+        await renderer.act(async () => {
+            await renderScreen(<PierreDiffViewer
+                    mode="unified"
+                    filePath="src/a.ts"
+                    unifiedDiff={[
+                        'diff --git a/a.ts b/a.ts',
+                        '--- a/a.ts',
+                        '+++ b/a.ts',
+                        '@@ -1,0 +1,2 @@',
+                        '+first',
+                        '+second',
+                        '',
+                    ].join('\n')}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    onPressAddComment={onPressAddComment as any}
+                />);
+        });
+
+        const call = fileDiffSpy.mock.calls[0]?.[0];
+        expect(typeof call?.renderHoverUtility).toBe('function');
+
+        const numberElement = {
+            getAttribute: (name: string) => {
+                if (name === 'data-column-number') return '2';
+                if (name === 'data-line-type') return 'change-addition';
+                return null;
+            },
+            closest: () => null,
+            getBoundingClientRect: () => ({ left: 0, width: 10 }),
+        };
+        const utility = call.renderHoverUtility(() => undefined);
+
+        await renderer.act(async () => {
+            clickPierreHoverUtility(utility, {
+                composedPath: () => [numberElement],
+            });
+        });
+
+        expect(onPressAddComment).toHaveBeenCalledTimes(1);
+        const lineArg = onPressAddComment.mock.calls[0]?.[0];
+        expect(lineArg?.newLine).toBe(2);
+        expect(lineArg?.renderCodeText).toBe('second');
     });
 
     it('maps line number clicks to onPressAddComment using lineType when annotationSide is unreliable', async () => {

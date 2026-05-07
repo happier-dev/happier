@@ -130,6 +130,57 @@ describe('handleMachineCommand', () => {
     ]);
   });
 
+  it('uses the current hdev invoker channel when setup omits explicit channel flags', async () => {
+    const originalArgv = [...process.argv];
+    const result: SystemTaskResult = {
+      protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+      taskId: 'task-1',
+      ok: true,
+      data: { machineId: 'machine-1' },
+    };
+    const start = vi.fn(async () => ({ taskId: 'task-1' }));
+    const poll = vi.fn(async () => ({
+      events: [],
+      nextCursor: 0,
+      result,
+      pendingPrompt: null,
+    }));
+
+    try {
+      process.argv = ['hdev', 'machine', 'setup'];
+      await handleMachineCommand(
+        ['setup', '--ssh', 'dev@example.test', '--json'],
+        {
+          applyServerSelectionFromArgs: async (args) => args,
+          createRunner: () => ({
+            start,
+            poll,
+            respond: vi.fn(),
+          }),
+          readRelaySelection: () => ({
+            relayUrl: 'https://relay.example.test',
+            webappUrl: 'https://app.example.test',
+          }),
+          promptInput: async () => {
+            throw new Error('prompt should not be used');
+          },
+          isInteractiveTerminal: () => false,
+          sleep: async () => undefined,
+        },
+      );
+
+      expect(start).toHaveBeenCalledWith({
+        spec: expect.objectContaining({
+          params: expect.objectContaining({
+            channel: 'dev',
+          }),
+        }),
+      });
+    } finally {
+      process.argv = originalArgv;
+    }
+  });
+
   it('answers SSH trust prompts interactively in text mode', async () => {
     const promptEvent: SystemTaskEvent = {
       protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,

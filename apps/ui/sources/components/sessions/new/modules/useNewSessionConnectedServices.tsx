@@ -96,7 +96,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
           });
         },
         defaultProfileIdByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-        onOpenSettings: () => router.push('/(app)/settings/connected-services'),
+        onOpenSettings: () => router.push('/settings/connected-services'),
       },
     });
   }, [

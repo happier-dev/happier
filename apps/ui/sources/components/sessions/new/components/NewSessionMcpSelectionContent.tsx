@@ -245,7 +245,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
     }, [managedResolution?.itemsByName, props.onSelectionChange, props.selection]);
 
     return (
-        <View style={[styles.container, { maxHeight: props.maxHeight }]}>
+        <View style={[styles.container, { height: props.maxHeight, maxHeight: props.maxHeight }]}>
             <ScrollView
                 style={styles.scroll}
                 contentContainerStyle={styles.scrollContent}

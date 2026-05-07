@@ -51,6 +51,35 @@ describe('executeSessionComposerResolution', () => {
     expect(setMessage).toHaveBeenCalledWith('');
   });
 
+  it('opens pet settings for the pet chooser action and clears the composer', async () => {
+    const executeSessionComposerResolution = await loadSubject();
+    const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { ok: true } })) };
+    const setMessage = vi.fn();
+    const clearDraft = vi.fn();
+    const navigateToPetSettings = vi.fn();
+
+    const handled = await executeSessionComposerResolution({
+      resolved: { kind: 'action', actionId: 'ui.pet.choose', rest: '' },
+      sessionId: 's1',
+      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'default',
+      actionExecutor,
+      setMessage,
+      clearDraft,
+      trackMessageSent: vi.fn(),
+      navigateToRuns: vi.fn(),
+      navigateToPetSettings,
+      modalAlert: vi.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(actionExecutor.execute).not.toHaveBeenCalled();
+    expect(setMessage).toHaveBeenCalledWith('');
+    expect(clearDraft).toHaveBeenCalled();
+    expect(navigateToPetSettings).toHaveBeenCalledTimes(1);
+  });
+
   it('inserts a review.start action draft when /h.review has no instructions', async () => {
     const executeSessionComposerResolution = await loadSubject();
     const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { ok: true } })) };

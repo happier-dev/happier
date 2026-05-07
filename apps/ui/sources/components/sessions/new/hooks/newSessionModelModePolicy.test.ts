@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { coerceNewSessionModelMode, resolveInitialNewSessionModelMode } from './newSessionModelModePolicy';
+import type { NewSessionModelConfig } from './newSessionModelModePolicy';
 
 describe('newSessionModelModePolicy', () => {
     it('prefers draft modelMode when supportsFreeform is enabled', () => {
@@ -41,6 +42,23 @@ describe('newSessionModelModePolicy', () => {
         });
 
         expect(out).toBe('gemini-2.5-pro');
+    });
+
+    it('keeps a dynamic backend model selection while the dynamic model probe has not returned yet', () => {
+        const dynamicModelConfig = {
+            defaultMode: 'default',
+            allowedModes: ['gpt-5.4'],
+            supportsFreeform: false,
+            dynamicProbe: 'auto',
+        } as const satisfies NewSessionModelConfig & { dynamicProbe: 'auto' };
+
+        const out = coerceNewSessionModelMode({
+            modelMode: 'gpt-5.5',
+            modelConfig: dynamicModelConfig,
+            preflight: null,
+        });
+
+        expect(out).toBe('gpt-5.5');
     });
 
     it('keeps custom modelMode when freeform is enabled (no preflight)', () => {
@@ -85,6 +103,26 @@ describe('newSessionModelModePolicy', () => {
         expect(out).toBe('gemini-2.5-pro');
     });
 
+    it('ignores preflight results from a different backend target', () => {
+        const out = coerceNewSessionModelMode({
+            modelMode: 'claude-opus-4-6',
+            modelConfig: {
+                defaultMode: 'default',
+                allowedModes: ['claude-opus-4-6'],
+                supportsFreeform: false,
+                dynamicProbe: 'static-only',
+            },
+            preflight: {
+                targetKey: 'agent:codex',
+                availableModels: [{ id: 'gpt-5.5' }],
+                supportsFreeform: false,
+            },
+            currentTargetKey: 'agent:claude',
+        });
+
+        expect(out).toBe('claude-opus-4-6');
+    });
+
     it('keeps custom modelMode when preflight exists and supports freeform', () => {
         const out = coerceNewSessionModelMode({
             modelMode: 'custom-model-id',
@@ -99,4 +137,3 @@ describe('newSessionModelModePolicy', () => {
         expect(out).toBe('custom-model-id');
     });
 });
-

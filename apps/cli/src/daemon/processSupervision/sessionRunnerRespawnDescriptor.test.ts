@@ -60,6 +60,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       },
       windowsRemoteSessionLaunchMode: 'windows_terminal',
       windowsRemoteSessionConsole: 'visible',
+      windowsTerminalWindowName: 'happier-qa',
     } satisfies SpawnSessionOptions;
 
     const descriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(spawnOptions);
@@ -72,6 +73,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       },
       windowsRemoteSessionLaunchMode: 'windows_terminal',
       windowsRemoteSessionConsole: 'visible',
+      windowsTerminalWindowName: 'happier-qa',
     });
 
     const restored = buildSpawnSessionOptionsFromRespawnDescriptorV1(descriptor!);
@@ -82,6 +84,7 @@ describe('sessionRunnerRespawnDescriptor', () => {
       },
       windowsRemoteSessionLaunchMode: 'windows_terminal',
       windowsRemoteSessionConsole: 'visible',
+      windowsTerminalWindowName: 'happier-qa',
       approvedNewDirectoryCreation: true,
     });
   });

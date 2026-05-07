@@ -7,6 +7,7 @@ import { createCodexSyntheticSubagentTracker } from '../collaboration/createCode
 import { mapCodexRolloutEventToActions, type CodexRolloutAction } from './rolloutMapper';
 import { projectCodexRolloutActions } from '../rollout/projectCodexRolloutActions';
 import { createCodexRolloutSemanticTracker } from '../rollout/createCodexRolloutSemanticTracker';
+import type { LocalTurnLifecycleEvent } from '@/agent/localControl/turnLifecycle';
 
 type MirrorContext = Readonly<{
     sidechainId: string | null;
@@ -49,6 +50,7 @@ export class CodexRolloutMirror {
             session: ApiSessionClient;
             debug: boolean;
             onCodexSessionId: (id: string) => void | Promise<void>;
+            onTurnLifecycleEvent?: (event: LocalTurnLifecycleEvent) => void | Promise<void>;
         },
     ) {
         this.itemTranscriptBridge = createKeyedStreamedTranscriptBridge<{
@@ -161,6 +163,13 @@ export class CodexRolloutMirror {
     }
 
     private async handleAction(action: CodexRolloutAction, context: MirrorContext): Promise<void> {
+        if (action.type === 'turn-lifecycle') {
+            if (context.sidechainId === null) {
+                await this.opts.onTurnLifecycleEvent?.(action.event);
+            }
+            return;
+        }
+
         for (const projected of projectCodexRolloutActions([action], { sidechainId: context.sidechainId })) {
             if (projected.type === 'codex-session-id') {
                 await this.opts.onCodexSessionId(projected.id);

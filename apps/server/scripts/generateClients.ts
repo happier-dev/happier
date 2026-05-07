@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
+import { runCommand } from "./runCommand";
 
 export type BuildDbProvider = "postgres" | "mysql" | "sqlite";
 
@@ -80,44 +80,29 @@ export function prismaGenerateDatabaseUrlForProvider(provider: BuildDbProvider):
     return "file:./.happier-prisma-generate.sqlite";
 }
 
-function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            env: env as Record<string, string>,
-            stdio: "inherit",
-            shell: false,
-        });
-        child.on("error", reject);
-        child.on("exit", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`${cmd} exited with code ${code}`));
-        });
-    });
-}
-
 async function main(): Promise<void> {
     const env: NodeJS.ProcessEnv = { ...process.env };
     const providers = resolveBuildDbProvidersFromEnv(env);
 
-    await run("yarn", ["-s", "schema:sync", "--quiet"], env);
+    await runCommand("yarn", ["-s", "schema:sync", "--quiet"], env);
 
     const require = createRequire(import.meta.url);
     const prismaCliPath = require.resolve("prisma/build/index.js");
 
     // Always generate the default client (postgres schema).
-    await run(process.execPath, [prismaCliPath, "generate"], {
+    await runCommand(process.execPath, [prismaCliPath, "generate"], {
         ...env,
         DATABASE_URL: prismaGenerateDatabaseUrlForProvider("postgres"),
     });
 
     if (providers.has("sqlite")) {
-        await run(process.execPath, [prismaCliPath, "generate", "--schema", "prisma/sqlite/schema.prisma"], {
+        await runCommand(process.execPath, [prismaCliPath, "generate", "--schema", "prisma/sqlite/schema.prisma"], {
             ...env,
             DATABASE_URL: prismaGenerateDatabaseUrlForProvider("sqlite"),
         });
     }
     if (providers.has("mysql")) {
-        await run(process.execPath, [prismaCliPath, "generate", "--schema", "prisma/mysql/schema.prisma"], {
+        await runCommand(process.execPath, [prismaCliPath, "generate", "--schema", "prisma/mysql/schema.prisma"], {
             ...env,
             DATABASE_URL: prismaGenerateDatabaseUrlForProvider("mysql"),
         });

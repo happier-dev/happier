@@ -47,6 +47,7 @@ const machineDirectSessionTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 const sessionRpcWithPreferredSessionScopeMock = vi.hoisted(() => vi.fn());
 const emitSessionMetadataUpdateWithServerScopeMock = vi.hoisted(() => vi.fn());
+const notifyActivityReadyMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/ops/machineDirectSessions', () => ({
     machineDirectSessionTranscriptPage: machineDirectSessionTranscriptPageMock,
@@ -84,12 +85,29 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSes
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope', () => ({
     emitSessionMetadataUpdateWithServerScope: (params: unknown) => emitSessionMetadataUpdateWithServerScopeMock(params),
 }));
+vi.mock('@/activity/notifications/runtime/activityLocalNotificationBus', () => ({
+    notifyActivityReady: (...args: unknown[]) => notifyActivityReadyMock(...args),
+}));
 
 import { storage } from './domains/state/storage';
 import { setActiveServerId, upsertServerProfile } from './domains/server/serverProfiles';
+import { saveAccountSettings, savePendingAccountSettings } from './domains/state/accountSettingsPersistence';
+import { createAccountSettingsScope } from './domains/settings/scope/accountSettingsScope';
+import { settingsDefaults } from './domains/settings/settings';
+import { encodeBase64 } from '@/encryption/base64';
+import { encodeUTF8 } from '@/encryption/text';
 import type { Session } from './domains/state/storageTypes';
 
 const initialStorageState = storage.getState();
+
+type SyncMetadataPatchTestAccess = {
+    credentials: { token: string; secret: string } | null;
+    encryption: {
+        decryptEncryptionKey: (encryptedKey: string | null | undefined) => Promise<null>;
+        initializeSessions: () => Promise<void>;
+        getSessionEncryption: (sessionId: string) => null;
+    };
+};
 
 function createSession(sessionId: string): Session {
     const now = Date.now();
@@ -142,6 +160,11 @@ function findRuntimeFetchCall(url: string) {
     return call;
 }
 
+function buildTokenWithSub(sub: string): string {
+    const payload = encodeBase64(encodeUTF8(JSON.stringify({ sub })), 'base64');
+    return `hdr.${payload}.sig`;
+}
+
 describe('sync.fetchMessages server-scoped known-session checks', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
@@ -155,6 +178,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         resolvePreferredServerIdForSessionIdMock.mockReset();
         sessionRpcWithPreferredSessionScopeMock.mockReset();
         emitSessionMetadataUpdateWithServerScopeMock.mockReset();
+        notifyActivityReadyMock.mockReset();
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(undefined);
     });
 
@@ -208,6 +232,48 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         await expect((sync as any).fetchMessages(sessionId)).rejects.toThrow(
             `Session encryption not ready for ${sessionId}`,
         );
+    });
+
+    it('fetches plaintext session messages without requiring session encryption', async () => {
+        const sessionId = 'plain_active_session';
+        storage.getState().applySessions([{ ...createSession(sessionId), encryptionMode: 'plain' } as Session]);
+        requestMock.mockResolvedValueOnce(
+            new Response(
+                JSON.stringify({
+                    messages: [
+                        {
+                            id: 'plain-message-1',
+                            seq: 1,
+                            localId: null,
+                            sidechainId: null,
+                            content: {
+                                t: 'plain',
+                                v: { role: 'user', content: { type: 'text', text: 'hello plain sync' } },
+                            },
+                            createdAt: 1_001,
+                            updatedAt: 1_001,
+                        },
+                    ],
+                    hasMore: false,
+                    nextBeforeSeq: null,
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+        );
+        const getSessionEncryption = vi.fn(() => null);
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
+
+        expect(getSessionEncryption).not.toHaveBeenCalled();
+        const messagesById = storage.getState().sessionMessages[sessionId]?.messagesById ?? {};
+        expect(Object.values(messagesById).some((message) => message.kind === 'user-text' && message.text === 'hello plain sync')).toBe(true);
     });
 
     it('treats sessions applied after the initial snapshot as known on the active server', async () => {
@@ -626,6 +692,77 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
     });
 
+    it('hydrates lightweight session rows before patching metadata', async () => {
+        const sessionId = 'plain_metadata_lightweight_row';
+        requestMock.mockResolvedValueOnce(
+            new Response(
+                JSON.stringify({
+                    session: {
+                        id: sessionId,
+                        seq: 1,
+                        createdAt: 1_000,
+                        updatedAt: 1_000,
+                        active: true,
+                        activeAt: 1_000,
+                        encryptionMode: 'plain',
+                        dataEncryptionKey: null,
+                        metadataVersion: 2,
+                        metadata: JSON.stringify({
+                            path: '/tmp/repo',
+                            host: 'test-host',
+                        }),
+                        agentStateVersion: 1,
+                        agentState: JSON.stringify({ controlledByUser: true }),
+                        share: null,
+                    },
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+        );
+        emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
+            result: 'success',
+            version: 3,
+            metadata: JSON.stringify({
+                path: '/tmp/repo',
+                host: 'test-host',
+                summary: { text: 'Renamed session', updatedAt: 123 },
+            }),
+        });
+
+        const { sync } = await import('./sync');
+        const syncForMetadataPatch = sync as unknown as SyncMetadataPatchTestAccess;
+        syncForMetadataPatch.credentials = { token: 'active-token', secret: 'active-secret' };
+        syncForMetadataPatch.encryption = {
+            decryptEncryptionKey: vi.fn(async () => null),
+            initializeSessions: vi.fn(async () => undefined),
+            getSessionEncryption: vi.fn(() => null),
+        };
+
+        await expect(
+            sync.patchSessionMetadataWithRetry(sessionId, (metadata) => ({
+                ...metadata,
+                summary: { text: 'Renamed session', updatedAt: 123 },
+            })),
+        ).resolves.toBeUndefined();
+
+        expect(requestMock).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}`,
+            expect.objectContaining({
+                method: 'GET',
+            }),
+        );
+        expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
+            sessionId,
+            expectedVersion: 2,
+            metadata: JSON.stringify({
+                path: '/tmp/repo',
+                host: 'test-host',
+                summary: { text: 'Renamed session', updatedAt: 123 },
+            }),
+        });
+        expect(storage.getState().sessions[sessionId]?.metadata?.summary?.text).toBe('Renamed session');
+    });
+
     it('drops stale direct transcript fetch results after the server scope resets mid-request', async () => {
         const sessionId = 'direct_session_scope_reset';
         storage.getState().applySessions([createDirectSession(sessionId)]);
@@ -812,4 +949,395 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             .map((message) => message.text);
         expect(orderedTexts).toEqual(['hello direct', 'followed direct']);
     });
+
+    it('applies pushed direct-session transcript deltas and advances the tail cursor for fallback paging', async () => {
+        const sessionId = 'direct_session_push_delta';
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+            ok: true,
+            items: [
+                {
+                    id: 'direct-msg-1',
+                    createdAtMs: 1,
+                    raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                },
+            ],
+            nextCursor: 'older-cursor-1',
+            tailCursor: 'page-tail-cursor-1',
+            hasMore: false,
+        });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        (sync as any).handleEphemeralUpdate({
+            type: 'direct-session-transcript-delta',
+            sessionId,
+            items: [
+                {
+                    id: 'direct-msg-2',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'followed direct' } },
+                },
+            ],
+            nextCursor: 'tail-cursor-2',
+            truncated: false,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
+            .map((id) => sessionMessages?.messagesById[id])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(orderedTexts).toEqual(['hello direct', 'followed direct']);
+
+        machineDirectSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+            ok: true,
+            items: [],
+            nextCursor: 'tail-cursor-3',
+            truncated: false,
+        });
+        await (sync as any).refreshSessionMessages(sessionId);
+
+        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1);
+        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-1',
+            remoteSessionId: 'vendor-session-1',
+            cursor: 'tail-cursor-2',
+        }), expect.anything());
+    });
+
+    it('emits activity ready notifications for pushed direct-session transcript deltas when voice is suppressed', async () => {
+        const sessionId = 'direct_session_push_ready_notification';
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+
+        (sync as any).handleEphemeralUpdate({
+            type: 'direct-session-transcript-delta',
+            sessionId,
+            items: [
+                {
+                    id: 'direct-ready-1',
+                    createdAtMs: 2,
+                    raw: {
+                        role: 'agent',
+                        content: {
+                            type: 'event',
+                            id: 'direct-ready-event-1',
+                            data: { type: 'ready' },
+                        },
+                    },
+                },
+            ],
+            nextCursor: 'ready-tail-cursor-1',
+            truncated: false,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(notifyActivityReadyMock).toHaveBeenCalledWith(sessionId, expect.any(Array));
+    });
+
+    it('emits activity notifications for pushed direct-session agent replies without requiring a ready event', async () => {
+        const sessionId = 'direct_session_push_agent_reply_notification';
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+
+        (sync as any).handleEphemeralUpdate({
+            type: 'direct-session-transcript-delta',
+            sessionId,
+            items: [
+                {
+                    id: 'direct-agent-reply-1',
+                    createdAtMs: 2,
+                    raw: {
+                        role: 'agent',
+                        content: {
+                            type: 'codex',
+                            data: {
+                                type: 'message',
+                                message: 'followed direct reply',
+                            },
+                        },
+                    },
+                },
+            ],
+            nextCursor: 'agent-reply-tail-cursor-1',
+            truncated: false,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(notifyActivityReadyMock).toHaveBeenCalledWith(sessionId, [
+            expect.objectContaining({
+                kind: 'agent-text',
+                text: 'followed direct reply',
+            }),
+        ]);
+    });
+
+    it('refetches direct-session transcript state when a pushed delta is truncated', async () => {
+        const sessionId = 'direct_session_truncated_delta';
+        storage.getState().applySessions([createDirectSession(sessionId)]);
+        machineDirectSessionTranscriptPageMock
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [
+                    {
+                        id: 'direct-msg-1',
+                        createdAtMs: 1,
+                        raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                    },
+                ],
+                nextCursor: null,
+                tailCursor: 'tail-cursor-1',
+                hasMore: false,
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                items: [
+                    {
+                        id: 'direct-msg-1',
+                        createdAtMs: 1,
+                        raw: { role: 'user', content: { type: 'text', text: 'hello direct' } },
+                    },
+                    {
+                        id: 'direct-msg-2',
+                        createdAtMs: 2,
+                        raw: { role: 'user', content: { type: 'text', text: 'reloaded direct' } },
+                    },
+                ],
+                nextCursor: null,
+                tailCursor: 'tail-cursor-2',
+                hasMore: false,
+            });
+
+        const { sync } = await import('./sync');
+        (sync as any).encryption = {
+            getSessionEncryption: () => null,
+        };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+
+        await (sync as any).fetchMessages(sessionId);
+        (sync as any).handleEphemeralUpdate({
+            type: 'direct-session-transcript-delta',
+            sessionId,
+            items: [
+                {
+                    id: 'direct-msg-2',
+                    createdAtMs: 2,
+                    raw: { role: 'user', content: { type: 'text', text: 'partial direct' } },
+                },
+            ],
+            nextCursor: 'tail-cursor-2',
+            truncated: true,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(machineDirectSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
+        expect(machineDirectSessionTranscriptPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            machineId: 'machine-1',
+            remoteSessionId: 'vendor-session-1',
+            direction: 'older',
+        }), expect.anything());
+
+        const sessionMessages = storage.getState().sessionMessages[sessionId];
+        const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])
+            .map((id) => sessionMessages?.messagesById[id])
+            .filter((message): message is NonNullable<typeof message> => Boolean(message))
+            .filter((message) => message.kind === 'user-text')
+            .map((message) => message.text);
+        expect(orderedTexts).toEqual(['hello direct', 'reloaded direct']);
+    });
+
+    it('activates the account settings scope and reloads scoped pending settings for active credentials', async () => {
+        const server = upsertServerProfile({ serverUrl: 'https://settings-scope.example', name: 'Settings Scope' });
+        setActiveServerId(server.id, { scope: 'device' });
+        const scope = createAccountSettingsScope(server.id, 'account-settings-user');
+        expect(scope).not.toBeNull();
+        saveAccountSettings(scope!, { ...settingsDefaults, viewInline: true }, 7);
+        savePendingAccountSettings(scope!, { viewInline: false });
+
+        const { sync } = await import('./sync');
+        const credentials = {
+            token: buildTokenWithSub('account-settings-user'),
+            secret: encodeBase64(new Uint8Array(32).fill(3), 'base64url'),
+        };
+
+        (sync as any).activateAccountSettingsScopeForCredentials(credentials);
+
+        expect(storage.getState().settingsScope).toEqual(scope);
+        expect(storage.getState().settingsVersion).toBe(7);
+        expect(storage.getState().settings.viewInline).toBe(true);
+        expect((sync as any).pendingSettingsScope).toEqual(scope);
+        expect((sync as any).pendingSettings).toEqual({ viewInline: false });
+    });
+
+    it('switches the active account pet library projection when credentials change account scope', async () => {
+        const server = upsertServerProfile({ serverUrl: 'https://settings-scope.example', name: 'Settings Scope' });
+        setActiveServerId(server.id, { scope: 'device' });
+
+        const { sync } = await import('./sync');
+
+        (sync as any).activateAccountSettingsScopeForCredentials({
+            token: buildTokenWithSub('account-a'),
+            secret: encodeBase64(new Uint8Array(32).fill(3), 'base64url'),
+        });
+        storage.getState().upsertAccountPet({
+            accountPetId: 'pet-a',
+            packageFormat: 'codex-compatible-atlas-v1',
+            manifest: {
+                id: 'blink-a',
+                displayName: 'Blink A',
+                description: 'Pet A',
+                spritesheetPath: 'spritesheet.webp',
+            },
+            spritesheetAssetRef: {
+                assetId: 'asset-a',
+                mediaType: 'image/webp',
+                digest: 'sha256:asset-a',
+                sizeBytes: 5,
+            },
+            digest: 'sha256:pkg-a',
+            sizeBytes: 128,
+            createdAt: 1,
+            updatedAt: 2,
+            origin: { kind: 'manualImport' },
+        });
+        expect(Object.keys(storage.getState().accountPetsById)).toEqual(['pet-a']);
+
+        (sync as any).activateAccountSettingsScopeForCredentials({
+            token: buildTokenWithSub('account-b'),
+            secret: encodeBase64(new Uint8Array(32).fill(4), 'base64url'),
+        });
+
+        expect(storage.getState().accountPetsById).toEqual({});
+    });
+
+    it('clears the account settings scope when credentials contain a malformed token', async () => {
+        const server = upsertServerProfile({ serverUrl: 'https://settings-scope.example', name: 'Settings Scope' });
+        setActiveServerId(server.id, { scope: 'device' });
+        const scope = createAccountSettingsScope(server.id, 'account-settings-user');
+        expect(scope).not.toBeNull();
+        saveAccountSettings(scope!, { ...settingsDefaults, viewInline: true }, 7);
+        savePendingAccountSettings(scope!, { viewInline: false });
+
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const previousDebugFlag = process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC;
+
+        try {
+            const { sync } = await import('./sync');
+            (sync as any).activateAccountSettingsScopeForCredentials({
+                token: buildTokenWithSub('account-settings-user'),
+                secret: encodeBase64(new Uint8Array(32).fill(3), 'base64url'),
+            });
+
+            process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC = '1';
+            expect((sync as any).activateAccountSettingsScopeForCredentials({
+                token: 'not-a-token',
+                secret: encodeBase64(new Uint8Array(32).fill(4), 'base64url'),
+            })).toBeNull();
+
+            expect(storage.getState().settingsScope).toBeNull();
+            expect(storage.getState().settingsVersion).toBeNull();
+            expect(storage.getState().settings.viewInline).toBe(settingsDefaults.viewInline);
+            expect(storage.getState().accountPetsById).toEqual({});
+            expect((sync as any).pendingSettingsScope).toBeNull();
+            expect((sync as any).pendingSettings).toEqual({});
+            expect(warnSpy).toHaveBeenCalledWith(
+                '[settings-sync] Sync.activateAccountSettingsScopeForCredentials: invalid token',
+                expect.objectContaining({ error: expect.stringContaining('Invalid token') }),
+            );
+        } finally {
+            if (previousDebugFlag === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC = previousDebugFlag;
+            }
+            warnSpy.mockRestore();
+        }
+    });
+
+    it('rejects create credentials with an empty token subject and clears the active settings scope', async () => {
+        const server = upsertServerProfile({ serverUrl: 'https://settings-scope.example', name: 'Settings Scope' });
+        setActiveServerId(server.id, { scope: 'device' });
+        const scope = createAccountSettingsScope(server.id, 'account-settings-user');
+        expect(scope).not.toBeNull();
+        saveAccountSettings(scope!, { ...settingsDefaults, viewInline: true }, 7);
+        savePendingAccountSettings(scope!, { viewInline: false });
+
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const previousDebugFlag = process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC;
+
+        try {
+            const { sync } = await import('./sync');
+            (sync as any).activateAccountSettingsScopeForCredentials({
+                token: buildTokenWithSub('account-settings-user'),
+                secret: encodeBase64(new Uint8Array(32).fill(3), 'base64url'),
+            });
+            storage.getState().upsertAccountPet({
+                accountPetId: 'pet-a',
+                packageFormat: 'codex-compatible-atlas-v1',
+                manifest: {
+                    id: 'blink-a',
+                    displayName: 'Blink A',
+                    description: 'Pet A',
+                    spritesheetPath: 'spritesheet.webp',
+                },
+                spritesheetAssetRef: {
+                    assetId: 'asset-a',
+                    mediaType: 'image/webp',
+                    digest: 'sha256:asset-a',
+                    sizeBytes: 5,
+                },
+                digest: 'sha256:pkg-a',
+                sizeBytes: 128,
+                createdAt: 1,
+                updatedAt: 2,
+                origin: { kind: 'manualImport' },
+            });
+
+            process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC = '1';
+            await expect(sync.create({
+                token: buildTokenWithSub(''),
+                secret: encodeBase64(new Uint8Array(32).fill(4), 'base64url'),
+            }, {
+                anonID: 'anon-empty-sub',
+                initializeSessions: async () => undefined,
+                getContentPrivateKey: () => new Uint8Array(32).fill(5),
+            } as any)).rejects.toThrow('Invalid auth token');
+
+            expect(storage.getState().settingsScope).toBeNull();
+            expect(storage.getState().settingsVersion).toBeNull();
+            expect(storage.getState().accountPetsById).toEqual({});
+            expect((sync as any).pendingSettingsScope).toBeNull();
+            expect((sync as any).pendingSettings).toEqual({});
+            expect(warnSpy).toHaveBeenCalledWith(
+                '[settings-sync] Sync.activateAccountSettingsScopeForCredentials: invalid token',
+                expect.objectContaining({ error: expect.stringContaining('sub') }),
+            );
+        } finally {
+            if (previousDebugFlag === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC = previousDebugFlag;
+            }
+            warnSpy.mockRestore();
+        }
+    });
+
 });

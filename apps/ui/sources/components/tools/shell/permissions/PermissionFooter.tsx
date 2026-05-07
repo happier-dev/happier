@@ -32,7 +32,10 @@ interface PermissionFooterProps {
     canApprovePermissions?: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     embedded?: boolean;
+    alignFirstButtonToStart?: boolean;
 }
+
+const BUTTON_HORIZONTAL_PADDING = 10;
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -54,7 +57,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 6,
     },
     button: {
-        paddingHorizontal: 10,
+        paddingHorizontal: BUTTON_HORIZONTAL_PADDING,
         paddingVertical: 6,
         borderRadius: 8,
         backgroundColor: 'transparent',
@@ -62,6 +65,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderLeftColor: 'transparent',
         flexShrink: 1,
         maxWidth: '100%',
+    },
+    buttonAlignedToStart: {
+        paddingLeft: 0,
     },
     buttonAllow: {
         backgroundColor: 'transparent',
@@ -147,9 +153,11 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     canApprovePermissions = true,
     disabledReason,
     embedded = false,
+    alignFirstButtonToStart = false,
 }) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const alignedButtonStyle = alignFirstButtonToStart ? styles.buttonAlignedToStart : null;
     const [loadingButton, setLoadingButton] = useState<'allow' | 'deny' | 'abort' | null>(null);
     const [loadingAllEdits, setLoadingAllEdits] = useState(false);
     const [loadingForSession, setLoadingForSession] = useState(false);
@@ -613,6 +621,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         testID="permission-footer.allow"
                         style={[
                             styles.button,
+                            alignedButtonStyle,
                             isPending && styles.buttonAllow,
                             isCodexApproved && styles.buttonSelected,
                             (isCodexAborted || isCodexApprovedForSession || isCodexApprovedExecPolicy) && styles.buttonInactive
@@ -644,6 +653,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                             testID="permission-footer.allow-execpolicy"
                             style={[
                                 styles.button,
+                                alignedButtonStyle,
                                 isPending && styles.buttonForSession,
                                 isCodexApprovedExecPolicy && styles.buttonSelected,
                                 (isCodexAborted || isCodexApproved || isCodexApprovedForSession) && styles.buttonInactive
@@ -675,6 +685,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         testID="permission-footer.allow-for-session"
                         style={[
                             styles.button,
+                            alignedButtonStyle,
                             isPending && styles.buttonForSession,
                             isCodexApprovedForSession && styles.buttonSelected,
                             (isCodexAborted || isCodexApproved || isCodexApprovedExecPolicy) && styles.buttonInactive
@@ -704,6 +715,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         testID="permission-footer.deny"
                         style={[
                             styles.button,
+                            alignedButtonStyle,
                             isPending && styles.buttonDeny,
                             isDeniedViaNo && styles.buttonSelected,
                             (isCodexAborted || isCodexApproved || isCodexApprovedForSession || isCodexApprovedExecPolicy) && styles.buttonInactive,
@@ -738,6 +750,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         testID="permission-footer.stop"
                         style={[
                             styles.button,
+                            alignedButtonStyle,
                             isPending && styles.buttonDeny,
                             isCodexAborted && styles.buttonSelected,
                             (isCodexApproved || isCodexApprovedForSession || isCodexApprovedExecPolicy) && styles.buttonInactive
@@ -783,6 +796,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     testID="permission-footer.allow"
                     style={[
                         styles.button,
+                        alignedButtonStyle,
                         isPending && styles.buttonAllow,
                         isApprovedViaAllow && styles.buttonSelected,
                         (isDenied || isApprovedViaAllEdits || isApprovedForSession) && styles.buttonInactive
@@ -813,6 +827,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     <TouchableOpacity
                         style={[
                             styles.button,
+                            alignedButtonStyle,
                             isPending && styles.buttonAllowAll,
                             isApprovedViaAllEdits && styles.buttonSelected,
                             (isDenied || isApprovedViaAllow || isApprovedForSession) && styles.buttonInactive
@@ -844,6 +859,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     <TouchableOpacity
                         style={[
                             styles.button,
+                            alignedButtonStyle,
                             isPending && styles.buttonForSession,
                             ((isShellTool ? isApprovedForSessionToolWide : isApprovedForSession) && styles.buttonSelected),
                             (isDenied || isApprovedViaAllow || isApprovedViaAllEdits) && styles.buttonInactive
@@ -875,6 +891,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     <TouchableOpacity
                         style={[
                             styles.button,
+                            alignedButtonStyle,
                             isPending && styles.buttonForSession,
                             (isApprovedForSessionSubcommand && !isApprovedForSessionCommandName) && styles.buttonSelected,
                             (isDenied || isApprovedViaAllow || isApprovedViaAllEdits || isApprovedForSessionToolWide || isApprovedForSessionExact) && styles.buttonInactive
@@ -912,6 +929,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     <TouchableOpacity
                         style={[
                             styles.button,
+                            alignedButtonStyle,
                             isPending && styles.buttonForSession,
                             isApprovedForSessionCommandName && styles.buttonSelected,
                             (isDenied || isApprovedViaAllow || isApprovedViaAllEdits || isApprovedForSessionToolWide || isApprovedForSessionExact || isApprovedForSessionSubcommand) && styles.buttonInactive
@@ -942,6 +960,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     testID="permission-footer.deny"
                     style={[
                         styles.button,
+                        alignedButtonStyle,
                         isPending && styles.buttonDeny,
                         isDeniedViaNo && styles.buttonSelected,
                         (isApproved || isStopped) && styles.buttonInactive,
@@ -975,6 +994,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                     testID="permission-footer.stop"
                     style={[
                         styles.button,
+                        alignedButtonStyle,
                         isPending && styles.buttonDeny,
                         isStopped && styles.buttonSelected,
                         (isApproved || isDeniedViaNo) && styles.buttonInactive,

@@ -80,6 +80,17 @@ export function isCodexPermissionMode(value: PermissionMode): value is CodexPerm
   return (CODEX_PERMISSION_MODES as readonly string[]).includes(value)
 }
 
+export type UpdateReadCursorPayload =
+  | { sid: string, lastViewedSessionSeq: number, operation?: undefined }
+  | { sid: string, operation: 'mark-read' | 'mark-unread', lastViewedSessionSeq?: number }
+
+export type UpdateReadCursorAckResponse = {
+  result: 'success' | 'forbidden' | 'error',
+  lastViewedSessionSeq?: number,
+  didChange?: boolean,
+  readState?: 'read' | 'unread' | 'empty',
+}
+
 /**
  * Usage data type from Claude
  */
@@ -156,6 +167,16 @@ export interface ClientToServerEvents {
     sid: string;
     run: ExecutionRunPublicState;
   }) => void
+  'transcript-stream-segment': (data: {
+    sid: string;
+    message: {
+      localId: string;
+      sidechainId?: string | null;
+      content: string | SessionMessageContent;
+      createdAt: number;
+      updatedAt: number;
+    };
+  }) => void
   'update-metadata': (data: { sid: string, expectedVersion: number, metadata: string }, cb: (answer: UpdateMetadataAckResponse) => void) => void,
   'update-state': (data: {
     sid: string,
@@ -166,10 +187,7 @@ export interface ClientToServerEvents {
       pendingUserActionRequestCount: number,
     },
   }, cb: (answer: UpdateStateAckResponse) => void) => void,
-  'update-read-cursor': (data: {
-    sid: string,
-    lastViewedSessionSeq: number,
-  }, cb: (answer: { result: 'success' | 'forbidden' | 'error', lastViewedSessionSeq?: number }) => void) => void,
+  'update-read-cursor': (data: UpdateReadCursorPayload, cb: (answer: UpdateReadCursorAckResponse) => void) => void,
   'ping': (callback: () => void) => void
   [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void
@@ -350,6 +368,12 @@ export type DirectSessionMetadataV1 = {
   remoteSessionId: string,
   source: DirectSessionsSource,
   linkedAtMs: number,
+  lastKnownActivityAtMs?: number,
+  followPolicyV1?: {
+    v: 1,
+    policy: 'attached_only' | 'background_follow',
+    updatedAtMs?: number,
+  },
   codexBackendMode?: 'mcp' | 'acp' | 'appServer',
   agentRuntimeDescriptorV1?: unknown,
 };
@@ -408,6 +432,13 @@ export type Metadata = {
   opencodeServerBaseUrl?: string,
   opencodeServerBaseUrlExplicit?: true,
   directSessionV1?: DirectSessionMetadataV1,
+  directSessionAttentionV1?: {
+    v: 1,
+    observedProgressToken?: string,
+    viewedProgressToken?: string,
+    observedAtMs?: number,
+    viewedAtMs?: number,
+  },
   externalHistoryImportV1?: ExternalHistoryImportMetadataV1,
   handoffV1?: SessionHandoffMetadataV1,
   auggieSessionId?: string, // Auggie ACP session ID (opaque)

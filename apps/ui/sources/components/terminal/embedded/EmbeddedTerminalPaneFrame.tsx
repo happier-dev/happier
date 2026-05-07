@@ -18,6 +18,7 @@ export type EmbeddedTerminalPaneFrameProps = Readonly<{
     controller: EmbeddedTerminalPaneController;
     surface: React.ReactNode;
     footer?: React.ReactNode;
+    keyboardBottomInset?: number;
     onRequestClose?: (() => void) | null;
     onPaste?: (() => void) | null;
     toolbarActionsStart?: React.ReactNode;
@@ -25,9 +26,18 @@ export type EmbeddedTerminalPaneFrameProps = Readonly<{
     platformOS?: 'web' | 'ios' | 'android';
 }>;
 
+function resolveKeyboardBottomInset(value: unknown): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+    return Math.max(0, value);
+}
+
 export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPaneFrame(props: EmbeddedTerminalPaneFrameProps) {
     const { theme } = useUnistyles();
     const styles = embeddedTerminalPaneStyles;
+    const keyboardBottomInset = resolveKeyboardBottomInset(props.keyboardBottomInset);
+    const terminalSurfaceStyle = keyboardBottomInset > 0
+        ? [styles.terminalSurface, { marginBottom: keyboardBottomInset }]
+        : styles.terminalSurface;
 
     const testId = React.useCallback(
         (suffix: string) => (props.testIdPrefix ? `${props.testIdPrefix}-${suffix}` : undefined),
@@ -139,7 +149,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                 </View>
             ) : null}
 
-            <View style={styles.terminalSurface}>
+            <View testID={testId('surface')} style={terminalSurfaceStyle}>
                 {props.surface}
                 {props.footer}
                 {shouldShowOverlay ? (

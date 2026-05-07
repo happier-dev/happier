@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { run, runCapture, spawnProc } from './utils/proc/proc.mjs';
-import { getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
+import { getComponentDir, getComponentRepoDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
 import { ensureDepsInstalled, pmExecBin, pmSpawnBin, requireDir } from './utils/proc/pm.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir } from './utils/expo/expo.mjs';
@@ -11,10 +11,14 @@ import { resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls
 import { resolveMobileExpoConfig } from './utils/mobile/config.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
 import { expoExec } from './utils/expo/command.mjs';
-import { ensureDevExpoServer } from './utils/dev/expo_dev.mjs';
+import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/expo_dev.mjs';
 import { resolveMobileReachableServerUrl } from './utils/server/mobile_api_url.mjs';
 import { patchIosXcodeProjectsForSigningAndIdentity, resolveIosAppXcodeProjects } from './utils/mobile/ios_xcodeproj_patch.mjs';
 import { pickMetroPort, resolveStablePortStart } from './utils/expo/metro_ports.mjs';
+import {
+  clearAndroidGeneratedBuildState,
+  shouldClearAndroidNativeBuildState,
+} from './utils/mobile/android_generated_build_state.mjs';
 
 /**
  * Mobile dev helper for the Happier UI Expo app (typically `apps/ui`).
@@ -47,11 +51,13 @@ async function main() {
           '--scheme=<url-scheme>',
           '--ios-bundle-id=<bundle-id>',
           '--ios-app-name=<name>',
+          '--android-package=<package-name>',
           '--app-env=development|production',
           '--prebuild [--platform=ios|all] [--clean]',
           '--run-ios [--device=<id-or-name>] [--configuration=Debug|Release]',
           '--run-android [--device=<id-or-name>]',
           '--metro / --no-metro',
+          '--expo-tailscale',
           '--restart',
           '--no-signing-fix',
         ],
@@ -76,6 +82,7 @@ async function main() {
 
   const rootDir = getRootDir(import.meta.url);
   const uiRepoDir = getComponentDir(rootDir, 'happier-ui');
+  const uiRepoRoot = getComponentRepoDir(rootDir, 'happier-ui');
   await requireDir('happier-ui', uiRepoDir);
   await ensureDepsInstalled(uiRepoDir, 'happier-ui');
   const happyDir = uiRepoDir;
@@ -108,6 +115,7 @@ async function main() {
   // the dev build instead of the App Store app when scanning QR/deeplinks.
   const appEnv = process.env.APP_ENV ?? kv.get('--app-env') ?? 'development';
   const host = kv.get('--host') ?? process.env.HAPPIER_STACK_MOBILE_HOST ?? 'lan';
+  const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
   const portFromArg = kv.get('--port') ?? '';
   const portFromEnv = process.env.HAPPIER_STACK_MOBILE_PORT ?? '';
   const portRaw = portFromArg || portFromEnv || '8081';
@@ -126,6 +134,7 @@ async function main() {
   const cfgBase = resolveMobileExpoConfig({ env });
   const iosAppName = (kv.get('--ios-app-name') ?? cfgBase.iosAppName ?? '').toString();
   const iosBundleId = (kv.get('--ios-bundle-id') ?? cfgBase.iosBundleId ?? '').toString();
+  const androidPackage = (kv.get('--android-package') ?? cfgBase.androidPackage ?? '').toString();
   const scheme = (kv.get('--scheme') ?? cfgBase.scheme ?? iosBundleId).toString();
 
   const autostart = getDefaultAutostartPaths();
@@ -165,6 +174,9 @@ async function main() {
   }
   if (iosBundleId && iosBundleId.trim()) {
     env.EXPO_APP_BUNDLE_ID = iosBundleId.trim();
+  }
+  if (androidPackage && androidPackage.trim()) {
+    env.EXPO_ANDROID_PACKAGE = androidPackage.trim();
   }
 
   // Always isolate Expo home + TMPDIR to avoid cross-worktree cache pollution (and to keep sandbox runs contained).
@@ -214,6 +226,7 @@ async function main() {
         shouldPrebuild: flags.has('--prebuild'),
         shouldRunIos: flags.has('--run-ios'),
         shouldStartMetro,
+        expoTailscale,
         expoPublicHappyServerUrl: env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? '',
       },
     });
@@ -356,6 +369,11 @@ async function main() {
 
     const metroPort = String(env.RCT_METRO_PORT ?? portRaw ?? '8081');
     const args = ['run:android', '--port', metroPort, '--no-build-cache'];
+    await clearAndroidGeneratedBuildState({
+      repoRoot: uiRepoRoot,
+      uiDir,
+      includeNativeModuleBuildState: shouldClearAndroidNativeBuildState(env),
+    });
     await expoExec({ dir: happyDir, projectDir: uiDir, args, env, ensureDepsLabel: 'happy' });
   }
 
@@ -385,6 +403,7 @@ async function main() {
     stackName,
     envPath,
     children,
+    expoTailscale,
   });
 
   await new Promise(() => {});

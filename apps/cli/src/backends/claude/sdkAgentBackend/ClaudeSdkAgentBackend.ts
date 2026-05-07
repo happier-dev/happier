@@ -5,10 +5,8 @@ import { PushableAsyncIterable } from '@/utils/PushableAsyncIterable';
 import { query } from '@/backends/claude/sdk/query';
 import type { SDKAssistantMessage, SDKMessage, SDKResultMessage, SDKSystemMessage } from '@/backends/claude/sdk/types';
 import { createSubprocessStderrAppender, type BoundedTextFileAppender } from '@/agent/runtime/subprocessArtifacts';
-import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import { ensureClaudeJsRuntimeExecutable } from '@/backends/claude/utils/ensureClaudeJsRuntimeExecutable';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import { ClaudeTurnChangeTracker } from '../utils/ClaudeTurnChangeTracker';
 import { isClaudeExplicitDiffToolInput } from '../utils/isClaudeExplicitDiffToolInput';
 import { isReadOnlyClaudeSdkToolAllowed } from './isReadOnlyClaudeSdkToolAllowed';
@@ -42,7 +40,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private pendingTurn: { resolve: () => void; reject: (e: Error) => void; buffer: string[] } | null = null;
   private pendingTurnCompletion: Promise<void> | null = null;
   private ignoreNextNonSuccessResult = false;
-  private didSendChangeTitleInstructionForSession = false;
   private currentTurnOrdinal = 0;
   private settledTurnOrdinal = 0;
 
@@ -104,8 +101,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private async startSessionInternal(params: Readonly<{ resume: string | null }>): Promise<void> {
     if (this.started) return;
     this.started = true;
-    this.didSendChangeTitleInstructionForSession = false;
-
     const model = this.normalizeModelId(this.opts.modelId);
     const canCallTool = this.buildCanCallTool();
 
@@ -173,20 +168,9 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
         this.currentTurnOrdinal += 1;
         this.turnChangeTracker.beginTurn();
 
-        const effectivePrompt = (() => {
-          const raw = typeof prompt === 'string' ? prompt : '';
-          if (!raw.trim()) return raw;
-          if (this.didSendChangeTitleInstructionForSession) return raw;
-          const lower = raw.toLowerCase();
-          const alreadyMentionsChangeTitle = CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias));
-          this.didSendChangeTitleInstructionForSession = true;
-          if (alreadyMentionsChangeTitle) return raw;
-          return `${raw}\n\n${CHANGE_TITLE_INSTRUCTION}`;
-        })();
-
         this.promptStream.push({
           type: 'user',
-          message: { role: 'user', content: effectivePrompt },
+          message: { role: 'user', content: typeof prompt === 'string' ? prompt : '' },
         });
         startedResolve();
 

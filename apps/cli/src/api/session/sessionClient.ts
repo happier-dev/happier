@@ -358,6 +358,13 @@ export class ApiSessionClient extends EventEmitter {
 
         // Always register execution-run RPC methods so callers never see "RPC method not available".
         // Feature gating is enforced inside the handler implementations.
+        const streamedTranscriptSession = {
+            sendAgentMessageCommitted: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }) =>
+                this.sendAgentMessageCommitted(provider, body, opts),
+            sendAgentMessageEphemeral: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }) =>
+                this.sendAgentMessageEphemeral(provider, body, opts),
+        };
+
         registerExecutionRunHandlers(this.rpcHandlerManager, {
             sessionId: this.sessionId,
             cwd: this.metadata?.path ?? process.cwd(),
@@ -374,9 +381,7 @@ export class ApiSessionClient extends EventEmitter {
                     start,
                 }),
             sendAcp: (provider, body, opts) => this.sendAgentMessage(provider as any, body as any, opts),
-            streamedTranscriptSession: {
-                sendAgentMessageCommitted: (provider, body, opts) => this.sendAgentMessageCommitted(provider as any, body as any, opts),
-            },
+            streamedTranscriptSession,
             transcriptWriter,
             budgetRegistry: executionBudgetRegistry,
             onExecutionRunPublicStateUpdated: (run) => {
@@ -1698,6 +1703,55 @@ export class ApiSessionClient extends EventEmitter {
             } catch (error) {
                 logger.debug('[SOCKET] Failed to send token_count usage report (non-fatal)', error);
             }
+        }
+    }
+
+    sendAgentMessageEphemeral(
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+    ): void {
+        if (!this.socket.connected) return;
+
+        const { content, localId, sidechainId } = this.prepareAcpAgentMessage({
+            provider,
+            body,
+            meta: opts.meta,
+            localId: opts.localId,
+        });
+        const payload = this.buildOutboundSessionMessagePayload(content);
+        const createdAt =
+            typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
+                ? Math.max(0, Math.trunc(opts.createdAt))
+                : Date.now();
+        const streamSegmentMeta = opts.meta?.happierStreamSegmentV1;
+        const metaUpdatedAt =
+            streamSegmentMeta
+            && typeof streamSegmentMeta === 'object'
+            && typeof (streamSegmentMeta as Record<string, unknown>).updatedAtMs === 'number'
+            && Number.isFinite((streamSegmentMeta as Record<string, unknown>).updatedAtMs)
+                ? Math.trunc((streamSegmentMeta as Record<string, unknown>).updatedAtMs as number)
+                : undefined;
+        const updatedAt =
+            typeof opts.updatedAt === 'number' && Number.isFinite(opts.updatedAt)
+                ? Math.max(createdAt, Math.trunc(opts.updatedAt))
+                : typeof metaUpdatedAt === 'number'
+                    ? Math.max(createdAt, metaUpdatedAt)
+                    : Math.max(createdAt, Date.now());
+
+        try {
+            this.socket.emit('transcript-stream-segment', {
+                sid: this.sessionId,
+                message: {
+                    localId,
+                    ...(sidechainId ? { sidechainId } : {}),
+                    content: payload,
+                    createdAt,
+                    updatedAt,
+                },
+            });
+        } catch {
+            // Ephemeral stream updates are best effort.
         }
     }
 

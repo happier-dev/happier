@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { storage } from '../state/storage';
+import { t } from '@/text';
 
 describe('suggestionCommands', () => {
     afterEach(() => {
@@ -17,6 +18,8 @@ describe('suggestionCommands', () => {
         const commands = getAllCommands('s1');
         expect(commands.some((c) => c.command === 'review')).toBe(true);
         expect(commands.some((c) => c.command === 'h.review')).toBe(true);
+        expect(commands.find((c) => c.command === 'pet')?.description).toBe(t('commandPalette.pets.chooseSubtitle'));
+        expect(commands.find((c) => c.command === 'h.pet')?.description).toBe(t('commandPalette.pets.chooseSubtitle'));
         expect(commands.some((c) => c.command === 'clear')).toBe(true);
     });
 

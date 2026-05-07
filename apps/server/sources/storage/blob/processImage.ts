@@ -1,7 +1,8 @@
-import sharp from "sharp";
+import { loadSharp } from "./sharpRuntime";
 import { thumbhash } from "./thumbhash";
 
 export async function processImage(src: Buffer) {
+    const sharp = loadSharp();
 
     // Read image
     let meta = await sharp(src).metadata();

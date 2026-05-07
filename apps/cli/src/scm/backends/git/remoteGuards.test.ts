@@ -8,7 +8,7 @@ function makeSnapshot(overrides?: Partial<ScmWorkingSnapshot>): ScmWorkingSnapsh
     return {
         projectKey: 'machine:/repo',
         fetchedAt: Date.now(),
-        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [] },
+        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [], remotes: [] },
         capabilities: {
             readStatus: true,
             readDiffFile: true,

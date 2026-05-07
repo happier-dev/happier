@@ -22,7 +22,11 @@ import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
 import type { DaemonServiceMode, DaemonServiceTargetMode } from './plan';
 import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
 import { resolveDaemonServiceDiscoveryTargets } from './resolveDaemonServiceDiscoveryTargets';
-import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import {
+  DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
+  resolveManagedCliReleaseChannel,
+} from '@happier-dev/cli-common/firstPartyRuntime';
 import { doesInstalledDaemonServiceDefinitionMatchExpected } from './doesInstalledDaemonServiceDefinitionMatchExpected';
 import { resolveHappierHomeDirComparableKey } from '@/daemon/ownership/happierHomeDirComparableKey';
 
@@ -37,6 +41,19 @@ function resolveSupportedPlatform(p: string): SupportedPlatform | null {
 
 function formatDaemonServiceLabels(services: readonly { label: string }[]): string {
   return services.map((service) => service.label).join(', ');
+}
+
+async function resolveDaemonServiceReleaseChannel(params: Readonly<{
+  channel?: PublicReleaseRingId;
+  processEnv?: NodeJS.ProcessEnv;
+}>): Promise<PublicReleaseRingId> {
+  if (params.channel) return params.channel;
+  return (await resolveManagedCliReleaseChannel({
+    argv: process.argv,
+    processEnv: params.processEnv ?? process.env,
+    envKeys: DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
+    markerFallback: 'always',
+  })).ringId;
 }
 
 export type DaemonServiceInstallConflictNotice = Readonly<{
@@ -125,8 +142,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const instanceId = options.instanceId ?? configuration.activeServerId;
-  const envChannel = normalizePublicReleaseRingId(String(process.env.HAPPIER_DAEMON_SERVICE_CHANNEL ?? '').trim());
-  const channel: PublicReleaseRingId = options.channel ?? (envChannel || 'stable');
+  const channel = await resolveDaemonServiceReleaseChannel({ channel: options.channel });
   const targetMode: DaemonServiceTargetMode = options.targetMode ?? 'default-following';
   const serverUrl = options.serverUrl ?? configuration.apiServerUrl;
   const webappUrl = options.webappUrl ?? configuration.webappUrl;
@@ -274,7 +290,6 @@ export async function installDaemonService(options: Readonly<{
   const uid = options.uid ?? (process.getuid ? process.getuid() : undefined);
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
-  const channel = options.channel ?? normalizePublicReleaseRingId(String(process.env.HAPPIER_DAEMON_SERVICE_CHANNEL ?? '').trim()) ?? 'stable';
   const preview = await previewDaemonServiceInstall(options);
   const conflictNotice = describeDaemonServiceInstallConflict({
     exactTargetExists: preview.exactTargetExists,
@@ -353,8 +368,7 @@ export async function uninstallDaemonService(options: Readonly<{
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const instanceId = options.instanceId ?? configuration.activeServerId;
-  const envChannel = normalizePublicReleaseRingId(String(process.env.HAPPIER_DAEMON_SERVICE_CHANNEL ?? '').trim());
-  const channel: PublicReleaseRingId = options.channel ?? (envChannel || 'stable');
+  const channel = await resolveDaemonServiceReleaseChannel({ channel: options.channel });
   const targetMode: DaemonServiceTargetMode = options.targetMode ?? 'default-following';
 
   const plan = planDaemonServiceUninstall({

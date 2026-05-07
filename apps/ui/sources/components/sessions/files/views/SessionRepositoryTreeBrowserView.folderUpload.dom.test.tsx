@@ -33,8 +33,25 @@ installSessionFilesViewCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-            View: ({ testID, children, onLayout: _onLayout, style, ...props }: any) =>
+            View: ({
+                testID,
+                children,
+                onLayout: _onLayout,
+                style,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
+                ...props
+            }: any) =>
                 React.createElement('div', { 'data-testid': testID, style: flattenRnStyle(style), ...props }, children),
+            Text: ({
+                testID,
+                children,
+                style,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
+                ...props
+            }: any) =>
+                React.createElement('span', { 'data-testid': testID, style: flattenRnStyle(style), ...props }, children),
             Pressable: ({
                 testID,
                 onPress,
@@ -62,6 +79,8 @@ installSessionFilesViewCommonModuleMocks({
                 testID,
                 onChangeText,
                 children,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
                 placeholderTextColor: _placeholderTextColor,
                 autoCorrect: _autoCorrect,
                 clearButtonMode: _clearButtonMode,
@@ -78,6 +97,22 @@ installSessionFilesViewCommonModuleMocks({
                     },
                     children,
                 ),
+            ScrollView: ({
+                testID,
+                children,
+                style,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
+                ...props
+            }: any) =>
+                React.createElement('div', { 'data-testid': testID, style: flattenRnStyle(style), ...props }, children),
+            ActivityIndicator: ({
+                testID,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
+                ...props
+            }: any) =>
+                React.createElement('span', { 'data-testid': testID, ...props }),
         });
     },
     storage: async (importOriginal) => {
@@ -92,8 +127,8 @@ installSessionFilesViewCommonModuleMocks({
 });
 
 vi.mock('@expo/vector-icons', () => ({
-    Octicons: (props: any) => React.createElement('span', props),
-    Ionicons: (props: any) => React.createElement('span', props),
+    Octicons: ({ accessibilityLabel: _accessibilityLabel, accessibilityRole: _accessibilityRole, ...props }: any) => React.createElement('span', props),
+    Ionicons: ({ accessibilityLabel: _accessibilityLabel, accessibilityRole: _accessibilityRole, ...props }: any) => React.createElement('span', props),
 }));
 
 vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
@@ -113,7 +148,11 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
+    ItemRowActions: ({
+        accessibilityLabel: _accessibilityLabel,
+        accessibilityRole: _accessibilityRole,
+        ...props
+    }: any) => React.createElement('ItemRowActions', props),
 }));
 
 vi.mock('@/components/sessions/files/repositoryTree/RepositoryTreeDropOverlay', () => ({
@@ -125,7 +164,13 @@ vi.mock('@/components/sessions/files/repositoryTree/RepositoryTreeTransferStatus
 }));
 
 vi.mock('@/components/sessions/files/repositoryTree/WebDropTargetView', () => ({
-    WebDropTargetView: ({ children, testID, ...props }: any) =>
+    WebDropTargetView: ({
+        children,
+        testID,
+        accessibilityLabel: _accessibilityLabel,
+        accessibilityRole: _accessibilityRole,
+        ...props
+    }: any) =>
         React.createElement('div', { 'data-testid': testID, ...props }, children),
 }));
 

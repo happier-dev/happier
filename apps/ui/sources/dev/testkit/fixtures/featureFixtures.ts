@@ -1,4 +1,7 @@
-import type { FeaturesResponse as RootLayoutFeatures } from '@happier-dev/protocol';
+import {
+    DEFAULT_PETS_CAPABILITIES,
+    type FeaturesResponse as RootLayoutFeatures,
+} from '@happier-dev/protocol';
 
 type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' | 'capabilities'> & Readonly<{
     features?: Omit<
@@ -6,6 +9,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
         | 'attachments'
         | 'channelBridges'
         | 'automations'
+        | 'pets'
         | 'connectedServices'
         | 'updates'
         | 'sharing'
@@ -22,6 +26,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
             attachments?: Partial<RootLayoutFeatures['features']['attachments']>;
             channelBridges?: Partial<RootLayoutFeatures['features']['channelBridges']>;
             automations?: Partial<RootLayoutFeatures['features']['automations']>;
+            pets?: Partial<RootLayoutFeatures['features']['pets']>;
             connectedServices?: Partial<RootLayoutFeatures['features']['connectedServices']>;
             updates?: Partial<RootLayoutFeatures['features']['updates']>;
             sharing?: Partial<RootLayoutFeatures['features']['sharing']>;
@@ -34,12 +39,13 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
             encryption?: Partial<RootLayoutFeatures['features']['encryption']>;
             e2ee?: Partial<RootLayoutFeatures['features']['e2ee']>;
         }>;
-    capabilities?: Omit<Partial<RootLayoutFeatures['capabilities']>, 'oauth' | 'social' | 'auth' | 'encryption'> &
+    capabilities?: Omit<Partial<RootLayoutFeatures['capabilities']>, 'oauth' | 'social' | 'auth' | 'encryption' | 'pets'> &
         Readonly<{
             oauth?: Partial<RootLayoutFeatures['capabilities']['oauth']>;
             social?: Partial<RootLayoutFeatures['capabilities']['social']>;
             auth?: Partial<RootLayoutFeatures['capabilities']['auth']>;
             encryption?: Partial<RootLayoutFeatures['capabilities']['encryption']>;
+            pets?: Partial<RootLayoutFeatures['capabilities']['pets']>;
         }>;
 }>;
 
@@ -55,6 +61,10 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         },
         attachments: {
             uploads: { enabled: true },
+        },
+        pets: {
+            companion: { enabled: false },
+            sync: { enabled: false },
         },
         channelBridges: {
             enabled: true,
@@ -129,6 +139,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             contextWindowMs: 30 * 60 * 1_000,
         },
         voice: { configured: false, provider: null, requested: false, disabledByBuildPolicy: false },
+        pets: DEFAULT_PETS_CAPABILITIES,
         encryption: {
             storagePolicy: 'required_e2ee',
             allowAccountOptOut: false,
@@ -203,12 +214,14 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
         nextFeatures.connectedServices ?? {};
     const nextUpdates: Partial<RootLayoutFeatures['features']['updates']> = nextFeatures.updates ?? {};
     const nextAutomations: Partial<RootLayoutFeatures['features']['automations']> = nextFeatures.automations ?? {};
+    const nextPets: Partial<RootLayoutFeatures['features']['pets']> = nextFeatures.pets ?? {};
 
     const nextCapabilitiesAuth: Partial<RootLayoutFeatures['capabilities']['auth']> = nextCapabilities.auth ?? {};
     const nextCapabilitiesSocial: Partial<RootLayoutFeatures['capabilities']['social']> = nextCapabilities.social ?? {};
     const nextCapabilitiesOauth: Partial<RootLayoutFeatures['capabilities']['oauth']> = nextCapabilities.oauth ?? {};
     const nextCapabilitiesEncryption: Partial<RootLayoutFeatures['capabilities']['encryption']> =
         nextCapabilities.encryption ?? {};
+    const nextCapabilitiesPets: Partial<RootLayoutFeatures['capabilities']['pets']> = nextCapabilities.pets ?? {};
     const nextCapabilitiesAuthRecovery: Partial<RootLayoutFeatures['capabilities']['auth']['recovery']> =
         nextCapabilitiesAuth.recovery ?? {};
     const nextCapabilitiesAuthUi: Partial<RootLayoutFeatures['capabilities']['auth']['ui']> =
@@ -290,6 +303,18 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                 ...BASE_ROOT_LAYOUT_FEATURES.features.automations,
                 ...nextAutomations,
             },
+            pets: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.pets,
+                ...nextPets,
+                companion: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.pets.companion,
+                    ...(nextPets.companion ?? {}),
+                },
+                sync: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.pets.sync,
+                    ...(nextPets.sync ?? {}),
+                },
+            },
             connectedServices: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.connectedServices,
                 ...nextConnectedServices,
@@ -345,6 +370,14 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
             voice: {
                 ...BASE_ROOT_LAYOUT_FEATURES.capabilities.voice,
                 ...(nextCapabilities.voice ?? {}),
+            },
+            pets: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.pets,
+                ...nextCapabilitiesPets,
+                limits: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.pets.limits,
+                    ...(nextCapabilitiesPets.limits ?? {}),
+                },
             },
             encryption: {
                 ...BASE_ROOT_LAYOUT_FEATURES.capabilities.encryption,

@@ -1,5 +1,13 @@
 import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
+import {
+    PET_COMPANION_POSITION_DEFAULT,
+    PetCompanionStoredPositionSchema,
+} from '@/sync/domains/pets/companionPosition/companionPosition';
+import {
+    PET_COMPANION_SIZE_SCALE_DEFAULT,
+    normalizePetCompanionSizeScale,
+} from '@/sync/domains/pets/companionSizeScale';
 
 function bucketNormalizedPaneSize(
     value: number,
@@ -30,6 +38,39 @@ function serializeNormalizedPaneSizeWithBasisKey(
     return (value: number, record: Readonly<Record<string, unknown>>) =>
         bucketNormalizedPaneSize(value, record[basisKey], smallMaxFraction, mediumMaxFraction);
 }
+
+function serializePetCompanionSizeScaleBucket(value: number): 'small' | 'default' | 'large' | 'xlarge' {
+    const scale = normalizePetCompanionSizeScale(value);
+    if (scale < 0.95) return 'small';
+    if (scale <= 1.05) return 'default';
+    if (scale <= 1.25) return 'large';
+    return 'xlarge';
+}
+
+const PetEnabledOverrideSchema = z.enum(['inherit', 'enabled', 'disabled']);
+const PetSelectedOverrideSchema = z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('inherit') }),
+    z.object({
+        kind: z.literal('detectedCodexHome'),
+        sourceKey: z.string().min(1),
+    }),
+    z.object({
+        kind: z.literal('happierManagedLocal'),
+        sourceKey: z.string().min(1),
+    }),
+]);
+const DesktopPetOverlayVisibilityModeOverrideSchema = z.enum([
+    'inherit',
+    'attentionOrActive',
+    'alwaysWhenEnabled',
+    'attentionOnly',
+]);
+const DesktopPetOverlayAnchorSchema = z.enum(['bottomRight', 'bottomLeft', 'topRight', 'topLeft']);
+const DesktopPetOverlayOffsetSchema = z.object({
+    x: z.number(),
+    y: z.number(),
+});
+const PetCompanionSizeScaleSchema = z.number().catch(PET_COMPANION_SIZE_SCALE_DEFAULT);
 
 export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
     debugMode: {
@@ -222,10 +263,77 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Foreground notification presentation on this device',
         storageScope: 'local',
     },
-    editorFocusModeEnabled: {
+    petsEnabledOverride: {
+        schema: PetEnabledOverrideSchema,
+        default: 'inherit',
+        description: 'Device override for pet companion enablement',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    petsSelectedPetOverride: {
+        schema: PetSelectedOverrideSchema,
+        default: { kind: 'inherit' },
+        description: 'Device-only pet package override',
+        storageScope: 'local',
+    },
+    petsCompanionPosition: {
+        schema: PetCompanionStoredPositionSchema,
+        default: PET_COMPANION_POSITION_DEFAULT,
+        description: 'Versioned normalized app-shell pet companion position on this device',
+        storageScope: 'local',
+    },
+    petsCompanionSizeScale: {
+        schema: PetCompanionSizeScaleSchema,
+        default: PET_COMPANION_SIZE_SCALE_DEFAULT,
+        description: 'Device-local size multiplier for pet companion surfaces',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'bucket',
+            privacy: 'bucketed',
+            identityScope: 'device_user',
+            serializeCurrent: serializePetCompanionSizeScaleBucket,
+        },
+    },
+    petsDetectCodexPets: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Discover Codex pet packages from local Codex homes on this device',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
+    },
+    desktopPetOverlayEnabledOverride: {
+        schema: PetEnabledOverrideSchema,
+        default: 'inherit',
+        description: 'Device override for desktop pet overlay enablement',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    desktopPetOverlayVisibilityModeOverride: {
+        schema: DesktopPetOverlayVisibilityModeOverrideSchema,
+        default: 'inherit',
+        description: 'Device override for desktop pet overlay visibility mode',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    desktopPetOverlayAnchor: {
+        schema: DesktopPetOverlayAnchorSchema,
+        default: 'bottomRight',
+        description: 'Desktop pet overlay anchor on this device',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    desktopPetOverlayOffset: {
+        schema: DesktopPetOverlayOffsetSchema,
+        default: { x: 0, y: 0 },
+        description: 'Desktop pet overlay offset from the selected anchor on this device',
+        storageScope: 'local',
+    },
+    desktopPetOverlayLocked: {
         schema: z.boolean(),
         default: false,
-        description: 'Hide main content + sidebar to focus on right/details panes (web/tablet)',
+        description: 'Lock desktop pet overlay dragging on this device',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
     },
@@ -302,6 +410,20 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Selected session list storage tab',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    sessionLastMobileSurfaceBySessionId: {
+        schema: z.record(z.string(), z.enum(['chat', 'browse', 'git', 'tabs', 'terminal'])).default({}),
+        default: {},
+        description: 'Last active mobile session surface by session id',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'device_user',
+            serializeCurrent: objectKeyCount,
+        },
     },
     acknowledgedCliVersions: {
         schema: z.record(z.string(), z.string()),

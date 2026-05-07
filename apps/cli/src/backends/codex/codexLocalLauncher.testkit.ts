@@ -119,6 +119,10 @@ export async function writeFakeCodexScript(path: string, opts: {
   handleSigterm?: boolean;
   selfTerminateSignal?: NodeJS.Signals;
   selfTerminateAfterMs?: number;
+  emitTaskStarted?: boolean;
+  taskCompleteAfterMs?: number;
+  turnAbortedAfterMs?: number;
+  turnAbortedReason?: string;
 }): Promise<void> {
   const sessionMetaDelayMs = typeof opts.sessionMetaDelayMs === 'number' ? opts.sessionMetaDelayMs : 0;
   const assistantText = typeof opts.assistantText === 'string' ? opts.assistantText : null;
@@ -129,6 +133,10 @@ export async function writeFakeCodexScript(path: string, opts: {
   const recordCodexEnv = opts.recordCodexEnv === true;
   const selfTerminateSignal = typeof opts.selfTerminateSignal === 'string' ? opts.selfTerminateSignal : null;
   const selfTerminateAfterMs = typeof opts.selfTerminateAfterMs === 'number' ? opts.selfTerminateAfterMs : null;
+  const emitTaskStarted = opts.emitTaskStarted === true;
+  const taskCompleteAfterMs = typeof opts.taskCompleteAfterMs === 'number' ? opts.taskCompleteAfterMs : null;
+  const turnAbortedAfterMs = typeof opts.turnAbortedAfterMs === 'number' ? opts.turnAbortedAfterMs : null;
+  const turnAbortedReason = typeof opts.turnAbortedReason === 'string' ? opts.turnAbortedReason : 'interrupted';
 
 const script = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -178,7 +186,10 @@ if (${recordCodexEnv ? 'true' : 'false'}) {
 
 function writeSessionMeta() {
   write(JSON.stringify({ type: 'session_meta', payload: { id, timestamp: ts, cwd: process.cwd() } }));
+  ${emitTaskStarted ? `write(JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: id } }));` : ''}
   ${assistantText ? `write(JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: ${JSON.stringify(assistantText)} }] } }));` : ''}
+  ${taskCompleteAfterMs != null ? `setTimeout(() => write(JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: id } })), ${taskCompleteAfterMs});` : ''}
+  ${turnAbortedAfterMs != null ? `setTimeout(() => write(JSON.stringify({ type: 'event_msg', payload: { type: 'turn_aborted', turn_id: id, reason: ${JSON.stringify(turnAbortedReason)} } })), ${turnAbortedAfterMs});` : ''}
 }
 
 if (${sessionMetaDelayMs} > 0) {

@@ -17,7 +17,6 @@ describe('buildLocalSettingsSnapshot', () => {
             uiMultiPanePanelsEnabled: false,
             sessionsRightPaneDefaultOpen: true,
             detailsPaneTabsBehavior: 'persistent',
-            editorFocusModeEnabled: true,
             rightPaneWidthPx: 360,
             rightPaneWidthBasisPx: 800,
             detailsPaneWidthPx: 420,
@@ -39,7 +38,7 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(snapshot.properties.local_setting__uiMultiPanePanelsEnabled).toBe(false);
         expect(snapshot.properties.local_setting__sessionsRightPaneDefaultOpen).toBe(true);
         expect(snapshot.properties.local_setting__detailsPaneTabsBehavior).toBe('persistent');
-        expect(snapshot.properties.local_setting__editorFocusModeEnabled).toBe(true);
+        expect(snapshot.properties).not.toHaveProperty('local_setting__editorFocusModeEnabled');
         expect(snapshot.properties.local_setting__rightPaneWidthPx).toBe('large');
         expect(snapshot.properties.local_setting__detailsPaneWidthPx).toBe('medium');
         expect(snapshot.properties.local_setting__bottomPaneHeightPx).toBe('small');
@@ -49,4 +48,3 @@ describe('buildLocalSettingsSnapshot', () => {
         expect(snapshot.properties.local_derived__uiFontScaleBucket).toBe('large');
     });
 });
-

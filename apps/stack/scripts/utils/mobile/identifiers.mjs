@@ -25,16 +25,37 @@ export function stackSlugForMobileIds(stackName) {
   return sanitizeBundleIdSegment(raw || 'stack');
 }
 
-export function defaultDevClientIdentity({ user = null } = {}) {
-  return {
+function normalizeDevClientProfile(raw) {
+  const value = (raw ?? '').toString().trim().toLowerCase();
+  if (!value || value === 'internaldev' || value === 'internal' || value === 'development') return 'internaldev';
+  if (value === 'publicdev' || value === 'public' || value === 'dev') return 'publicdev';
+  throw new Error(`[mobile-dev-client] unsupported profile: ${value}`);
+}
+
+const DEV_CLIENT_IDENTITIES = Object.freeze({
+  internaldev: Object.freeze({
+    profile: 'internaldev',
+    appEnv: 'internaldev',
     iosAppName: 'Happier (internal dev)',
-    // IMPORTANT:
-    // Keep the dev-client bundle id stable so EAS Android signing credentials (keystore) can be
-    // provisioned once and reused across runs. This also matches the default development variant
-    // bundle id in apps/ui/app.config.js.
-    iosBundleId: 'dev.happier.app.dev.internal',
+    iosBundleId: 'dev.happier.app.dev.internal.devclient',
+    androidPackage: 'dev.happier.app.internaldev.devclient',
     scheme: 'happier-internaldev',
-  };
+    easBuildProfile: 'internaldev-dev-client',
+  }),
+  publicdev: Object.freeze({
+    profile: 'publicdev',
+    appEnv: 'publicdev',
+    iosAppName: 'Happier (dev)',
+    iosBundleId: 'dev.happier.app.publicdev.devclient',
+    androidPackage: 'dev.happier.app.publicdev.devclient',
+    scheme: 'happier-dev',
+    easBuildProfile: 'publicdev-dev-client',
+  }),
+});
+
+export function defaultDevClientIdentity({ user = null, profile = null } = {}) {
+  const normalizedProfile = normalizeDevClientProfile(profile);
+  return { ...DEV_CLIENT_IDENTITIES[normalizedProfile] };
 }
 
 export function defaultStackReleaseIdentity({ stackName, user = null, appName = null } = {}) {

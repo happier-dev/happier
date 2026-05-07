@@ -14,7 +14,7 @@ export const CLAUDE_CORE: AgentCoreConfig = {
     permissionModeI18nPrefix: 'agentInput.permissionMode',
     availability: { experimental: false },
     connectedServices: buildAgentConnectedServicesUiConfig({ agentId: 'claude' }),
-    uiConnectedService: { serviceId: 'anthropic', label: 'Claude Code', connectRoute: '/(app)/settings/connect/claude' },
+    uiConnectedService: { serviceId: 'anthropic', label: 'Claude Code', connectRoute: '/settings/connect/claude' },
     flavorAliases: ['claude'],
     cli: buildCatalogProviderCliUiConfig('claude'),
     permissions: {

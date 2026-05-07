@@ -60,4 +60,31 @@ describe("markAccountChanged", () => {
         await expect(markAccountChanged(tx, { accountId: "a", kind: "" as any, entityId: "e" })).rejects.toThrow(/kind/i);
         await expect(markAccountChanged(tx, { accountId: "a", kind: "session", entityId: "" })).rejects.toThrow(/entityId/i);
     });
+
+    it("links pet changes to account pet package rows for pruning-safe change tracking", async () => {
+        const tx: any = {
+            account: {
+                update: vi.fn().mockResolvedValue({ seq: 9 }),
+            },
+            accountChange: {
+                upsert: vi.fn().mockResolvedValue({}),
+            },
+        };
+
+        await markAccountChanged(tx, {
+            accountId: "a1",
+            kind: "pet",
+            entityId: "pet-1",
+            hint: { domain: "accountPet", action: "create", accountPetId: "pet-1", changedAt: 1 },
+        });
+
+        expect(tx.accountChange.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({
+                accountPetPackageId: "pet-1",
+            }),
+            update: expect.objectContaining({
+                accountPetPackageId: "pet-1",
+            }),
+        }));
+    });
 });

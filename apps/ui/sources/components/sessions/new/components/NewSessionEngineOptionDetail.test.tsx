@@ -36,11 +36,20 @@ const modelOptionsState = vi.hoisted(() => ({
         { value: 'preset-fast', label: 'Preset Fast', description: 'Fast preset model.' },
     ] as ReadonlyArray<ModelOptionEntry>,
 }));
-const preflightModelsState = vi.hoisted(() => ({
+const preflightModelsState = vi.hoisted<{
+    value: {
+        availableModels: Array<{ id: string; name: string; description?: string }>;
+        supportsFreeform: boolean;
+    } | null;
+}>(() => ({
     value: { availableModels: [] as Array<{ id: string; name: string }>, supportsFreeform: false },
 }));
-const agentCoreState = vi.hoisted(() => ({
+const agentCoreState = vi.hoisted<{
+    supportsFreeform: boolean;
+    dynamicProbe: 'dynamic' | 'static-only';
+}>(() => ({
     supportsFreeform: true,
+    dynamicProbe: 'dynamic',
 }));
 
 const modeOptionsState = vi.hoisted(() => ({
@@ -111,6 +120,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: () => ({
         model: {
             supportsFreeform: agentCoreState.supportsFreeform,
+            dynamicProbe: agentCoreState.dynamicProbe,
         },
     }),
 }));
@@ -195,6 +205,7 @@ describe('NewSessionEngineOptionDetail', () => {
         ];
         preflightModelsState.value = { availableModels: [], supportsFreeform: false };
         agentCoreState.supportsFreeform = true;
+        agentCoreState.dynamicProbe = 'dynamic';
         modeOptionsState.value = [
             { id: 'default', name: 'Build', description: 'Default build mode.' },
             { id: 'review', name: 'Review', description: 'Review and critique mode.' },
@@ -265,6 +276,68 @@ describe('NewSessionEngineOptionDetail', () => {
         expect(lastModelPickerOverlayProps).toBeTruthy();
         expect(lastModelPickerOverlayProps.options).toHaveLength(12);
         expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(true);
+    });
+
+    it('marks only dynamically probed favorite models as favoritable for dynamic backends', async () => {
+        modelOptionsState.value = [
+            { value: 'default', label: 'Use CLI settings', description: '' },
+            { value: 'preset-fast', label: 'Preset Fast', description: 'Fast preset model.' },
+            { value: 'catalog-only', label: 'Catalog Only', description: 'Catalog fallback.' },
+        ];
+        preflightModelsState.value = {
+            availableModels: [{ id: 'preset-fast', name: 'Preset Fast' }],
+            supportsFreeform: false,
+        };
+        agentCoreState.dynamicProbe = 'dynamic';
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="preset-fast"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            favoriteModelSelections={[
+                { backendTargetKey: 'acpBackend:custom-preset', modelId: 'preset-fast' },
+                { backendTargetKey: 'acpBackend:custom-preset', modelId: 'catalog-only' },
+            ]}
+            onToggleFavoriteModel={vi.fn()}
+        />);
+
+        expect(lastModelPickerOverlayProps?.favoriteOptions?.values.has('preset-fast')).toBe(true);
+        expect(lastModelPickerOverlayProps?.favoriteOptions?.values.has('catalog-only')).toBe(false);
+        expect(lastModelPickerOverlayProps?.favoriteOptions?.isFavoritable({ value: 'preset-fast' })).toBe(true);
+        expect(lastModelPickerOverlayProps?.favoriteOptions?.isFavoritable({ value: 'catalog-only' })).toBe(false);
+    });
+
+    it('marks static catalog models as favoritable for static-only backends', async () => {
+        modelOptionsState.value = [
+            { value: 'default', label: 'Use CLI settings', description: '' },
+            { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', description: 'Static model.' },
+        ];
+        preflightModelsState.value = null;
+        agentCoreState.dynamicProbe = 'static-only';
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="claude-sonnet-4-5"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            favoriteModelSelections={[
+                { backendTargetKey: 'acpBackend:custom-preset', modelId: 'claude-sonnet-4-5' },
+            ]}
+            onToggleFavoriteModel={vi.fn()}
+        />);
+
+        expect(lastModelPickerOverlayProps?.favoriteOptions?.values.has('claude-sonnet-4-5')).toBe(true);
+        expect(lastModelPickerOverlayProps?.favoriteOptions?.isFavoritable({ value: 'claude-sonnet-4-5' })).toBe(true);
+        expect(lastModelPickerOverlayProps?.favoriteOptions?.isFavoritable({ value: 'default' })).toBe(false);
     });
 
     it('renders a single refresh control (in the model section) that refreshes CLI detection even when model/config probes have no refresh callback', async () => {

@@ -462,6 +462,31 @@ describe('Realtime voice modes', () => {
       );
     });
 
+    it('clears realtime status and speaking mode on stop even when the provider emits no disconnect callback', async () => {
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        expiresAtMs: Date.now() + 60_000,
+      });
+
+      const { registerVoiceSession, startRealtimeSession, stopRealtimeSession } = await import('./RealtimeSession');
+      const { session } = makeVoiceSession('conv_1');
+      registerVoiceSession(session);
+
+      await startRealtimeSession('s1', 'hi');
+
+      state.setRealtimeStatus.mockReset();
+      state.setRealtimeMode.mockReset();
+      state.clearRealtimeModeDebounce.mockReset();
+
+      await stopRealtimeSession();
+
+      expect(state.setRealtimeStatus).toHaveBeenCalledWith('disconnected');
+      expect(state.setRealtimeMode).toHaveBeenCalledWith('idle', true);
+      expect(state.clearRealtimeModeDebounce).toHaveBeenCalledTimes(1);
+    });
+
     it('retries after paywall purchase without deadlocking', async () => {
       fetchHappierVoiceToken
         .mockResolvedValueOnce({ allowed: false, reason: 'subscription_required' })

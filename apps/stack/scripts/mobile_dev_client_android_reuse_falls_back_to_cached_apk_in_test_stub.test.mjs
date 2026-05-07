@@ -14,7 +14,7 @@ test('hstack mobile-dev-client --platform=android --reuse falls back to cached A
     includeStorageDir: true,
   });
 
-  const cachedApkAbs = join(fixture.homeDir, 'mobile-dev-client', 'android', 'happier-dev-client-android.apk');
+  const cachedApkAbs = join(fixture.homeDir, 'mobile-dev-client', 'internaldev', 'android', 'happier-dev-client-android.apk');
   await mkdir(dirname(cachedApkAbs), { recursive: true });
   await writeFile(cachedApkAbs, 'apk-bytes', 'utf-8');
 

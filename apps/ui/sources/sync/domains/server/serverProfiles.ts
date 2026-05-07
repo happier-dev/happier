@@ -687,6 +687,7 @@ export function setActiveServerId(
 
     const now = nowMs();
     const existing = state.servers[id]!;
+    writeTabActiveServerId(null);
     writePersistedState({
         ...state,
         activeServerIdIsExplicit: true,

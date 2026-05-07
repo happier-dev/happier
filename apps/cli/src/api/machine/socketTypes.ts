@@ -1,6 +1,10 @@
 import type { SocketRpcCallPayload, SocketRpcCallResponse, SocketRpcRequestPayload, Update } from '../types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
+import type {
+  DirectSessionTranscriptDeltaEphemeral,
+  MachineTransferReceiveEnvelope,
+  MachineTransferSendEnvelope,
+} from '@happier-dev/protocol';
 
 export interface ServerToDaemonEvents {
   update: (data: Update) => void;
@@ -16,6 +20,7 @@ export interface ServerToDaemonEvents {
 export interface DaemonToServerEvents {
   'machine-alive': (data: { machineId: string; time: number }) => void;
   'session-end': (data: { sid: string; time: number; exit?: any }) => void;
+  'direct-session-transcript-delta': (data: DirectSessionTranscriptDeltaEphemeral) => void;
 
   'machine-update-metadata': (
     data: { machineId: string; metadata: string; expectedVersion: number },

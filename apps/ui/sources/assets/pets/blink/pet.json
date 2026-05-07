@@ -1,0 +1,6 @@
+{
+  "id": "blink",
+  "displayName": "Blink",
+  "description": "Friendly alpine marmot inspired by the reference photo.",
+  "spritesheetPath": "spritesheet.webp"
+}

@@ -1,22 +1,7 @@
-import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 import { buildLightDevPlan } from './dev.lightPlan';
-
-function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            env: env as Record<string, string>,
-            stdio: 'inherit',
-            shell: false,
-        });
-        child.on('error', reject);
-        child.on('exit', (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`${cmd} exited with code ${code}`));
-        });
-    });
-}
+import { runCommand } from './runCommand';
 
 async function main() {
     const env: NodeJS.ProcessEnv = { ...process.env };
@@ -33,10 +18,10 @@ async function main() {
     await mkdir(dbDir, { recursive: true });
 
     // Apply migrations (idempotent).
-    await run('yarn', plan.migrateDeployArgs, env);
+    await runCommand('yarn', plan.migrateDeployArgs, env);
 
     // Run the light flavor.
-    await run('yarn', plan.startLightArgs, env);
+    await runCommand('yarn', plan.startLightArgs, env);
 }
 
 main().catch((err) => {

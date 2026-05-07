@@ -1,9 +1,8 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
-import { FileActionToolbar, type FileDiffMode } from '@/components/sessions/files/file/FileActionToolbar';
+import { FileActionToolbar, type FileDiffMode, type FileDisplayMode } from '@/components/sessions/files/file/FileActionToolbar';
 import { FileContentPanel } from '@/components/sessions/files/file/FileContentPanel';
 import { FileDownloadButton } from '@/components/sessions/files/file/FileDownloadButton';
-import { FileHeader } from '@/components/sessions/files/file/FileHeader';
 import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/sessions/files/file/FileScreenState';
 import { FileEditorPanel } from '@/components/sessions/files/file/editor/FileEditorPanel';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
@@ -11,7 +10,7 @@ import {
     useSession,
     useSessions,
     useProjectForSession,
-    useSessionReviewCommentsDrafts,
+    useWorkspaceReviewCommentsDrafts,
     useSessionProjectScmCommitSelectionPaths,
     useSessionProjectScmCommitSelectionPatches,
     useSessionProjectScmInFlightOperation,
@@ -35,15 +34,17 @@ import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/in
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { refreshSessionFileDetails, type SessionFileDetailsFileContent } from './sessionFileDetails/refreshSessionFileDetails';
 import { useSessionFileEditorState } from './sessionFileDetails/useSessionFileEditorState';
-import { useSessionReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useSessionReviewCommentDraftHandlers';
+import { useWorkspaceReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useWorkspaceReviewCommentDraftHandlers';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { resolveShowDiffToggle } from './sessionFileDetails/resolveShowDiffToggle';
+import { resolveFileDetailsDisplayMode } from './sessionFileDetails/resolveFileDetailsDisplayMode';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { useSessionFileDownloadAvailability } from '@/components/sessions/files/useSessionFileDownloadAvailability';
+import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 export type SessionFileDeepLinkAnchor = Readonly<{
     source: ReviewCommentSource;
     anchor: ReviewCommentAnchor;
@@ -91,7 +92,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     const scmCommitStrategy = useSetting('scmCommitStrategy');
     const scmDefaultDiffModeByBackend = useSetting('scmDefaultDiffModeByBackend');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
-    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
+    const reviewCommentsFeatureEnabled = useFeatureEnabled('files.reviewComments');
     const fileEditorFeatureEnabled = useFeatureEnabled('files.editor');
     const showLineNumbers = useSetting('showLineNumbers');
     const wrapLinesInDiffs = useSetting('wrapLinesInDiffs');
@@ -127,7 +128,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
 
     const [fileContent, setFileContent] = React.useState<SessionFileDetailsFileContent | null>(null);
     const [diffContent, setDiffContent] = React.useState<string | null>(null);
-    const [displayMode, setDisplayMode] = React.useState<'file' | 'diff'>(() => (
+    const [displayMode, setDisplayMode] = React.useState<FileDisplayMode>(() => (
         persistedDraft?.isEditingFile ? 'file' : 'diff'
     ));
     const [diffMode, setDiffMode] = React.useState<FileDiffMode>('pending');
@@ -251,25 +252,18 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     }, [lineSelectionFingerprint, refreshAll]);
 
     React.useEffect(() => {
-        // Prefer explicit deep-link source when provided.
-        if (deepLinkAnchor?.source === 'file') {
-            if (fileContent) setDisplayMode('file');
-            return;
-        }
-        if (deepLinkAnchor?.source === 'diff') {
-            if (diffContent) setDisplayMode('diff');
-            return;
-        }
-
-        // Preserve editor-like semantics: if a draft indicates the user was editing, keep the tab in file mode.
-        if (persistedDraft?.isEditingFile) {
-            setDisplayMode('file');
-            return;
-        }
-
-        if (diffContent) setDisplayMode('diff');
-        else if (fileContent) setDisplayMode('file');
-    }, [deepLinkAnchor?.source, diffContent, fileContent, persistedDraft?.isEditingFile]);
+        const language = getFileLanguageFromPath(filePath);
+        const markdownPreviewAvailable = (language === 'markdown' || language === 'mdx')
+            && fileContent?.isBinary !== true
+            && typeof fileContent?.content === 'string';
+        setDisplayMode(resolveFileDetailsDisplayMode({
+            persistedEditing: persistedDraft?.isEditingFile === true,
+            deepLinkSource: deepLinkAnchor?.source ?? null,
+            hasDiffContent: Boolean(diffContent),
+            hasFileContent: Boolean(fileContent),
+            markdownPreviewAvailable,
+        }));
+    }, [deepLinkAnchor?.source, diffContent, fileContent, filePath, persistedDraft?.isEditingFile]);
 
     React.useEffect(() => {
         if (!deepLinkAnchor) {
@@ -322,9 +316,14 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
     const fileName = filePath.split('/').pop() || filePath;
     const filePathDir = filePath.split('/').slice(0, -1).join('/');
     const language = getFileLanguageFromPath(filePath);
+    const markdownPreviewAvailable = (language === 'markdown' || language === 'mdx')
+        && fileContent?.isBinary !== true
+        && typeof fileContent?.content === 'string';
     const syntaxHighlighting = useCodeLinesSyntaxHighlighting(filePath);
-    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
-    const reviewDraftHandlers = useSessionReviewCommentDraftHandlers(sessionId);
+    const reviewScope = useWorkspaceScopeForSession(sessionId);
+    const reviewCommentsEnabled = reviewCommentsFeatureEnabled === true && Boolean(reviewScope);
+    const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
+    const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
 
     const {
         editorSurfaceEnabled,
@@ -405,7 +404,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
 
     React.useEffect(() => {
         if (!previewTooLarge) return;
-        if (displayMode !== 'file') return;
+        if (displayMode !== 'file' && displayMode !== 'markdown') return;
         setDisplayMode('diff');
     }, [displayMode, previewTooLarge]);
 
@@ -425,6 +424,31 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
         if (typeof mime !== 'string' || mime.trim().length === 0) return null;
         return `data:${mime};base64,${base64}`;
     })();
+    const fileHeaderRightElement =
+        showDownloadAction || (fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true)) ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {showDownloadAction ? (
+                    <FileDownloadButton
+                        testID="file-header-download"
+                        sessionId={sessionId}
+                        path={filePath}
+                        asZip={false}
+                    />
+                ) : null}
+                {fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true) ? (
+                    <ScmChangeDiscardButton
+                        sessionId={sessionId}
+                        sessionPath={sessionPath}
+                        snapshot={scmSnapshot ?? null}
+                        scmWriteEnabled={scmWriteEnabled}
+                        commitStrategy={scmCommitStrategy}
+                        file={fileStatusForHeaderActions}
+                        surface="file"
+                        onAfterDiscard={refreshAll}
+                    />
+                ) : null}
+            </View>
+        ) : null;
 
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
@@ -434,43 +458,16 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
                     ...(constrainWidth ? { maxWidth: layout.maxWidth, alignSelf: 'center' } : { maxWidth: '100%' }),
                 }}
             >
-                <FileHeader
+                <FileActionToolbar
                     theme={theme}
                     fileName={fileName}
                     filePathDir={filePathDir}
-                    rightElement={
-                        showDownloadAction || (fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true)) ? (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                {showDownloadAction ? (
-                                    <FileDownloadButton
-                                        testID="file-header-download"
-                                        sessionId={sessionId}
-                                        path={filePath}
-                                        asZip={false}
-                                    />
-                                ) : null}
-                                {fileStatusForHeaderActions && scmWriteEnabled && (scmSnapshot?.capabilities?.writeDiscard === true) ? (
-                                    <ScmChangeDiscardButton
-                                        sessionId={sessionId}
-                                        sessionPath={sessionPath}
-                                        snapshot={scmSnapshot ?? null}
-                                        scmWriteEnabled={scmWriteEnabled}
-                                        commitStrategy={scmCommitStrategy}
-                                        file={fileStatusForHeaderActions}
-                                        surface="file"
-                                        onAfterDiscard={refreshAll}
-                                    />
-                                ) : null}
-                            </View>
-                        ) : null
-                    }
-                />
-                <FileActionToolbar
-                    theme={theme}
+                    rightElement={fileHeaderRightElement}
                     displayMode={displayMode}
                     onDisplayMode={setDisplayMode}
                     showDiffToggle={resolveShowDiffToggle({ diffContent, hasPendingDelta, hasIncludedDelta, fileIsBinary: isBinaryFile })}
                     showFileToggle={Boolean(fileContent)}
+                    showMarkdownToggle={markdownPreviewAvailable}
                     diffMode={diffMode}
                     onDiffMode={setDiffMode}
                     hasPendingDelta={hasPendingDelta}

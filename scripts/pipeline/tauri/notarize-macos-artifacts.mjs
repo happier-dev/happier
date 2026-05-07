@@ -37,10 +37,24 @@ export function extractTauriUpdaterSignature(stdout) {
     const line = lines[i];
     const m = /^signature:\s*([A-Za-z0-9+/=]+)$/i.exec(line);
     if (m?.[1]) return m[1];
+    if (/^signature:\s*$/i.test(line)) {
+      const nextLine = lines[i + 1];
+      if (nextLine && /^[A-Za-z0-9+/=]{80,}$/.test(nextLine)) {
+        return nextLine;
+      }
+    }
   }
 
-  // Fallback: pick the last plausible base64 token of signature-like length.
-  const matches = raw.match(/[A-Za-z0-9+/=]{80,256}/g) ?? [];
+  // Fallback: pick the last full base64-only line. Signatures can be longer than 256
+  // characters, so token chunking would silently publish only the tail of the signature.
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (/^[A-Za-z0-9+/=]{80,}$/.test(line)) {
+      return line;
+    }
+  }
+
+  const matches = raw.match(/[A-Za-z0-9+/=]{80,}/g) ?? [];
   return matches.length > 0 ? matches[matches.length - 1] : '';
 }
 

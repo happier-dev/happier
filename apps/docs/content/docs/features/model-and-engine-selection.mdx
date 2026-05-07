@@ -1,0 +1,209 @@
+---
+title: Model and engine selection
+description: Choose a backend engine, pick a model, use live model lists, and save favorite model choices for new sessions.
+---
+
+Happier uses **engine** in the app UI for the backend choice that will run a session.
+
+An engine can be:
+
+- a built-in provider backend, such as Claude, Codex, Gemini, OpenCode, or Pi
+- a configured **Custom ACP** backend
+- a backend variant exposed by a provider integration
+
+The **Model** section inside an engine controls which provider model should run the session.
+
+## Where to find it
+
+Open the **new session** flow and use the engine picker in the bottom bar.
+
+The left side of the picker shows engine choices. The right side shows the selected engine's details, including:
+
+- model choices
+- provider or ACP configuration options
+- refresh status when Happier is probing the selected machine
+- model-specific controls, when the provider exposes them
+
+Running sessions can also show a model/config picker in the input settings for the current session. Favorites are part of the **new session** engine picker.
+
+## Choose an engine
+
+Pick the engine that should launch the session.
+
+The list is capability-aware:
+
+- disabled providers or hidden backends do not appear
+- configured ACP backends appear as normal engine choices
+- profiles can filter which engines are compatible
+- engine details can vary by machine, working directory, profile, and connected-service state
+
+If only one engine is available, Happier can skip most of the picker chrome and use that engine directly.
+
+## Choose a model
+
+Most model pickers start with **Use CLI settings**.
+
+Use this when you want Happier to avoid setting a model override and let the provider CLI/runtime decide from its own settings.
+
+When you choose a specific model, Happier stores that selection for the session launch. The exact apply behavior depends on the provider and runtime. Some providers can change models on the next prompt or live through ACP; others only apply the model when a new provider process starts.
+
+For running-session apply timing, see [Permissions](/docs/features/permissions).
+
+## Live model lists
+
+Some engines expose models dynamically. Happier probes the selected machine/backend and shows the models that backend currently reports.
+
+This matters because the available list can depend on:
+
+- the installed provider CLI version
+- whether the provider is logged in
+- account or subscription entitlements
+- selected connected-service profile
+- Custom ACP backend args and environment
+- the selected working directory, when the provider uses project-local config
+
+Use the refresh button in the model section after changing provider login state, CLI config, Custom ACP settings, or working directory.
+
+## Static model lists
+
+Not every provider has a dynamic model API.
+
+For static-only providers, Happier uses its built-in provider catalog instead. Claude is the main example: Claude models can still be selected and favorited even though the model list is static rather than dynamically probed.
+
+Static model lists can still change when Happier updates its provider catalog.
+
+## Custom model ids
+
+Some engines support entering a custom model id.
+
+Use this for providers or profiles where you know the exact model id but it is not shown in the list.
+
+Important details:
+
+- Happier sends the id to the provider; the provider still decides whether it is valid.
+- Custom ids are useful for provider-compatible gateways, custom endpoints, or newly released models.
+- A custom id is not automatically a favorite candidate. Favorites use models Happier can verify from the current live list or static catalog.
+
+## Model-specific options
+
+Some models expose extra controls, such as thinking, reasoning, effort, or a provider-specific mode.
+
+When those controls exist, Happier shows them inside the selected model card. They are part of the selected engine's configuration surface, not a separate global settings page.
+
+Not every provider exposes these options, and not every model under the same provider exposes the same options.
+
+## Favorite models
+
+Favorite models help you keep a short list of model choices you use often.
+
+To favorite a model:
+
+1. Open the new-session engine picker.
+2. Choose an engine.
+3. Select a concrete model.
+4. Use the star button on the selected model card.
+
+The filled star means the model is already a favorite. The outline star means it can be added.
+
+The **Use CLI settings** default is not favoritable because it is not a concrete model choice.
+
+## Favorites section
+
+After you save at least one favorite model, the engine picker can show a **Favorites** section in the left rail.
+
+Use it to jump directly to saved engine/model combinations without scanning a long model list.
+
+Selecting a favorite:
+
+- switches to the favorite's engine
+- applies the favorite's model
+- keeps other launch settings, such as profile, permissions, modes, and config options, governed by the normal new-session controls
+
+Favorites are account settings. They are saved per backend identity and model id, so the same model id can be a separate favorite under two different engines or Custom ACP backends.
+
+## Removing favorites
+
+You can remove a favorite by clicking the filled star:
+
+- from the normal model list, when the favorited model is visible
+- from the **Favorites** section
+
+Already-favorited models keep showing the filled star so you can remove them without selecting them first.
+
+## Availability rules
+
+Favorites are saved, but selection still respects the current backend state.
+
+For dynamically probed engines:
+
+- a favorite is selectable only when the current probe reports that model as available
+- if the model disappears because auth changed, the CLI changed, or the provider removed it, Happier does not start a session with that unavailable model
+- refresh the probe after fixing login/configuration
+
+For static-only engines:
+
+- favorites are checked against Happier's static provider catalog
+- Claude models can be favorited and selected from the catalog without a live model probe
+
+If a saved favorite no longer appears in the current live/static model list, Happier keeps it in the Favorites section with a setup hint so you can remove it. It will not be selectable until the backend reports it again.
+
+## Profile and backend compatibility
+
+Favorites respect the current engine list.
+
+If a selected profile filters out an engine, favorites for that incompatible engine are hidden from the Favorites section for that picker state.
+
+This keeps the Favorites section focused on choices that make sense for the current launch configuration.
+
+## What favorites do not store
+
+A favorite stores the engine/model pair. It does not replace profiles or backend settings.
+
+Favorites do not store:
+
+- API keys or connected-service credentials
+- environment variables
+- working directory
+- permission mode
+- session mode
+- model-specific controls such as reasoning effort
+
+Use [Profiles](/docs/features/profiles) for reusable environment, secret, endpoint, and backend-default setup.
+
+## Common use cases
+
+Use favorite models when you want to:
+
+- keep your normal Claude, Codex, or Gemini model one click away
+- quickly switch between a fast model and a deeper reasoning model
+- save favorite models for several Custom ACP backends
+- avoid scrolling through a long live model list
+- preserve a favorite while a provider login or entitlement issue is temporarily hiding it
+
+## Troubleshooting
+
+### A favorite is visible but does not start
+
+The model is saved, but the current backend does not report it as available.
+
+Check the provider login, connected-service profile, Custom ACP config, and selected machine. Then refresh the model probe.
+
+### A favorite disappeared from the left rail
+
+The Favorites section only shows favorites for engines that are currently visible and compatible with the picker state.
+
+Check whether a selected profile or feature setting is hiding that engine.
+
+### I cannot favorite a custom model id
+
+Favorites are limited to concrete models Happier can verify from a dynamic probe or static catalog.
+
+Use the custom model entry for one-off ids. If the provider later reports that id in its model list, it can become favoritable.
+
+## Related guides
+
+- [Profiles](/docs/features/profiles)
+- [ACP backends](/docs/features/acp-backends)
+- [Provider authentication](/docs/features/provider-authentication)
+- [Permissions](/docs/features/permissions)
+- [Session modes](/docs/features/session-modes)

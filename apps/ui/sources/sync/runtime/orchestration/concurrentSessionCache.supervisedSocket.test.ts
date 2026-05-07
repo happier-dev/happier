@@ -94,6 +94,8 @@ function mockConcurrentSessionCacheDeps() {
     vi.doMock('@/sync/encryption/encryption', () => ({
         Encryption: {
             create: async () => ({}) as unknown,
+            markNativeCryptoWorkerQueueActive: vi.fn(async () => {}),
+            markNativeCryptoWorkerQueueQuiescent: vi.fn(() => {}),
         },
     }));
     vi.doMock('@/encryption/base64', () => ({

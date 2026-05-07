@@ -242,7 +242,7 @@ describe('SkillBundleEditorScreen', () => {
 
         await screen.pressByTestIdAsync('skillBundle.manageExternalAssets');
 
-        expect(skillBundleRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1/export');
+        expect(skillBundleRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills/bundle-1/export');
     });
 
     it('starts new skills with starter markdown and saves it when only the title changes', async () => {

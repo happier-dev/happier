@@ -24,6 +24,7 @@ export function deriveSessionWorkingTreeProjection(params: Readonly<{
                 backendId: params.snapshot.repo.backendId ?? null,
                 mode: params.snapshot.repo.mode ?? null,
                 worktrees: params.snapshot.repo.worktrees ?? [],
+                remotes: params.snapshot.repo.remotes ?? [],
             },
             capabilities: {
                 readStatus: mergedCapabilities!.readStatus ?? false,

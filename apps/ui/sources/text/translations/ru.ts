@@ -500,6 +500,7 @@ export const ru: TranslationStructure = {
     emptyDescription: "Сейчас нет ожидающих запросов или обновлений.",
     approvals: "Подтверждения",
     permissions: "Разрешения",
+    unreadSessions: "Непрочитанные сессии",
     updates: "Активность",
   },
 
@@ -1621,6 +1622,8 @@ export const ru: TranslationStructure = {
       channelBridgesSubtitle: "Подключайте внешние чаты (Telegram) к сессиям",
       featuresTitle: "Возможности",
       featuresSubtitle: "Включить или отключить функции приложения",
+      pets: "Питомцы",
+      petsSubtitle: "Выберите Blink и питомцев-компаньонов для устройства",
     developer: "Разработчик",
     developerTools: "Инструменты разработчика",
     about: "О программе",
@@ -2055,6 +2058,7 @@ export const ru: TranslationStructure = {
       openai: "Ключ API OpenAI",
       anthropic: "Ключ API Anthropic",
       gemini: "Gemini от Google",
+      github: "GitHub",
     },
     title: "Подключённые сервисы",
     authChip: {
@@ -2176,6 +2180,10 @@ export const ru: TranslationStructure = {
       connectApiKeySubtitle: "Вставьте API-ключ Anthropic",
       connectSetupTokenTitle: "Подключить setup-token",
       connectSetupTokenSubtitle: "Вставьте setup-token Claude (из claude setup-token)",
+      connectAccessTokenTitle: "Подключить токен доступа",
+      connectAccessTokenSubtitle: "Вставьте персональный токен доступа GitHub",
+      openGithubTokenTemplateTitle: "Создать токен GitHub",
+      openGithubTokenTemplateSubtitle: "Открыть GitHub с уже заполненными разрешениями, нужными Happier",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `Отключить ${service} (${profileId})?`,
       prompts: {
@@ -2187,6 +2195,9 @@ export const ru: TranslationStructure = {
         setupTokenTitle: "Токен настройки",
         setupTokenBody: "Вставьте ваш setup-token Claude (из claude setup-token).",
         setupTokenPlaceholder: "например, sk-ant-oat01-…",
+        accessTokenTitle: "Токен доступа",
+        accessTokenBody: "Вставьте ваш персональный токен доступа GitHub. Используйте fine-grained token с разрешениями Contents, Pull requests и Administration на чтение и запись, чтобы работали PR и публикация репозиториев.",
+        accessTokenPlaceholder: "github_pat_…",
         profileLabelTitle: "Метка профиля",
         profileLabelBody: "Необязательно. Показывается в списках авторизации.",
         profileLabelPlaceholder: "Рабочий аккаунт",
@@ -2198,6 +2209,7 @@ export const ru: TranslationStructure = {
         unknownProfileTitle: "Неизвестный профиль",
         unknownProfileBody: ({ profileId, service }: { profileId: string; service: string }) =>
           `Профиля «${profileId}» не существует для ${service}.`,
+        failedToOpenTokenSetupUrl: "Не удалось открыть настройки токена GitHub.",
       },
       profiles: {
         empty: "Профилей пока нет.",
@@ -2357,19 +2369,13 @@ export const ru: TranslationStructure = {
       title: "Подтверждение удалённых операций",
       footer:
         "Управляет тем, требуют ли операции pull/push подтверждения.",
-      options: {
-        always: {
-          title: "Всегда подтверждать pull/push",
-          subtitle: "Показывать диалоги подтверждения для pull и push.",
-        },
-        pushOnly: {
-          title: "Подтверждать только push",
-          subtitle: "Pull выполняется сразу; push требует подтверждения.",
-        },
-        never: {
-          title: "Никогда не подтверждать",
-          subtitle: "Выполнять pull и push сразу.",
-        },
+      pull: {
+        title: "Спрашивать перед pull",
+        subtitle: "Показывать подтверждение перед получением удалённых изменений.",
+      },
+      push: {
+        title: "Спрашивать перед push",
+        subtitle: "Показывать подтверждение перед отправкой локальных коммитов.",
       },
     },
     pushRejectionRecovery: {
@@ -2503,6 +2509,86 @@ export const ru: TranslationStructure = {
     footer: 'Управляет интеграциями Tauri для рабочего стола на этом компьютере.',
     startOnLoginTitle: 'Запускать при входе',
     startOnLoginSubtitle: 'Автоматически запускать Happier при входе на этом компьютере.',
+  },
+
+  settingsPets: {
+    title: 'Питомцы',
+    previewTitle: 'Компаньон Blink',
+    previewSubtitle: 'Небольшой компаньон для состояния сессии и внимания к ревью.',
+    disabledTitle: 'Питомцы отключены',
+    disabledSubtitle: 'Включите Питомцев в функциях, чтобы использовать компаньонов на этом устройстве.',
+    disabledByServerTitle: 'Питомцы отключены на этом сервере',
+    disabledByServerSubtitle: 'Администратор отключил питомцев-компаньонов для этого сервера.',
+    accountTitle: 'Значение аккаунта по умолчанию',
+    enabledTitle: 'Включить питомцев',
+    enabledSubtitle: 'Показывать поверхности компаньона для этого аккаунта.',
+    companionSizeTitle: 'Размер питомца',
+    companionSizeSubtitle: 'Настройте размер компаньона на этом устройстве.',
+    companionSizeValue: ({ percent }: { percent: number }) => `${percent}%`,
+    deviceOverrideTitle: 'Использовать на этом устройстве',
+    deviceOverrideSubtitle: 'Локально переопределить настройку питомца из аккаунта.',
+    sourceTitle: 'Источник питомца',
+    builtInSubtitle: 'Встроено в Happier.',
+    builtInBlinkSubtitle: 'Превращает сигналы сессии в спокойные маленькие индикаторы.',
+    builtInFurySubtitle: 'Стресс-тестирует сложные потоки до попадания в продакшен.',
+    builtInMiloSubtitle: 'Держит UI в порядке и дремлет на упавших тестах.',
+    builtInOliSubtitle: 'Тихо отправляет фиксы, пока сборка не заметила.',
+    builtInTitiSubtitle: 'Разбирает релизные заметки с фокусом senior staff.',
+    localLibraryTitle: 'Это устройство',
+    localLibraryFooter: 'Локальные питомцы остаются на этом устройстве, пока вы не импортируете их в аккаунт.',
+    helpDocsTitle: 'Справка по питомцам',
+    helpDocsSubtitle: 'Открыть документацию Happier по настройке и устранению неполадок.',
+    detectCodexPetsTitle: 'Обнаруживать питомцев Codex',
+    detectCodexPetsSubtitle: 'Искать совместимых питомцев в локальных Codex homes.',
+    detectedCodexPetsTileSubtitle: 'Найден в Codex и готов присоединиться к этому устройству.',
+    detectedCodexPetsEmptyTitle: 'Питомцы Codex не найдены',
+    detectedCodexPetsEmptySubtitle: 'Создайте питомца в Codex, затем запустите обнаружение снова.',
+    detectedCodexPetsErrorTitle: 'Не удалось обнаружить питомцев Codex',
+    detectedCodexPetsErrorSubtitle: 'Проверьте, что daemon подключен, и попробуйте снова.',
+    detectedCodexPetsNoTargetTitle: 'Нет доступного daemon',
+    detectedCodexPetsNoTargetSubtitle: 'Запустите Happier на этом компьютере, затем снова обнаружьте питомцев Codex.',
+    detectedCodexPetsDaemonMismatchTitle: 'Обновите daemon для обнаружения питомцев',
+    detectedCodexPetsDaemonMismatchSubtitle: 'Этот daemon еще не предоставляет обнаружение питомцев. Обновите stack и попробуйте снова.',
+    useOnThisDeviceTitle: 'Использовать на этом устройстве',
+    useOnThisDeviceSubtitle: 'Выберите локального питомца без изменения значения аккаунта по умолчанию.',
+    importedLocalSubtitle: 'Импортировано из Codex на этом устройстве.',
+    removeFromDeviceTitle: 'Удалить с устройства',
+    removeFromDeviceSubtitle: 'Удалить этого локального питомца с этого устройства.',
+    accountLibraryTitle: 'Библиотека аккаунта',
+    accountLibraryFooter: 'Синхронизированные питомцы доступны на ваших устройствах с входом в аккаунт.',
+    accountPetTileSubtitle: 'Синхронизировано из вашего аккаунта.',
+    removeFromDeviceDaemonErrorTitle: 'Удалено локально; очистка демона не удалась',
+    removeFromDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `Питомец удален из списка этого устройства, но очистка демона вернула ${code}.`,
+    importToDeviceDaemonErrorTitle: 'Не удалось импортировать питомца',
+    importToDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `Демон не смог импортировать этого питомца. Снова обнаружьте питомцев Codex и повторите попытку. (${code})`,
+    importToAccountTitle: 'Импортировать в аккаунт',
+    importToAccountSubtitle: 'Загрузите совместимого локального питомца для использования на разных устройствах.',
+    desktopOverlayTitle: 'Оверлей рабочего стола',
+    overlayTrayTitle: 'Активность питомца',
+    overlayStatusWaiting: 'Ожидание',
+    overlayStatusFailed: 'Ошибка',
+    overlayStatusReview: 'Проверка',
+    overlayStatusRunning: 'Выполняется',
+    overlayQuickReplyPlaceholder: 'Быстрый ответ',
+    overlayReplyAction: 'Ответить',
+    overlayQuickReplyAction: 'Отправить быстрый ответ',
+    overlayDismissAction: 'Скрыть активность',
+    overlayTuckAction: 'Спрятать',
+    overlayClosePetAction: 'Закрыть питомца',
+    desktopOverlayEnabledTitle: 'Включить оверлей рабочего стола',
+    desktopOverlayEnabledSubtitle: 'Показывать питомца в прозрачном окне-компаньоне рабочего стола.',
+    desktopOverlayDeviceOverrideTitle: 'Оверлей рабочего стола на этом устройстве',
+    desktopOverlayVisibilityModeTitle: 'Видимость оверлея на этом устройстве',
+    desktopOverlayVisibilityModeSubtitle: 'Выберите, когда локально показывать питомца на рабочем столе.',
+    desktopOverlayResetPositionTitle: 'Сбросить позицию',
+    desktopOverlayResetPositionSubtitle: 'Вернуть оверлей в правый нижний угол.',
+    overrideInherit: 'Значение аккаунта',
+    overrideEnabled: 'Включено',
+    overrideDisabled: 'Отключено',
+    visibilityModeInherit: 'Значение аккаунта',
+    visibilityModeAlwaysWhenEnabled: 'Всегда, когда включено',
+    visibilityModeAttentionOrActive: 'Внимание или активность',
+    visibilityModeAttentionOnly: 'Только внимание',
   },
 
   settingsNotifications: {
@@ -3066,6 +3152,12 @@ export const ru: TranslationStructure = {
     },
   },
 
+  workspaceCockpit: {
+    openCockpit: 'Открыть cockpit',
+    openClassicView: 'Открыть классический вид',
+    tabs: 'Вкладки',
+  },
+
   settingsAppearance: {
     ...settingsAppearanceTranslationExtension,
     // Appearance settings screen
@@ -3096,9 +3188,6 @@ export const ru: TranslationStructure = {
       preview: "Вкладка предпросмотра",
       persistent: "Постоянные вкладки",
     },
-    editorFocusMode: "Режим фокуса редактора",
-    editorFocusModeDescription:
-      "Скрывать чат и боковую панель при просмотре файлов (web/tablet)",
     inlineToolCalls: "Встроенные вызовы инструментов",
     inlineToolCallsDescription:
       "Отображать вызовы инструментов прямо в сообщениях чата",
@@ -3140,6 +3229,23 @@ export const ru: TranslationStructure = {
       pixelated: "Пиксельная",
       gradient: "Градиентная",
       brutalist: "Бруталистская",
+      meshGradient: "Сеточный градиент",
+      meshGradientOrganic: "Сеточный градиент: органика",
+      meshGradientRows: "Сеточный градиент: ряды",
+      meshGradientColumns: "Сеточный градиент: колонки",
+      meshGradientDiagonal: "Сеточный градиент: диагональ",
+      meshGradientOval: "Сеточный градиент: овал",
+      meshGradientWaves: "Сеточный градиент: волны",
+      meshGradientSoftNoise: "Сеточный градиент: мягкий шум",
+      photoGradient: "Слоистый градиент",
+      photoGradientRows: "Слоистый градиент: ряды",
+      photoGradientColumns: "Слоистый градиент: колонки",
+      photoGradientDiagonal: "Слоистый градиент: диагональ",
+      photoGradientWaves: "Слоистый градиент: волны",
+      photoGradientOval: "Слоистый градиент: овал",
+      photoGradientValueNoise: "Слоистый градиент: мягкий шум",
+      photoGradientVoronoi: "Слоистый градиент: ячейки",
+      photoGradientMeshGrid: "Слоистый градиент: сетка",
     },
     showFlavorIcons: "Показывать иконки провайдеров ИИ",
     showFlavorIconsDescription:
@@ -3264,6 +3370,8 @@ export const ru: TranslationStructure = {
     expMemorySearchSubtitle: "Включить экраны и настройки локального поиска по памяти",
     expSessionsDirect: "Прямые сессии",
     expSessionsDirectSubtitle: "Показывать и открывать в боковой панели прямые сессии провайдера",
+    expPetsCompanion: "Питомцы",
+    expPetsCompanionSubtitle: "Включить поверхности компаньона Blink и локальный выбор питомцев",
     expFriends: "Друзья",
     expFriendsSubtitle: "Включить функции друзей (вкладка «Входящие» и обмен сессиями)",
     webFeatures: "Веб-функции",
@@ -3428,6 +3536,9 @@ export const ru: TranslationStructure = {
       },
       codexAcp: {
         title: "Адаптер Codex ACP",
+      },
+      githubCli: {
+        title: "CLI GitHub",
       },
     },
     ui: {
@@ -3667,6 +3778,19 @@ export const ru: TranslationStructure = {
       description:
         "Это установит экспериментальный ACP-адаптер для Codex, который поддерживает загрузку/возобновление тредов.",
     },
+        githubCliBanner: {
+            title: 'GitHub CLI',
+            install: 'Установить',
+            update: 'Обновить',
+            reinstall: 'Переустановить',
+        },
+    githubCliInstallModal: {
+      installTitle: "Установить GitHub CLI?",
+      updateTitle: "Обновить GitHub CLI?",
+      reinstallTitle: "Переустановить GitHub CLI?",
+      description:
+        "Устанавливает GitHub CLI, чтобы Happier мог использовать вашу локальную аутентификацию GitHub в сценариях pull request.",
+    },
   },
 
   sessionHistory: {
@@ -3829,6 +3953,7 @@ export const ru: TranslationStructure = {
   directSessions: {
     browseTitle: "Просмотр сессий провайдера",
     browseOpenExisting: "Просмотр сессий провайдера",
+    browseActionSubtitle: "Выберите машину, провайдера и сессию, чтобы открыть её здесь.",
     browseFiltersTitle: "Выберите источник",
     browseMachines: "Машины",
     browseProviders: "Провайдеры",
@@ -3929,6 +4054,10 @@ export const ru: TranslationStructure = {
     lastUpdated: "Последнее обновление",
     sequence: "Последовательность",
     quickActions: "Быстрые действия",
+    markSessionRead: "Отметить как прочитанную",
+    markSessionReadSubtitle: "Снять непрочитанное внимание с этой сессии",
+    markSessionUnread: "Отметить как непрочитанную",
+    markSessionUnreadSubtitle: "Оставить эту сессию в списке непрочитанных",
     executionRunsSubtitle: "Посмотреть запуски этой сессии",
     automationsTitle: "Автоматизации",
     automationsSubtitle: "Управляйте запланированными сообщениями для этой сессии",
@@ -3997,7 +4126,11 @@ export const ru: TranslationStructure = {
     renameSessionPlaceholder: "Введите название сессии...",
     forkSession: "Создать ветку сессии",
     forkSessionSubtitle: "Создать новую сессию из последнего контекста",
+    newSessionSameSetup: "Новая сессия с той же настройкой",
+    newSessionSameSetupSubtitle: "Повторно использовать машину, папку, движок, модель и параметры этой сессии.",
     failedToRenameSession: "Не удалось переименовать сессию",
+    failedToMarkSessionRead: "Не удалось отметить сессию как прочитанную",
+    failedToMarkSessionUnread: "Не удалось отметить сессию как непрочитанную",
     sessionRenamed: "Сессия успешно переименована",
   },
 
@@ -4087,6 +4220,11 @@ export const ru: TranslationStructure = {
 
   session: {
     inputPlaceholder: "Введите сообщение...",
+    rightPanel: {
+      tabs: {
+        git: "Git",
+      },
+    },
     toolCalls: "Вызовы инструментов",
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} ещё…`,
     forking: {
@@ -4221,8 +4359,8 @@ export const ru: TranslationStructure = {
           unpinTabA11y: "Открепить вкладку",
           pinnedTabA11y: "Закрепленная вкладка",
           closeTabA11y: "Закрыть вкладку",
-          enterFocusModeA11y: "Включить режим фокуса редактора",
-          exitFocusModeA11y: "Выключить режим фокуса редактора",
+          enterFocusModeA11y: "Включить режим фокуса панели",
+          exitFocusModeA11y: "Выключить режим фокуса панели",
       },
   
       actionsDraft: {
@@ -4425,6 +4563,19 @@ export const ru: TranslationStructure = {
   commandPalette: {
     placeholder: "Введите команду или поиск...",
     noCommandsFound: "Команды не найдены",
+    pets: {
+      category: "Питомцы",
+      wakeTitle: "Разбудить питомца",
+      wakeSubtitle: "Показать компаньона на этой поверхности.",
+      tuckTitle: "Убрать питомца",
+      tuckSubtitle: "Скрыть компаньона на этой поверхности.",
+      resetPositionTitle: "Сбросить позицию питомца",
+      resetPositionSubtitle: "Вернуть компаньона в место по умолчанию.",
+      chooseTitle: "Выбрать питомца",
+      chooseSubtitle: "Открыть настройки питомцев.",
+      refreshCodexTitle: "Обновить питомцев Codex",
+      refreshCodexSubtitle: "Открыть настройки и найти локальных питомцев Codex.",
+    },
   },
 
   commandView: {
@@ -5032,6 +5183,24 @@ export const ru: TranslationStructure = {
         removeFailed: "Не удалось удалить рабочее дерево.",
         pruneFailed: "Не удалось обрезать рабочие деревья.",
       },
+      pullRequests: {
+        checkoutLocalTitle: "Получить pull request",
+        checkoutLocalSubtitle: "Вставьте URL PR или merge request, номер либо команду checkout.",
+        openWorktreeTitle: "Открыть pull request в рабочем дереве",
+        openWorktreeSubtitle: "Подготовить pull request в отдельном рабочем дереве и запустить там сессию.",
+        promptTitle: "Ссылка на pull request",
+        promptBody: "Вставьте URL pull request или merge request, номер либо команду checkout.",
+        promptPlaceholder: "https://github.com/owner/repo/pull/123",
+        invalidReferenceBody: "Введите корректную ссылку на pull request или merge request.",
+        checkoutFailed: "Не удалось получить pull request.",
+        worktreeFailed: "Не удалось подготовить рабочее дерево pull request.",
+      },
+      indexLock: {
+        title: "Удалить устаревшую блокировку Git?",
+        body: "Git сообщил о блокировке индекса. Если другая команда Git не выполняется, Happier может удалить устаревшую блокировку и повторить попытку.",
+        confirm: "Удалить блокировку и повторить",
+        recoveryFailed: "Не удалось удалить блокировку индекса Git.",
+      },
       stashOverwrite: {
         title: "Перезаписать stash для ветки?",
         body: ({ branch }: { branch: string }) =>
@@ -5100,6 +5269,8 @@ export const ru: TranslationStructure = {
       `Изменения, привязанные к сессии (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `Изменения последнего хода (${count})`,
+    selectedForCommitChanges: ({ count }: { count: number }) =>
+      `Выбрано для коммита (${count})`,
     latestTurnDescription:
       'Изменения от провайдера из последнего завершённого хода.',
     otherRepositoryChanges: ({ count }: { count: number }) =>
@@ -5119,6 +5290,15 @@ export const ru: TranslationStructure = {
       "Изменения последнего хода пока не обнаружены.",
     notRepo: "Не является репозиторием системы контроля версий",
     notUnderSourceControl: "Эта папка не находится под управлением системы контроля версий",
+    repositoryInit: {
+      initialize: "Инициализировать репозиторий",
+      initializing: "Инициализация…",
+      confirmTitle: "Инициализировать репозиторий?",
+      confirmBody: "Создает Git-репозиторий в этой папке. Существующие файлы не будут добавлены в индекс или закоммичены.",
+      errors: {
+        failed: "Не удалось инициализировать репозиторий.",
+      },
+    },
     searching: "Поиск файлов...",
       noFilesFound: "Файлы не найдены",
       noFilesInProject: "Файлов в проекте нет",
@@ -5167,6 +5347,13 @@ export const ru: TranslationStructure = {
           addCommentA11y: "Добавить комментарий",
           closeCommentA11y: "Закрыть комментарий",
           draftsChipLabel: ({ count }: { count: number }) => `Ревью (${count})`,
+          modalSubtitle: "Проверьте, какие комментарии будут отправлены со следующим сообщением.",
+          modalSummary: ({ included, count }: { included: number; count: number }) =>
+            `${included} из ${count} выбрано для следующего промпта`,
+          detachOrDiscardTitle: "Убрать комментарии ревью?",
+          detachOrDiscardBody:
+            "Открепление сохранит комментарии, но исключит их из следующего промпта. Удаление удалит их полностью.",
+          detachFromPrompt: "Открепить от промпта",
           errors: {
             empty: "Комментарий не может быть пустым",
             couldNotMapSelection: "Не удалось сопоставить выделение со строкой diff",
@@ -5200,6 +5387,17 @@ export const ru: TranslationStructure = {
 	          generateFailed: "Не удалось сгенерировать сообщение коммита",
 	          generatorDisabled: "Генератор сообщений коммита отключён",
 	        },
+      commitAdjacentPush: {
+        accessibilityLabel: ({ target }: { target: string }) => `Push в ${target}`,
+        confirm: {
+          title: "Отправить локальные коммиты?",
+          body: ({ target }: { target: string }) =>
+            `Отправить локальные коммиты в ${target}.`,
+          push: "Да",
+          notNow: "Нет",
+          pushAndDontAskAgain: "Push и больше не спрашивать",
+        },
+      },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Загрузка ${fileName}...`,
         binaryFile: "Бинарный файл",
@@ -5207,6 +5405,7 @@ export const ru: TranslationStructure = {
         cannotDisplayBinary: "Невозможно отобразить содержимое бинарного файла",
         diff: "Различия",
       file: "Файл",
+      markdown: "Markdown",
     diffModes: {
       pending: "Ожидает",
       included: "Включено",
@@ -5233,10 +5432,12 @@ export const ru: TranslationStructure = {
 	      upload: "Загрузить",
 	      uploadFiles: "Загрузить файлы",
 	      uploadFolder: "Загрузить папку",
-	      allRepositoryFiles: "Все файлы репозитория",
+      allRepositoryFiles: "Все файлы репозитория",
       repositoryView: "Вид репозитория",
+      selectedForCommitView: "Выбрано для коммита",
       turnView: "Вид хода",
       sessionView: "Вид сессии",
+      view: "Вид",
       review: "Ревью",
       list: "Список",
       scm: "Git",
@@ -5321,6 +5522,120 @@ export const ru: TranslationStructure = {
         commitBlocked: "Коммит заблокирован",
         pullBlocked: "Pull заблокирован",
         pushBlocked: "Push заблокирован",
+      },
+      update: {
+        remotes: {
+          title: "Удаленные репозитории",
+          empty: "Для этого репозитория не настроены удаленные репозитории.",
+          addTitle: "Добавить удаленный репозиторий",
+          editTitle: ({ name }: { name: string }) => `Изменить ${name}`,
+          add: "Добавить удаленный",
+          remove: "Удалить",
+          nameLabel: "Имя удаленного",
+          fetchUrlLabel: "URL для fetch",
+          pushUrlLabel: "URL для push",
+          namePlaceholder: "origin",
+          fetchUrlPlaceholder: "URL для fetch",
+          pushUrlPlaceholder: "URL для push (необязательно)",
+          noFetchUrl: "Нет URL для fetch",
+          removeConfirmTitle: "Удалить удаленный репозиторий?",
+          removeConfirmBody: ({ name }: { name: string }) =>
+            `Удалить ${name} из этого репозитория?`,
+          errors: {
+            nameRequired: "Введите имя удаленного репозитория.",
+            fetchUrlRequired: "Введите URL для fetch.",
+            addFailed: "Не удалось добавить удаленный репозиторий.",
+            saveFailed: "Не удалось обновить удаленный репозиторий.",
+            removeFailed: "Не удалось удалить удаленный репозиторий.",
+          },
+        },
+        publishRepository: {
+          title: "Опубликовать в GitHub",
+          body: "Создает репозиторий GitHub и добавляет его как origin.",
+          ownerLabel: "Владелец",
+          repositoryNameLabel: "Имя репозитория",
+          repositoryNamePlaceholder: "имя-репозитория",
+          visibilityLabel: "Видимость",
+          private: "Приватный",
+          public: "Публичный",
+          internal: "Внутренний",
+          remoteKindLabel: "URL удаленного репозитория",
+          httpsRemote: "Удаленный HTTPS",
+          sshRemote: "Удаленный SSH",
+          originConflictLabel: "Существующий origin",
+          keepOrigin: "Не заменять",
+          setOriginUrl: "Задать URL origin",
+          pushCurrentBranch: "Отправить текущую ветку",
+          publish: "Опубликовать репозиторий",
+          publishing: "Публикация…",
+          noTargets: "Подключите GitHub или войдите через gh CLI, чтобы опубликовать этот репозиторий.",
+          errors: {
+            targetRequired: "Выберите аккаунт или организацию GitHub.",
+            nameRequired: "Введите имя репозитория.",
+            loadTargetsFailed: "Не удалось загрузить цели публикации GitHub.",
+            publishFailed: "Не удалось опубликовать репозиторий.",
+          },
+        },
+        branchIntegration: {
+          title: "Merge и rebase",
+          sourceLabel: "Исходная ветка",
+          sourcePlaceholder: "Ветка или удаленная ссылка",
+          merge: "Слить",
+          rebase: "Перебазировать",
+          continue: "Продолжить",
+          abort: "Отменить",
+          operationInProgress: ({ operation, source }: { operation: string; source: string }) =>
+            `${operation} выполняется из ${source}`,
+          errors: {
+            sourceRequired: "Введите исходную ветку или ссылку.",
+            mergeFailed: "Не удалось выполнить merge ветки.",
+            rebaseFailed: "Не удалось выполнить rebase ветки.",
+            continueFailed: "Не удалось продолжить операцию.",
+            abortFailed: "Не удалось отменить операцию.",
+          },
+        },
+        pullRequests: {
+          title: "Запрос на слияние",
+          readyTitle: "Готово к открытию pull request",
+          view: "Открыть PR",
+          openOrReuse: "Открыть или использовать PR",
+          pushAndOpen: "Отправить и открыть PR",
+          createFeatureBranch: "Создать feature-ветку",
+          createFeatureBranchAndOpen: "Создать ветку и открыть PR",
+          featureBranchPromptTitle: "Имя feature-ветки",
+          featureBranchPromptBody: "Happier переключится на эту ветку перед продолжением.",
+          defaultBranchRequiresFeature: "Создайте feature-ветку перед открытием pull request из ветки по умолчанию.",
+          defaultBranchDenied: "Нельзя открывать pull request напрямую из ветки по умолчанию.",
+          states: {
+            ready: "Готово",
+            open: "Открыт",
+            closed: "Закрыт",
+            merged: "Слит",
+          },
+          status: {
+            creating: "Открытие pull request…",
+            creatingFeatureBranch: "Создание feature-ветки…",
+            creatingFeatureBranchPullRequest: "Создание feature-ветки и открытие pull request…",
+            pushingAndCreating: "Отправка ветки и открытие pull request…",
+          },
+          unavailable: {
+            notRepositoryTitle: "Репозиторий не обнаружен",
+            notRepositoryBody: "Действия pull request появятся, когда эта сессия будет подключена к репозиторию системы контроля версий.",
+            unknownProviderTitle: "Провайдер хостинга не обнаружен",
+            unknownProviderBody: "Добавьте remote GitHub, GitLab или Bitbucket, чтобы включить действия pull request.",
+            noBranchTitle: "Ветка не выбрана",
+            noBranchBody: "Переключитесь на ветку перед открытием pull request.",
+            detachedHeadTitle: "Отсоединенный HEAD",
+            detachedHeadBody: "Переключитесь на ветку перед открытием pull request.",
+          },
+          errors: {
+            featureBranchRequired: "Создайте feature-ветку перед открытием pull request.",
+            openFailed: "Не удалось открыть pull request.",
+            branchNameRequired: "Введите имя feature-ветки.",
+            createBranchFailed: "Не удалось создать feature-ветку.",
+            stackedFailed: "Не удалось завершить workflow pull request.",
+          },
+        },
       },
     },
   },
@@ -5474,17 +5789,27 @@ export const ru: TranslationStructure = {
     },
 
 settingsSession: {
-    sessionList: {
-        title: 'Список сессий',
-        footer: 'Настройте, что показывается в каждой строке сессии.',
-        tagsTitle: 'Теги сессии',
-        tagsEnabledSubtitle: 'Управление тегами отображается в списке',
-        tagsDisabledSubtitle: 'Управление тегами скрыто',
-    },
-    input: {
-        title: 'Внешний вид ввода',
-        footer: 'Настройте внешний вид панели ввода агента.',
-    },
+	    sessionList: {
+	        title: 'Список сессий',
+	        footer: 'Настройте, что показывается в каждой строке сессии.',
+	        tagsTitle: 'Теги сессии',
+	        tagsEnabledSubtitle: 'Управление тегами отображается в списке',
+	        tagsDisabledSubtitle: 'Управление тегами скрыто',
+	    },
+	    mobileWorkspaceExperience: {
+	        title: 'Мобильный макет сессии',
+	        subtitle: 'Выберите макет для телефона внутри сессий.',
+	        options: {
+	            cockpitTitle: 'Кокпит',
+	            cockpitSubtitle: 'Использовать нижние вкладки для чата, файлов, Git, вкладок и терминала.',
+	            classicTitle: 'Классический',
+	            classicSubtitle: 'Использовать прежний макет экрана сессии.',
+	        },
+	    },
+	    input: {
+	        title: 'Внешний вид ввода',
+	        footer: 'Настройте внешний вид панели ввода агента.',
+	    },
     inputBehavior: {
         title: 'Поведение ввода',
         footer: 'Настройте отправку по Enter и поведение истории сообщений.',
@@ -5493,6 +5818,9 @@ settingsSession: {
     windows: {
         title: 'Windows',
         defaultModeTitle: 'Режим удалённой сессии Windows по умолчанию',
+        windowNameTitle: 'Имя окна Windows Terminal',
+        windowNamePlaceholder: 'happier',
+        windowNameHint: 'Сессии, открытые в Windows Terminal, используют это именованное окно, чтобы новые сессии могли появляться как вкладки.',
     },
     advanced: {
         title: 'Дополнительно',
@@ -5654,6 +5982,9 @@ settingsSession: {
             coalesceMaxBatchPromptTitle: "Макс. размер пакета",
             coalesceMaxBatchPromptBody:
               "Установите верхний предел сообщений, применяемых за один flush.",
+            streamingPartialOutputTitle: "Показывать частичный вывод при стриминге",
+            streamingPartialOutputSubtitle:
+              "Если выключено, сообщения ассистента появятся только после завершения.",
             thinkingPulseStaleTitle: "Окно устаревания размышления",
             thinkingPulseStaleSubtitle: ({ value }: { value: string }) => `Текущее: ${value}ms`,
             thinkingPulseStalePromptTitle: "Окно устаревания размышления (ms)",
@@ -5772,6 +6103,15 @@ settingsSession: {
         openSubtitle: "Открыть настройки суб-агента",
       },
       handoff: settingsSessionHandoffTranslationExtensions.ru,
+      sessionCreation: {
+        title: "Быстрые действия новой сессии",
+        footer: "Выберите, как быстрые действия проекта заполняют экран новой сессии.",
+        rememberLastProjectSelectionsTitle: "Запоминать последние выборы сессии проекта",
+        rememberLastProjectSelectionsEnabledSubtitle:
+          "Быстрые действия проекта повторно используют машину, папку, движок, модель и параметры самой новой сессии.",
+        rememberLastProjectSelectionsDisabledSubtitle:
+          "Быстрые действия проекта только предварительно выбирают машину и папку проекта.",
+      },
       defaultPermissions: {
         title: "Разрешения по умолчанию",
         footer:
@@ -5856,7 +6196,7 @@ settingsSession: {
     hiddenSubtitle: "Запускает сессию в фоне без открытия окна терминала.",
     windowsTerminal: "Windows Terminal",
     shortWindowsTerminal: "WT",
-    windowsTerminalSubtitle: "Открывает сессию в отдельном окне Windows Terminal.",
+    windowsTerminalSubtitle: "Открывает сессию как вкладку в общем окне Windows Terminal.",
     console: "Консоль",
     shortConsole: "Консоль",
     consoleSubtitle: "Открывает сессию в стандартном окне консоли Windows.",
@@ -7186,7 +7526,6 @@ settingsSession: {
     sessionRunningLocallyAndRemotely:
       "Эта сессия локально подключена в OpenCode и по-прежнему управляется из приложения.",
     switchingToRemote: "Переключение в удалённый режим…",
-    switchToLocal: "Переключиться на локальный",
     switchToRemote: "Переключиться на удалённый",
     detachLocalTerminal: "Отсоединить терминал",
     directSessionTakeoverAvailable:
@@ -7417,6 +7756,10 @@ settingsSession: {
     usageOverTime: "Использование во времени",
     byModel: "По модели",
     noData: "Данные об использовании недоступны",
+    errors: {
+      notAuthenticated: "Войдите, чтобы просматривать использование.",
+      failedToLoad: "Не удалось загрузить данные об использовании.",
+    },
   },
 
   feed: {

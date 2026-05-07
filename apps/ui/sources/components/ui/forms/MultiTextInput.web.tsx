@@ -43,6 +43,8 @@ interface MultiTextInputProps {
     onKeyPress?: OnKeyPressCallback;
     onSelectionChange?: (selection: { start: number; end: number }) => void;
     onStateChange?: (state: TextInputState) => void;
+    onFocus?: () => void;
+    onBlur?: () => void;
     submitBehavior?: MultiTextInputSubmitBehavior;
     onSubmitEditing?: () => void;
     onFilesPasted?: (files: readonly File[]) => void;
@@ -266,6 +268,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 onDragLeave={handleDragLeave}
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
+                onFocus={props.onFocus}
+                onBlur={props.onBlur}
                 readOnly={props.editable === false}
                 maxRows={maxRows}
                 autoCapitalize="sentences"

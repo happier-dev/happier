@@ -10,8 +10,9 @@ type Props = Readonly<{
 }>;
 
 export function NewSessionProfileChipPopoverContent(props: Props) {
+    const maxHeight = Math.min(props.maxHeight, 560);
     return (
-        <View style={[styles.container, { maxHeight: Math.min(props.maxHeight, 560) }]}>
+        <View style={[styles.container, { height: maxHeight, maxHeight }]}>
             <View style={styles.listContainer}>
                 <ProfilesList {...props.profilesListProps} />
             </View>

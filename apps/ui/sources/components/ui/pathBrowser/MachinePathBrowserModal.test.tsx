@@ -583,7 +583,7 @@ describe('MachinePathBrowserModal', () => {
         expect(titledInfoRows[0]?.props?.title).toBe('newSession.pathPicker.truncatedDirectoryInfo:1');
     });
 
-    it('constrains the modal card to the viewport and lets the browser body shrink for internal scrolling', async () => {
+    it('fills the modal card to the viewport clamp so the browser list has measurable height for internal scrolling', async () => {
         const { MachinePathBrowserModal } = await import('./MachinePathBrowserModal');
 
         const screen = await renderScreen(<MachinePathBrowserModal
@@ -602,6 +602,7 @@ describe('MachinePathBrowserModal', () => {
             : modal.props.style;
 
         expect(modalStyle).toEqual(expect.objectContaining({
+            height: 852,
             maxHeight: 852,
             width: 560,
         }));

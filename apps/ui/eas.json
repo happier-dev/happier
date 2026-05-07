@@ -40,6 +40,14 @@
         "EX_UPDATES_NATIVE_DEBUG": "1"
       }
     },
+    "internaldev-dev-client": {
+      "extends": "internaldev",
+      "env": {
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app.dev.internal.devclient",
+        "EXPO_ANDROID_PACKAGE": "dev.happier.app.internaldev.devclient",
+        "EXPO_APP_SCHEME": "happier-internaldev-devclient"
+      }
+    },
     "internaldev-store": {
       "extends": "base",
       "environment": "development",
@@ -122,6 +130,30 @@
         "HAPPIER_ANDROID_ENABLE_MINIFY": "1",
         "HAPPIER_ANDROID_ENABLE_SHRINK_RESOURCES": "1",
         "HAPPIER_ANDROID_GRADLE_JVMARGS": "-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8"
+      }
+    },
+    "publicdev-dev-client": {
+      "extends": "base",
+      "environment": "preview",
+      "autoIncrement": true,
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "dev",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "env": {
+        "APP_ENV": "publicdev",
+        "EXPO_UPDATES_CHANNEL": "dev",
+        "EXPO_APP_NAME": "Happier (dev)",
+        "EXPO_APP_BUNDLE_ID": "dev.happier.app.publicdev.devclient",
+        "EXPO_ANDROID_PACKAGE": "dev.happier.app.publicdev.devclient",
+        "EXPO_APP_SCHEME": "happier-dev-devclient",
+        "HAPPIER_EXPO_DEVCLIENT_LAUNCH_MODE": "most-recent",
+        "HAPPIER_EXPO_DEVCLIENT_SILENT_LAUNCH": "true",
+        "HAPPIER_EXPO_USE_NATIVE_DEBUG": "true",
+        "EX_UPDATES_NATIVE_DEBUG": "1"
       }
     },
     "preview": {

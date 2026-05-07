@@ -56,11 +56,11 @@ export interface SpawnSessionOptions {
     agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
     terminal?: TerminalSpawnOptions | null;
     /**
-     * Windows-only: when starting a session remotely via the daemon, optionally open a visible console window
-     * on the machine so the user can later interact locally.
+     * Windows-only: how a daemon-spawned remote session should be hosted locally.
      */
     windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode;
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
+    windowsTerminalWindowName?: string;
     /**
      * Optional: per-session bindings to Happier Connected Services profiles.
      *
@@ -91,6 +91,7 @@ export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     terminal?: TerminalSpawnOptions
     windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode
     windowsRemoteSessionConsole?: 'hidden' | 'visible'
+    windowsTerminalWindowName?: string
     connectedServices?: unknown
     mcpSelection?: SessionMcpSelectionV1
 };
@@ -192,6 +193,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         terminal,
         windowsRemoteSessionLaunchMode,
         windowsRemoteSessionConsole,
+        windowsTerminalWindowName,
         connectedServices,
         mcpSelection,
     } = options;
@@ -258,6 +260,9 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         params.windowsRemoteSessionLaunchMode = windowsRemoteSessionLaunchMode;
     } else if (windowsRemoteSessionConsole === 'hidden' || windowsRemoteSessionConsole === 'visible') {
         params.windowsRemoteSessionLaunchMode = windowsRemoteSessionConsole === 'visible' ? 'console' : 'hidden';
+    }
+    if (typeof windowsTerminalWindowName === 'string' && windowsTerminalWindowName.trim().length > 0) {
+        params.windowsTerminalWindowName = windowsTerminalWindowName.trim();
     }
 
     return params;

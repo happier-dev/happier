@@ -177,4 +177,23 @@ describe('socket update handling cursor isolation', () => {
         expect(updatedSession.thinking).toBe(false);
         expect(updatedSession.thinkingAt).toBe(150);
     });
+
+    it('drops activity flushes when the captured socket scope is stale', () => {
+        const sessionId = 's_stale_flush';
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            active: true,
+            activeAt: 100,
+            updatedAt: 100,
+        }]);
+
+        const updates = new Map<string, any>([
+            [sessionId, { type: 'activity', id: sessionId, active: false, activeAt: 150, thinking: false }],
+        ]);
+        const applySessions = vi.fn();
+
+        flushActivityUpdates({ updates, applySessions, shouldContinue: () => false });
+
+        expect(applySessions).not.toHaveBeenCalled();
+    });
 });

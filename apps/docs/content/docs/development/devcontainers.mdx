@@ -53,7 +53,7 @@ docker run --rm -it \
 If your **local** machine is already authenticated (`happier auth status` is OK), you can pair a **remote** host/container over SSH:
 
 ```bash
-happier auth pair-remote --ssh user@host --json
+happier auth pair-remote --ssh user@host
 ```
 
 What this does:
@@ -61,6 +61,8 @@ What this does:
 1. Runs `happier auth request --json` on the remote host.
 2. Approves the request locally using your existing token (the local token is **not** sent to the remote host).
 3. Runs `happier auth wait --public-key ... --json` on the remote host to claim the request and write credentials.
+
+Use `--json` when scripting. If your active relay URL is loopback-only (`localhost` / `127.0.0.1`), interactive mode offers reachable addresses for this computer. In scripts, pass `--server-url-for-remote <url>` with the address the remote host can use to reach this computer's relay (`--remote-server-url` is still accepted as a legacy alias).
 
 ### Manual (scriptable) alternative
 

@@ -7,8 +7,8 @@ export const CLAUDE_UI: AgentUiConfig = {
     svgIconXml: PROVIDER_LOGO_SVG_XML.claude ?? null,
     tintColor: null,
     avatarOverlay: {
-        circleScale: 0.35,
-        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
+        circleScale: 0.42,
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.32),
     },
     // iOS can render dingbat glyphs as emoji; force text presentation (U+FE0E).
     cliGlyph: '\u2733\uFE0E',

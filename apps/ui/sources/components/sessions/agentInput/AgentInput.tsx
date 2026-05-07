@@ -1,6 +1,6 @@
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable, ScrollView, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
 import { MultiTextInput, KeyPressEvent, type MultiTextInputSubmitBehavior } from '@/components/ui/forms/MultiTextInput';
 import { Typography } from '@/constants/Typography';
@@ -20,8 +20,6 @@ import { type ShakeInstance } from '@/components/ui/feedback/Shaker';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useActiveWord } from '@/components/autocomplete/useActiveWord';
 import { useActiveSuggestions } from '@/components/autocomplete/useActiveSuggestions';
-import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
-import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
 import { type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
@@ -38,19 +36,15 @@ import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import { Theme } from '@/theme';
 import { t } from '@/text';
 
-const ScrollViewWithWheel = ScrollView as unknown as React.ComponentType<
-    React.ComponentPropsWithRef<typeof ScrollView> & {
-        onWheel?: any;
-    }
->;
 import { Metadata } from '@/sync/domains/state/storageTypes';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentBehavior, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
+import { AgentInputScrollableChipRow } from './layout/AgentInputScrollableChipRow';
 import { PathAndResumeRow } from './layout/PathAndResumeRow';
 import { getHasAnyAgentInputActions, shouldShowSecondaryControlRow } from './layout/actionBarLogic';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
@@ -88,7 +82,6 @@ import {
 } from '@/sync/acp/configOptionsControl';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { Text } from '@/components/ui/text/Text';
-import { attachActionBarMouseDragScroll } from './layout/attachActionBarMouseDragScroll';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
 import {
@@ -100,16 +93,19 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import type {
     AgentInputAttachment,
+    AgentInputComposerAttachmentBadge,
     AgentInputExtraActionChip,
 } from './agentInputContracts';
 import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { insertTextAtSelection } from './insertTextAtSelection';
+import { subscribeToIosHardwareShiftEnter } from './subscribeToIosHardwareShiftEnter';
 
-const ACTION_BAR_SCROLL_END_GUTTER_WIDTH = 24;
 const NATIVE_ACTION_CHIP_GAP_Y = 1;
 const NATIVE_ACTION_BAR_SECTION_GAP_Y = 6;
 const WEB_ACTION_BAR_ROW_GAP_Y = 2;
 const WEB_ACTION_BAR_ROW_GAP_MOBILE_Y = 1;
+const ACTION_BAR_SCROLL_CONTENT_PADDING_RIGHT = 30;
 
 const AGENT_INPUT_TEST_IDS = {
     sessionInput: 'session-composer-input',
@@ -420,11 +416,19 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flex: 1,
         overflow: 'visible',
     },
+    actionButtonsScrollViewportContent: {
+        paddingRight: ACTION_BAR_SCROLL_CONTENT_PADDING_RIGHT,
+    },
+    actionButtonsLeftScrollInline: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        ...(Platform.OS === 'web' ? { columnGap: 6 } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
+    },
     actionButtonsLeftScrollContent: {
         flexDirection: 'row',
         alignItems: 'center',
         ...(Platform.OS === 'web' ? { columnGap: 6 } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
-        paddingRight: 6 + ACTION_BAR_SCROLL_END_GUTTER_WIDTH,
+        paddingRight: ACTION_BAR_SCROLL_CONTENT_PADDING_RIGHT,
     },
     actionButtonsFadeLeft: {
         position: 'absolute',
@@ -773,12 +777,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 return 'person-circle-outline';
             }, []);
 
-    const contextWindowTokens = React.useMemo(
-        () => resolveContextWindowTokens({ agentId, metadata: props.metadata ?? null, usageData: props.usageData }),
-        [agentId, props.metadata, props.usageData],
+    const supportsExactContextUsageBadge = React.useMemo(
+        () => getAgentBehavior(agentId).sessionUsage?.supportsExactContextUsageBadge !== false,
+        [agentId],
     );
 
-    const contextUsageState = (
+    const contextWindowTokens = React.useMemo(
+        () => (
+            supportsExactContextUsageBadge
+                ? resolveContextWindowTokens({ agentId, metadata: props.metadata ?? null, usageData: props.usageData })
+                : null
+        ),
+        [agentId, props.metadata, props.usageData, supportsExactContextUsageBadge],
+    );
+
+    const contextUsageState = supportsExactContextUsageBadge && (
         (props.usageData && typeof props.usageData.contextSize === 'number')
         || props.alwaysShowContextSize === true
     )
@@ -805,10 +818,14 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     });
 
     const sendActionDisabled = Boolean(props.disabled || props.isSendDisabled || props.isSending);
+    const inputRef = React.useRef<MultiTextInputHandle>(null);
 
     const handleSend = React.useCallback(() => {
         if (sendActionDisabled) {
             return;
+        }
+        if (props.sessionId) {
+            inputRef.current?.blur();
         }
         if (props.sessionId && (props.value.trim().length > 0 || props.hasSendableAttachments === true)) {
             // Clear immediately for existing sessions so Enter-to-send doesn't leave stale text behind
@@ -847,7 +864,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Abort button state
     const [isAborting, setIsAborting] = React.useState(false);
     const shakerRef = React.useRef<ShakeInstance>(null);
-    const inputRef = React.useRef<MultiTextInputHandle>(null);
+    const [isInputFocused, setIsInputFocused] = React.useState(false);
 
     // Forward ref to the MultiTextInput
     React.useImperativeHandle(ref, () => inputRef.current!, []);
@@ -855,13 +872,46 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Autocomplete state - track text and selection together
     const [inputState, setInputState] = React.useState<TextInputState>({
         text: props.value,
-        selection: { start: 0, end: 0 }
+        selection: { start: props.value.length, end: props.value.length }
     });
+    const inputStateRef = React.useRef(inputState);
 
     // Handle combined text and selection state changes
     const handleInputStateChange = React.useCallback((newState: TextInputState) => {
         setInputState(newState);
     }, []);
+
+    React.useEffect(() => {
+        inputStateRef.current = inputState;
+    }, [inputState]);
+
+    const handleComposerFocus = React.useCallback(() => {
+        setIsInputFocused(true);
+    }, []);
+
+    const handleComposerBlur = React.useCallback(() => {
+        setIsInputFocused(false);
+    }, []);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'ios' || !enterToSendEnabled || !isInputFocused || props.disabled) {
+            return;
+        }
+
+        const subscription = subscribeToIosHardwareShiftEnter(() => {
+            const nextState = insertTextAtSelection({
+                text: inputStateRef.current.text,
+                selection: inputStateRef.current.selection,
+                insertedText: '\n',
+            });
+
+            inputRef.current?.setTextAndSelection(nextState.text, nextState.selection);
+        });
+
+        return () => {
+            subscription?.remove();
+        };
+    }, [enterToSendEnabled, isInputFocused, props.disabled]);
 
     // Use the tracked selection from inputState
     const activeWord = useActiveWord(inputState.text, inputState.selection, props.autocompletePrefixes);
@@ -897,31 +947,16 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // Action menu popover state
     const composerAnchorRef = React.useRef<View>(null);
 
-    const actionBarFades = useScrollEdgeFades({
-        enabledEdges: { left: true, right: true },
-        // Match previous behavior: require a bit of overflow before enabling scroll.
-        overflowThreshold: 8,
-        // Match previous behavior: avoid showing fades for tiny offsets.
-        edgeThreshold: 2,
-    });
-    const actionBarScrollRef = React.useRef<any>(null);
-
     const permissionRequestsFades = useScrollEdgeFades({
         enabledEdges: { top: true, bottom: true },
         overflowThreshold: 2,
         edgeThreshold: 2,
     });
-    const [permissionRequestsContentHeightPx, setPermissionRequestsContentHeightPx] = React.useState<number | null>(null);
     const permissionRequestsMaxHeightPx = React.useMemo(() => {
         const available = Math.max(1, screenHeight - keyboardHeight);
         const desired = Math.round(available * 0.34);
         return Math.max(160, Math.min(320, desired));
     }, [keyboardHeight, screenHeight]);
-    const permissionRequestsClampedHeightPx = React.useMemo(() => {
-        const raw = permissionRequestsContentHeightPx;
-        if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return undefined;
-        return Math.max(1, Math.min(Math.trunc(raw), permissionRequestsMaxHeightPx));
-    }, [permissionRequestsContentHeightPx, permissionRequestsMaxHeightPx]);
 
             const permissionModeOptions = React.useMemo(() => {
                 return getPermissionModeOptionsForSession(agentId, props.metadata ?? null);
@@ -1353,6 +1388,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'delivery');
     }, [props.extraActionChips]);
     const hasExtraActionChips = (props.extraActionChips?.length ?? 0) > 0;
+    const composerAttachmentBadges = React.useMemo<readonly AgentInputComposerAttachmentBadge[]>(() => {
+        return (props.extraActionChips ?? [])
+            .map((chip) => chip.composerAttachmentBadge)
+            .filter((badge): badge is AgentInputComposerAttachmentBadge => Boolean(badge));
+    }, [props.extraActionChips]);
     const hasMachine = Boolean(props.onMachineClick || props.machinePopover);
     const hasPath = Boolean(props.onPathClick || props.pathPopover);
     const hasResume = Boolean(props.onResumeClick || props.resumePopover);
@@ -1400,140 +1440,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         styles.actionChipPressed,
     ]);
 
-    const canActionBarScroll = actionBarShouldScroll && actionBarFades.canScrollX;
-    const showActionBarFadeLeft = canActionBarScroll && actionBarFades.visibility.left;
-    const showActionBarFadeRight = canActionBarScroll && actionBarFades.visibility.right;
-
     const actionBarFadeColor = React.useMemo(() => {
         return theme.colors.input.background;
     }, [theme.colors.input.background]);
-
-    const getActionBarScrollNode = React.useCallback(() => {
-        const raw = actionBarScrollRef.current;
-        if (!raw) return null;
-        // RN ScrollView refs often expose getScrollableNode()
-        return raw.getScrollableNode?.() ?? raw;
-    }, []);
-
-    const seedActionBarScrollMeasurements = React.useCallback(() => {
-        if (Platform.OS !== 'web') return;
-        const node = getActionBarScrollNode() as any;
-        if (!node) return;
-        const clientWidth = typeof node.clientWidth === 'number' ? node.clientWidth : null;
-        const clientHeight = typeof node.clientHeight === 'number' ? node.clientHeight : null;
-        const scrollWidth = typeof node.scrollWidth === 'number' ? node.scrollWidth : null;
-        if (clientWidth === null || scrollWidth === null) return;
-
-        // Seed both viewport and content sizes so chevrons/fades can render even before the first scroll event.
-        const layoutEvent = {
-            nativeEvent: { layout: { x: 0, y: 0, width: clientWidth, height: clientHeight ?? 0 } },
-        } as unknown as LayoutChangeEvent;
-        actionBarFades.onViewportLayout(layoutEvent);
-        actionBarFades.onContentSizeChange(
-            Math.max(0, scrollWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
-            clientHeight ?? 0
-        );
-    }, [actionBarFades, getActionBarScrollNode]);
-
-    const reportActionBarWebScroll = React.useCallback((nodeOverride?: any) => {
-        if (Platform.OS !== 'web') return;
-        const node = (nodeOverride ?? getActionBarScrollNode()) as any;
-        if (!node) return;
-
-        const clientWidth = typeof node.clientWidth === 'number' ? node.clientWidth : null;
-        const clientHeight = typeof node.clientHeight === 'number' ? node.clientHeight : 0;
-        const scrollWidth = typeof node.scrollWidth === 'number' ? node.scrollWidth : null;
-        const scrollLeft = typeof node.scrollLeft === 'number' ? node.scrollLeft : 0;
-        if (clientWidth === null || scrollWidth === null) return;
-
-        const scrollEvent = {
-            nativeEvent: {
-                contentInset: { top: 0, left: 0, bottom: 0, right: 0 },
-                contentOffset: { x: scrollLeft, y: 0 },
-                layoutMeasurement: { width: clientWidth, height: clientHeight },
-                contentSize: {
-                    width: Math.max(0, scrollWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
-                    height: clientHeight,
-                },
-                zoomScale: 1,
-            },
-        } as unknown as NativeSyntheticEvent<NativeScrollEvent>;
-        actionBarFades.onScroll(scrollEvent);
-    }, [actionBarFades, getActionBarScrollNode]);
-
-    React.useEffect(() => {
-        if (Platform.OS !== 'web') return;
-        if (!actionBarShouldScroll) return;
-
-        const requestAnimationFrameSafe: (cb: () => void) => any =
-            (globalThis as any).requestAnimationFrame?.bind(globalThis) ??
-            ((cb: () => void) => setTimeout(cb, 0));
-        const cancelAnimationFrameSafe: (id: any) => void =
-            (globalThis as any).cancelAnimationFrame?.bind(globalThis) ??
-            ((id: any) => clearTimeout(id));
-
-        const rAF = requestAnimationFrameSafe(() => {
-            seedActionBarScrollMeasurements();
-            reportActionBarWebScroll();
-        });
-
-        const node = getActionBarScrollNode();
-        if (!node) return () => cancelAnimationFrameSafe(rAF);
-
-        // Keep measurements up-to-date as the viewport changes (resizes, chip density changes, etc).
-        // Prefer ResizeObserver (more accurate), but fall back to window resize.
-        const ResizeObserverAny = (globalThis as any).ResizeObserver as (new (cb: () => void) => { observe: (n: any) => void; disconnect: () => void }) | undefined;
-        if (typeof ResizeObserverAny === 'function') {
-            const observer = new ResizeObserverAny(() => {
-                seedActionBarScrollMeasurements();
-                reportActionBarWebScroll();
-            });
-            observer.observe(node as any);
-            return () => {
-                cancelAnimationFrameSafe(rAF);
-                observer.disconnect();
-            };
-        }
-
-        const onResize = () => {
-            seedActionBarScrollMeasurements();
-            reportActionBarWebScroll();
-        };
-        const w = (globalThis as any).window as Window | undefined;
-        w?.addEventListener?.('resize', onResize);
-        return () => {
-            cancelAnimationFrameSafe(rAF);
-            w?.removeEventListener?.('resize', onResize);
-        };
-    }, [actionBarShouldScroll, getActionBarScrollNode, reportActionBarWebScroll, seedActionBarScrollMeasurements]);
-
-    React.useEffect(() => {
-        if (Platform.OS !== 'web') return;
-        if (!actionBarShouldScroll) return;
-
-        const requestAnimationFrameSafe: (cb: () => void) => any =
-            (globalThis as any).requestAnimationFrame?.bind(globalThis) ??
-            ((cb: () => void) => setTimeout(cb, 0));
-        const cancelAnimationFrameSafe: (id: any) => void =
-            (globalThis as any).cancelAnimationFrame?.bind(globalThis) ??
-            ((id: any) => clearTimeout(id));
-
-        let cleanup: (() => void) | undefined;
-
-        const rAF = requestAnimationFrameSafe(() => {
-            const node = getActionBarScrollNode() as any;
-            if (!node || typeof node.addEventListener !== 'function') return;
-            cleanup = attachActionBarMouseDragScroll({
-                node,
-                onScroll: () => reportActionBarWebScroll(node),
-            });
-        });
-
-        return () => {
-            cancelAnimationFrameSafe(rAF);
-            cleanup?.();
-        };
-    }, [actionBarShouldScroll, getActionBarScrollNode, reportActionBarWebScroll]);
 
     // Handle abort button press
     const handleAbortPress = React.useCallback(async () => {
@@ -1958,9 +1867,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             canApprovePermissions={canApprovePermissions}
                             disabledReason={props.permissionDisabledReason}
                             maxHeightPx={permissionRequestsMaxHeightPx}
-                            clampedHeightPx={permissionRequestsClampedHeightPx ?? permissionRequestsMaxHeightPx}
                             onContentSizeChange={(_w, h) => {
-                                setPermissionRequestsContentHeightPx(h);
                                 permissionRequestsFades.onContentSizeChange?.(_w, h);
                             }}
                             onLayout={(e) => {
@@ -1973,8 +1880,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         />
                     ) : null}
 
-                    {props.attachments && props.attachments.length > 0 ? (
-                        <AgentInputAttachmentsRow attachments={props.attachments} />
+                    {((props.attachments?.length ?? 0) > 0 || composerAttachmentBadges.length > 0) ? (
+                        <AgentInputAttachmentsRow
+                            attachments={props.attachments ?? []}
+                            composerBadges={composerAttachmentBadges}
+                        />
                     ) : null}
                     {/* Input field */}
                     <View
@@ -1996,6 +1906,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             placeholder={props.placeholder}
                             onKeyPress={handleKeyPress}
                             onStateChange={handleInputStateChange}
+                            onFocus={handleComposerFocus}
+                            onBlur={handleComposerBlur}
                             submitBehavior={submitBehavior}
                             onSubmitEditing={handleSubmitEditing}
                             maxHeight={resolvedInputMaxHeight}
@@ -2023,79 +1935,16 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 style={[styles.actionButtonsRow, showSecondaryControlsRow ? styles.actionButtonsRowWithBelow : null]}
                             >
                                 {actionBarShouldScroll ? (
-                                    <View style={styles.actionButtonsLeftScroll}>
-                                        <ScrollViewWithWheel
-                                            ref={actionBarScrollRef}
-                                            horizontal
-                                            showsHorizontalScrollIndicator={false}
-                                            scrollEnabled={Platform.OS === 'web' ? true : actionBarShouldScroll}
-                                            alwaysBounceHorizontal={false}
-                                            directionalLockEnabled
-                                            keyboardShouldPersistTaps="handled"
-                                            onWheel={(e: any) => {
-                                                if (Platform.OS !== 'web') return;
-                                                const node = getActionBarScrollNode() as any;
-                                                if (!node) return;
-                                                const ne = e?.nativeEvent ?? e;
-                                                const dx = typeof ne?.deltaX === 'number' ? ne.deltaX : 0;
-                                                const dy = typeof ne?.deltaY === 'number' ? ne.deltaY : 0;
-                                                const delta = Math.abs(dy) >= Math.abs(dx) ? dy : dx;
-                                                if (!delta) return;
-                                                const before = node.scrollLeft ?? 0;
-                                                node.scrollLeft = before + delta;
-                                                reportActionBarWebScroll(node);
-                                            }}
-                                            onLayout={actionBarFades.onViewportLayout}
-                                            onContentSizeChange={(width: number, height: number) => {
-                                                actionBarFades.onContentSizeChange(
-                                                    Math.max(0, width - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
-                                                    height
-                                                );
-                                            }}
-                                            onScroll={(e: any) => {
-                                                if (Platform.OS === 'web') {
-                                                    reportActionBarWebScroll();
-                                                    return;
-                                                }
-                                                const nativeEvent = e?.nativeEvent;
-                                                const contentSizeWidth = nativeEvent?.contentSize?.width;
-                                                if (typeof contentSizeWidth !== 'number') {
-                                                    actionBarFades.onScroll(e);
-                                                    return;
-                                                }
-                                                actionBarFades.onScroll({
-                                                    ...e,
-                                                    nativeEvent: {
-                                                        ...nativeEvent,
-                                                        contentSize: {
-                                                            ...nativeEvent.contentSize,
-                                                            width: Math.max(0, contentSizeWidth - ACTION_BAR_SCROLL_END_GUTTER_WIDTH),
-                                                        },
-                                                    },
-                                                });
-                                            }}
-                                            scrollEventThrottle={16}
-                                        >
-                                            <View style={styles.actionButtonsLeftScrollContent as any}>
-                                                {renderedActionControlNodes as any}
-                                            </View>
-                                        </ScrollViewWithWheel>
-                                        <ScrollEdgeFades
-                                            color={actionBarFadeColor}
-                                            size={24}
-                                            edges={{ left: showActionBarFadeLeft, right: showActionBarFadeRight }}
-                                            leftStyle={styles.actionButtonsFadeLeft as any}
-                                            rightStyle={styles.actionButtonsFadeRight as any}
-                                        />
-                                        <ScrollEdgeIndicators
-                                            edges={{ left: showActionBarFadeLeft, right: showActionBarFadeRight }}
-                                            color={theme.colors.button.secondary.tint}
-                                            size={14}
-                                            opacity={0.28}
-                                            leftStyle={styles.actionButtonsFadeLeft as any}
-                                            rightStyle={styles.actionButtonsFadeRight as any}
-                                        />
-                                    </View>
+                                    <AgentInputScrollableChipRow
+                                        containerStyle={styles.actionButtonsLeftScroll}
+                                        contentStyle={styles.actionButtonsLeftScrollContent}
+                                        fadeColor={actionBarFadeColor}
+                                        indicatorColor={theme.colors.button.secondary.tint}
+                                        fadeLeftStyle={styles.actionButtonsFadeLeft}
+                                        fadeRightStyle={styles.actionButtonsFadeRight}
+                                    >
+                                        {renderedActionControlNodes as any}
+                                    </AgentInputScrollableChipRow>
                                 ) : (
                                     <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null]}>
                                         {renderedActionControlNodes as any}
@@ -2116,38 +1965,74 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 />
                                     </View>,
 
-                                    // Row 2: Path + Resume selectors (separate line to match pre-PR272 layout)
-                                    // - wrap: shown below
-                                    // - scroll: folds into row 1
-                                    // - collapsed: moved into action menu
                                     (showSecondaryControlsRow) ? (
-                                        <PathAndResumeRow
-                                            key="row2"
-                                            styles={{
-                                                pathRow: styles.pathRow,
-                                                actionButtonsLeft: styles.actionButtonsLeft,
-                                                actionChip: styles.actionChip,
-                                                actionChipIconOnly: styles.actionChipIconOnly,
-                                                actionChipPressed: styles.actionChipPressed,
-                                                actionChipText: styles.actionChipText,
-                                            }}
-                                            leadingControls={secondaryLeadingControlsForWrap}
-                                            showChipLabels={showChipLabels}
-                                            iconColor={theme.colors.button.secondary.tint}
-                                            currentPath={props.currentPath}
-                                            pathChipAnchorRef={pathChipAnchorRef}
-                                            emptyPathLabel={t('newSession.selectPathTitle')}
-                                            onPathClick={handlePathPress}
-                                            resumeSessionId={props.resumeSessionId}
-                                            resumeChipAnchorRef={resumeChipAnchorRef}
-                                            onResumeClick={handleResumePress}
-                                            resumeLabelTitle={t('newSession.resume.chipOptional', {
-                                                agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
-                                            })}
-                                            resumeLabelOptional={t('newSession.resume.chipOptional', {
-                                                agent: t(getAgentCore(props.agentType ?? DEFAULT_AGENT_ID).displayNameKey),
-                                            })}
-                                        />
+                                        actionBarShouldScroll ? (
+                                            <AgentInputScrollableChipRow
+                                                key="row2"
+                                                containerStyle={styles.actionButtonsLeftScroll}
+                                                contentStyle={styles.actionButtonsScrollViewportContent}
+                                                fadeColor={actionBarFadeColor}
+                                                indicatorColor={theme.colors.button.secondary.tint}
+                                                fadeLeftStyle={styles.actionButtonsFadeLeft}
+                                                fadeRightStyle={styles.actionButtonsFadeRight}
+                                            >
+                                                <PathAndResumeRow
+                                                    styles={{
+                                                        pathRow: styles.pathRow,
+                                                        actionButtonsLeft: styles.actionButtonsLeftScrollInline,
+                                                        actionChip: styles.actionChip,
+                                                        actionChipIconOnly: styles.actionChipIconOnly,
+                                                        actionChipPressed: styles.actionChipPressed,
+                                                        actionChipText: styles.actionChipText,
+                                                    }}
+                                                    fillAvailableWidth={false}
+                                                    leadingControls={secondaryLeadingControlsForWrap}
+                                                    showChipLabels={showChipLabels}
+                                                    iconColor={theme.colors.button.secondary.tint}
+                                                    currentPath={props.currentPath}
+                                                    pathChipAnchorRef={pathChipAnchorRef}
+                                                    emptyPathLabel={t('newSession.selectPathTitle')}
+                                                    onPathClick={handlePathPress}
+                                                    resumeSessionId={props.resumeSessionId}
+                                                    resumeChipAnchorRef={resumeChipAnchorRef}
+                                                    onResumeClick={handleResumePress}
+                                                    resumeLabelTitle={t('newSession.resume.chipOptional', {
+                                                        agent: resolvedAgentLabel,
+                                                    })}
+                                                    resumeLabelOptional={t('newSession.resume.chipOptional', {
+                                                        agent: resolvedAgentLabel,
+                                                    })}
+                                                />
+                                            </AgentInputScrollableChipRow>
+                                        ) : (
+                                            <PathAndResumeRow
+                                                key="row2"
+                                                styles={{
+                                                    pathRow: styles.pathRow,
+                                                    actionButtonsLeft: styles.actionButtonsLeft,
+                                                    actionChip: styles.actionChip,
+                                                    actionChipIconOnly: styles.actionChipIconOnly,
+                                                    actionChipPressed: styles.actionChipPressed,
+                                                    actionChipText: styles.actionChipText,
+                                                }}
+                                                leadingControls={secondaryLeadingControlsForWrap}
+                                                showChipLabels={showChipLabels}
+                                                iconColor={theme.colors.button.secondary.tint}
+                                                currentPath={props.currentPath}
+                                                pathChipAnchorRef={pathChipAnchorRef}
+                                                emptyPathLabel={t('newSession.selectPathTitle')}
+                                                onPathClick={handlePathPress}
+                                                resumeSessionId={props.resumeSessionId}
+                                                resumeChipAnchorRef={resumeChipAnchorRef}
+                                                onResumeClick={handleResumePress}
+                                                resumeLabelTitle={t('newSession.resume.chipOptional', {
+                                                    agent: resolvedAgentLabel,
+                                                })}
+                                                resumeLabelOptional={t('newSession.resume.chipOptional', {
+                                                    agent: resolvedAgentLabel,
+                                                })}
+                                            />
+                                        )
                             ) : null,
                         ]}</View>
                     </View>

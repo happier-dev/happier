@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installCodeBlockCommonModuleMocks } from './codeBlockTestHelpers';
 
@@ -11,15 +11,6 @@ const setStringAsyncSpy = vi.fn<(text: string) => Promise<void>>(async (_text) =
 const alertSpy = vi.fn();
 
 installCodeBlockCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-                select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-            },
-        });
-    },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({
@@ -40,8 +31,27 @@ vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: () => 1,
 }));
 
+function mockPlatform(os: 'android' | 'web') {
+    installCodeBlockCommonModuleMocks({
+        reactNative: async () => {
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeWebMock({
+                Platform: {
+                    OS: os,
+                    select: (options: any) => options?.[os] ?? options?.default ?? options?.native ?? options?.ios ?? options?.android,
+                },
+            });
+        },
+    });
+}
+
 describe('CodeBlockViewFrame', () => {
-    it('enables nested horizontal scrolling when wrap is false', async () => {
+    beforeEach(() => {
+        vi.resetModules();
+    });
+
+    it('uses a gesture-handler ScrollView on Android so horizontal code block drags win nested gesture negotiation', async () => {
+        mockPlatform('android');
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 
         let tree!: renderer.ReactTestRenderer;
@@ -49,16 +59,17 @@ describe('CodeBlockViewFrame', () => {
                     <React.Fragment>child</React.Fragment>
                 </CodeBlockViewFrame>)).tree;
 
-        const scrollView = tree.findByType('ScrollView');
+        const scrollView = tree.findByType('GestureHandlerScrollView');
         expect(scrollView.props.horizontal).toBe(true);
         expect(scrollView.props.nestedScrollEnabled).toBe(true);
+        expect(scrollView.props.disallowInterruption).toBe(true);
     });
 
     it('forwards scrollTestID when wrap is false (stable E2E locator)', async () => {
+        mockPlatform('web');
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(
+        const screen = await renderScreen(
             <CodeBlockViewFrame
                 code={'x'}
                 language={null}
@@ -68,13 +79,16 @@ describe('CodeBlockViewFrame', () => {
             >
                 <React.Fragment>child</React.Fragment>
             </CodeBlockViewFrame>,
-        )).tree;
+        );
 
-        const scrollView = tree.findByType('ScrollView');
+        const scrollView = screen.findByTestId('markdown-code-block-scroll')!;
         expect(scrollView.props.testID).toBe('markdown-code-block-scroll');
+        expect(scrollView.props.horizontal).toBe(true);
+        expect(scrollView.props.nestedScrollEnabled).toBe(true);
     });
 
     it('positions copy button absolutely when there is no header content', async () => {
+        mockPlatform('web');
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 
         let tree!: renderer.ReactTestRenderer;
@@ -88,6 +102,7 @@ describe('CodeBlockViewFrame', () => {
     });
 
     it('keeps copy button in the header when language is provided', async () => {
+        mockPlatform('web');
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 
         let tree!: renderer.ReactTestRenderer;
@@ -103,6 +118,7 @@ describe('CodeBlockViewFrame', () => {
     it('copies without showing a modal and shows a temporary copied state', async () => {
         setStringAsyncSpy.mockClear();
         alertSpy.mockClear();
+        mockPlatform('web');
 
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
 

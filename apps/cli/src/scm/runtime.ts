@@ -304,8 +304,11 @@ export function createNonRepositorySnapshot(input: {
             backendId: null,
             mode: null,
             worktrees: [],
+            remotes: [],
         },
-        capabilities: createScmCapabilities(),
+        capabilities: createScmCapabilities({
+            writeRepositoryInit: true,
+        }),
         branch: {
             head: null,
             upstream: null,
@@ -314,6 +317,7 @@ export function createNonRepositorySnapshot(input: {
             detached: false,
         },
         stashCount: 0,
+        operationState: null,
         hasConflicts: false,
         entries: [],
         totals: {

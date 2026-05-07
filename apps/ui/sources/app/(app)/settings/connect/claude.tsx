@@ -5,7 +5,7 @@ export default function ClaudeConnectRedirect() {
   const router = useRouter();
 
   React.useEffect(() => {
-    router.replace('/(app)/settings/connected-services/anthropic');
+    router.replace('/settings/connected-services/anthropic');
   }, [router]);
 
   return null;

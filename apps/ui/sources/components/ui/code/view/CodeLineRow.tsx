@@ -1,16 +1,15 @@
 import React from 'react';
 import { Pressable, View, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { TextStyle } from 'react-native';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { Typography } from '@/constants/Typography';
 import { tokenizeSimpleSyntaxLine } from '@/components/ui/code/tokenization/simpleSyntaxTokenizer';
+import { ReviewCommentLineAffordance } from '@/components/ui/code/diff/reviewComments/ReviewCommentLineAffordance';
 
 import { CodeGutter } from './CodeGutter';
 import { Text } from '@/components/ui/text/Text';
-import { t } from '@/text';
 
 
 export function CodeLineRow(props: {
@@ -40,6 +39,8 @@ export function CodeLineRow(props: {
     const [isHovered, setIsHovered] = React.useState(false);
     const commentActive = props.commentActive === true;
     const highlighted = props.highlighted === true;
+    const canShowCommentAffordance = isWeb && Boolean(onPressAddComment) && !line.renderIsHeaderLine;
+    const commentAffordanceVisible = isHovered || commentActive;
 
     const intraLineSegments = (Array.isArray(line.renderIntraLineDiffSegments) && line.renderIntraLineDiffSegments.length > 0)
         ? line.renderIntraLineDiffSegments
@@ -139,9 +140,9 @@ export function CodeLineRow(props: {
         <View
             nativeID={line.id}
             style={[
-            styles.row,
-            highlighted ? styles.rowHighlighted : null,
-            { backgroundColor },
+                styles.row,
+                highlighted ? styles.rowHighlighted : null,
+                { backgroundColor },
             ]}
         >
             <Pressable
@@ -151,6 +152,18 @@ export function CodeLineRow(props: {
                 onHoverIn={isWeb && onPressAddComment ? () => setIsHovered(true) : undefined}
                 onHoverOut={isWeb && onPressAddComment ? () => setIsHovered(false) : undefined}
             >
+                {canShowCommentAffordance && onPressAddComment ? (
+                    <View testID="review-comment-line-affordance-lane" style={styles.commentButtonLane}>
+                        <ReviewCommentLineAffordance
+                            active={commentActive}
+                            color={theme.colors.textSecondary}
+                            onHoverIn={() => setIsHovered(true)}
+                            onHoverOut={() => setIsHovered(false)}
+                            onPress={() => onPressAddComment(line)}
+                            visible={commentAffordanceVisible}
+                        />
+                    </View>
+                ) : null}
                 <CodeGutter line={line} showLineNumbers={showLineNumbers} />
                 <View style={styles.codeContainer}>
                     {showPrefix && line.renderPrefixText ? (
@@ -230,26 +243,6 @@ export function CodeLineRow(props: {
                     </Text>
                 </View>
             </Pressable>
-
-            {isWeb && onPressAddComment && isHovered && !line.renderIsHeaderLine ? (
-                <Pressable
-                    onHoverIn={() => setIsHovered(true)}
-                    onHoverOut={() => setIsHovered(false)}
-                    onPress={() => onPressAddComment(line)}
-	                  hitSlop={8}
-	                  style={styles.commentButton}
-	                  accessibilityRole="button"
-	                  accessibilityLabel={
-	                      commentActive ? t('files.reviewComments.closeCommentA11y') : t('files.reviewComments.addCommentA11y')
-	                  }
-                  >
-                    <Ionicons
-                        name={commentActive ? 'close-circle-outline' : 'add-circle-outline'}
-                        size={16}
-                        color={theme.colors.textSecondary}
-                    />
-                </Pressable>
-            ) : null}
         </View>
     );
 }
@@ -271,13 +264,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         alignItems: 'flex-start',
     },
+    commentButtonLane: {
+        width: 32,
+        flexShrink: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: 22,
+    },
     codeContainer: {
         flexDirection: 'row',
         flex: 1,
-    },
-    commentButton: {
-        paddingLeft: 8,
-        paddingTop: 2,
     },
     codeText: {
         ...Typography.mono(),

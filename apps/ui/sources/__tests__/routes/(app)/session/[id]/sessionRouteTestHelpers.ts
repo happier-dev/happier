@@ -5,6 +5,12 @@ type SessionRouteImportOriginal = <T = unknown>() => Promise<T>;
 type SessionRouteStorageModuleFactory = (
     importOriginal: SessionRouteImportOriginal,
 ) => unknown | Promise<unknown>;
+type SessionRouteSafeAreaInsets = Readonly<{
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+}>;
 
 type InstallSessionRouteCommonModuleMocksOptions = Readonly<{
     reactNative?: SessionRouteModuleFactory;
@@ -13,6 +19,7 @@ type InstallSessionRouteCommonModuleMocksOptions = Readonly<{
     text?: SessionRouteModuleFactory;
     modal?: SessionRouteModuleFactory;
     storageModule?: SessionRouteStorageModuleFactory;
+    safeAreaInsets?: () => SessionRouteSafeAreaInsets;
 }>;
 
 const sessionRouteModuleState = vi.hoisted(() => ({
@@ -64,6 +71,11 @@ export function installSessionRouteCommonModuleMocks(
         return createUnistylesMock();
     });
 
+    vi.mock('react-native-safe-area-context', () => ({
+        useSafeAreaInsets: () =>
+            sessionRouteModuleState.options.safeAreaInsets?.() ?? { top: 0, right: 0, bottom: 0, left: 0 },
+    }));
+
     vi.mock('@/text', async () => {
         const activeOptions = sessionRouteModuleState.options;
         if (activeOptions.text) {
@@ -105,4 +117,14 @@ export function installSessionRouteCommonModuleMocks(
             },
         });
     });
+}
+
+export function getStyleValue(style: unknown, key: string): unknown {
+    const styles = Array.isArray(style) ? style : [style];
+    for (const entry of styles) {
+        if (entry && typeof entry === 'object' && key in entry) {
+            return (entry as Record<string, unknown>)[key];
+        }
+    }
+    return undefined;
 }

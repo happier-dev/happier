@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Stack, useNavigation, useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { t } from '@/text';
@@ -238,7 +238,6 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: props.artifactId ? t('promptLibrary.editSkill') : t('promptLibrary.newSkill') }} />
       <ItemList containerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <ItemGroup title={t('promptLibrary.general')}>
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
@@ -297,7 +296,7 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
           {savedArtifactId ? (
             supportingFiles.length > 0 ? supportingFiles.map((entry, index) => (
               (() => {
-                const editPath = `/(app)/settings/prompts/skills/${savedArtifactId}/files/edit?path=${encodeURIComponent(entry.path)}`;
+                const editPath = `/settings/prompts/skills/${savedArtifactId}/files/edit?path=${encodeURIComponent(entry.path)}`;
                 const actions: ItemAction[] = [];
                 if (entry.contentKind === 'utf8') {
                   actions.push({
@@ -358,7 +357,7 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
               testID="skillBundle.addSupportingFile"
               title={t('promptLibrary.addSupportingFile')}
               subtitle={t('promptLibrary.addSupportingFileSubtitle')}
-              onPress={() => router.push(`/(app)/settings/prompts/skills/${savedArtifactId}/files/new`)}
+              onPress={() => router.push(`/settings/prompts/skills/${savedArtifactId}/files/new`)}
             />
           </ItemGroup>
         ) : null}

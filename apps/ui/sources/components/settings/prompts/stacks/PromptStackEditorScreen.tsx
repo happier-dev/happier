@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ScrollView, View, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 
 import type { PromptStackEntryV1, PromptStacksV1 } from '@happier-dev/protocol';
 
@@ -98,8 +98,8 @@ export const PromptStackEditorScreen = React.memo((props: Readonly<{
 
   const openArtifactEditor = React.useCallback((entry: PromptStackEntryV1) => {
     router.push(entry.ref.kind === 'bundle'
-      ? `/(app)/settings/prompts/skills/${entry.ref.artifactId}`
-      : `/(app)/settings/prompts/docs/${entry.ref.artifactId}`);
+      ? `/settings/prompts/skills/${entry.ref.artifactId}`
+      : `/settings/prompts/docs/${entry.ref.artifactId}`);
   }, [router]);
 
   const onAdd = React.useCallback(() => {
@@ -108,7 +108,7 @@ export const PromptStackEditorScreen = React.memo((props: Readonly<{
       params.push(`profileId=${encodeURIComponent(props.profileId)}`);
     }
     const query = params.length > 0 ? `?${params.join('&')}` : '';
-    router.push(`/(app)/settings/prompts/stacks/pick${query}`);
+    router.push(`/settings/prompts/stacks/pick${query}`);
   }, [props.profileId, props.surface, router]);
 
   const remove = React.useCallback((entryId: string) => {
@@ -128,7 +128,6 @@ export const PromptStackEditorScreen = React.memo((props: Readonly<{
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: props.title }} />
       <ScrollView contentContainerStyle={{ paddingVertical: 12, maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
         <ItemGroup title={t('promptLibrary.stackEntries')}>
           {entries.map((entry, index) => {

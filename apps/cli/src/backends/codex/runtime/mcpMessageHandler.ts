@@ -5,6 +5,7 @@ import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
+import type { TurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 
 import { nextCodexLifecycleAcpMessages } from '../utils/codexAcpLifecycle';
 import { formatCodexEventForUi } from '../utils/formatCodexEventForUi';
@@ -58,6 +59,7 @@ export function createCodexMcpMessageHandler(opts: {
   setCurrentTaskId: (next: string | null) => void;
   getThinking: () => boolean;
   setThinking: (next: boolean) => void;
+  turnAssistantPreviewTracker?: TurnAssistantPreviewTracker;
 }): (msg: unknown) => void {
   let accumulatedReasoning = '';
   let sawReasoningDelta = false;
@@ -105,6 +107,7 @@ export function createCodexMcpMessageHandler(opts: {
         'result',
       );
     } else if (message?.type === 'task_started') {
+      opts.turnAssistantPreviewTracker?.reset();
       opts.messageBuffer.addMessage('Starting task...', 'status');
     } else if (message?.type === 'task_complete') {
       opts.messageBuffer.addMessage('Task completed', 'status');
@@ -170,6 +173,7 @@ export function createCodexMcpMessageHandler(opts: {
     if (message?.type === 'agent_message') {
       const assistantText = typeof message.message === 'string' ? message.message : '';
       if (assistantText) {
+        opts.turnAssistantPreviewTracker?.replace(assistantText);
         streamedTranscriptWriter.appendAssistantDelta(assistantText);
       }
     }

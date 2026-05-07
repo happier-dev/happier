@@ -1,6 +1,61 @@
 import { z } from 'zod';
+import {
+    DirectTranscriptRawMessageV1Schema,
+    SessionStoredMessageContentSchema,
+} from '@happier-dev/protocol';
+import type {
+    DirectTranscriptRawMessageV1,
+    SessionStoredMessageContent,
+} from '@happier-dev/protocol';
 import { EphemeralUpdateSchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import type { UpdateContainer, EphemeralUpdate } from '@happier-dev/protocol/updates';
+
+export type TranscriptStreamSegmentEphemeralUpdate = Readonly<{
+    type: 'transcript-stream-segment';
+    sessionId: string;
+    message: Readonly<{
+        localId: string;
+        sidechainId?: string | null;
+        content: SessionStoredMessageContent;
+        createdAt: number;
+        updatedAt: number;
+    }>;
+}>;
+
+export type DirectSessionTranscriptUpdatedEphemeralUpdate = Readonly<{
+    type: 'direct-session-transcript-delta';
+    sessionId: string;
+    items: ReadonlyArray<DirectTranscriptRawMessageV1>;
+    nextCursor?: string | null;
+    tailCursor?: string | null;
+    truncated?: boolean;
+}>;
+
+export type ParsedEphemeralUpdate =
+    | EphemeralUpdate
+    | TranscriptStreamSegmentEphemeralUpdate
+    | DirectSessionTranscriptUpdatedEphemeralUpdate;
+
+const TranscriptStreamSegmentEphemeralUpdateSchema = z.object({
+    type: z.literal('transcript-stream-segment'),
+    sessionId: z.string(),
+    message: z.object({
+        localId: z.string(),
+        sidechainId: z.string().nullable().optional(),
+        content: SessionStoredMessageContentSchema,
+        createdAt: z.number(),
+        updatedAt: z.number(),
+    }).passthrough(),
+}).passthrough();
+
+const DirectSessionTranscriptUpdatedEphemeralUpdateSchema = z.object({
+    type: z.literal('direct-session-transcript-delta'),
+    sessionId: z.string(),
+    items: z.array(DirectTranscriptRawMessageV1Schema),
+    nextCursor: z.string().nullable().optional(),
+    tailCursor: z.string().nullable().optional(),
+    truncated: z.boolean().optional(),
+}).passthrough();
 
 const LegacySharingUpdateBodySchema = z.discriminatedUnion('t', [
     z.object({
@@ -68,9 +123,19 @@ export function parseUpdateContainer(update: unknown): UpdateContainer | null {
     return validatedUpdate.data;
 }
 
-export function parseEphemeralUpdate(update: unknown): EphemeralUpdate | null {
+export function parseEphemeralUpdate(update: unknown): ParsedEphemeralUpdate | null {
     const validatedUpdate = EphemeralUpdateSchema.safeParse(update);
     if (!validatedUpdate.success) {
+        const transcriptStreamSegmentUpdate = TranscriptStreamSegmentEphemeralUpdateSchema.safeParse(update);
+        if (transcriptStreamSegmentUpdate.success) {
+            return transcriptStreamSegmentUpdate.data;
+        }
+
+        const directSessionTranscriptDeltaUpdate = DirectSessionTranscriptUpdatedEphemeralUpdateSchema.safeParse(update);
+        if (directSessionTranscriptDeltaUpdate.success) {
+            return directSessionTranscriptDeltaUpdate.data;
+        }
+
         const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
         if (isDev) {
             console.error('Invalid ephemeral update received:', update);
@@ -83,5 +148,5 @@ export function parseEphemeralUpdate(update: unknown): EphemeralUpdate | null {
         }
         return null;
     }
-    return validatedUpdate.data;
+    return validatedUpdate.data as ParsedEphemeralUpdate;
 }

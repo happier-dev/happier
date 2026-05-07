@@ -24,3 +24,10 @@ export function isBranchStashAlreadyExistsError(
     return message.includes('stash') && message.includes('already') && message.includes('branch');
 }
 
+export function isGitIndexLockError(
+    response: Readonly<{ success: boolean; error?: string; stderr?: string }>
+): boolean {
+    if (response.success) return false;
+    const message = `${response.error ?? ''}\n${response.stderr ?? ''}`.toLowerCase();
+    return message.includes('index.lock');
+}

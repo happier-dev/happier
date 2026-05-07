@@ -1,10 +1,9 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
-import { Ionicons, Octicons } from '@expo/vector-icons';
+import { Platform, View } from 'react-native';
+import { Octicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { usePublishBranchAction } from '@/hooks/session/sourceControl/usePublishBranchAction';
 import { t } from '@/text';
 import type { ScmStatusFiles } from '@/scm/scmStatusFiles';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
@@ -85,13 +84,6 @@ export function SourceControlBranchSummary({
         && Boolean(sessionId)
         && scmSnapshot?.capabilities?.readBranches === true;
 
-    const { canPublish, publishBusy, publishBranch } = usePublishBranchAction({
-        sessionId,
-        snapshot: scmSnapshot,
-        writeEnabled: scmWriteEnabled === true && isRail,
-        disabled,
-    });
-
     if (variant === 'rail') {
         return (
             <View
@@ -128,7 +120,7 @@ export function SourceControlBranchSummary({
                                     currentBranch={scmStatusFiles.branch}
                                     snapshot={scmSnapshot ?? null}
                                     writeEnabled={scmWriteEnabled}
-                                    disabled={disabled === true || publishBusy}
+                                    disabled={disabled === true}
                                     testID="scm-branch-menu-trigger"
                                 />
                             </React.Suspense>
@@ -147,34 +139,6 @@ export function SourceControlBranchSummary({
                     </View>
 
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-                        {canPublish ? (
-                            <Pressable
-                                testID="scm-publish-branch"
-                                accessibilityRole="button"
-                                accessibilityLabel={t('files.branchMenu.publish.title')}
-                                onPress={() => {
-                                    void publishBranch();
-                                }}
-                                disabled={publishBusy || disabled === true}
-                                style={({ pressed }) => ({
-                                    flexDirection: 'row',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                    paddingHorizontal: 10,
-                                    paddingVertical: 6,
-                                    borderRadius: 999,
-                                    borderWidth: 1,
-                                    borderColor: theme.colors.textLink,
-                                    backgroundColor: theme.colors.surfaceHigh,
-                                    opacity: publishBusy || disabled === true ? 0.6 : pressed ? 0.85 : 1,
-                                })}
-                            >
-                                <Ionicons name="cloud-upload-outline" size={14} color={theme.colors.textLink} />
-                                <Text style={{ fontSize: 12, color: theme.colors.textLink, ...Typography.default('semiBold') }}>
-                                    {t('files.branchMenu.publish.short')}
-                                </Text>
-                            </Pressable>
-                        ) : null}
                         <InlineStat value={staged} iconName="diff-added" />
                         <InlineStat value={unstaged} iconName="diff-modified" />
                         {showTracking ? <InlineStat value={ahead} iconName="arrow-up" /> : null}

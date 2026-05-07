@@ -46,4 +46,29 @@ describe('waitForExistingSessionExitIfStopRequested', () => {
     expect(isSessionRunnerActive).toHaveBeenCalled();
     vi.useRealTimers();
   });
+
+  it('notifies the caller when a stopped tracked runner is no longer active', async () => {
+    const { waitForExistingSessionExitIfStopRequested } = await import('./waitForExistingSessionExitIfStopRequested');
+
+    const isSessionRunnerActive = vi.fn(async () => false);
+    const onExitObserved = vi.fn();
+    const pidToTrackedSession = new Map<number, any>([
+      [1, { happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
+    ]);
+
+    await waitForExistingSessionExitIfStopRequested({
+      sessionId: 'sess-1',
+      pidToTrackedSession,
+      isSessionRunnerActive,
+      timeoutMs: 1_000,
+      pollIntervalMs: 50,
+      onExitObserved,
+    });
+
+    expect(onExitObserved).toHaveBeenCalledWith(1, {
+      reason: 'process-missing',
+      code: null,
+      signal: null,
+    });
+  });
 });
