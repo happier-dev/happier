@@ -1,11 +1,117 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { UiConfig } from "@/app/api/uiConfig";
-import { extname, resolve, sep } from "node:path";
+import { extname, isAbsolute, relative, resolve } from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { warn } from "@/utils/logging/log";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 
 type AnyFastifyInstance = FastifyInstance<any, any, any, any, any>;
+type UiEncoding = 'br' | 'gzip';
+
+function isWithinRoot(root: string, candidate: string): boolean {
+    const rel = relative(root, candidate);
+    return rel === '' || (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function parseAcceptedEncodings(header: unknown): Map<string, number> {
+    const raw = Array.isArray(header) ? header.join(',') : typeof header === 'string' ? header : '';
+    const result = new Map<string, number>();
+    for (const part of raw.split(',')) {
+        const [encodingRaw, ...params] = part.trim().split(';');
+        const encoding = encodingRaw.trim().toLowerCase();
+        if (!encoding) continue;
+        let q = 1;
+        for (const param of params) {
+            const [key, value] = param.trim().split('=');
+            if (key?.toLowerCase() !== 'q') continue;
+            const parsed = Number.parseFloat(value ?? '');
+            q = Number.isFinite(parsed) ? parsed : 0;
+        }
+        result.set(encoding, Math.max(0, Math.min(1, q)));
+    }
+    return result;
+}
+
+function acceptedQuality(accepted: Map<string, number>, encoding: UiEncoding): number {
+    return accepted.get(encoding) ?? accepted.get('*') ?? 0;
+}
+
+async function statFile(path: string) {
+    const info = await stat(path).catch(() => null);
+    return info?.isFile() ? info : null;
+}
+
+async function selectPrecompressedSidecar(
+    candidate: string,
+    request: FastifyRequest,
+): Promise<{ path: string; encoding: UiEncoding; size: number } | null> {
+    const accepted = parseAcceptedEncodings(request.headers['accept-encoding']);
+    const candidates = [
+        { encoding: 'br' as const, quality: acceptedQuality(accepted, 'br'), path: `${candidate}.br`, preference: 0 },
+        { encoding: 'gzip' as const, quality: acceptedQuality(accepted, 'gzip'), path: `${candidate}.gz`, preference: 1 },
+    ].filter((entry) => entry.quality > 0)
+        .sort((a, b) => b.quality - a.quality || a.preference - b.preference);
+
+    for (const entry of candidates) {
+        const info = await statFile(entry.path);
+        if (info) {
+            return { path: entry.path, encoding: entry.encoding, size: info.size };
+        }
+    }
+    return null;
+}
+
+function setUiFileHeaders(reply: any, ext: string): void {
+    if (ext === '.html') {
+        reply.header('content-type', 'text/html; charset=utf-8');
+        reply.header('cache-control', 'no-cache');
+    } else if (ext === '.js') {
+        reply.header('content-type', 'text/javascript; charset=utf-8');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.css') {
+        reply.header('content-type', 'text/css; charset=utf-8');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.json') {
+        reply.header('content-type', 'application/json; charset=utf-8');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.map') {
+        reply.header('content-type', 'application/json; charset=utf-8');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.svg') {
+        reply.header('content-type', 'image/svg+xml');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.ico') {
+        reply.header('content-type', 'image/x-icon');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.wasm') {
+        reply.header('content-type', 'application/wasm');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.ttf') {
+        reply.header('content-type', 'font/ttf');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.woff') {
+        reply.header('content-type', 'font/woff');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.woff2') {
+        reply.header('content-type', 'font/woff2');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.png') {
+        reply.header('content-type', 'image/png');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.jpg' || ext === '.jpeg') {
+        reply.header('content-type', 'image/jpeg');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.webp') {
+        reply.header('content-type', 'image/webp');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.gif') {
+        reply.header('content-type', 'image/gif');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else {
+        reply.header('content-type', 'application/octet-stream');
+        reply.header('cache-control', 'public, max-age=31536000, immutable');
+    }
+}
 
 export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
     const uiDir = ui.dir;
@@ -21,66 +127,29 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
         }
     }
 
-    async function sendUiFile(relPath: string, reply: any) {
+    async function sendUiFile(relPath: string, request: FastifyRequest, reply: any) {
         const candidate = resolve(root, relPath);
-        if (!(candidate === root || candidate.startsWith(root + sep))) {
+        if (!isWithinRoot(root, candidate)) {
             return reply.code(404).send({ error: 'Not found' });
         }
 
-        const bytes = await readFile(candidate);
+        const originalInfo = await statFile(candidate);
+        if (!originalInfo) {
+            return reply.code(404).send({ error: 'Not found' });
+        }
         const ext = extname(candidate).toLowerCase();
+        const sidecar = await selectPrecompressedSidecar(candidate, request);
 
-        if (ext === '.html') {
-            reply.header('content-type', 'text/html; charset=utf-8');
-            reply.header('cache-control', 'no-cache');
-        } else if (ext === '.js') {
-            reply.header('content-type', 'text/javascript; charset=utf-8');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.css') {
-            reply.header('content-type', 'text/css; charset=utf-8');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.json') {
-            reply.header('content-type', 'application/json; charset=utf-8');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.map') {
-            reply.header('content-type', 'application/json; charset=utf-8');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.svg') {
-            reply.header('content-type', 'image/svg+xml');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.ico') {
-            reply.header('content-type', 'image/x-icon');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.wasm') {
-            reply.header('content-type', 'application/wasm');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.ttf') {
-            reply.header('content-type', 'font/ttf');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.woff') {
-            reply.header('content-type', 'font/woff');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.woff2') {
-            reply.header('content-type', 'font/woff2');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.png') {
-            reply.header('content-type', 'image/png');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.jpg' || ext === '.jpeg') {
-            reply.header('content-type', 'image/jpeg');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.webp') {
-            reply.header('content-type', 'image/webp');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else if (ext === '.gif') {
-            reply.header('content-type', 'image/gif');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
-        } else {
-            reply.header('content-type', 'application/octet-stream');
-            reply.header('cache-control', 'public, max-age=31536000, immutable');
+        setUiFileHeaders(reply, ext);
+        reply.header('vary', 'Accept-Encoding');
+        if (sidecar) {
+            reply.header('content-encoding', sidecar.encoding);
+            reply.header('content-length', String(sidecar.size));
+            return reply.send(createReadStream(sidecar.path));
         }
 
-        return reply.send(Buffer.from(bytes));
+        reply.header('content-length', String(originalInfo.size));
+        return reply.send(createReadStream(candidate));
     }
 
     async function sendIndexHtml(reply: any) {
@@ -168,7 +237,7 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
                     '.map',
                 ].includes(ext);
                 if (isStaticAsset) {
-                    return await sendUiFile(decoded, reply);
+                    return await sendUiFile(decoded, request, reply);
                 }
                 return await sendIndexHtml(reply);
             } catch {
@@ -192,7 +261,7 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
                 const rel = decoded.replace(/^\/+/, '');
 
                 const candidate = resolve(root, rel || 'index.html');
-                if (!(candidate === root || candidate.startsWith(root + sep))) {
+                if (!isWithinRoot(root, candidate)) {
                     return reply.code(404).send({ error: 'Not found' });
                 }
 
@@ -210,7 +279,7 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
                 if (relPath === 'index.html') {
                     return await sendIndexHtml(reply);
                 }
-                return await sendUiFile(relPath, reply);
+                return await sendUiFile(relPath, request, reply);
             } catch {
                 return reply.code(404).send({ error: 'Not found' });
             }
@@ -223,7 +292,7 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
         try {
             const raw = (request.params as { '*': string | undefined })['*'] || '';
             const decoded = decodeURIComponent(raw).replace(/^\/+/, '');
-            return await sendUiFile(`_expo/${decoded}`, reply);
+            return await sendUiFile(`_expo/${decoded}`, request, reply);
         } catch {
             return reply.code(404).send({ error: 'Not found' });
         }
@@ -232,7 +301,7 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
         try {
             const raw = (request.params as { '*': string | undefined })['*'] || '';
             const decoded = decodeURIComponent(raw).replace(/^\/+/, '');
-            return await sendUiFile(`assets/${decoded}`, reply);
+            return await sendUiFile(`assets/${decoded}`, request, reply);
         } catch {
             return reply.code(404).send({ error: 'Not found' });
         }
@@ -241,35 +310,35 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
         try {
             const raw = (request.params as { '*': string | undefined })['*'] || '';
             const decoded = decodeURIComponent(raw).replace(/^\/+/, '');
-            return await sendUiFile(`.well-known/${decoded}`, reply);
+            return await sendUiFile(`.well-known/${decoded}`, request, reply);
         } catch {
             return reply.code(404).send({ error: 'Not found' });
         }
     });
-    app.get('/favicon.ico', async (_request, reply) => {
+    app.get('/favicon.ico', async (request, reply) => {
         try {
-            return await sendUiFile('favicon.ico', reply);
+            return await sendUiFile('favicon.ico', request, reply);
         } catch {
             return reply.code(404).send({ error: 'Not found' });
         }
     });
-    app.get('/favicon-active.ico', async (_request, reply) => {
+    app.get('/favicon-active.ico', async (request, reply) => {
         try {
-            return await sendUiFile('favicon-active.ico', reply);
+            return await sendUiFile('favicon-active.ico', request, reply);
         } catch {
             return reply.code(404).send({ error: 'Not found' });
         }
     });
-    app.get('/canvaskit.wasm', async (_request, reply) => {
+    app.get('/canvaskit.wasm', async (request, reply) => {
         try {
-            return await sendUiFile('canvaskit.wasm', reply);
+            return await sendUiFile('canvaskit.wasm', request, reply);
         } catch {
             return reply.code(404).send({ error: 'Not found' });
         }
     });
-    app.get('/metadata.json', async (_request, reply) => {
+    app.get('/metadata.json', async (request, reply) => {
         try {
-            return await sendUiFile('metadata.json', reply);
+            return await sendUiFile('metadata.json', request, reply);
         } catch {
             return reply.code(404).send({ error: 'Not found' });
         }

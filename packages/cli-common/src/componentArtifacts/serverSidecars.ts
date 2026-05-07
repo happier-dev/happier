@@ -67,6 +67,13 @@ async function ensureUiWebDist({
   if (!builtInfo?.isDirectory()) {
     throw new Error(`[component-artifacts] missing ui web dist directory: ${uiDistPath}`);
   }
+  runCommand(process.execPath, ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'], {
+    cwd: repoRoot,
+    env: {
+      ...env,
+      CI: env.CI ?? '1',
+    },
+  });
   return uiDistPath;
 }
 

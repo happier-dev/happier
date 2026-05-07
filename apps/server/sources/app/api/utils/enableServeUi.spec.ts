@@ -115,6 +115,78 @@ describe('enableServeUi (mountRoot)', () => {
     });
   });
 
+  it('serves a Brotli sidecar for static assets when accepted', async () => {
+    await withTempDir('happier-ui-root-br-', async (dir) => {
+      await writeFile(join(dir, 'index.html'), '<!doctype html><html><body>ok</body></html>\n', 'utf-8');
+      await writeFile(join(dir, 'main.js'), 'console.log("original");\n', 'utf-8');
+      await writeFile(join(dir, 'main.js.br'), 'brotli-sidecar\n', 'utf-8');
+      await writeFile(join(dir, 'main.js.gz'), 'gzip-sidecar\n', 'utf-8');
+
+      await withApp(async (app) => {
+        enableServeUi(app, { dir, prefix: '/', mountRoot: true, required: false });
+        await app.ready();
+
+        const res = await app.inject({
+          method: 'GET',
+          url: '/main.js',
+          headers: { 'accept-encoding': 'gzip, br' },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['content-encoding']).toBe('br');
+        expect(res.headers['vary']).toMatch(/accept-encoding/i);
+        expect(res.headers['content-type']).toMatch(/text\/javascript/i);
+        expect(res.body).toBe('brotli-sidecar\n');
+      });
+    });
+  });
+
+  it('falls back to a gzip sidecar when Brotli is not accepted', async () => {
+    await withTempDir('happier-ui-root-gz-', async (dir) => {
+      await writeFile(join(dir, 'index.html'), '<!doctype html><html><body>ok</body></html>\n', 'utf-8');
+      await writeFile(join(dir, 'main.js'), 'console.log("original");\n', 'utf-8');
+      await writeFile(join(dir, 'main.js.gz'), 'gzip-sidecar\n', 'utf-8');
+
+      await withApp(async (app) => {
+        enableServeUi(app, { dir, prefix: '/', mountRoot: true, required: false });
+        await app.ready();
+
+        const res = await app.inject({
+          method: 'GET',
+          url: '/main.js',
+          headers: { 'accept-encoding': 'gzip' },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['content-encoding']).toBe('gzip');
+        expect(res.body).toBe('gzip-sidecar\n');
+      });
+    });
+  });
+
+  it('serves the original asset when no accepted sidecar exists', async () => {
+    await withTempDir('happier-ui-root-identity-', async (dir) => {
+      await writeFile(join(dir, 'index.html'), '<!doctype html><html><body>ok</body></html>\n', 'utf-8');
+      await writeFile(join(dir, 'main.js'), 'console.log("original");\n', 'utf-8');
+      await writeFile(join(dir, 'main.js.gz'), 'gzip-sidecar\n', 'utf-8');
+
+      await withApp(async (app) => {
+        enableServeUi(app, { dir, prefix: '/', mountRoot: true, required: false });
+        await app.ready();
+
+        const res = await app.inject({
+          method: 'GET',
+          url: '/main.js',
+          headers: { 'accept-encoding': 'deflate' },
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['content-encoding']).toBeUndefined();
+        expect(res.body).toBe('console.log("original");\n');
+      });
+    });
+  });
+
   it('does not rewrite unknown API routes to index.html when mounted at root', async () => {
     await withTempDir('happier-ui-root-api-404-', async (dir) => {
       await writeFile(join(dir, 'index.html'), '<!doctype html><html><body>ok</body></html>\n', 'utf-8');

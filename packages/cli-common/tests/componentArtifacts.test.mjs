@@ -879,6 +879,7 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
       { cmd: 'yarn', args: ['--cwd', 'apps/server', '-s', 'generate:providers'] },
       { cmd: process.execPath, args: ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'] },
       { cmd: 'yarn', args: ['--cwd', 'apps/ui', '-s', 'expo', 'export', '--platform', 'web', '--output-dir', 'dist'] },
+      { cmd: process.execPath, args: ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'] },
     ]);
     assert.equal(readFileSync(join(payloadDir, 'happier-server'), 'utf8'), '#!/bin/sh\necho happier-server\n');
     assert.equal(readFileSync(join(payloadDir, 'generated', 'sqlite-client', 'schema.prisma'), 'utf8'), '// sqlite\n');
@@ -1180,6 +1181,13 @@ test('buildServerBinaryArtifactPayload builds ui-web dist when it is missing', a
           const uiDistDir = join(repoRoot, 'apps', 'ui', 'dist');
           mkdirSync(uiDistDir, { recursive: true });
           writeFileSync(join(uiDistDir, 'index.html'), '<html>ui built</html>\n', 'utf8');
+          writeFileSync(join(uiDistDir, 'main.js'), 'console.log("fresh ui");\n'.repeat(200), 'utf8');
+          return;
+        }
+        if (cmd === process.execPath && argsText.includes('precompress-ui-web-assets.mjs --dir apps/ui/dist')) {
+          const uiDistDir = join(repoRoot, 'apps', 'ui', 'dist');
+          writeFileSync(join(uiDistDir, 'main.js.br'), 'br-sidecar\n', 'utf8');
+          writeFileSync(join(uiDistDir, 'main.js.gz'), 'gz-sidecar\n', 'utf8');
           return;
         }
       },
@@ -1192,8 +1200,11 @@ test('buildServerBinaryArtifactPayload builds ui-web dist when it is missing', a
       { cmd: 'yarn', args: ['--cwd', 'apps/server', '-s', 'generate:providers'] },
       { cmd: process.execPath, args: ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'] },
       { cmd: 'yarn', args: ['--cwd', 'apps/ui', '-s', 'expo', 'export', '--platform', 'web', '--output-dir', 'dist'] },
+      { cmd: process.execPath, args: ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'] },
     ]);
     assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'index.html'), 'utf8'), '<html>ui built</html>\n');
+    assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'main.js.br'), 'utf8'), 'br-sidecar\n');
+    assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'main.js.gz'), 'utf8'), 'gz-sidecar\n');
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -1257,6 +1268,7 @@ test('buildServerBinaryArtifactPayload rebuilds ui-web dist even when a stale di
       { cmd: 'yarn', args: ['--cwd', 'apps/server', '-s', 'generate:providers'] },
       { cmd: process.execPath, args: ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'] },
       { cmd: 'yarn', args: ['--cwd', 'apps/ui', '-s', 'expo', 'export', '--platform', 'web', '--output-dir', 'dist'] },
+      { cmd: process.execPath, args: ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'] },
     ]);
     assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'index.html'), 'utf8'), '<html>fresh ui</html>\n');
   } finally {

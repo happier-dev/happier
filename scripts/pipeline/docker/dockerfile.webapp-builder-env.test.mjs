@@ -17,6 +17,7 @@ test("webapp-builder stage exports PostHog + Sentry public env and supports opti
   const dockerfilePath = path.join(repoRoot, "Dockerfile");
   const raw = fs.readFileSync(dockerfilePath, "utf8");
   const section = extractStageSection(raw, "FROM deps-alpine-build AS webapp-builder");
+  const webappSection = extractStageSection(raw, "FROM nginxinc/nginx-unprivileged:alpine AS webapp");
 
   assert.match(section, /\bARG POSTHOG_HOST\b/);
   assert.match(section, /\bARG SENTRY_DSN\b/);
@@ -38,4 +39,7 @@ test("webapp-builder stage exports PostHog + Sentry public env and supports opti
 
   assert.match(section, /\bRUN if \[ -n "\$SENTRY_AUTH_TOKEN" \]; then\b/);
   assert.match(section, /\bsentry-expo-upload-sourcemaps dist\b/);
+  assert.match(section, /precompress-ui-web-assets\.mjs --dir apps\/ui\/dist --gzip-only/);
+  assert.match(webappSection, /gzip_static on/);
+  assert.match(webappSection, /gzip_vary on/);
 });

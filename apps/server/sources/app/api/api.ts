@@ -56,7 +56,6 @@ export async function startApi() {
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
     });
     app.register(import('@fastify/rate-limit'), resolveApiRateLimitPluginOptions(process.env));
-    app.register(import('@fastify/compress'), { global: true });
 
     enableOptionalStatics(app);
 
