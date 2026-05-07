@@ -161,4 +161,137 @@ describe('stateUpdates (plaintext sessions)', () => {
     expect(agentState.requests.req_permission.tool).toBe('Write');
     expect(version).toBe(2);
   });
+
+  it('rejects metadata updates when snapshot sync cannot establish a metadata version', async () => {
+    const emitWithAck = vi.fn();
+    const syncSessionSnapshotFromServer = vi.fn(async () => undefined);
+    let metadata: any = { path: '/tmp', host: 'localhost' };
+    let version = -1;
+
+    await expect(updateSessionMetadataWithAck({
+      socket: { emitWithAck },
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getMetadata: () => metadata,
+      setMetadata: (next) => {
+        metadata = next;
+      },
+      getMetadataVersion: () => version,
+      setMetadataVersion: (next) => {
+        version = next;
+      },
+      syncSessionSnapshotFromServer,
+      handler: (current) => ({ ...current, path: '/tmp2' }),
+    })).rejects.toThrow(/metadataVersion/i);
+
+    expect(syncSessionSnapshotFromServer).toHaveBeenCalled();
+    expect(emitWithAck).not.toHaveBeenCalled();
+  });
+
+  it('updates metadata from an empty object when the local metadata snapshot is unavailable but versioned', async () => {
+    const emitWithAck = vi.fn(async (_event: string, payload: any) => ({
+      result: 'success',
+      metadata: payload.metadata,
+      version: payload.expectedVersion + 1,
+    }));
+    let metadata: any = null;
+    let version = 4;
+    const seenMetadata: any[] = [];
+
+    await updateSessionMetadataWithAck({
+      socket: { emitWithAck },
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getMetadata: () => metadata,
+      setMetadata: (next) => {
+        metadata = next;
+      },
+      getMetadataVersion: () => version,
+      setMetadataVersion: (next) => {
+        version = next;
+      },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => {
+        seenMetadata.push(current);
+        return { ...current, claudeSessionId: 'claude-1' } as any;
+      },
+    });
+
+    expect(seenMetadata).toEqual([{}]);
+    expect(metadata).toEqual({ claudeSessionId: 'claude-1' });
+    expect(version).toBe(5);
+  });
+
+  it('rejects metadata update acks that are neither success nor version mismatch', async () => {
+    const emitWithAck = vi.fn(async () => ({ result: 'error' }));
+    let metadata: any = { path: '/tmp', host: 'localhost' };
+    let version = 1;
+
+    await expect(updateSessionMetadataWithAck({
+      socket: { emitWithAck },
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getMetadata: () => metadata,
+      setMetadata: (next) => {
+        metadata = next;
+      },
+      getMetadataVersion: () => version,
+      setMetadataVersion: (next) => {
+        version = next;
+      },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => ({ ...current, path: '/tmp2' }),
+    })).rejects.toThrow(/metadata update failed/i);
+  });
+
+  it('re-runs metadata updater against refreshed metadata after a version mismatch', async () => {
+    const emitWithAck = vi.fn(async (_event: string, payload: any) => {
+      if (payload.expectedVersion === 1) {
+        return {
+          result: 'version-mismatch',
+          metadata: JSON.stringify({ path: '/server', host: 'localhost', serverOnly: true }),
+          version: 2,
+        };
+      }
+      return {
+        result: 'success',
+        metadata: payload.metadata,
+        version: 3,
+      };
+    });
+    let metadata: any = { path: '/tmp', host: 'localhost' };
+    let version = 1;
+    const seenPaths: string[] = [];
+
+    await updateSessionMetadataWithAck({
+      socket: { emitWithAck },
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getMetadata: () => metadata,
+      setMetadata: (next) => {
+        metadata = next;
+      },
+      getMetadataVersion: () => version,
+      setMetadataVersion: (next) => {
+        version = next;
+      },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => {
+        seenPaths.push(String((current as any).path));
+        return { ...current, clientOnly: true };
+      },
+    });
+
+    expect(seenPaths).toEqual(['/tmp', '/server']);
+    expect(metadata).toMatchObject({ path: '/server', serverOnly: true, clientOnly: true });
+    expect(version).toBe(3);
+  });
 });

@@ -71,6 +71,7 @@ import { shouldStartClaudeSessionCaffeinate } from './sessionCaffeinatePolicy';
 import { ensureManagedJavaScriptRuntimeCommand } from '@/runtime/js/managedJavaScriptRuntime';
 import { createClaudeRawMessageTurnDiffBridge } from './utils/createClaudeRawMessageTurnDiffBridge';
 import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
+import { createSessionMetadataShutdownDeadline } from '@/session/services/sessionMetadataShutdownDeadline';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { publishClaudeSessionModelsMetadataBestEffort } from '@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort';
 import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
@@ -786,8 +787,13 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 // Dispose the local permission bridge while the session transport is still alive so it can
                 // cancel and persist any outstanding local-mode permission requests.
                 disposeLocalPermissionBridge();
+                // Share one metadata budget across drain -> archive so shutdown cannot stack waits.
+                const metadataDeadline = createSessionMetadataShutdownDeadline();
+                await currentSession?.drainCriticalMetadataWrites({ timeoutMs: metadataDeadline.remainingMs() });
                 if (archiveDecision.archive) {
-                    await archiveAndCloseRuntimeSession(session, credentials, archiveDecision.archiveReason);
+                    await archiveAndCloseRuntimeSession(session, credentials, archiveDecision.archiveReason, {
+                        metadataTimeoutMs: metadataDeadline.remainingMs(),
+                    });
                 }
 
                 // Cleanup session resources (intervals, callbacks)
@@ -901,6 +907,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
     // Cleanup session resources (intervals, callbacks) - prevents memory leak
     // Note: currentSession is set by onSessionReady callback during loop()
+    await (currentSession as import('./session').Session | null)?.drainCriticalMetadataWrites();
     (currentSession as import('./session').Session | null)?.cleanup();
 
     // Dispose the local permission bridge while the session transport is still alive so it can
@@ -1529,6 +1536,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
             try {
                 coordinator.cancel();
                 coordinator.artifacts.deferredSession.cancel();
+                await currentSession?.drainCriticalMetadataWrites();
                 cleanupClaudeSessionBestEffort(currentSession);
                 // Dispose the local permission bridge while the session transport is still alive so it can
                 // cancel and persist any outstanding local-mode permission requests.
@@ -1578,6 +1586,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
 
     // Best-effort cleanup for normal exits (signals handled via terminationHandlers).
     try {
+        await (currentSession as import('./session').Session | null)?.drainCriticalMetadataWrites();
         cleanupClaudeSessionBestEffort(currentSession);
         // Dispose the local permission bridge while the session transport is still alive so it can
         // cancel and persist any outstanding local-mode permission requests.

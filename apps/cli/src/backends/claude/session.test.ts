@@ -87,6 +87,34 @@ describe('Session', () => {
     }
   });
 
+  it('tracks changed Claude session id metadata writes as drainable critical persistence', async () => {
+    let resolveMetadataUpdate!: () => void;
+    const metadataUpdate = new Promise<void>((resolve) => {
+      resolveMetadataUpdate = resolve;
+    });
+    const client = createSessionClientStub({
+      updateMetadata: vi.fn(() => metadataUpdate),
+    });
+    const session = createSession(client);
+
+    session.onSessionFound('sess_critical', hookWithTranscript('/tmp/sess_critical.jsonl'));
+
+    const drained = session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+    await Promise.resolve();
+    expect(client.updateMetadata).toHaveBeenCalledTimes(1);
+
+    let didDrain = false;
+    void drained.then(() => {
+      didDrain = true;
+    });
+    await Promise.resolve();
+    expect(didDrain).toBe(false);
+
+    resolveMetadataUpdate();
+    await drained;
+    expect(didDrain).toBe(true);
+  });
+
   it('defaults startedBy to terminal', () => {
     const client = createSessionClientStub();
 

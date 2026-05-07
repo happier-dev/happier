@@ -18,6 +18,7 @@ import type { McpServerConfig } from '@/agent';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { resolveConfiguredClaudeConfigDir } from './utils/resolveConfiguredClaudeConfigDir';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
+import { resolveSessionCriticalMetadataDrainTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -144,6 +145,7 @@ export class Session {
     /** Callbacks to be notified when session ID is found/changed */
     private sessionFoundCallbacks: ((info: SessionFoundInfo) => void)[] = [];
     private claudeSessionHookCallbacks: ((data: SessionHookData) => void)[] = [];
+    private readonly criticalMetadataWrites = new Set<Promise<void>>();
     
     /** Keep alive interval reference for cleanup */
     private keepAliveTimer: NodeJS.Timeout | null = null;
@@ -265,6 +267,44 @@ export class Session {
         this.sessionFoundCallbacks = [];
         this.permissionRpcRouter = null;
         logger.debug('[Session] Cleaned up resources');
+    }
+
+    private trackCriticalMetadataWrite(write: () => Promise<void> | void, reason: string): void {
+        let result: Promise<void> | void;
+        try {
+            result = write();
+        } catch (error) {
+            logger.debug(`[Session] Failed to update session metadata (${reason}) (non-fatal)`, error);
+            return;
+        }
+        const tracked = Promise.resolve(result).catch((error) => {
+            logger.debug(`[Session] Failed to update session metadata (${reason}) (non-fatal)`, error);
+        }).finally(() => {
+            this.criticalMetadataWrites.delete(tracked);
+        });
+        this.criticalMetadataWrites.add(tracked);
+    }
+
+    async drainCriticalMetadataWrites(opts: Readonly<{ timeoutMs?: number }> = {}): Promise<void> {
+        const pending = [...this.criticalMetadataWrites];
+        if (pending.length === 0) return;
+
+        const timeoutMs = opts.timeoutMs ?? resolveSessionCriticalMetadataDrainTimeoutMs();
+        let timer: NodeJS.Timeout | null = null;
+        const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`critical metadata drain timed out after ${timeoutMs}ms`)), timeoutMs);
+            timer.unref?.();
+        });
+        try {
+            await Promise.race([
+                Promise.allSettled(pending).then(() => undefined),
+                timeout,
+            ]);
+        } catch (error) {
+            logger.debug('[Session] Failed to drain critical metadata writes before close (non-fatal)', error);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
     }
 
     async getOrCreateHappierMcpBridge(): Promise<{ mcpServers: Record<string, McpServerConfig>; mcpConfigJson: string }> {
@@ -403,9 +443,8 @@ export class Session {
 
         // Update metadata with Claude Code session ID
         if (didSessionIdChange) {
-            updateMetadataBestEffort(
-                this.client,
-                (metadata) => buildClaudeDirectSessionMetadata({
+            this.trackCriticalMetadataWrite(
+                () => this.client.updateMetadata((metadata) => buildClaudeDirectSessionMetadata({
                     metadata: clearClaudeLastAssistantUuid({
                         ...metadata,
                         claudeSessionId: sessionId,
@@ -413,8 +452,7 @@ export class Session {
                     }),
                     sessionId,
                     transcriptPath: this.transcriptPath,
-                }),
-                '[Session]',
+                })),
                 'claude_session_found',
             );
             logger.debug(`[Session] Claude Code session ID ${sessionId} added to metadata`);

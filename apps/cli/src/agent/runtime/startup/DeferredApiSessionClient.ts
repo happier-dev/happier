@@ -191,7 +191,10 @@ export class DeferredApiSessionClient {
         deferred.resolve();
       },
       { hint: 'updateMetadata' },
-      { onDrop: () => deferred.resolve() },
+      {
+        onDrop: () => deferred.resolve(),
+        onError: (error) => deferred.reject(error),
+      },
     );
     return deferred.promise;
   }
@@ -214,7 +217,10 @@ export class DeferredApiSessionClient {
         deferred.resolve();
       },
       { hint: 'updateAgentState' },
-      { onDrop: () => deferred.resolve() },
+      {
+        onDrop: () => deferred.resolve(),
+        onError: (error) => deferred.reject(error),
+      },
     );
     return deferred.promise;
   }
@@ -363,10 +369,11 @@ export class DeferredApiSessionClient {
     for (const entry of entries) {
       try {
         await Promise.resolve(entry.flush(target));
-      } catch {
+      } catch (error) {
         hadError = true;
         try {
-          entry.onDrop?.();
+          if (entry.onError) entry.onError(error);
+          else entry.onDrop?.();
         } catch {
           // ignore
         }
@@ -439,10 +446,10 @@ export class DeferredApiSessionClient {
   private pushBufferedCall(
     flush: (target: DeferredApiSessionTarget) => void | Promise<void>,
     opts: { hint: string },
-    extra?: { onDrop?: () => void },
+    extra?: { onDrop?: () => void; onError?: (error: unknown) => void },
   ): void {
     const approxBytes = approxBytesForHint(opts.hint);
-    this.buffer.push({ approxBytes, flush, onDrop: extra?.onDrop });
+    this.buffer.push({ approxBytes, flush, onDrop: extra?.onDrop, onError: extra?.onError });
     this.bufferBytes += approxBytes;
 
     this.enforceBufferLimits();
@@ -467,14 +474,21 @@ export class DeferredApiSessionClient {
   }
 }
 
-function createDeferredPromise<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function createDeferredPromise<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+} {
   let resolveFn: ((value: T) => void) | null = null;
-  const promise = new Promise<T>((resolve) => {
+  let rejectFn: ((error: unknown) => void) | null = null;
+  const promise = new Promise<T>((resolve, reject) => {
     resolveFn = resolve;
+    rejectFn = reject;
   });
   return {
     promise,
     resolve: (value: T) => resolveFn?.(value),
+    reject: (error: unknown) => rejectFn?.(error),
   };
 }
 

@@ -1593,18 +1593,18 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 endSeqInclusive: rollbackPlan.range.endSeqInclusive,
             });
             if (range) {
-                if (target.type === 'latest_turn') {
-                    await publishLatestTurnRollbackRangeMetadata({
+                await (target.type === 'latest_turn'
+                    ? publishLatestTurnRollbackRangeMetadata({
                         session: params.session,
                         range,
-                    });
-                } else {
-                    await publishRollbackRangeMetadata({
+                    })
+                    : publishRollbackRangeMetadata({
                         session: params.session,
                         target,
                         range,
+                    })).catch((error) => {
+                        logger.debug('[codex-app-server] Failed to publish rollback range metadata (non-fatal)', error);
                     });
-                }
             }
             return { ok: true, target: request.target, threadId: activeThreadId };
         },

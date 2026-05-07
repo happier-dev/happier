@@ -1926,6 +1926,45 @@ describe('createCodexAppServerRuntime', () => {
         });
     });
 
+    it('does not fail rollback after app-server success when rollback metadata persistence rejects', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-rollback-metadata-reject-');
+
+        let lastObservedMessageSeq = 7;
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(async () => {
+                    throw new Error('metadata unavailable');
+                }),
+                getLastObservedMessageSeq: vi.fn(() => lastObservedMessageSeq),
+                sendAgentMessageCommitted: vi.fn(async () => {
+                    lastObservedMessageSeq = 11;
+                }),
+                sendCodexMessage: vi.fn(),
+            } as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-streams');
+
+        await expect((runtime as any).rollbackConversation({ v: 1, target: { type: 'latest_turn' } })).resolves.toMatchObject({
+            ok: true,
+            target: { type: 'latest_turn' },
+            threadId: 'thread-started',
+        });
+
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    method: 'thread/rollback',
+                    params: { threadId: 'thread-started', numTurns: 1 },
+                }),
+            ]),
+        );
+    });
+
     it('rolls back before a user message even when user-message seq increments after the onUserMessage callback fires', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-rollback-user-message-seq-order-');
 

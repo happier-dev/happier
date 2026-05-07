@@ -1,12 +1,46 @@
 import { logger } from '@/ui/logger'
 import { backoff } from '@/utils/time';
+import { resolveSessionControlSocketAckTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
 
 type AckableSocket = {
     emitWithAck: (event: string, ...args: any[]) => Promise<any>;
+    timeout?: (ms: number) => AckableSocket;
 };
+
+type SessionStateUpdateError = Error & {
+    code: string;
+    retryable: boolean;
+};
+
+function createSessionStateUpdateError(message: string, code: string, retryable: boolean): SessionStateUpdateError {
+    const error = new Error(message) as SessionStateUpdateError;
+    error.code = code;
+    error.retryable = retryable;
+    return error;
+}
+
+function describeAckFailure(answer: any): string {
+    const reason = typeof answer?.error === 'string'
+        ? answer.error
+        : typeof answer?.message === 'string'
+            ? answer.message
+            : typeof answer?.result === 'string'
+                ? answer.result
+                : 'unknown result';
+    return reason;
+}
+
+async function emitWithAck(opts: {
+    socket: AckableSocket;
+    event: string;
+    payload: unknown;
+}): Promise<any> {
+    const socketWithTimeout = opts.socket.timeout?.(resolveSessionControlSocketAckTimeoutMs()) ?? opts.socket;
+    return await socketWithTimeout.emitWithAck(opts.event, opts.payload);
+}
 
 function readLoggedCurrentModeId(metadata: Record<string, unknown> | null | undefined): string | null {
     const genericCurrentModeId = typeof metadata?.sessionModesV1 === 'object'
@@ -40,13 +74,16 @@ export async function updateSessionMetadataWithAck(opts: {
         if (opts.getMetadataVersion() < 0) {
             await opts.syncSessionSnapshotFromServer();
             if (opts.getMetadataVersion() < 0) {
-                logger.debug('[API] updateMetadata skipped: metadataVersion is still unknown');
-                return;
+                throw createSessionStateUpdateError(
+                    'metadataVersion is still unknown after session snapshot sync',
+                    'metadata_version_unknown',
+                    false,
+                );
             }
         }
 
-        const current = opts.getMetadata();
-        const updated = opts.handler(current!);
+        const current = opts.getMetadata() ?? ({} as Metadata);
+        const updated = opts.handler(current);
         logger.debug('[API] updateMetadata attempting', {
             expectedVersion: opts.getMetadataVersion(),
             hasModeOverride: Boolean((updated as Record<string, unknown> | null)?.acpSessionModeOverrideV1),
@@ -58,10 +95,14 @@ export async function updateSessionMetadataWithAck(opts: {
             opts.sessionEncryptionMode === 'plain'
                 ? JSON.stringify(updated)
                 : encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated));
-        const answer = await opts.socket.emitWithAck('update-metadata', {
-            sid: opts.sessionId,
-            expectedVersion: opts.getMetadataVersion(),
-            metadata: metadataPayload,
+        const answer = await emitWithAck({
+            socket: opts.socket,
+            event: 'update-metadata',
+            payload: {
+                sid: opts.sessionId,
+                expectedVersion: opts.getMetadataVersion(),
+                metadata: metadataPayload,
+            },
         });
 
         if (answer.result === 'success') {
@@ -100,7 +141,11 @@ export async function updateSessionMetadataWithAck(opts: {
             throw new Error('Metadata version mismatch');
         }
 
-        // Hard error - ignore
+        throw createSessionStateUpdateError(
+            `metadata update failed: ${describeAckFailure(answer)}`,
+            'metadata_update_failed',
+            false,
+        );
     });
 }
 
@@ -121,8 +166,11 @@ export async function updateSessionAgentStateWithAck(opts: {
         if (opts.getAgentStateVersion() < 0) {
             await opts.syncSessionSnapshotFromServer();
             if (opts.getAgentStateVersion() < 0) {
-                logger.debug('[API] updateAgentState skipped: agentStateVersion is still unknown');
-                return;
+                throw createSessionStateUpdateError(
+                    'agentStateVersion is still unknown after session snapshot sync',
+                    'agent_state_version_unknown',
+                    false,
+                );
             }
         }
 
@@ -132,11 +180,15 @@ export async function updateSessionAgentStateWithAck(opts: {
                 ? JSON.stringify(updated)
                 : (updated ? encodeBase64(encrypt(opts.encryptionKey, opts.encryptionVariant, updated)) : null);
         const activitySummaryV1 = deriveActivitySummaryFromAgentState(updated);
-        const answer = await opts.socket.emitWithAck('update-state', {
-            sid: opts.sessionId,
-            expectedVersion: opts.getAgentStateVersion(),
-            agentState: agentStatePayload,
-            activitySummaryV1,
+        const answer = await emitWithAck({
+            socket: opts.socket,
+            event: 'update-state',
+            payload: {
+                sid: opts.sessionId,
+                expectedVersion: opts.getAgentStateVersion(),
+                agentState: agentStatePayload,
+                activitySummaryV1,
+            },
         });
 
         if (answer.result === 'success') {
@@ -166,6 +218,10 @@ export async function updateSessionAgentStateWithAck(opts: {
             throw new Error('Agent state version mismatch');
         }
 
-        // Hard error - ignore
+        throw createSessionStateUpdateError(
+            `agent state update failed: ${describeAckFailure(answer)}`,
+            'agent_state_update_failed',
+            false,
+        );
     });
 }

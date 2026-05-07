@@ -1757,6 +1757,41 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
+    it('does not emit unhandledRejection when summary metadata persistence rejects', async () => {
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown) => {
+            unhandled.push(reason);
+        };
+        process.on('unhandledRejection', onUnhandled);
+        try {
+            const sessionSocket = createConfiguredSocket({
+                connected: true,
+                emitWithAck: async (event) => {
+                    if (event === 'update-metadata') {
+                        return { result: 'error', error: 'metadata unavailable' };
+                    }
+                    return { ok: true, id: 'msg-1', seq: 1, localId: 'local-1' };
+                },
+            });
+            replaceSocketPair({ sessionSocket });
+
+            const client = createClient('fake-token', mockSession);
+            client.sendClaudeSessionMessage({
+                type: 'summary',
+                uuid: 'summary-1',
+                summary: 'summary text',
+                leafUuid: 'leaf-1',
+            } as RawJSONLines);
+
+            await flushClientQueue(client);
+            await new Promise((resolve) => setImmediate(resolve));
+
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off('unhandledRejection', onUnhandled);
+        }
+    });
+
     it('sends keepAlive(thinking=true) as a non-volatile emit so UIs that connect mid-turn still receive it', () => {
         connectSessionSocket();
         mockSocket.volatile = { emit: vi.fn() };

@@ -54,4 +54,20 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
     expect(state.metadata.sessionModelsV1).toBeUndefined();
     expect(state.metadata.acpSessionModelsV1).toBeUndefined();
   });
+
+  it('does not reject when metadata persistence fails', async () => {
+    await expect(publishClaudeSessionModelsMetadataBestEffort({
+      cwd: '/',
+      timeoutMs: 250,
+      currentModelId: 'claude-sonnet-4-6',
+      nowMs: () => 999,
+      probeHelpText: async () => '  --effort <level>  (low, medium, high, max)',
+      session: {
+        ensureMetadataSnapshot: async () => ({} as Metadata),
+        updateMetadata: async () => {
+          throw new Error('metadata unavailable');
+        },
+      },
+    })).resolves.toBeUndefined();
+  });
 });

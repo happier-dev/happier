@@ -72,6 +72,7 @@ import {
 import { normalizeExecutionRunWaitTimeoutMs } from '@/session/services/executionRunWaitTiming';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
+import { updateMetadataBestEffort } from './sessionWritesBestEffort';
 
 function serializeUnknownErrorForLog(error: unknown): Record<string, unknown> {
     if (error instanceof Error) {
@@ -1557,13 +1558,18 @@ export class ApiSessionClient extends EventEmitter {
 
         // Update metadata with summary if this is a summary message
         if (body.type === 'summary' && 'summary' in body && 'leafUuid' in body) {
-            this.updateMetadata((metadata) => ({
-                ...metadata,
-                summary: {
-                    text: body.summary,
-                    updatedAt: Date.now()
-                }
-            }));
+            updateMetadataBestEffort(
+                this,
+                (metadata) => ({
+                    ...metadata,
+                    summary: {
+                        text: body.summary,
+                        updatedAt: Date.now()
+                    }
+                }),
+                '[SOCKET]',
+                'summary_message',
+            );
         }
     }
 

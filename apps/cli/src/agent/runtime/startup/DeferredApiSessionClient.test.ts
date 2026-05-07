@@ -123,7 +123,7 @@ describe('DeferredApiSessionClient', () => {
     expect(calls).toEqual(['user', 'codex']);
   });
 
-  it('flushes buffered calls best-effort when an early write fails (no hang, no abort)', async () => {
+  it('rejects failed buffered metadata writes without aborting later buffered writes', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-1',
       limits: { maxEntries: 10, maxBytes: 10_000 },
@@ -161,7 +161,49 @@ describe('DeferredApiSessionClient', () => {
     deferred.sendSessionEvent({ type: 'message', message: 'hi' });
 
     await expect(deferred.attach(real)).resolves.toBeUndefined();
-    await expect(updatePromise).resolves.toBeUndefined();
+    await expect(updatePromise).rejects.toThrow('boom');
+    expect(events.some((e: any) => e && typeof e === 'object' && (e as any).message === 'hi')).toBe(true);
+  });
+
+  it('rejects failed buffered agent-state writes without aborting later buffered writes', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+
+    const events: unknown[] = [];
+    const real = {
+      sessionId: 'sess_1',
+      rpcHandlerManager: { registerHandler: vi.fn(), invokeLocal: vi.fn(async () => ({})) },
+      sendSessionEvent: vi.fn((event: unknown) => {
+        events.push(event);
+      }),
+      sendClaudeSessionMessage: vi.fn(),
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendCodexMessage: vi.fn(),
+      sendUserTextMessage: vi.fn(),
+      updateMetadata: vi.fn(),
+      updateAgentState: vi.fn(async () => {
+        throw new Error('agent-state-boom');
+      }),
+      keepAlive: vi.fn(),
+      getMetadataSnapshot: vi.fn(() => createMetadataStub()),
+      waitForMetadataUpdate: vi.fn(async () => true),
+      popPendingMessage: vi.fn(async () => true),
+      peekPendingMessageQueueV2Count: vi.fn(async () => 0),
+      discardPendingMessageQueueV2All: vi.fn(async () => 0),
+      discardCommittedMessageLocalIds: vi.fn(async () => 0),
+      sendSessionDeath: vi.fn(),
+      flush: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+    } as const;
+
+    const updatePromise = deferred.updateAgentState((agentState) => agentState) as Promise<void>;
+    deferred.sendSessionEvent({ type: 'message', message: 'hi' });
+
+    await expect(deferred.attach(real)).resolves.toBeUndefined();
+    await expect(updatePromise).rejects.toThrow('agent-state-boom');
     expect(events.some((e: any) => e && typeof e === 'object' && (e as any).message === 'hi')).toBe(true);
   });
 

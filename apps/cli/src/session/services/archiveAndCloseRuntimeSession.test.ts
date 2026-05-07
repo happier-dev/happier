@@ -139,4 +139,49 @@ describe('archiveAndCloseRuntimeSession', () => {
     expect(getSpy).toHaveBeenCalledTimes(1);
     expect(elapsedMs).toBeGreaterThanOrEqual(20);
   });
+
+  it('awaits lifecycle metadata persistence before closing the live session', async () => {
+    const postSpy = vi.spyOn(axios, 'post');
+    const getSpy = vi.spyOn(axios, 'get');
+    postSpy.mockResolvedValue({ status: 200, data: { success: true, archivedAt: 1234 } } as never);
+    getSpy.mockResolvedValue({
+      status: 200,
+      data: {
+        session: {
+          id: 'sess-runtime-await',
+          active: false,
+          archivedAt: 1234,
+        },
+      },
+    } as never);
+
+    let resolveMetadataUpdate!: () => void;
+    const metadataUpdate = new Promise<void>((resolve) => {
+      resolveMetadataUpdate = resolve;
+    });
+    const session = {
+      sessionId: 'sess-runtime-await',
+      updateMetadata: vi.fn(() => metadataUpdate),
+      sendSessionDeath: vi.fn(),
+      flush: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    };
+
+    const invokeArchiveAndCloseRuntimeSession =
+      archiveAndCloseRuntimeSession as unknown as ArchiveAndCloseRuntimeSessionWithOptions;
+    const pending = invokeArchiveAndCloseRuntimeSession(session, { token: 'token-1' }, null, {
+      timeoutMs: 50,
+      pollIntervalMs: 0,
+    });
+
+    await Promise.resolve();
+    expect(session.updateMetadata).toHaveBeenCalledTimes(1);
+    expect(session.sendSessionDeath).not.toHaveBeenCalled();
+
+    resolveMetadataUpdate();
+    await pending;
+
+    expect(session.sendSessionDeath).toHaveBeenCalledTimes(1);
+    expect(session.updateMetadata.mock.invocationCallOrder[0]).toBeLessThan(session.sendSessionDeath.mock.invocationCallOrder[0]);
+  });
 });
