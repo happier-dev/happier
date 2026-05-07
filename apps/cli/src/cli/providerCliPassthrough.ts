@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 
-import type { AgentId } from '@happier-dev/agents';
+import { AGENTS_CORE, type AgentCore, type AgentId } from '@happier-dev/agents';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
@@ -8,24 +8,35 @@ import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProv
 const HELP_FLAGS = new Set(['-h', '--help']);
 const VERSION_FLAGS = new Set(['-v', '--version']);
 
+type NativeCliPassthroughSupport = Pick<AgentCore, 'id' | 'nativeCliPassthroughSubcommands'>;
+
+const NATIVE_CLI_PASSTHROUGH_SUPPORT_BY_AGENT: Readonly<Record<AgentId, NativeCliPassthroughSupport>> = AGENTS_CORE;
+
+function resolveNativeProviderArgs(agentId: AgentId, args: readonly string[]): string[] | null {
+  const supported = NATIVE_CLI_PASSTHROUGH_SUPPORT_BY_AGENT[agentId].nativeCliPassthroughSubcommands ?? [];
+  if (supported.length === 0) return null;
+
+  const providerArgs = args[0] === agentId ? args.slice(1) : args;
+  const subcommand = providerArgs[0];
+  if (!subcommand || !supported.includes(subcommand)) return null;
+  return [...providerArgs];
+}
+
 export function detectProviderCliInfoRequest(args: readonly string[]): '--help' | '--version' | null {
   if (args.some((arg) => HELP_FLAGS.has(arg))) return '--help';
   if (args.some((arg) => VERSION_FLAGS.has(arg))) return '--version';
   return null;
 }
 
-export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
+function passthroughProviderCli(params: Readonly<{
   agentId: AgentId;
-  args: readonly string[];
+  providerArgs: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
 }>): boolean {
-  const flag = detectProviderCliInfoRequest(params.args);
-  if (!flag) return false;
-
   const launch = requireProviderCliLaunchSpec(params.agentId, { processEnv: params.processEnv });
   const invocation = resolveWindowsCommandInvocation({
     command: launch.command,
-    args: [...launch.args, flag],
+    args: [...launch.args, ...params.providerArgs],
     env: params.processEnv ?? process.env,
     resolveCommandOnPath: false,
   });
@@ -46,4 +57,28 @@ export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
     process.exit(1);
   }
   return true;
+}
+
+export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
+  agentId: AgentId;
+  args: readonly string[];
+  processEnv?: NodeJS.ProcessEnv;
+}>): boolean {
+  const nativeProviderArgs = resolveNativeProviderArgs(params.agentId, params.args);
+  if (nativeProviderArgs) {
+    return passthroughProviderCli({
+      agentId: params.agentId,
+      providerArgs: nativeProviderArgs,
+      processEnv: params.processEnv,
+    });
+  }
+
+  const flag = detectProviderCliInfoRequest(params.args);
+  if (!flag) return false;
+
+  return passthroughProviderCli({
+    agentId: params.agentId,
+    providerArgs: [flag],
+    processEnv: params.processEnv,
+  });
 }

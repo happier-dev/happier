@@ -54,6 +54,7 @@ export const AGENTS_CORE = {
                 openai: ['token'],
             },
         },
+        nativeCliPassthroughSubcommands: ['resume', 'fork'],
         resume: { vendorResume: 'experimental', vendorResumeIdField: 'codexSessionId' },
         sessionStorage: { direct: true, persisted: true },
         sessionCapabilities: {

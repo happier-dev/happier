@@ -65,6 +65,14 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        process.stdout.write(JSON.stringify({ id: msg.id, result: { threadId: adoptsOverrideThread ? "thread-overrides" : (msg.params?.threadId ?? null), model: msg.params?.model ?? (adoptsOverrideThread ? "gpt-5.4-mini" : "gpt-5.4"), serviceTier: Object.prototype.hasOwnProperty.call(msg.params ?? {}, "serviceTier") ? msg.params.serviceTier : null } }) + "\\n");',
         '        continue;',
         '    }',
+        '    if (msg.method === "thread/name/set") {',
+        '        if (msg.params?.name === "fail-native-title-sync") {',
+        '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32000, message: "native title sync failed" } }) + "\\n");',
+        '            continue;',
+        '        }',
+        '        process.stdout.write(JSON.stringify({ id: msg.id, result: { ok: true } }) + "\\n");',
+        '        continue;',
+        '    }',
         '    if (msg.method === "collaborationMode/list") {',
         '        process.stdout.write(JSON.stringify({ id: msg.id, result: [{ name: "Default", mode: "default", reasoning_effort: null }, { name: "Plan", mode: "plan", reasoning_effort: "medium" }] }) + "\\n");',
         '        continue;',
@@ -183,6 +191,54 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ id: 0, method: "mcpServer/elicitation/request", params: { threadId: msg.params?.threadId ?? null, turnId: turnId, serverName: "happier", mode: "form", requestedSchema: { type: "object", properties: {} } } }) + "\\n");',
         '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-mcp-title-tool-completed") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "mcp_title_1", type: "mcpToolCall", server: "happier", tool: "change_title", arguments: { title: "New Title" } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "mcp_title_1", type: "mcpToolCall", result: { Ok: { success: true, title: "New Title" } } } } }) + "\\n");',
+        '            }, 10);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-mcp-title-tool-blank-title") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "mcp_title_blank", type: "mcpToolCall", server: "happier", tool: "change_title", arguments: { title: "   " } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "mcp_title_blank", type: "mcpToolCall", result: { Ok: { success: true, title: "   " } } } } }) + "\\n");',
+        '            }, 10);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-mcp-title-tool-failed") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "mcp_title_failed", type: "mcpToolCall", server: "happier", tool: "change_title", arguments: { title: "Failed Title" } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "mcp_title_failed", type: "mcpToolCall", result: { Ok: { success: false, title: "Failed Title" } } } } }) + "\\n");',
+        '            }, 10);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
+        '        if (text === "bridge-mcp-title-tool-native-sync-fails") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "mcp_title_native_fail", type: "mcpToolCall", server: "happier", tool: "change_title", arguments: { title: "fail-native-title-sync" } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "mcp_title_native_fail", type: "mcpToolCall", result: { Ok: { success: true, title: "fail-native-title-sync" } } } } }) + "\\n");',
+        '            }, 10);',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
         '            }, 20);',
@@ -530,6 +586,10 @@ describe('createCodexAppServerRuntime', () => {
             CODEX_API_KEY: undefined,
         });
         return { root, requestLogPath, fakeAppServer };
+    }
+
+    async function readRequestLog(requestLogPath: string): Promise<Array<{ id: unknown; method: string; params: any; result: any; error: any }>> {
+        return (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
     }
 
     it('allows app-server startup when Codex credentials are missing so the backend can surface auth errors itself', async () => {
@@ -1519,6 +1579,137 @@ describe('createCodexAppServerRuntime', () => {
             'mcp__happier__change_title',
             { title: 'New Title' },
         );
+    });
+
+    it('syncs completed Happier title tool calls to the Codex native thread name', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-native-title-sync-');
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+            } as any,
+            permissionHandler: { handleToolCall: vi.fn() } as any,
+        } as any);
+
+        try {
+            await runtime.startOrLoad({});
+            await runtime.sendPrompt('bridge-mcp-title-tool-completed');
+
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const requestLog = await readRequestLog(requestLogPath);
+
+            expect(requestLog).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        method: 'thread/name/set',
+                        params: { threadId: 'thread-started', name: 'New Title' },
+                        error: null,
+                    }),
+                ]),
+            );
+        } finally {
+            await runtime.reset();
+        }
+    });
+
+    it('does not sync blank completed Happier title tool calls to the Codex native thread name', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-native-title-sync-blank-');
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+            } as any,
+            permissionHandler: { handleToolCall: vi.fn() } as any,
+        } as any);
+
+        try {
+            await runtime.startOrLoad({});
+            await runtime.sendPrompt('bridge-mcp-title-tool-blank-title');
+
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const requestLog = await readRequestLog(requestLogPath);
+
+            expect(requestLog.filter((entry) => entry.method === 'thread/name/set')).toEqual([]);
+        } finally {
+            await runtime.reset();
+        }
+    });
+
+    it('does not sync failed completed Happier title tool calls to the Codex native thread name', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-native-title-sync-failed-');
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+            } as any,
+            permissionHandler: { handleToolCall: vi.fn() } as any,
+        } as any);
+
+        try {
+            await runtime.startOrLoad({});
+            await runtime.sendPrompt('bridge-mcp-title-tool-failed');
+
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const requestLog = await readRequestLog(requestLogPath);
+
+            expect(requestLog.filter((entry) => entry.method === 'thread/name/set')).toEqual([]);
+        } finally {
+            await runtime.reset();
+        }
+    });
+
+    it('keeps completed Happier title tool calls accepted when Codex native title sync fails', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-native-title-sync-fails-');
+        const sendCodexMessage = vi.fn();
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage,
+            } as any,
+            permissionHandler: { handleToolCall: vi.fn() } as any,
+        } as any);
+
+        try {
+            await runtime.startOrLoad({});
+            await runtime.sendPrompt('bridge-mcp-title-tool-native-sync-fails');
+
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const requestLog = await readRequestLog(requestLogPath);
+
+            expect(requestLog).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        method: 'thread/name/set',
+                        params: { threadId: 'thread-started', name: 'fail-native-title-sync' },
+                    }),
+                ]),
+            );
+            expect(sendCodexMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: 'tool-call-result',
+                    callId: 'mcp_title_native_fail',
+                    output: { success: true, title: 'fail-native-title-sync' },
+                }),
+            );
+        } finally {
+            await runtime.reset();
+        }
     });
 
     it('bridges MCP elicitation requests that use callId fields through the permission handler', async () => {

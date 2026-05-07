@@ -14,6 +14,7 @@ import {
     SESSION_MEDIA_MESSAGE_META_KIND_V1,
     type SessionMediaItemV1,
 } from '@happier-dev/protocol';
+import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
 import { TurnChangeSetCollector } from '@/agent/tools/diff/turnChangeSetCollector';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import { logger } from '@/ui/logger';
@@ -151,6 +152,16 @@ function trimStringValue(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+}
+
+function readHappierTitleToolTitle(input: unknown): string | null {
+    const record = readRecord(input);
+    return record ? trimStringValue(record.title) : null;
+}
+
+function didHappierTitleToolSucceed(output: unknown): boolean {
+    const record = readRecord(output);
+    return record ? record.success === true : false;
 }
 
 function readRollbackUnsupportedErrorMessage(error: unknown): string | null {
@@ -392,6 +403,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     const normalizedAssistantFinalSeenByStreamScope = new Set<string>();
     const rawAssistantFinalByStreamScope = new Map<string, PendingRawAssistantFinal>();
     const persistedMediaDedupeKeys = new Set<string>();
+    const pendingHappierTitleToolNamesByCallId = new Map<string, string>();
     const syntheticSubagentThreadIds = new Set<string>();
     const syntheticSubagentTracker = createCodexSyntheticSubagentTracker({
         session: params.session,
@@ -707,6 +719,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
         if (update.type === 'tool-call') {
             await itemTranscriptBridge.flushAll({ reason: 'tool-call-boundary' });
+            if (update.toolKind === 'mcp' && isChangeTitleToolNameAlias(update.name)) {
+                const title = readHappierTitleToolTitle(update.input);
+                if (title) {
+                    pendingHappierTitleToolNamesByCallId.set(update.callId, title);
+                }
+            }
             if (update.toolKind === 'file-change') {
                 const input = update.input && typeof update.input === 'object' && !Array.isArray(update.input)
                     ? update.input as Record<string, unknown>
@@ -742,6 +760,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
 
         if (update.type === 'tool-result') {
+            const completedTitleName = pendingHappierTitleToolNamesByCallId.get(update.callId) ?? null;
+            pendingHappierTitleToolNamesByCallId.delete(update.callId);
             if (context.sidechainId) {
                 params.session.sendAgentMessage('codex', {
                     type: 'tool-result',
@@ -758,6 +778,17 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     id: randomUUID(),
                 });
             }
+            if (completedTitleName && didHappierTitleToolSucceed(update.output) && threadId && !context.sidechainId) {
+                try {
+                    const client = await ensureClient();
+                    await client.request('thread/name/set', { threadId, name: completedTitleName });
+                } catch (error) {
+                    logger.debug('[codex-app-server] Failed to sync Happier title to Codex native thread name', {
+                        threadId,
+                        error,
+                    });
+                }
+            }
         }
     };
 
@@ -767,6 +798,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         latestAssistantItemIdByStreamScope.clear();
         normalizedAssistantFinalSeenByStreamScope.clear();
         rawAssistantFinalByStreamScope.clear();
+        pendingHappierTitleToolNamesByCallId.clear();
         await itemTranscriptBridge.flushAll({
             reason,
             ...(reason === 'abort' ? { interruptedReason: 'app-server-turn-interrupted' } : {}),

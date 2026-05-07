@@ -141,5 +141,10 @@ export type AgentCore = Readonly<{
        */
       supportedKindsByServiceId?: Readonly<Partial<Record<ConnectedServiceId, ReadonlyArray<ConnectedServiceKind>>>>;
     }> | null;
+    /**
+     * Native provider CLI subcommands that Happier should pass through before
+     * invoking its own provider command handler.
+     */
+    nativeCliPassthroughSubcommands?: ReadonlyArray<string>;
     runtimeKinds?: AnyAgentRuntimeKindsManifest | null;
 }> & AgentCoreRuntimeControlSurface;
