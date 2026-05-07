@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderScreen, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -18,6 +19,8 @@ const remoteHostsState = vi.hoisted(() => ({
             target: string;
             port: number | null;
             authMode: 'agent' | 'password' | 'keyfile';
+            passwordEnc?: unknown;
+            identityPrivateKeyEnc?: unknown;
         };
         linkedMachineId: string | null;
         linkedRelayProfileId: string | null;
@@ -28,6 +31,8 @@ const remoteHostsState = vi.hoisted(() => ({
 }));
 const systemTaskState = vi.hoisted(() => ({
     mode: 'tauri' as 'tauri' | 'native' | 'dev' | 'unavailable',
+    nativeSshAvailable: false,
+    nativeSshSupportsLoopbackTunnel: true,
     nextTaskNumber: 1,
     snapshots: new Map<string, unknown>(),
     sshTunnelSnapshots: [] as Array<{
@@ -137,6 +142,60 @@ const modalSpies = vi.hoisted(() => ({
     show: vi.fn(),
     alert: vi.fn(async () => undefined),
     confirm: vi.fn(async () => true),
+}));
+const secretState = vi.hoisted(() => ({
+    decryptedSecretValue: null as string | null,
+}));
+const nativeTunnelState = vi.hoisted(() => ({
+    credentialsByRemoteHostId: new Map<string, unknown>(),
+    hostKeyPromptResolver: null as ((event: {
+        host: string;
+        fingerprintSha256: string;
+    }) => Promise<unknown>) | null,
+    setHostKeyPromptResolver: vi.fn((resolver: ((event: {
+        host: string;
+        fingerprintSha256: string;
+    }) => Promise<unknown>) | null) => {
+        nativeTunnelState.hostKeyPromptResolver = resolver;
+    }),
+    leases: [] as Array<{
+        leaseId: string;
+        key: string;
+        remoteHostId: string;
+        localUrl: string;
+        channelMode: 'loopback-port';
+        purpose: 'server-http';
+        status: 'ready' | 'failed' | 'degraded';
+        startedAt: string;
+    }>,
+    startLifecycle: vi.fn(),
+    listener: null as (() => void) | null,
+    ensureTunnel: vi.fn(async () => {
+        const lease = {
+            leaseId: 'native-lease-1',
+            key: 'native-key-a',
+            remoteHostId: 'host-a',
+            localUrl: 'http://127.0.0.1:49154',
+            channelMode: 'loopback-port' as const,
+            purpose: 'server-http' as const,
+            status: 'ready' as const,
+            startedAt: '2026-05-06T10:00:00.000Z',
+        };
+        nativeTunnelState.leases = [lease];
+        nativeTunnelState.listener?.();
+        return lease;
+    }),
+    releaseTunnel: vi.fn(async (leaseId: string) => {
+        nativeTunnelState.leases = nativeTunnelState.leases.filter((lease) => lease.leaseId !== leaseId);
+        nativeTunnelState.listener?.();
+    }),
+}));
+const nativeBootstrapInterruptionState = vi.hoisted(() => ({
+    markers: new Map<string, {
+        taskId: string;
+        key: string;
+        startedAtMs: number;
+    }>(),
 }));
 const activeServerState = vi.hoisted(() => ({
     snapshot: {
@@ -253,6 +312,14 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', async () => {
 vi.mock('@/components/systemTasks', () => ({
     getDefaultSystemTaskRunner: () => ({
         mode: systemTaskState.mode,
+        capabilities: systemTaskState.mode === 'native' ? {
+            nativeSsh: {
+                available: systemTaskState.nativeSshAvailable,
+                supportedTaskKinds: ['remote.ssh.bootstrapMachine.v1'],
+                supportsLoopbackTunnel: systemTaskState.nativeSshSupportsLoopbackTunnel,
+                ...(!systemTaskState.nativeSshAvailable ? { unavailableReason: 'engine-unavailable' } : {}),
+            },
+        } : {},
         start: startMock,
         cancel: vi.fn(async () => {}),
         respond: vi.fn(async () => {}),
@@ -274,9 +341,49 @@ vi.mock('@/components/systemTasks/SystemTaskProgressCard', () => ({
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        decryptSecretValue: () => null,
+        decryptSecretValue: () => secretState.decryptedSecretValue,
         encryptSecretValue: () => ({ __brand: 'SecretString', value: 'enc' }),
     },
+}));
+
+vi.mock('@/sync/runtime/nativeSshTunnels/runtime', () => ({
+    getNativeSshTunnelRuntime: () => ({
+        ensureTunnel: nativeTunnelState.ensureTunnel,
+        listTunnels: () => ({ leases: nativeTunnelState.leases, platformLimitations: [] }),
+        releaseTunnel: nativeTunnelState.releaseTunnel,
+        markSuspended: vi.fn(),
+        markForeground: vi.fn(async () => undefined),
+        subscribe: vi.fn((listener: () => void) => {
+            nativeTunnelState.listener = listener;
+            return () => {
+                if (nativeTunnelState.listener === listener) {
+                    nativeTunnelState.listener = null;
+                }
+            };
+        }),
+    }),
+    setNativeSshTunnelCredentialResolution: (credentialsRef: { remoteHostId: string }, credentials: unknown) => {
+        nativeTunnelState.credentialsByRemoteHostId.set(credentialsRef.remoteHostId, credentials);
+    },
+    setNativeSshTunnelHostKeyPromptResolver: nativeTunnelState.setHostKeyPromptResolver,
+    startNativeSshTunnelRuntimeAppStateLifecycle: nativeTunnelState.startLifecycle,
+}));
+
+vi.mock('@/components/systemTasks/nativeSshBridgeInterruptionStore', () => ({
+    createDefaultNativeSshBridgeInterruptionStore: () => ({
+        read: (key: string) => nativeBootstrapInterruptionState.markers.get(key) ?? null,
+        write: (marker: { key: string }) => {
+            nativeBootstrapInterruptionState.markers.set(marker.key, marker as {
+                taskId: string;
+                key: string;
+                startedAtMs: number;
+            });
+        },
+        remove: (key: string) => {
+            nativeBootstrapInterruptionState.markers.delete(key);
+        },
+        list: () => [...nativeBootstrapInterruptionState.markers.values()],
+    }),
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -305,8 +412,20 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
             remoteHostsState.value = [];
             systemTaskState.nextTaskNumber = 1;
             systemTaskState.mode = 'tauri';
+            systemTaskState.nativeSshAvailable = false;
+            systemTaskState.nativeSshSupportsLoopbackTunnel = true;
             systemTaskState.snapshots.clear();
             systemTaskState.sshTunnelSnapshots = [];
+            secretState.decryptedSecretValue = null;
+            nativeTunnelState.credentialsByRemoteHostId.clear();
+            nativeTunnelState.leases = [];
+            nativeTunnelState.listener = null;
+            nativeTunnelState.startLifecycle.mockClear();
+            nativeTunnelState.ensureTunnel.mockClear();
+            nativeTunnelState.releaseTunnel.mockClear();
+            nativeTunnelState.hostKeyPromptResolver = null;
+            nativeTunnelState.setHostKeyPromptResolver.mockClear();
+            nativeBootstrapInterruptionState.markers.clear();
             activeServerState.snapshot = {
                 serverId: 'server-1',
                 serverUrl: 'https://server.example.test',
@@ -585,6 +704,320 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
         }));
     });
 
+    it('starts a native SSH tunnel from the remote host action when running on native with stored password material', async () => {
+        setTauriDesktop(true);
+        systemTaskState.mode = 'native';
+        systemTaskState.nativeSshAvailable = true;
+        featureGateState.managementEnabled = true;
+        featureGateState.secretMaterialEnabled = true;
+        secretState.decryptedSecretValue = 'secret';
+        remoteHostsState.value = [
+            {
+                id: 'host-a',
+                name: 'Dev box',
+                ssh: {
+                    target: 'dev@10.0.0.1',
+                    port: 2222,
+                    authMode: 'password',
+                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                },
+                linkedMachineId: null,
+                linkedRelayProfileId: null,
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: null,
+            },
+        ];
+
+        const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
+        await renderScreen(React.createElement(RemoteHostsScreen));
+
+        const rowActionsProps = itemRowActionsSpy.props as { actions?: Array<{ id: string; onPress: () => void }> } | null;
+        const connectFromThisDevice = rowActionsProps?.actions?.find((action) => action.id === 'connectFromThisDevice');
+        expect(connectFromThisDevice).toBeTruthy();
+
+        connectFromThisDevice!.onPress();
+        await flushHookEffects({ cycles: 2, turns: 6 });
+
+        expect(nativeTunnelState.startLifecycle).toHaveBeenCalledTimes(1);
+        expect(nativeTunnelState.ensureTunnel).toHaveBeenCalledWith({
+            remoteHostId: 'host-a',
+            sshTarget: 'dev@10.0.0.1',
+            sshPort: 2222,
+            destinationHost: '127.0.0.1',
+            destinationPort: 3005,
+            purpose: 'server-http',
+            credentialsRef: {
+                remoteHostId: 'host-a',
+                credentialId: 'remote-host:host-a:ssh',
+                storage: 'session-memory',
+            },
+        });
+        expect(nativeTunnelState.credentialsByRemoteHostId.get('host-a')).toEqual({
+            auth: {
+                username: 'dev',
+                password: 'secret',
+            },
+        });
+        expect(nativeTunnelState.setHostKeyPromptResolver).toHaveBeenCalledWith(expect.any(Function));
+        await expect(nativeTunnelState.hostKeyPromptResolver?.({
+            host: '10.0.0.1',
+            fingerprintSha256: 'SHA256:abc',
+        })).resolves.toEqual({
+            decision: 'accept-once',
+            fingerprintSha256: 'SHA256:abc',
+        });
+        expect(startMock).not.toHaveBeenCalledWith(expect.objectContaining({
+            kind: 'daemon.sshTunnel.ensure.v1',
+        }));
+    });
+
+    it('shows native SSH tunnel access channels after connecting from this device', async () => {
+        setTauriDesktop(false);
+        systemTaskState.mode = 'native';
+        systemTaskState.nativeSshAvailable = true;
+        featureGateState.managementEnabled = true;
+        featureGateState.secretMaterialEnabled = true;
+        secretState.decryptedSecretValue = 'secret';
+        remoteHostsState.value = [
+            {
+                id: 'host-a',
+                name: 'Dev box',
+                ssh: {
+                    target: 'dev@10.0.0.1',
+                    port: 2222,
+                    authMode: 'password',
+                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                },
+                linkedMachineId: null,
+                linkedRelayProfileId: null,
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: null,
+            },
+        ];
+
+        const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
+        const screen = await renderScreen(React.createElement(RemoteHostsScreen));
+
+        const rowActionsProps = itemRowActionsSpy.props as { actions?: Array<{ id: string; onPress: () => void }> } | null;
+        const connectFromThisDevice = rowActionsProps?.actions?.find((action) => action.id === 'connectFromThisDevice');
+        expect(connectFromThisDevice).toBeTruthy();
+
+        connectFromThisDevice!.onPress();
+        await flushHookEffects({ cycles: 2, turns: 6 });
+        await screen.update(React.createElement(RemoteHostsScreen));
+
+        expect(screen.findByTestId('settings.server.accessEndpoints.channel:access-channel:ssh-tunnel-native:host-a:native-key-a')).toBeTruthy();
+        expect(screen.findByTestId('settings.server.accessEndpoints.channel:access-channel:ssh-tunnel-native:host-a:native-key-a.recommendedUse')?.props.title).toBe(
+            'settings.accessEndpoints.recommendedUse.native-this-device',
+        );
+        expect(screen.findByTestId('settings.server.accessEndpoints.channel:access-channel:ssh-tunnel-native:host-a:native-key-a.action:ssh-tunnel-native:native-lease-1:stop')).toBeTruthy();
+    });
+
+    it('surfaces native SSH tunnel stop failures from access channel remediation', async () => {
+        setTauriDesktop(false);
+        systemTaskState.mode = 'native';
+        systemTaskState.nativeSshAvailable = true;
+        systemTaskState.nativeSshSupportsLoopbackTunnel = true;
+        featureGateState.managementEnabled = true;
+        nativeTunnelState.leases = [{
+            leaseId: 'native-lease-failed',
+            key: 'native-key-failed',
+            remoteHostId: 'host-a',
+            localUrl: 'http://127.0.0.1:49154',
+            channelMode: 'loopback-port',
+            purpose: 'server-http',
+            status: 'failed',
+            startedAt: '2026-05-06T10:00:00.000Z',
+        }];
+        nativeTunnelState.releaseTunnel.mockRejectedValueOnce(new Error('native_stop_failed'));
+
+        const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
+        const screen = await renderScreen(React.createElement(RemoteHostsScreen));
+
+        const action = screen.findByTestId(
+            'settings.server.accessEndpoints.channel:access-channel:ssh-tunnel-native:host-a:native-key-failed.action:ssh-tunnel-native:native-lease-failed:stop',
+        );
+        expect(action).toBeTruthy();
+
+        action!.props.onPress();
+        await flushHookEffects({ cycles: 2, turns: 6 });
+
+        expect(nativeTunnelState.releaseTunnel).toHaveBeenCalledWith('native-lease-failed');
+        expect(modalSpies.alert).toHaveBeenCalledWith('common.error', 'native_stop_failed');
+    });
+
+    it('surfaces interrupted native SSH bootstrap markers after app restart and lets the user clear them', async () => {
+        setTauriDesktop(false);
+        systemTaskState.mode = 'native';
+        systemTaskState.nativeSshAvailable = true;
+        featureGateState.managementEnabled = true;
+        remoteHostsState.value = [
+            {
+                id: 'host-a',
+                name: 'Dev box',
+                ssh: {
+                    target: 'dev@10.0.0.1',
+                    port: 2222,
+                    authMode: 'password',
+                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                },
+                linkedMachineId: null,
+                linkedRelayProfileId: null,
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: null,
+            },
+        ];
+        const markerKey = 'native-ssh-interrupted:host-a:remote.ssh.bootstrapMachine.v1';
+        nativeBootstrapInterruptionState.markers.set(markerKey, {
+            taskId: 'native_ssh_task_stale',
+            key: markerKey,
+            startedAtMs: 1760000000000,
+        });
+
+        const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
+        const screen = await renderScreen(React.createElement(RemoteHostsScreen));
+
+        expect(screen.findByTestId('settings.remoteHosts.interruptedBootstrap.host-a')).toBeTruthy();
+        const actions = itemRowActionsSpy.props as { actions?: Array<{ id: string; onPress: () => void }> } | null;
+        const clearAction = actions?.actions?.find((action) => action.id === 'clearInterruptedBootstrap');
+        expect(clearAction).toBeTruthy();
+
+        await act(async () => {
+            clearAction!.onPress();
+        });
+        await flushHookEffects({ cycles: 2, turns: 4 });
+
+        expect(nativeBootstrapInterruptionState.markers.has(markerKey)).toBe(false);
+        await screen.update(React.createElement(RemoteHostsScreen));
+        expect(screen.findByTestId('settings.remoteHosts.interruptedBootstrap.host-a')).toBeNull();
+    });
+
+    it('does not surface the active native SSH bootstrap marker as interrupted', async () => {
+        setTauriDesktop(false);
+        systemTaskState.mode = 'native';
+        systemTaskState.nativeSshAvailable = true;
+        featureGateState.managementEnabled = true;
+        featureGateState.secretMaterialEnabled = true;
+        remoteHostsState.value = [
+            {
+                id: 'host-a',
+                name: 'Dev box',
+                ssh: {
+                    target: 'dev@10.0.0.1',
+                    port: 2222,
+                    authMode: 'password',
+                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                },
+                linkedMachineId: null,
+                linkedRelayProfileId: null,
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: null,
+            },
+        ];
+        const markerKey = 'native-ssh-interrupted:host-a:remote.ssh.bootstrapMachine.v1';
+        startMock.mockImplementationOnce(async () => {
+            const taskId = 'native_ssh_task_live';
+            systemTaskState.snapshots.set(taskId, {
+                taskId,
+                status: 'running',
+                currentStepId: null,
+                latestMessage: null,
+                awaitingInput: false,
+                cancelRequested: false,
+                events: [],
+                result: null,
+            });
+            nativeBootstrapInterruptionState.markers.set(markerKey, {
+                taskId,
+                key: markerKey,
+                startedAtMs: 1760000000000,
+            });
+            return taskId;
+        });
+
+        const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
+        const screen = await renderScreen(React.createElement(RemoteHostsScreen));
+        const rowActionsProps = itemRowActionsSpy.props as { actions?: Array<{ id: string; onPress: () => void }> } | null;
+        const setupAsMachine = rowActionsProps?.actions?.find((action) => action.id === 'setupAsMachine');
+        expect(setupAsMachine).toBeTruthy();
+
+        setupAsMachine!.onPress();
+        await flushHookEffects({ cycles: 2, turns: 6 });
+        remoteHostsState.value = [...remoteHostsState.value];
+        await screen.update(React.createElement(RemoteHostsScreen));
+
+        expect(screen.findByTestId('settings.remoteHosts.interruptedBootstrap.host-a')).toBeNull();
+        expect(nativeBootstrapInterruptionState.markers.has(markerKey)).toBe(true);
+    });
+
+    it('hides native SSH tunnel actions when the native module cannot provide loopback tunnels', async () => {
+        setTauriDesktop(false);
+        systemTaskState.mode = 'native';
+        systemTaskState.nativeSshAvailable = true;
+        systemTaskState.nativeSshSupportsLoopbackTunnel = false;
+        featureGateState.managementEnabled = true;
+        featureGateState.secretMaterialEnabled = true;
+        remoteHostsState.value = [
+            {
+                id: 'host-a',
+                name: 'Dev box',
+                ssh: {
+                    target: 'dev@10.0.0.1',
+                    port: 2222,
+                    authMode: 'password',
+                    passwordEnc: { __brand: 'SecretString', value: 'enc' },
+                },
+                linkedMachineId: null,
+                linkedRelayProfileId: null,
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: null,
+            },
+        ];
+
+        const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
+        await renderScreen(React.createElement(RemoteHostsScreen));
+
+        const rowActionsProps = itemRowActionsSpy.props as { actions?: Array<{ id: string }> } | null;
+        expect(rowActionsProps?.actions?.map((action) => action.id)).not.toContain('connectFromThisDevice');
+        expect(nativeTunnelState.listener).toBeNull();
+    });
+
+    it('hides native SSH tunnel actions for credentials the native client cannot use from mobile', async () => {
+        setTauriDesktop(false);
+        systemTaskState.mode = 'native';
+        systemTaskState.nativeSshAvailable = true;
+        systemTaskState.nativeSshSupportsLoopbackTunnel = true;
+        featureGateState.managementEnabled = true;
+        featureGateState.secretMaterialEnabled = true;
+        remoteHostsState.value = [
+            {
+                id: 'host-a',
+                name: 'Dev box',
+                ssh: {
+                    target: 'dev@10.0.0.1',
+                    port: 2222,
+                    authMode: 'agent',
+                },
+                linkedMachineId: null,
+                linkedRelayProfileId: null,
+                createdAt: 1,
+                updatedAt: 1,
+                lastUsedAt: null,
+            },
+        ];
+
+        const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
+        await renderScreen(React.createElement(RemoteHostsScreen));
+
+        const rowActionsProps = itemRowActionsSpy.props as { actions?: Array<{ id: string }> } | null;
+        expect(rowActionsProps?.actions?.map((action) => action.id)).not.toContain('connectFromThisDevice');
+    });
+
     it('opens relay access for the saved SSH target without starting a tunnel or relay-runtime maintenance task', async () => {
         setTauriDesktop(true);
         featureGateState.managementEnabled = true;
@@ -685,9 +1118,10 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
         }));
     });
 
-    it('does not expose the desktop daemon SSH tunnel launcher as a native access channel', async () => {
+    it('hides unsupported native access and maintenance actions when the native SSH engine is unavailable', async () => {
         setTauriDesktop(false);
         systemTaskState.mode = 'native';
+        systemTaskState.nativeSshAvailable = false;
         featureGateState.managementEnabled = true;
         remoteHostsState.value = [
             {
@@ -707,7 +1141,10 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
         ];
 
         const { RemoteHostsScreen } = await import('./RemoteHostsScreen');
-        await renderScreen(React.createElement(RemoteHostsScreen));
+        const screen = await renderScreen(React.createElement(RemoteHostsScreen));
+
+        expect(screen.findByTestId('settings.remoteHosts.desktopOnly')).toBeNull();
+        expect(screen.findByTestId('settings.remoteHosts.hostRow.host-a')).toBeTruthy();
 
         const rowActionsProps = itemRowActionsSpy.props as { actions?: Array<{
             id: string;
@@ -715,10 +1152,13 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
             subtitle?: string;
             onPress: () => void;
         }> } | null;
-        const connectFromThisDevice = rowActionsProps?.actions?.find((action) => action.id === 'connectFromThisDevice');
-        await flushHookEffects({ cycles: 2, turns: 6 });
+        const actionIds = rowActionsProps?.actions?.map((action) => action.id) ?? [];
+        expect(actionIds).not.toContain('connectFromThisDevice');
+        expect(actionIds).not.toContain('testConnection');
+        expect(actionIds).not.toContain('installOrUpdateCli');
+        expect(actionIds).not.toContain('daemonService.installOrUpdate');
+        expect(actionIds).not.toContain('relayRuntime.installOrUpdate');
 
-        expect(connectFromThisDevice).toBeUndefined();
         const startedSpecs = startMock.mock.calls.map((call) => call[0]);
         expect(startedSpecs).not.toEqual(expect.arrayContaining([
             expect.objectContaining({
@@ -733,6 +1173,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
         expect(JSON.stringify(startedSpecs)).not.toContain('providerId');
         expect(JSON.stringify(startedSpecs)).not.toContain('sshTunnelProvider');
         expect(startedSpecs.filter((spec) => spec.kind === 'daemon.sshTunnel.list.v1')).toHaveLength(0);
+        expect(modalSpies.alert).not.toHaveBeenCalled();
     });
 
     it('shows active supervised SSH tunnel status and stops it through the local daemon control system task', async () => {

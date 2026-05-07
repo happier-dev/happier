@@ -21,5 +21,14 @@ Pod::Spec.new do |s|
     'DEFINES_MODULE' => 'YES'
   }
 
+  s.prepare_command = <<-CMD
+    set -euo pipefail
+    bash "../scripts/build-rust-ios.sh"
+  CMD
+
+  s.vendored_frameworks = [
+    "vendor/happier-ssh-native/HappierSshNativeRust.xcframework"
+  ]
+
   s.source_files = '**/*.{h,m,mm,swift}'
 end

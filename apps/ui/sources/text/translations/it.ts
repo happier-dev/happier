@@ -1960,6 +1960,7 @@ export const it: TranslationStructure = {
     remoteHostsConnectFromThisDeviceTitle: "Connetti da questo dispositivo",
     remoteHostsConnectFromThisDeviceSubtitle: "Solo questo dispositivo. Apre un tunnel SSH locale per questa sessione dell’app.",
     remoteHostsConnectFromThisDeviceFailed: "Impossibile aprire il tunnel SSH locale.",
+    remoteHostsNativeSshTunnelRequiresEngine: "I tunnel SSH nativi richiedono la build del motore SSH nativo prima di poter essere avviati da questo dispositivo.",
     remoteHostsSshTunnelGroupTitle: "Raggiungi l’host remoto da questo dispositivo",
     remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `Tunnel SSH attivo per ${host}`,
     remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `Solo questo dispositivo. Endpoint locale: ${url}`,
@@ -1989,6 +1990,15 @@ export const it: TranslationStructure = {
     remoteHostsActiveTaskTitle: "Attività di sistema",
     remoteHostsHostTrustTitle: "Vuoi fidarti dell'host SSH?",
     remoteHostsPasswordRequiredTitle: "Password SSH richiesta",
+    remoteHostsRememberHostKeyTitle: "Ricordare questa chiave host SSH?",
+    remoteHostsRememberHostKeyAction: "Fidati e ricorda",
+    remoteHostsTrustOnceAction: "Fidati una volta",
+    remoteHostsPrivateKeyPassphraseTitle: "Passphrase della chiave privata SSH",
+    remoteHostsKeyboardInteractiveTitle: "Autenticazione SSH",
+    remoteHostsKeyboardInteractivePromptLabel: "Prompt SSH",
+    remoteHostsTrustedHostKeysTitle: "Chiavi host SSH attendibili",
+    remoteHostsTrustedHostKeyRemoveTitle: "Rimuovere la chiave host SSH attendibile?",
+    remoteHostsTrustedHostKeysClearTitle: "Cancella chiavi host SSH attendibili",
     remoteHostsConnectionSucceeded: "Connessione riuscita.",
     remoteHostsConnectionFailed: "Connessione non riuscita.",
     sshConfiguredHostPickerTitle: "Host SSH suggeriti",
@@ -2172,37 +2182,79 @@ export const it: TranslationStructure = {
       webHandoffSubtitle: "Usa la CLI per configurare l'accesso al relay, poi torna qui e aggiorna.",
     },
     accessEndpoints: {
+      status: {
+        refreshing: 'Aggiornamento dei canali di accesso',
+      },
       scope: {
-        availableToOtherDevices: 'Available to other devices',
-        thisDeviceOnly: 'This device only',
+        availableToOtherDevices: 'Disponibile per altri dispositivi',
+        thisDeviceOnly: 'Solo questo dispositivo',
       },
       direction: {
-        makeCurrentServerReachable: 'Make this server reachable',
-        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
-        unknown: 'Access channel',
+        makeCurrentServerReachable: 'Rendi raggiungibile questo server',
+        reachRemoteServerFromThisDevice: 'Raggiungi un server remoto da questo dispositivo',
+        unknown: 'Canale di accesso',
       },
       kind: {
-        'relay-access-provider': 'Relay access',
-        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
-        'server-profile-url': 'Server URL',
-        'peer-mediation': 'Peer mediation',
-        'manual-url': 'Manual URL',
+        'relay-access-provider': 'Accesso relay',
+        'ssh-tunnel-desktop': 'Tunnel SSH desktop',
+        'ssh-tunnel-native': 'Tunnel SSH nativo',
+        'server-profile-url': 'URL server',
+        'peer-mediation': 'Mediazione peer',
+        'manual-url': 'URL manuale',
       },
       recommendedUse: {
-        'multi-device': 'Best for other devices',
-        'native-this-device': 'Works in this native app',
-        'hosted-web': 'Works from hosted web',
-        'lan-only': 'LAN or private network only',
-        diagnostic: 'Needs attention',
+        'multi-device': 'Ideale per altri dispositivi',
+        'native-this-device': 'Funziona in questa app nativa',
+        'hosted-web': 'Funziona dal web ospitato',
+        'lan-only': 'Solo LAN o rete privata',
+        diagnostic: 'Richiede attenzione',
       },
       limitation: {
-        'this-device-only': 'This device only',
-        'not-hosted-web-compatible': 'Not available to hosted web',
-        'not-public-share-url': 'Not a public share URL',
-        'session-scoped': 'Session scoped',
-        'foreground-only': 'Requires the app to stay in the foreground',
-        'requires-auth': 'Requires SSH authentication',
-        'requires-host-key-trust': 'Requires host-key trust',
+        'this-device-only': 'Solo questo dispositivo',
+        'not-hosted-web-compatible': 'Non disponibile per il web ospitato',
+        'not-public-share-url': 'Non è un URL pubblico condivisibile',
+        'session-scoped': 'Limitato alla sessione',
+        'authentication-failed': 'Autenticazione SSH non riuscita',
+        'foreground-only': 'Richiede che l’app resti in primo piano',
+        'host-key-mismatch': 'La chiave SSH dell’host è cambiata',
+        'host-key-rejected': 'La chiave SSH dell’host è stata rifiutata',
+        'host-key-untrusted': 'La chiave SSH dell’host non è ancora attendibile',
+        'platform-suspended': 'In pausa mentre l’app è sospesa',
+        'loopback-bind-failed': 'Impossibile associare la porta locale del tunnel',
+        'network-captive-portal': 'La rete ha intercettato la connessione SSH',
+        'remote-service-unreachable': 'Il servizio remoto non è raggiungibile tramite il tunnel',
+        'requires-auth': 'Richiede autenticazione SSH',
+        'requires-host-key-trust': 'Richiede fiducia nella chiave host',
+      },
+      remediation: {
+        tailscale: {
+          install: 'Installa Tailscale',
+          login: 'Accedi a Tailscale',
+          serve: {
+            enable: 'Abilita Tailscale Serve',
+            approve: 'Approva Tailscale Serve',
+          },
+          funnel: {
+            approve: 'Approva Tailscale Funnel',
+          },
+        },
+        cloudflare: {
+          configure: 'Configura il tunnel Cloudflare',
+        },
+        serverProfile: {
+          configureShareableUrl: 'Configura URL condivisibile',
+        },
+        remoteHost: {
+          add: 'Aggiungi host remoto',
+          setup: 'Configura host remoto',
+        },
+        sshTunnel: {
+          start: 'Avvia tunnel SSH',
+          reuse: 'Usa tunnel SSH esistente',
+          stop: 'Arresta tunnel SSH',
+          authenticate: 'Autentica tunnel SSH',
+          trustHost: 'Considera attendibile la chiave host SSH',
+        },
       },
     },
     systemTaskStepPrepare: "Prepara l'attività",
@@ -2922,6 +2974,23 @@ export const it: TranslationStructure = {
         invalidValueMessage: "Inserisci un numero tra 1024 e 1073741824.",
       },
     },
+  },
+
+  settingsScmDiffSummary: {
+    title: 'Riepiloghi diff',
+    enabledTitle: 'Abilita riepiloghi diff',
+    enabledSubtitle:
+      'Consenti riepiloghi generati dall’IA per i diff del controllo sorgente.',
+    prefetchTitle: 'Precarica riepiloghi',
+    prefetchSubtitle:
+      'Genera riepiloghi in anticipo solo quando questa preferenza è attiva.',
+    modelOverrideTitle: 'Modello di riepilogo',
+    modelOverrideSubtitle:
+      'Profilo runtime risolto opzionale usato per i riepiloghi diff.',
+    modelOverrideDefault: 'Usa il valore predefinito del runtime',
+    cacheTitle: 'Cache riepiloghi',
+    cacheSubtitle:
+      'I riepiloghi dei checkpoint vengono riutilizzati per ricevuta; quelli del working tree restano temporanei.',
   },
 
   settingsSourceControl: {
@@ -4655,6 +4724,34 @@ export const it: TranslationStructure = {
 	    rollback: {
 	      latestTurnA11y: "Ripristina l'ultimo turno",
 	      beforeUserMessageA11y: 'Ripristina fino a prima di questo messaggio',
+	      checkpointCode: {
+	        title: 'Opzioni di rollback',
+	        conversationUnavailable: 'Il rollback della conversazione non e disponibile per questa sessione.',
+	        codeOnlyConfirmation: 'Capisco che la conversazione rimarra invariata.',
+	        showAdvanced: 'Mostra opzioni avanzate solo codice',
+	        choices: {
+	          conversation_only: {
+	            title: 'Solo conversazione',
+	            description: 'Ripristina la trascrizione senza modificare i file.',
+	          },
+	          conversation_and_code_with_stash: {
+	            title: 'Conversazione e codice, con Git stash',
+	            description: 'Crea un checkpoint Happier, salva le modifiche nello stash e applica la patch inversa.',
+	          },
+	          conversation_and_code_without_stash: {
+	            title: 'Conversazione e codice, senza Git stash',
+	            description: 'Crea un checkpoint Happier e applica la patch inversa in questo worktree.',
+	          },
+	          code_only_with_stash: {
+	            title: 'Solo codice, con Git stash',
+	            description: 'Avanzato: lascia invariata la trascrizione e ripristina i file dopo uno stash.',
+	          },
+	          code_only_without_stash: {
+	            title: 'Solo codice, senza Git stash',
+	            description: 'Avanzato: lascia invariata la trascrizione e ripristina i file solo con il checkpoint Happier.',
+	          },
+	        },
+	      },
 	    },
 	    resuming: "Ripresa in corso...",
 	    resumeFailed: "Impossibile riprendere la sessione",
@@ -5280,7 +5377,7 @@ export const it: TranslationStructure = {
     openProject: 'Apri progetto',
   },
 
-  directSessions: {
+  externalSessions: {
     browseTitle: "Sfoglia le sessioni del provider",
     browseOpenExisting: "Sfoglia le sessioni del provider",
     browseActionSubtitle: "Scegli una macchina, un provider e una sessione per aprirla qui.",
@@ -8661,9 +8758,9 @@ settingsSession: {
     switchingToRemote: "Passaggio alla modalità remota…",
     switchToRemote: "Passa a remoto",
     detachLocalTerminal: "Scollega terminale",
-    directSessionTakeoverAvailable:
+    externalSessionTakeoverAvailable:
       "Questa sessione diretta è disponibile sulla tua macchina. Prendila in carico in Happier per controllarla qui.",
-    directSessionMachineOffline:
+    externalSessionMachineOffline:
       "Questa sessione diretta non è attualmente disponibile perché la macchina è offline.",
     switchingToDirectTakeover: "Presa in carico di questa sessione diretta…",
     switchingToPersistedTakeover: "Presa in carico e sincronizzazione di questa sessione…",

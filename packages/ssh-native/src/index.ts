@@ -1,11 +1,21 @@
 export { HAPPIER_SSH_NATIVE_MODULE_NAME, getOptionalHappierSshNativeModule } from './HappierSshNative';
+export { cancelNativeSshRequest } from './cancel';
 export {
   createUnavailableNativeSshAvailability,
   getNativeSshAvailability,
   normalizeNativeSshAvailability,
 } from './availability';
+export {
+  normalizeNativeSshAuthPromptEvent,
+  normalizeNativeSshHostKeyPromptEvent,
+  normalizeNativeSshProgressEvent,
+} from './events';
 export { NativeSshError, normalizeNativeSshError } from './errors';
 export { normalizeHostKeyFingerprintSha256 } from './hostKey';
+export {
+  startNativeSshLoopbackTunnel,
+  stopNativeSshLoopbackTunnel,
+} from './tunnels';
 
 import { getNativeSshAvailability } from './availability';
 import { NativeSshError, normalizeNativeSshError } from './errors';
@@ -13,12 +23,16 @@ import { getOptionalHappierSshNativeModule } from './HappierSshNative';
 
 import type {
   NativeSshAvailability,
+  NativeSshAuthPromptEvent,
+  NativeSshAuthPromptResponse,
   NativeSshAuthRequest,
   NativeSshEngine,
   NativeSshExecRequest,
   NativeSshExecResult,
   NativeSshHostKeyPromptEvent,
   NativeSshHostKeyVerification,
+  NativeSshLoopbackTunnelRequest,
+  NativeSshLoopbackTunnelResult,
   NativeSshModule,
   NativeSshProgressEvent,
   NativeSshSubscription,
@@ -27,12 +41,16 @@ import type {
 
 export type {
   NativeSshAvailability,
+  NativeSshAuthPromptEvent,
+  NativeSshAuthPromptResponse,
   NativeSshAuthRequest,
   NativeSshEngine,
   NativeSshExecRequest,
   NativeSshExecResult,
   NativeSshHostKeyPromptEvent,
   NativeSshHostKeyVerification,
+  NativeSshLoopbackTunnelRequest,
+  NativeSshLoopbackTunnelResult,
   NativeSshModule,
   NativeSshProgressEvent,
   NativeSshSubscription,

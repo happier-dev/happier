@@ -24,6 +24,14 @@ export function buildSshTunnelListSystemTaskSpec(): SystemTaskSpec {
     };
 }
 
+export function buildSshTunnelReleaseSystemTaskSpec(leaseId: string): SystemTaskSpec {
+    return {
+        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+        kind: 'daemon.sshTunnel.release.v1',
+        params: { leaseId },
+    };
+}
+
 export function buildSshTunnelStopSystemTaskSpec(tunnelKey: string): SystemTaskSpec {
     return {
         protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,

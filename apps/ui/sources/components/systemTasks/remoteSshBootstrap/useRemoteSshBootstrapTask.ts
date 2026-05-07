@@ -181,6 +181,15 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
 
         latestFormStateRef.current = params;
 
+        if (runner.mode === 'native' && activeTaskId && rawSnapshot?.result == null) {
+            if (prompt.kind === 'auth.approveRemoteProvisioning') {
+                await runner.respond(activeTaskId, { approved: true });
+                return activeTaskId;
+            }
+            await runner.respond(activeTaskId, { trusted: true });
+            return activeTaskId;
+        }
+
         const nextPromptResolution: RemoteSshPromptResolution = prompt.kind === 'auth.approveRemoteProvisioning'
             ? {
                 ...promptResolution,
@@ -240,8 +249,11 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
     }, [activeTaskId, prompt, runner]);
 
     const dismissPrompt = React.useCallback(() => {
+        if (activeTaskId) {
+            void runner.cancel(activeTaskId);
+        }
         setActiveTaskId(null);
-    }, []);
+    }, [activeTaskId, runner]);
 
     const resetPromptResolution = React.useCallback(() => {
         setPromptResolution({});

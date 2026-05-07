@@ -15,12 +15,12 @@ import type {
     AccessEndpointReachability,
     AccessEndpointRemediationAction,
     AccessEndpointStatus,
-} from '../accessEndpointModel';
-import { createAccessEndpointRemediationAction } from '../accessEndpointRemediation';
+} from '../model';
+import { createAccessEndpointRemediationAction } from '../remediation';
 import {
     classifyAccessEndpointHostedHttpsCompatibility,
     deriveAccessEndpointWsBaseUrl,
-} from '../classifyAccessEndpoint';
+} from '../classify';
 
 export type RelayAccessEndpointInput = Readonly<{
     config: RelayAccessConfig;

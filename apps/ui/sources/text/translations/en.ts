@@ -1517,6 +1517,7 @@ export const en = {
         remoteHostsConnectFromThisDeviceTitle: 'Connect from this device',
         remoteHostsConnectFromThisDeviceSubtitle: 'This device only. Opens a local SSH tunnel for this app session.',
         remoteHostsConnectFromThisDeviceFailed: 'Could not open the local SSH tunnel.',
+        remoteHostsNativeSshTunnelRequiresEngine: 'Native SSH tunnels need the native SSH engine build before they can start from this device.',
         remoteHostsSshTunnelGroupTitle: 'Reach remote host from this device',
         remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `SSH tunnel active for ${host}`,
         remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `This device only. Local endpoint: ${url}`,
@@ -1546,6 +1547,15 @@ export const en = {
         remoteHostsActiveTaskTitle: 'System task',
         remoteHostsHostTrustTitle: 'Trust SSH host?',
         remoteHostsPasswordRequiredTitle: 'SSH password required',
+        remoteHostsRememberHostKeyTitle: 'Remember this SSH host key?',
+        remoteHostsRememberHostKeyAction: 'Trust and remember',
+        remoteHostsTrustOnceAction: 'Trust once',
+        remoteHostsPrivateKeyPassphraseTitle: 'SSH private-key passphrase',
+        remoteHostsKeyboardInteractiveTitle: 'SSH authentication',
+        remoteHostsKeyboardInteractivePromptLabel: 'SSH prompt',
+        remoteHostsTrustedHostKeysTitle: 'Trusted SSH host keys',
+        remoteHostsTrustedHostKeyRemoveTitle: 'Remove trusted SSH host key?',
+        remoteHostsTrustedHostKeysClearTitle: 'Clear trusted SSH host keys',
         remoteHostsConnectionSucceeded: 'Connection succeeded.',
         remoteHostsConnectionFailed: 'Connection failed.',
         sshConfiguredHostPickerTitle: 'Suggested SSH hosts',
@@ -1729,6 +1739,9 @@ export const en = {
             webHandoffSubtitle: 'Use the CLI to configure relay access, then come back here and refresh.',
         },
         accessEndpoints: {
+            status: {
+                refreshing: 'Refreshing access channels',
+            },
             scope: {
                 availableToOtherDevices: 'Available to other devices',
                 thisDeviceOnly: 'This device only',
@@ -1741,6 +1754,7 @@ export const en = {
             kind: {
                 'relay-access-provider': 'Relay access',
                 'ssh-tunnel-desktop': 'Desktop SSH tunnel',
+                'ssh-tunnel-native': 'Native SSH tunnel',
                 'server-profile-url': 'Server URL',
                 'peer-mediation': 'Peer mediation',
                 'manual-url': 'Manual URL',
@@ -1757,9 +1771,47 @@ export const en = {
                 'not-hosted-web-compatible': 'Not available to hosted web',
                 'not-public-share-url': 'Not a public share URL',
                 'session-scoped': 'Session scoped',
+                'authentication-failed': 'SSH authentication failed',
                 'foreground-only': 'Requires the app to stay in the foreground',
+                'host-key-mismatch': 'SSH host key changed',
+                'host-key-rejected': 'SSH host key was rejected',
+                'host-key-untrusted': 'SSH host key is not trusted yet',
+                'platform-suspended': 'Paused while the app is suspended',
+                'loopback-bind-failed': 'Could not bind the local tunnel port',
+                'network-captive-portal': 'Network intercepted the SSH connection',
+                'remote-service-unreachable': 'Remote service is unreachable through the tunnel',
                 'requires-auth': 'Requires SSH authentication',
                 'requires-host-key-trust': 'Requires host-key trust',
+            },
+            remediation: {
+                tailscale: {
+                    install: 'Install Tailscale',
+                    login: 'Sign in to Tailscale',
+                    serve: {
+                        enable: 'Enable Tailscale Serve',
+                        approve: 'Approve Tailscale Serve',
+                    },
+                    funnel: {
+                        approve: 'Approve Tailscale Funnel',
+                    },
+                },
+                cloudflare: {
+                    configure: 'Configure Cloudflare tunnel',
+                },
+                serverProfile: {
+                    configureShareableUrl: 'Configure shareable URL',
+                },
+                remoteHost: {
+                    add: 'Add remote host',
+                    setup: 'Set up remote host',
+                },
+                sshTunnel: {
+                    start: 'Start SSH tunnel',
+                    reuse: 'Use existing SSH tunnel',
+                    stop: 'Stop SSH tunnel',
+                    authenticate: 'Authenticate SSH tunnel',
+                    trustHost: 'Trust SSH host key',
+                },
             },
         },
         systemTaskStepPrepare: 'Prepare task',
@@ -2435,6 +2487,19 @@ export const en = {
                 invalidValueMessage: 'Enter a number between 1024 and 1073741824.',
             },
         },
+    },
+
+    settingsScmDiffSummary: {
+        title: 'Diff summaries',
+        enabledTitle: 'Enable diff summaries',
+        enabledSubtitle: 'Allow AI-generated summaries for source-control diffs.',
+        prefetchTitle: 'Prefetch summaries',
+        prefetchSubtitle: 'Generate summaries ahead of time only when this preference is enabled.',
+        modelOverrideTitle: 'Summary model',
+        modelOverrideSubtitle: 'Optional resolved runtime profile used for diff summaries.',
+        modelOverrideDefault: 'Use runtime default',
+        cacheTitle: 'Summary cache',
+        cacheSubtitle: 'Checkpoint summaries are reused by receipt; working tree summaries stay temporary.',
     },
 
     settingsSourceControl: {
@@ -4042,6 +4107,34 @@ export const en = {
         rollback: {
             latestTurnA11y: 'Roll back the latest turn',
             beforeUserMessageA11y: 'Roll back to before this message',
+            checkpointCode: {
+                title: 'Rollback options',
+                conversationUnavailable: 'Conversation rollback is unavailable for this session.',
+                codeOnlyConfirmation: 'I understand the conversation will remain unchanged.',
+                showAdvanced: 'Show advanced code-only options',
+                choices: {
+                    conversation_only: {
+                        title: 'Conversation only',
+                        description: 'Roll back the transcript without changing files.',
+                    },
+                    conversation_and_code_with_stash: {
+                        title: 'Conversation and code, with Git stash',
+                        description: 'Create a Happier backup checkpoint, stash current changes, then reverse the checkpoint patch.',
+                    },
+                    conversation_and_code_without_stash: {
+                        title: 'Conversation and code, without Git stash',
+                        description: 'Create a Happier backup checkpoint, then reverse the checkpoint patch in this worktree.',
+                    },
+                    code_only_with_stash: {
+                        title: 'Code only, with Git stash',
+                        description: 'Advanced: leave the transcript unchanged and roll back files after a stash backup.',
+                    },
+                    code_only_without_stash: {
+                        title: 'Code only, without Git stash',
+                        description: 'Advanced: leave the transcript unchanged and roll back files with only the Happier backup checkpoint.',
+                    },
+                },
+            },
         },
         resuming: 'Resuming...',
         resumeFailed: 'Failed to resume session',
@@ -4640,7 +4733,7 @@ export const en = {
         openProject: 'Open project',
     },
 
-    directSessions: {
+    externalSessions: {
         browseTitle: 'Browse provider sessions',
         browseOpenExisting: 'Browse provider sessions',
         browseActionSubtitle: 'Choose a machine, provider, and session to open it here.',
@@ -7688,8 +7781,8 @@ settingsSession: {
         switchingToRemote: 'Switching to remote mode…',
         switchToRemote: 'Switch to remote',
         detachLocalTerminal: 'Detach terminal',
-        directSessionTakeoverAvailable: 'This direct session is available on your machine. Take it over in Happier to control it here.',
-        directSessionMachineOffline: 'This direct session is currently unavailable because the machine is offline.',
+        externalSessionTakeoverAvailable: 'This direct session is available on your machine. Take it over in Happier to control it here.',
+        externalSessionMachineOffline: 'This direct session is currently unavailable because the machine is offline.',
         switchingToDirectTakeover: 'Taking over this direct session…',
         switchingToPersistedTakeover: 'Taking over and syncing this session…',
         takeOverDirect: 'Take over',

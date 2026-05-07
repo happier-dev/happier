@@ -1925,6 +1925,7 @@ export const ja: TranslationStructure = {
     remoteHostsConnectFromThisDeviceTitle: "このデバイスから接続",
     remoteHostsConnectFromThisDeviceSubtitle: "このデバイスのみ。このアプリセッション用のローカル SSH トンネルを開きます。",
     remoteHostsConnectFromThisDeviceFailed: "ローカル SSH トンネルを開けませんでした。",
+    remoteHostsNativeSshTunnelRequiresEngine: "このデバイスから開始するには、ネイティブ SSH トンネルにネイティブ SSH エンジンのビルドが必要です。",
     remoteHostsSshTunnelGroupTitle: "このデバイスからリモートホストに到達",
     remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `${host} の SSH トンネルが有効です`,
     remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `このデバイスのみ。ローカルエンドポイント: ${url}`,
@@ -1954,6 +1955,15 @@ export const ja: TranslationStructure = {
     remoteHostsActiveTaskTitle: "システムタスク",
     remoteHostsHostTrustTitle: "SSHホストを信頼しますか？",
     remoteHostsPasswordRequiredTitle: "SSHパスワードが必要です",
+    remoteHostsRememberHostKeyTitle: "この SSH ホストキーを記憶しますか？",
+    remoteHostsRememberHostKeyAction: "信頼して記憶",
+    remoteHostsTrustOnceAction: "今回だけ信頼",
+    remoteHostsPrivateKeyPassphraseTitle: "SSH 秘密鍵のパスフレーズ",
+    remoteHostsKeyboardInteractiveTitle: "SSH 認証",
+    remoteHostsKeyboardInteractivePromptLabel: "SSH プロンプト",
+    remoteHostsTrustedHostKeysTitle: "信頼済み SSH ホストキー",
+    remoteHostsTrustedHostKeyRemoveTitle: "信頼済み SSH ホストキーを削除しますか？",
+    remoteHostsTrustedHostKeysClearTitle: "信頼済み SSH ホストキーをクリア",
     remoteHostsConnectionSucceeded: "接続に成功しました。",
     remoteHostsConnectionFailed: "接続に失敗しました。",
     sshConfiguredHostPickerTitle: "候補の SSH ホスト",
@@ -2137,37 +2147,79 @@ localTailscale: {
       webHandoffSubtitle: 'CLI で relay アクセスを設定し、ここに戻って更新してください。',
     },
     accessEndpoints: {
+      status: {
+        refreshing: 'アクセスチャネルを更新中',
+      },
       scope: {
-        availableToOtherDevices: 'Available to other devices',
-        thisDeviceOnly: 'This device only',
+        availableToOtherDevices: '他のデバイスで利用可能',
+        thisDeviceOnly: 'このデバイスのみ',
       },
       direction: {
-        makeCurrentServerReachable: 'Make this server reachable',
-        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
-        unknown: 'Access channel',
+        makeCurrentServerReachable: 'このサーバーを到達可能にする',
+        reachRemoteServerFromThisDevice: 'このデバイスからリモートサーバーに接続',
+        unknown: 'アクセスチャネル',
       },
       kind: {
-        'relay-access-provider': 'Relay access',
-        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
-        'server-profile-url': 'Server URL',
-        'peer-mediation': 'Peer mediation',
-        'manual-url': 'Manual URL',
+        'relay-access-provider': 'Relay アクセス',
+        'ssh-tunnel-desktop': 'デスクトップ SSH トンネル',
+        'ssh-tunnel-native': 'ネイティブ SSH トンネル',
+        'server-profile-url': 'サーバー URL',
+        'peer-mediation': 'ピア仲介',
+        'manual-url': '手動 URL',
       },
       recommendedUse: {
-        'multi-device': 'Best for other devices',
-        'native-this-device': 'Works in this native app',
-        'hosted-web': 'Works from hosted web',
-        'lan-only': 'LAN or private network only',
-        diagnostic: 'Needs attention',
+        'multi-device': '他のデバイスに最適',
+        'native-this-device': 'このネイティブアプリで動作',
+        'hosted-web': 'ホストされた Web から動作',
+        'lan-only': 'LAN またはプライベートネットワークのみ',
+        diagnostic: '確認が必要',
       },
       limitation: {
-        'this-device-only': 'This device only',
-        'not-hosted-web-compatible': 'Not available to hosted web',
-        'not-public-share-url': 'Not a public share URL',
-        'session-scoped': 'Session scoped',
-        'foreground-only': 'Requires the app to stay in the foreground',
-        'requires-auth': 'Requires SSH authentication',
-        'requires-host-key-trust': 'Requires host-key trust',
+        'this-device-only': 'このデバイスのみ',
+        'not-hosted-web-compatible': 'ホストされた Web では利用不可',
+        'not-public-share-url': '公開共有 URL ではありません',
+        'session-scoped': 'セッション限定',
+        'authentication-failed': 'SSH 認証に失敗しました',
+        'foreground-only': 'アプリをフォアグラウンドに保つ必要があります',
+        'host-key-mismatch': 'SSH ホストキーが変更されました',
+        'host-key-rejected': 'SSH ホストキーが拒否されました',
+        'host-key-untrusted': 'SSH ホストキーはまだ信頼されていません',
+        'platform-suspended': 'アプリの一時停止中は停止します',
+        'loopback-bind-failed': 'ローカルトンネルポートをバインドできませんでした',
+        'network-captive-portal': 'ネットワークが SSH 接続を傍受しました',
+        'remote-service-unreachable': 'トンネル経由でリモートサービスに到達できません',
+        'requires-auth': 'SSH 認証が必要',
+        'requires-host-key-trust': 'ホストキーの信頼が必要',
+      },
+      remediation: {
+        tailscale: {
+          install: 'Tailscale をインストール',
+          login: 'Tailscale にサインイン',
+          serve: {
+            enable: 'Tailscale Serve を有効化',
+            approve: 'Tailscale Serve を承認',
+          },
+          funnel: {
+            approve: 'Tailscale Funnel を承認',
+          },
+        },
+        cloudflare: {
+          configure: 'Cloudflare トンネルを設定',
+        },
+        serverProfile: {
+          configureShareableUrl: '共有 URL を設定',
+        },
+        remoteHost: {
+          add: 'リモートホストを追加',
+          setup: 'リモートホストを設定',
+        },
+        sshTunnel: {
+          start: 'SSH トンネルを開始',
+          reuse: '既存の SSH トンネルを使用',
+          stop: 'SSH トンネルを停止',
+          authenticate: 'SSH トンネルを認証',
+          trustHost: 'SSH ホストキーを信頼',
+        },
       },
     },
     systemTaskStepPrepare: "タスクを準備",
@@ -2880,6 +2932,19 @@ localTailscale: {
         invalidValueMessage: "1024 から 1073741824 の間の数値を入力してください。",
       },
     },
+  },
+
+  settingsScmDiffSummary: {
+  title: '差分サマリー',
+  enabledTitle: '差分サマリーを有効化',
+  enabledSubtitle: 'ソース管理の差分に AI 生成サマリーを許可します。',
+  prefetchTitle: 'サマリーを先読み',
+  prefetchSubtitle: 'この設定が有効な場合にのみ、サマリーを事前生成します。',
+  modelOverrideTitle: 'サマリーモデル',
+  modelOverrideSubtitle: '差分サマリーに使う任意の解決済みランタイムプロファイル。',
+  modelOverrideDefault: 'ランタイムの既定値を使用',
+  cacheTitle: 'サマリーキャッシュ',
+  cacheSubtitle: 'チェックポイントのサマリーは受領 ID で再利用され、working tree のサマリーは一時的に扱われます。',
   },
 
   settingsSourceControl: {
@@ -4576,6 +4641,34 @@ localTailscale: {
 	    rollback: {
 	      latestTurnA11y: '最新のターンをロールバック',
 	      beforeUserMessageA11y: 'このメッセージの前までロールバック',
+	      checkpointCode: {
+	        title: 'ロールバックの選択',
+	        conversationUnavailable: 'このセッションでは会話のロールバックを利用できません。',
+	        codeOnlyConfirmation: '会話は変更されないことを理解しました。',
+	        showAdvanced: 'コードのみの詳細オプションを表示',
+	        choices: {
+	          conversation_only: {
+	            title: '会話のみ',
+	            description: 'ファイルを変更せずにトランスクリプトだけをロールバックします。',
+	          },
+	          conversation_and_code_with_stash: {
+	            title: '会話とコード、Git stash あり',
+	            description: 'Happier バックアップチェックポイントを作成し、変更を stash してから逆パッチを適用します。',
+	          },
+	          conversation_and_code_without_stash: {
+	            title: '会話とコード、Git stash なし',
+	            description: 'Happier バックアップチェックポイントを作成し、この worktree に逆パッチを適用します。',
+	          },
+	          code_only_with_stash: {
+	            title: 'コードのみ、Git stash あり',
+	            description: '詳細: 会話はそのままにし、stash バックアップ後にファイルをロールバックします。',
+	          },
+	          code_only_without_stash: {
+	            title: 'コードのみ、Git stash なし',
+	            description: '詳細: 会話はそのままにし、Happier バックアップチェックポイントだけでファイルをロールバックします。',
+	          },
+	        },
+	      },
 	    },
 	    resuming: "再開中...",
 	    resumeFailed: "セッションの再開に失敗しました",
@@ -5194,7 +5287,7 @@ localTailscale: {
     openProject: 'プロジェクトを開く',
   },
 
-  directSessions: {
+  externalSessions: {
     browseTitle: "プロバイダー セッションを参照",
     browseOpenExisting: "プロバイダー セッションを参照",
     browseActionSubtitle: "ここで開くマシン、プロバイダー、セッションを選択します。",
@@ -8559,9 +8652,9 @@ settingsSession: {
     switchingToRemote: "リモートモードに切り替え中…",
     switchToRemote: "リモートに切り替え",
     detachLocalTerminal: "ターミナルを切り離す",
-    directSessionTakeoverAvailable:
+    externalSessionTakeoverAvailable:
       "この直接セッションはあなたのマシンで利用できます。ここで操作するために Happier で引き継いでください。",
-    directSessionMachineOffline:
+    externalSessionMachineOffline:
       "この直接セッションは、マシンがオフラインのため現在利用できません。",
     switchingToDirectTakeover: "この直接セッションを引き継いでいます…",
     switchingToPersistedTakeover: "このセッションを引き継いで同期しています…",

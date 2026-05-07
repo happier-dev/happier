@@ -153,4 +153,52 @@ describe('system task prompt payload contracts', () => {
       }],
     });
   });
+
+  it('parses SSH passphrase and keyboard-interactive prompt payloads', async () => {
+    const {
+      parseSshKeyboardInteractivePromptData,
+      parseSshPrivateKeyPassphrasePromptData,
+    } = await import('./promptPayloadContracts.js');
+
+    expect(parseSshPrivateKeyPassphrasePromptData({
+      promptId: ' prompt-1 ',
+      host: ' example.test ',
+      port: 2222,
+      username: ' dev ',
+      keyLabel: ' id_ed25519 ',
+      attemptsRemaining: 2,
+    } satisfies SystemTaskJsonObject)).toEqual({
+      promptId: 'prompt-1',
+      host: 'example.test',
+      port: 2222,
+      username: 'dev',
+      keyLabel: 'id_ed25519',
+      attemptsRemaining: 2,
+    });
+
+    expect(parseSshKeyboardInteractivePromptData({
+      promptId: ' prompt-2 ',
+      host: ' example.test ',
+      port: 22,
+      username: ' dev ',
+      name: ' MFA ',
+      instruction: ' Enter code ',
+      prompts: [
+        { id: '0', label: ' OTP ', echo: false },
+        { id: '1', label: ' visible ', echo: true },
+        { id: '', label: 'invalid', echo: true },
+      ],
+    } satisfies SystemTaskJsonObject)).toEqual({
+      promptId: 'prompt-2',
+      host: 'example.test',
+      port: 22,
+      username: 'dev',
+      name: 'MFA',
+      instruction: 'Enter code',
+      prompts: [
+        { id: '0', label: 'OTP', echo: false },
+        { id: '1', label: 'visible', echo: true },
+      ],
+    });
+  });
 });

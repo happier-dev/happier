@@ -9,13 +9,13 @@ import type {
     AccessEndpointClientContext,
     AccessEndpointDiagnostic,
     AccessEndpointStatus,
-} from '../accessEndpointModel';
-import { createAccessEndpointRemediationAction } from '../accessEndpointRemediation';
+} from '../model';
+import { createAccessEndpointRemediationAction } from '../remediation';
 import {
     classifyAccessEndpointHostedHttpsCompatibility,
     classifyAccessEndpointReachability,
     deriveAccessEndpointWsBaseUrl,
-} from '../classifyAccessEndpoint';
+} from '../classify';
 
 export type ServerProfileAccessEndpointInput = Readonly<{
     id: string;

@@ -176,6 +176,37 @@ describe('createSystemTaskRunner', () => {
         }));
     });
 
+    it('reuses an existing task record when the bridge dedupes to an in-flight task id', async () => {
+        const { createSystemTaskRunner } = await import('./createSystemTaskRunner');
+        const manual = createManualBridge();
+        const bridge = {
+            ...manual.bridge,
+            start: vi.fn(async () => 'task_1'),
+        };
+        const runner = createSystemTaskRunner({ bridge });
+
+        const firstTaskId = await runner.start(createSpec());
+        manual.emitEvent(firstTaskId, {
+            protocolVersion: 1,
+            taskId: firstTaskId,
+            tsMs: 100,
+            type: 'started',
+            stepId: 'prepare',
+            message: 'Preparing task',
+        } satisfies SystemTaskEvent);
+
+        const secondTaskId = await runner.start(createSpec());
+
+        expect(secondTaskId).toBe(firstTaskId);
+        expect(runner.getSnapshot(firstTaskId)).toEqual(expect.objectContaining({
+            events: [
+                expect.objectContaining({
+                    stepId: 'prepare',
+                }),
+            ],
+        }));
+    });
+
     it('ignores duplicate events when snapshot replay and live delivery carry the same payload', async () => {
         const { createSystemTaskRunner } = await import('./createSystemTaskRunner');
         const manual = createManualBridge();

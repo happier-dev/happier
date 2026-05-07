@@ -48,6 +48,13 @@
         "EXPO_ANDROID_PACKAGE": "dev.happier.app.internaldev.devclient"
       }
     },
+    "internaldev-native-ssh": {
+      "extends": "internaldev-dev-client",
+      "env": {
+        "HAPPIER_ENABLE_NATIVE_SSH": "1",
+        "HAPPIER_INSTALL_SCOPE": "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,ssh-native"
+      }
+    },
     "internaldev-store": {
       "extends": "base",
       "environment": "development",

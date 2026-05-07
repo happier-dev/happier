@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { resolveSshHostTrust } from '@happier-dev/protocol';
 
 export interface ParsedSshKnownHostLine {
   host: string;
@@ -126,11 +127,19 @@ export function resolveSshKnownHostTrust(params: Readonly<{
       };
     }
 
-    if (
-      trustedEntry.host !== scanned.host
-      || trustedEntry.keyType !== scanned.keyType
-      || trustedEntry.key !== scanned.key
-    ) {
+    const trust = resolveSshHostTrust({
+      host: scanned.host,
+      port: 22,
+      algorithm: scanned.keyType,
+      fingerprintSha256: scanned.fingerprint,
+      trusted: {
+        host: trustedEntry.host,
+        port: 22,
+        algorithm: trustedEntry.keyType,
+        fingerprintSha256: trustedEntry.fingerprint,
+      },
+    });
+    if (trust.status !== 'trusted' || trustedEntry.key !== scanned.key) {
       return {
         status: 'rejected',
         reason: 'trustedHostKeyMismatch',
@@ -148,7 +157,19 @@ export function resolveSshKnownHostTrust(params: Readonly<{
   }
 
   if (persistedEntry) {
-    if (persistedEntry.key === scanned.key) {
+    const trust = resolveSshHostTrust({
+      host: scanned.host,
+      port: 22,
+      algorithm: scanned.keyType,
+      fingerprintSha256: scanned.fingerprint,
+      trusted: {
+        host: persistedEntry.host,
+        port: 22,
+        algorithm: persistedEntry.keyType,
+        fingerprintSha256: persistedEntry.fingerprint,
+      },
+    });
+    if (trust.status === 'trusted' && persistedEntry.key === scanned.key) {
       return {
         status: 'trusted',
         scanned,

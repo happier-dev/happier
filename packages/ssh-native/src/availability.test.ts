@@ -39,13 +39,49 @@ describe('native SSH availability', () => {
       platform: 'android',
       engine: 'russh',
       moduleVersion: '0.0.0',
+      supportsLoopbackTunnel: true,
+      supportsPersistentHostKeyStorage: false,
     };
     const nativeModule: NativeSshModule = {
       getAvailability: () => availability,
       exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+      cancelRequest: async () => undefined,
     };
 
-    expect(getNativeSshAvailability({ nativeModule, platform: 'android' })).toBe(availability);
+    expect(getNativeSshAvailability({ nativeModule, platform: 'android' })).toEqual(availability);
+  });
+
+  it('preserves unavailable loopback tunnel support for exec-only native builds', () => {
+    expect(normalizeNativeSshAvailability({
+      available: true,
+      platform: 'ios',
+      engine: 'libssh2',
+      moduleVersion: '0.0.0',
+      supportsLoopbackTunnel: false,
+      supportsPersistentHostKeyStorage: false,
+    })).toEqual({
+      available: true,
+      platform: 'ios',
+      engine: 'libssh2',
+      moduleVersion: '0.0.0',
+      supportsLoopbackTunnel: false,
+      supportsPersistentHostKeyStorage: false,
+    });
+  });
+
+  it('rejects platform-split engines that are not selected by RAU-8 Phase 0', () => {
+    expect(normalizeNativeSshAvailability({
+      available: true,
+      platform: 'android',
+      engine: 'jsch',
+      moduleVersion: '0.0.0',
+      supportsLoopbackTunnel: true,
+      supportsPersistentHostKeyStorage: false,
+    })).toEqual({
+      available: false,
+      reason: 'engine-unavailable',
+      detail: 'HappierSshNative returned an invalid availability payload.',
+    });
   });
 
   it('creates structured unavailable results with optional details', () => {

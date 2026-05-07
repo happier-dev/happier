@@ -15,6 +15,8 @@ export const SYSTEM_TASK_PROMPT_KINDS_V1 = [
   'ssh.trustHost',
   'ssh.replaceHostKey',
   'ssh.password',
+  'ssh.privateKeyPassphrase',
+  'ssh.keyboardInteractive',
   'auth.approveRemoteProvisioning',
   'releaseChannel.switchDefaultForSetup',
   'daemon.takeOverManualRelayRuntimeForSetup',

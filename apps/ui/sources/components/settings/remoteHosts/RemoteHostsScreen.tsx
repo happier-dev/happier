@@ -22,11 +22,22 @@ import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSna
 import { SystemTaskProgressCard } from '@/components/systemTasks/SystemTaskProgressCard';
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
 import { useSshSystemTaskPromptModals } from '@/components/systemTasks/ssh/useSshSystemTaskPromptModals';
+import { readNativeSshBridgeInterruptionKey, type NativeSshBridgeInterruptionMarker } from '@/components/systemTasks/createNativeSshBridge';
+import { NATIVE_SSH_BOOTSTRAP_TASK_KIND } from '@/components/systemTasks/bridges/native';
+import { createDefaultNativeSshBridgeInterruptionStore } from '@/components/systemTasks/nativeSshBridgeInterruptionStore';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
+import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { buildRemoteSshManageHostSystemTaskSpec } from '@/components/systemTasks/specs/remoteSsh/buildRemoteSshManageHostSystemTaskSpec';
 import { RelayAccessControlSection } from '@/components/settings/server/relayAccess/RelayAccessControlSection';
+import { AccessEndpointSettingsSection } from '@/components/settings/server/accessEndpoints/AccessEndpointSettingsSection';
+import { buildAccessChannelProjection } from '@/sync/domains/accessEndpoints/channels/buildProjection';
+import { buildAccessEndpointProjection } from '@/sync/domains/accessEndpoints/buildProjection';
+import { getNativeSshTunnelRuntime } from '@/sync/runtime/nativeSshTunnels/runtime';
+import type { NativeSshTunnelSnapshot } from '@/sync/runtime/nativeSshTunnels/types';
 
 import { RemoteHostForm } from './RemoteHostForm';
+import { TrustedHostKeysSection } from './TrustedHostKeysSection';
 import { pinnedRemoteHostOutcomeActionIds } from './remoteHostOutcomeActions';
 import { useRemoteHostOutcomeActions } from './useRemoteHostOutcomeActions';
 import { useRemoteHostSshTunnelControl } from './useRemoteHostSshTunnelControl';
@@ -53,9 +64,97 @@ function removeRemoteHost(list: readonly RemoteHost[], remoteHostId: string): Re
     return list.filter((entry) => entry.id !== remoteHostId);
 }
 
+function hasNativeUsableSshCredentialMaterial(
+    host: RemoteHost,
+    secretMaterialAllowed: boolean,
+): boolean {
+    if (!secretMaterialAllowed) {
+        return false;
+    }
+    if (host.ssh.authMode === 'password') {
+        return Boolean(host.ssh.passwordEnc);
+    }
+    if (host.ssh.authMode === 'keyfile') {
+        return Boolean(host.ssh.identityPrivateKeyEnc);
+    }
+    return false;
+}
+
+function emptyNativeSshTunnelSnapshot(): NativeSshTunnelSnapshot {
+    return {
+        leases: [],
+        platformLimitations: [],
+    };
+}
+
+function useNativeSshTunnelSnapshot(enabled: boolean): NativeSshTunnelSnapshot {
+    const [snapshot, setSnapshot] = React.useState<NativeSshTunnelSnapshot>(() => emptyNativeSshTunnelSnapshot());
+
+    React.useEffect(() => {
+        if (!enabled) {
+            setSnapshot(emptyNativeSshTunnelSnapshot());
+            return undefined;
+        }
+        const runtime = getNativeSshTunnelRuntime();
+        setSnapshot(runtime.listTunnels());
+        return runtime.subscribe(() => {
+            setSnapshot(runtime.listTunnels());
+        });
+    }, [enabled]);
+
+    return snapshot;
+}
+
+type NativeSshBootstrapInterruption = Readonly<{
+    remoteHostId: string;
+    remoteHostName: string;
+    marker: NativeSshBridgeInterruptionMarker;
+}>;
+
+function useNativeSshBootstrapInterruptions(
+    enabled: boolean,
+    hosts: readonly RemoteHost[],
+    activeTaskIds: readonly string[],
+): Readonly<{
+    interruptions: readonly NativeSshBootstrapInterruption[];
+    clearInterruption: (key: string) => void;
+}> {
+    const store = React.useMemo(() => createDefaultNativeSshBridgeInterruptionStore(), []);
+    const [revision, setRevision] = React.useState(0);
+    const activeTaskIdSet = React.useMemo(() => new Set(activeTaskIds), [activeTaskIds]);
+    const interruptions = React.useMemo(() => {
+        if (!enabled) {
+            return [];
+        }
+        const markers = new Map((store.list?.() ?? []).map((marker) => [marker.key, marker] as const));
+        return hosts.flatMap((host): NativeSshBootstrapInterruption[] => {
+            const key = readNativeSshBridgeInterruptionKey({
+                kind: NATIVE_SSH_BOOTSTRAP_TASK_KIND,
+                params: { remoteHostId: host.id },
+            });
+            const marker = markers.get(key) ?? store.read(key);
+            return marker && !activeTaskIdSet.has(marker.taskId)
+                ? [{
+                    remoteHostId: host.id,
+                    remoteHostName: host.name,
+                    marker,
+                }]
+                : [];
+        });
+    }, [activeTaskIdSet, enabled, hosts, revision, store]);
+
+    const clearInterruption = React.useCallback((key: string) => {
+        store.remove(key);
+        setRevision((value) => value + 1);
+    }, [store]);
+
+    return { interruptions, clearInterruption };
+}
+
 export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
     const isDesktop = isTauriDesktop();
     const runner = getDefaultSystemTaskRunner();
+    const supportsRemoteHostManagementSurface = isDesktop || runner.mode === 'native';
     const { theme } = useUnistyles();
     const supportsWholeRowPress = Platform.OS !== 'web';
     const [remoteHosts, setRemoteHosts] = useSettingMutable('remoteHostsV1');
@@ -63,8 +162,11 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
     useSettings(); // Ensure settings are hydrated for feature decisions.
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const secretMaterialAllowed = useFeatureEnabled('remoteHosts.secretMaterial');
+    const setupSurfacePolicy = React.useMemo(() => resolveSetupSurfacePolicy(), []);
+    const remoteSshMachineSetupAllowed = setupSurfacePolicy.machine.allowRemoteSshMachineSetup;
+    const nativeSshTransportAllowed = getFeatureBuildPolicyDecision('setup.ssh.nativeTransport') !== 'deny';
 
-    if (!isDesktop) {
+    if (!supportsRemoteHostManagementSurface) {
         return (
             <ItemList>
                 <ItemGroup title={t('settings.remoteHostsTitle')}>
@@ -102,6 +204,8 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
             remoteHosts={remoteHosts}
             setRemoteHosts={setRemoteHosts}
             runner={runner}
+            remoteSshMachineSetupAllowed={remoteSshMachineSetupAllowed}
+            nativeSshTransportAllowed={nativeSshTransportAllowed}
             secretMaterialAllowed={secretMaterialAllowed}
             supportsWholeRowPress={supportsWholeRowPress}
             themeTextSecondary={theme.colors.textSecondary}
@@ -113,6 +217,8 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
     hosts: RemoteHost[];
     remoteHosts: RemoteHost[] | null;
     runner: ReturnType<typeof getDefaultSystemTaskRunner>;
+    remoteSshMachineSetupAllowed: boolean;
+    nativeSshTransportAllowed: boolean;
     setRemoteHosts: (value: RemoteHost[]) => void;
     secretMaterialAllowed: boolean;
     supportsWholeRowPress: boolean;
@@ -167,10 +273,85 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
     const activeRemoteHostSshTunnels = React.useMemo(() => (
         sshTunnelControl.tunnels.filter((tunnel) => tunnel.purpose === 'remote-host-access')
     ), [sshTunnelControl.tunnels]);
-    const desktopSshTunnelRemoteHostIds = React.useMemo(() => new Set(
-        runner.mode === 'tauri' ? props.hosts.map((host) => host.id) : [],
-    ), [props.hosts, runner.mode]);
+    const nativeSshCapabilityAvailable = props.nativeSshTransportAllowed
+        && runner.capabilities?.nativeSsh?.available === true;
+    const nativeSshLoopbackTunnelAvailable = nativeSshCapabilityAvailable
+        && runner.capabilities?.nativeSsh?.supportsLoopbackTunnel === true;
+    const nativeSshTunnelSnapshot = useNativeSshTunnelSnapshot(runner.mode === 'native' && nativeSshLoopbackTunnelAvailable);
+    const activeNativeSshBootstrapTaskIds = React.useMemo(() => [
+        ...(activeTaskId && activeTaskSnapshot && !activeTaskSnapshot.result ? [activeTaskId] : []),
+        ...(remoteHostOutcomeActions.activeTaskSnapshot && !remoteHostOutcomeActions.activeTaskSnapshot.result
+            ? [remoteHostOutcomeActions.activeTaskSnapshot.taskId]
+            : []),
+        ...(sshTunnelControl.activeTaskSnapshot && !sshTunnelControl.activeTaskSnapshot.result
+            ? [sshTunnelControl.activeTaskSnapshot.taskId]
+            : []),
+    ], [
+        activeTaskId,
+        activeTaskSnapshot,
+        remoteHostOutcomeActions.activeTaskSnapshot,
+        sshTunnelControl.activeTaskSnapshot,
+    ]);
+    const nativeSshBootstrapInterruptions = useNativeSshBootstrapInterruptions(
+        runner.mode === 'native' && nativeSshCapabilityAvailable,
+        props.hosts,
+        activeNativeSshBootstrapTaskIds,
+    );
+    const canRunRemoteHostMaintenanceTasks = runner.mode === 'tauri';
+    const canRunRemoteHostBootstrapTasks = props.remoteSshMachineSetupAllowed
+        && (canRunRemoteHostMaintenanceTasks || (runner.mode === 'native' && nativeSshCapabilityAvailable));
+    const connectableRemoteHostIds = React.useMemo(() => new Set(
+        runner.mode === 'tauri'
+            ? props.hosts.map((host) => host.id)
+            : runner.mode === 'native' && nativeSshLoopbackTunnelAvailable
+                ? props.hosts
+                    .filter((host) => hasNativeUsableSshCredentialMaterial(host, props.secretMaterialAllowed))
+                    .map((host) => host.id)
+                : [],
+    ), [nativeSshLoopbackTunnelAvailable, props.hosts, props.secretMaterialAllowed, runner.mode]);
+    const nativeBootstrapCapableRemoteHostIds = React.useMemo(() => new Set(
+        runner.mode === 'native' && nativeSshCapabilityAvailable
+            ? props.hosts
+                .filter((host) => hasNativeUsableSshCredentialMaterial(host, props.secretMaterialAllowed))
+                .map((host) => host.id)
+            : [],
+    ), [nativeSshCapabilityAvailable, props.hosts, props.secretMaterialAllowed, runner.mode]);
     const hostNameById = React.useMemo(() => new Map(props.hosts.map((host) => [host.id, host.name])), [props.hosts]);
+    const accessEndpointProjection = React.useMemo(() => buildAccessEndpointProjection({
+        clientContext: runner.mode === 'native' ? 'native' : 'desktop',
+        remoteHosts: props.hosts,
+        sshTunnelSnapshots: sshTunnelControl.tunnels,
+        nativeSshTunnelSnapshot,
+    }), [nativeSshTunnelSnapshot, props.hosts, runner.mode, sshTunnelControl.tunnels]);
+    const accessChannels = React.useMemo(() => buildAccessChannelProjection({
+        endpoints: accessEndpointProjection.endpoints,
+    }), [accessEndpointProjection.endpoints]);
+    const handleAccessEndpointRemediationActionPress = React.useCallback((payload: Readonly<{
+        action: Readonly<{
+            ownerSurface: string;
+            payload?: Readonly<Record<string, unknown>>;
+        }>;
+    }>) => {
+        if (payload.action.ownerSurface !== 'sshTunnel.stop') {
+            return;
+        }
+        const leaseId = typeof payload.action.payload?.leaseId === 'string' ? payload.action.payload.leaseId : '';
+        if (leaseId && runner.mode === 'native') {
+            void (async () => {
+                try {
+                    await getNativeSshTunnelRuntime().releaseTunnel(leaseId);
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error ?? '');
+                    Modal.alert(t('common.error'), message || t('settings.remoteHostsConnectFromThisDeviceFailed'));
+                }
+            })();
+            return;
+        }
+        const tunnelKey = typeof payload.action.payload?.tunnelKey === 'string' ? payload.action.payload.tunnelKey : '';
+        if (tunnelKey) {
+            void sshTunnelControl.stopTunnel(tunnelKey);
+        }
+    }, [runner.mode, sshTunnelControl]);
 
     const startManageHostAction = React.useCallback(async (
         remoteHost: RemoteHost,
@@ -229,6 +410,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                 savedRemoteHosts: props.remoteHosts ?? [],
                 systemTaskRunner: runner,
                 secretMaterialAllowed: props.secretMaterialAllowed,
+                remoteMaintenanceSupported: canRunRemoteHostMaintenanceTasks,
                 onSave: ({ remoteHost, localOverrides }) => {
                     const nextList = upsertRemoteHost(props.remoteHosts ?? [], remoteHost);
                     props.setRemoteHosts(nextList);
@@ -258,9 +440,11 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                 ) : null}
                 {props.hosts.map((host) => (
                     (() => {
-                        const canConnectFromThisDevice = desktopSshTunnelRemoteHostIds.has(host.id);
+                        const canConnectFromThisDevice = connectableRemoteHostIds.has(host.id);
+                        const canSetupAsMachine = canRunRemoteHostBootstrapTasks
+                            && (canRunRemoteHostMaintenanceTasks || nativeBootstrapCapableRemoteHostIds.has(host.id));
                         const actions: ItemAction[] = [
-                            {
+                            ...(canSetupAsMachine ? [{
                                 id: 'setupAsMachine',
                                 title: t('settings.remoteHostsSetupAsMachineTitle'),
                                 icon: 'rocket-outline',
@@ -268,7 +452,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                 onPress: () => {
                                     void remoteHostOutcomeActions.setupAsMachine(host);
                                 },
-                            },
+                            }] satisfies ItemAction[] : []),
                             ...(canConnectFromThisDevice ? [{
                                 id: 'connectFromThisDevice',
                                 title: t('settings.remoteHostsConnectFromThisDeviceTitle'),
@@ -305,7 +489,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                 icon: 'information-circle-outline',
                                 onPress: () => openEditor(host.id),
                             },
-                            {
+                            ...(canRunRemoteHostMaintenanceTasks ? [{
                                 id: 'testConnection',
                                 title: t('settings.remoteHostsTestConnectionTitle'),
                                 icon: 'pulse-outline',
@@ -372,7 +556,7 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                                 title: t('settings.remoteHostsRelayRuntimeRestartTitle'),
                                 icon: 'refresh-outline',
                                 onPress: () => void startManageHostAction(host, 'relayRuntime.restart', t('settings.remoteHostsRelayRuntimeRestartTitle')),
-                            },
+                            }] satisfies ItemAction[] : []),
                             {
                                 id: 'edit',
                                 title: t('common.edit'),
@@ -442,6 +626,8 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                 />
             </ItemGroup>
 
+            <TrustedHostKeysSection />
+
             {activeRemoteHostSshTunnels.length > 0 ? (
                 <ItemGroup title={t('settings.remoteHostsSshTunnelGroupTitle')}>
                     {activeRemoteHostSshTunnels.map((tunnel) => {
@@ -486,8 +672,46 @@ const RemoteHostsScreenBody = React.memo(function RemoteHostsScreenBody(props: R
                         target={remoteHostOutcomeActions.relayAccessSelection.target}
                         upstreamUrl={remoteHostOutcomeActions.relayAccessSelection.upstreamUrl}
                         runner={runner}
+                        accessChannels={accessChannels}
+                        accessEndpointRemediationActions={accessEndpointProjection.remediationActions}
+                        onAccessEndpointRemediationActionPress={handleAccessEndpointRemediationActionPress}
                     />
                 </>
+            ) : accessChannels.length > 0 ? (
+                <AccessEndpointSettingsSection
+                    channels={accessChannels}
+                    remediationActions={accessEndpointProjection.remediationActions}
+                    onRemediationActionPress={handleAccessEndpointRemediationActionPress}
+                />
+            ) : null}
+
+            {nativeSshBootstrapInterruptions.interruptions.length > 0 ? (
+                <ItemGroup title={t('settings.remoteHostsActiveTaskTitle')}>
+                    {nativeSshBootstrapInterruptions.interruptions.map((interruption) => (
+                        <Item
+                            key={interruption.marker.key}
+                            testID={`settings.remoteHosts.interruptedBootstrap.${interruption.remoteHostId}`}
+                            title={t('settings.remoteHostsSetupAsMachineTitle')}
+                            subtitle={interruption.remoteHostName}
+                            mode="info"
+                            showChevron={false}
+                            rightElement={(
+                                <ItemRowActions
+                                    title={interruption.remoteHostName}
+                                    actions={[{
+                                        id: 'clearInterruptedBootstrap',
+                                        title: t('common.remove'),
+                                        icon: 'close-circle-outline',
+                                        onPress: () => {
+                                            nativeSshBootstrapInterruptions.clearInterruption(interruption.marker.key);
+                                        },
+                                    }]}
+                                    compactThreshold={REMOTE_HOST_ROW_ACTIONS_OVERFLOW_THRESHOLD}
+                                />
+                            )}
+                        />
+                    ))}
+                </ItemGroup>
             ) : null}
 
             {(remoteHostOutcomeActions.activeTaskSnapshot ?? sshTunnelControl.activeTaskSnapshot ?? activeTaskSnapshot) ? (

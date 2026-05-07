@@ -20,9 +20,20 @@ function requireExpoModulesCore(): ExpoModulesCoreLike | null {
 }
 
 export function getOptionalHappierSshNativeModule(): NativeSshModule | null {
-  const requireOptionalNativeModule = requireExpoModulesCore()?.requireOptionalNativeModule;
+  return readOptionalHappierSshNativeModuleFromExpoCore(requireExpoModulesCore());
+}
+
+export function readOptionalHappierSshNativeModuleFromExpoCore(
+  expoCore: ExpoModulesCoreLike | null,
+): NativeSshModule | null {
+  const requireOptionalNativeModule = expoCore?.requireOptionalNativeModule;
   if (typeof requireOptionalNativeModule !== 'function') return null;
 
-  const mod = requireOptionalNativeModule(HAPPIER_SSH_NATIVE_MODULE_NAME);
+  let mod: unknown;
+  try {
+    mod = requireOptionalNativeModule(HAPPIER_SSH_NATIVE_MODULE_NAME);
+  } catch {
+    return null;
+  }
   return mod && typeof mod === 'object' ? (mod as NativeSshModule) : null;
 }

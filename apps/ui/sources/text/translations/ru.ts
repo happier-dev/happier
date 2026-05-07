@@ -1612,6 +1612,7 @@ export const ru: TranslationStructure = {
     remoteHostsConnectFromThisDeviceTitle: "Подключиться с этого устройства",
     remoteHostsConnectFromThisDeviceSubtitle: "Только это устройство. Открывает локальный SSH-туннель для этой сессии приложения.",
     remoteHostsConnectFromThisDeviceFailed: "Не удалось открыть локальный SSH-туннель.",
+    remoteHostsNativeSshTunnelRequiresEngine: "Для запуска нативных SSH-туннелей с этого устройства нужна сборка нативного SSH-движка.",
     remoteHostsSshTunnelGroupTitle: "Доступ к удаленному хосту с этого устройства",
     remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `SSH-туннель активен для ${host}`,
     remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `Только это устройство. Локальная конечная точка: ${url}`,
@@ -1641,6 +1642,15 @@ export const ru: TranslationStructure = {
     remoteHostsActiveTaskTitle: "Системная задача",
     remoteHostsHostTrustTitle: "Доверять SSH-хосту?",
     remoteHostsPasswordRequiredTitle: "Требуется пароль SSH",
+    remoteHostsRememberHostKeyTitle: "Запомнить этот ключ SSH-хоста?",
+    remoteHostsRememberHostKeyAction: "Доверять и запомнить",
+    remoteHostsTrustOnceAction: "Доверять один раз",
+    remoteHostsPrivateKeyPassphraseTitle: "Парольная фраза закрытого ключа SSH",
+    remoteHostsKeyboardInteractiveTitle: "Аутентификация SSH",
+    remoteHostsKeyboardInteractivePromptLabel: "Запрос SSH",
+    remoteHostsTrustedHostKeysTitle: "Доверенные ключи SSH-хостов",
+    remoteHostsTrustedHostKeyRemoveTitle: "Удалить доверенный ключ SSH-хоста?",
+    remoteHostsTrustedHostKeysClearTitle: "Очистить доверенные ключи SSH-хостов",
     remoteHostsConnectionSucceeded: "Соединение успешно.",
     remoteHostsConnectionFailed: "Не удалось подключиться.",
     sshConfiguredHostPickerTitle: "Предложенные SSH-хосты",
@@ -1824,37 +1834,79 @@ export const ru: TranslationStructure = {
       webHandoffSubtitle: "Используйте CLI для настройки доступа к Relay, затем вернитесь сюда и обновите.",
     },
     accessEndpoints: {
+      status: {
+        refreshing: 'Обновление каналов доступа',
+      },
       scope: {
-        availableToOtherDevices: 'Available to other devices',
-        thisDeviceOnly: 'This device only',
+        availableToOtherDevices: 'Доступно для других устройств',
+        thisDeviceOnly: 'Только это устройство',
       },
       direction: {
-        makeCurrentServerReachable: 'Make this server reachable',
-        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
-        unknown: 'Access channel',
+        makeCurrentServerReachable: 'Сделать этот сервер доступным',
+        reachRemoteServerFromThisDevice: 'Подключиться к удалённому серверу с этого устройства',
+        unknown: 'Канал доступа',
       },
       kind: {
-        'relay-access-provider': 'Relay access',
-        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
-        'server-profile-url': 'Server URL',
-        'peer-mediation': 'Peer mediation',
-        'manual-url': 'Manual URL',
+        'relay-access-provider': 'Доступ через Relay',
+        'ssh-tunnel-desktop': 'Настольный SSH-туннель',
+        'ssh-tunnel-native': 'Нативный SSH-туннель',
+        'server-profile-url': 'URL сервера',
+        'peer-mediation': 'Посредничество между узлами',
+        'manual-url': 'URL вручную',
       },
       recommendedUse: {
-        'multi-device': 'Best for other devices',
-        'native-this-device': 'Works in this native app',
-        'hosted-web': 'Works from hosted web',
-        'lan-only': 'LAN or private network only',
-        diagnostic: 'Needs attention',
+        'multi-device': 'Лучше для других устройств',
+        'native-this-device': 'Работает в этом нативном приложении',
+        'hosted-web': 'Работает из размещённой веб-версии',
+        'lan-only': 'Только LAN или частная сеть',
+        diagnostic: 'Требует внимания',
       },
       limitation: {
-        'this-device-only': 'This device only',
-        'not-hosted-web-compatible': 'Not available to hosted web',
-        'not-public-share-url': 'Not a public share URL',
-        'session-scoped': 'Session scoped',
-        'foreground-only': 'Requires the app to stay in the foreground',
-        'requires-auth': 'Requires SSH authentication',
-        'requires-host-key-trust': 'Requires host-key trust',
+        'this-device-only': 'Только это устройство',
+        'not-hosted-web-compatible': 'Недоступно для размещённой веб-версии',
+        'not-public-share-url': 'Это не публичный URL для общего доступа',
+        'session-scoped': 'Ограничено сеансом',
+        'authentication-failed': 'SSH-аутентификация не удалась',
+        'foreground-only': 'Требует, чтобы приложение оставалось на переднем плане',
+        'host-key-mismatch': 'SSH-ключ хоста изменился',
+        'host-key-rejected': 'SSH-ключ хоста был отклонён',
+        'host-key-untrusted': 'SSH-ключ хоста пока не является доверенным',
+        'platform-suspended': 'Приостановлено, пока приложение остановлено системой',
+        'loopback-bind-failed': 'Не удалось привязать локальный порт туннеля',
+        'network-captive-portal': 'Сеть перехватила SSH-соединение',
+        'remote-service-unreachable': 'Удалённый сервис недоступен через туннель',
+        'requires-auth': 'Требуется SSH-аутентификация',
+        'requires-host-key-trust': 'Требуется доверие к ключу хоста',
+      },
+      remediation: {
+        tailscale: {
+          install: 'Установить Tailscale',
+          login: 'Войти в Tailscale',
+          serve: {
+            enable: 'Включить Tailscale Serve',
+            approve: 'Одобрить Tailscale Serve',
+          },
+          funnel: {
+            approve: 'Одобрить Tailscale Funnel',
+          },
+        },
+        cloudflare: {
+          configure: 'Настроить туннель Cloudflare',
+        },
+        serverProfile: {
+          configureShareableUrl: 'Настроить URL для общего доступа',
+        },
+        remoteHost: {
+          add: 'Добавить удалённый хост',
+          setup: 'Настроить удалённый хост',
+        },
+        sshTunnel: {
+          start: 'Запустить SSH-туннель',
+          reuse: 'Использовать существующий SSH-туннель',
+          stop: 'Остановить SSH-туннель',
+          authenticate: 'Аутентифицировать SSH-туннель',
+          trustHost: 'Доверять SSH-ключу хоста',
+        },
       },
     },
     systemTaskStepPrepare: "Подготовить задачу",
@@ -2562,6 +2614,19 @@ export const ru: TranslationStructure = {
         invalidValueMessage: "Введите число от 1024 до 1073741824.",
       },
     },
+  },
+
+  settingsScmDiffSummary: {
+  title: 'Сводки diff',
+  enabledTitle: 'Включить сводки diff',
+  enabledSubtitle: 'Разрешает AI-сводки для изменений системы контроля версий.',
+  prefetchTitle: 'Предзагружать сводки',
+  prefetchSubtitle: 'Генерирует сводки заранее только при включенной настройке.',
+  modelOverrideTitle: 'Модель сводки',
+  modelOverrideSubtitle: 'Необязательный разрешенный runtime-профиль для сводок diff.',
+  modelOverrideDefault: 'Использовать значение runtime по умолчанию',
+  cacheTitle: 'Кэш сводок',
+  cacheSubtitle: 'Сводки checkpoint повторно используются по квитанции; сводки working tree остаются временными.',
   },
 
   settingsSourceControl: {
@@ -4419,7 +4484,7 @@ export const ru: TranslationStructure = {
     openProject: 'Открыть проект',
   },
 
-  directSessions: {
+  externalSessions: {
     browseTitle: "Просмотр сессий провайдера",
     browseOpenExisting: "Просмотр сессий провайдера",
     browseActionSubtitle: "Выберите машину, провайдера и сессию, чтобы открыть её здесь.",
@@ -4712,6 +4777,34 @@ export const ru: TranslationStructure = {
 	    rollback: {
 	      latestTurnA11y: 'Откатить последний ход',
 	      beforeUserMessageA11y: 'Откатить к состоянию до этого сообщения',
+	      checkpointCode: {
+	        title: 'Варианты отката',
+	        conversationUnavailable: 'Откат разговора недоступен для этой сессии.',
+	        codeOnlyConfirmation: 'Я понимаю, что разговор останется без изменений.',
+	        showAdvanced: 'Показать расширенные параметры только для кода',
+	        choices: {
+	          conversation_only: {
+	            title: 'Только разговор',
+	            description: 'Откатить транскрипт без изменения файлов.',
+	          },
+	          conversation_and_code_with_stash: {
+	            title: 'Разговор и код, с Git stash',
+	            description: 'Создать checkpoint Happier, сохранить изменения в stash и применить обратный patch.',
+	          },
+	          conversation_and_code_without_stash: {
+	            title: 'Разговор и код, без Git stash',
+	            description: 'Создать checkpoint Happier и применить обратный patch в этом worktree.',
+	          },
+	          code_only_with_stash: {
+	            title: 'Только код, с Git stash',
+	            description: 'Расширенно: оставить разговор без изменений и откатить файлы после stash.',
+	          },
+	          code_only_without_stash: {
+	            title: 'Только код, без Git stash',
+	            description: 'Расширенно: оставить разговор без изменений и откатить файлы только с checkpoint Happier.',
+	          },
+	        },
+	      },
 	    },
 	    resuming: "Возобновление...",
 	    resumeFailed: "Не удалось возобновить сессию",
@@ -8226,9 +8319,9 @@ settingsSession: {
     switchingToRemote: "Переключение в удалённый режим…",
     switchToRemote: "Переключиться на удалённый",
     detachLocalTerminal: "Отсоединить терминал",
-    directSessionTakeoverAvailable:
+    externalSessionTakeoverAvailable:
       "Эта прямая сессия доступна на вашей машине. Возьмите её под контроль в Happier, чтобы управлять ею здесь.",
-    directSessionMachineOffline:
+    externalSessionMachineOffline:
       "Эта прямая сессия сейчас недоступна, потому что машина офлайн.",
     switchingToDirectTakeover: "Берём эту прямую сессию под контроль…",
     switchingToPersistedTakeover: "Берём сессию под контроль и синхронизируем её…",

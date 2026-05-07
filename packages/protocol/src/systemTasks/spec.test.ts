@@ -30,6 +30,8 @@ describe('systemTasks protocol exports', () => {
     const promptKinds = (protocol as Record<string, unknown>).SYSTEM_TASK_PROMPT_KINDS_V1;
     expect(Array.isArray(promptKinds)).toBe(true);
     expect(promptKinds).toContain('ssh.trustHost');
+    expect(promptKinds).toContain('ssh.privateKeyPassphrase');
+    expect(promptKinds).toContain('ssh.keyboardInteractive');
     expect(promptKinds).toContain('releaseChannel.switchDefaultForSetup');
     expect(promptKinds).toContain('daemon.takeOverManualRelayRuntimeForSetup');
     expect(promptKinds).toContain('daemon.replaceLocalBackgroundServices');

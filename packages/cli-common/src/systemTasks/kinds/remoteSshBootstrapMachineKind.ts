@@ -4,7 +4,6 @@ import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/re
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { redactSensitiveSystemTaskJsonValue, type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
 import { runSetupMachineRecipe, type SetupMachineRecipeExecutor } from '../recipes/setupMachineRecipe.js';
-import { materializeSshIdentityPrivateKeyToTempFile } from '../ssh/materializeSshIdentityPrivateKeyToTempFile.js';
 import {
   createRemoteSetupMachineRecipeHappierExecutor,
   createSetupMachineRecipeExecutorFromRemoteCommandRunner,
@@ -651,6 +650,7 @@ async function resolveRemoteSshAuth(params: Readonly<{
       throw new SystemTaskExecutionError('invalid_params', 'Missing ssh.identityFile for keyfile auth.');
     }
 
+    const { materializeSshIdentityPrivateKeyToTempFile } = await import('../ssh/materializeSshIdentityPrivateKeyToTempFile.js');
     const materialized = await materializeSshIdentityPrivateKeyToTempFile({
       privateKey: privateKeyMaterial,
       prefix: 'happier-ssh-bootstrap-',

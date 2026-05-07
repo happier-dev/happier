@@ -283,4 +283,45 @@ describe('installRemoteFirstPartyComponent', () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  it('can install through the shared remote self-download strategy without staging a local payload', async () => {
+    const remoteTextCommands: string[] = [];
+    const copiedRemotePaths: string[] = [];
+
+    const result = await installRemoteFirstPartyComponent(
+      {
+        componentId: 'happier-cli',
+        channel: 'preview',
+        ssh: {
+          target: 'dev@example.test',
+          auth: 'agent',
+        },
+        strategy: 'remote-self-download',
+      },
+      {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async ({ remoteCommand }) => {
+          remoteTextCommands.push(remoteCommand);
+          return { status: 0, stdout: '', stderr: '' };
+        },
+        copyLocalDirectoryToRemote: async ({ remotePath }) => {
+          copiedRemotePaths.push(remotePath);
+        },
+        resolveSelfDownloadInstallPlan: async ({ componentId, channel, os, arch }) => ({
+          binaryPath: `$HOME/.happier/${componentId}/${channel}/${os}/${arch}/happier`,
+          command: 'verified self-download install command',
+          source: 'https://example.test/happier.tar.gz',
+          versionId: 'preview-1',
+        }),
+      },
+    );
+
+    expect(result).toEqual({
+      binaryPath: '$HOME/.happier/happier-cli/preview/linux/x64/happier',
+      versionId: 'preview-1',
+      source: 'https://example.test/happier.tar.gz',
+    });
+    expect(remoteTextCommands).toEqual(['verified self-download install command']);
+    expect(copiedRemotePaths).toEqual([]);
+  });
 });

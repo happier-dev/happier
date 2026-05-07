@@ -64,9 +64,44 @@ export type SshPasswordPromptData = Readonly<{
   target: string;
 }>;
 
+export type SshPrivateKeyPassphrasePromptData = Readonly<{
+  promptId: string;
+  host: string;
+  port: number;
+  username: string;
+  keyLabel: string | null;
+  attemptsRemaining: number | null;
+}>;
+
+export type SshKeyboardInteractivePromptEntry = Readonly<{
+  id: string;
+  label: string;
+  echo: boolean;
+}>;
+
+export type SshKeyboardInteractivePromptData = Readonly<{
+  promptId: string;
+  host: string;
+  port: number;
+  username: string;
+  name: string | null;
+  instruction: string | null;
+  prompts: ReadonlyArray<SshKeyboardInteractivePromptEntry>;
+}>;
+
 function readTrimmedString(record: SystemTaskJsonObject, key: string): string | null {
   const value = record[key];
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readPort(record: SystemTaskJsonObject, key: string): number {
+  const value = record[key];
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 65_535 ? value : 22;
+}
+
+function readPositiveInteger(record: SystemTaskJsonObject, key: string): number | null {
+  const value = record[key];
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 function parseBackgroundServicePromptEntry(
@@ -219,5 +254,60 @@ export function parseSshPasswordPromptData(
 ): SshPasswordPromptData {
   return {
     target: readTrimmedString(record, 'target') ?? '',
+  };
+}
+
+export function parseSshPrivateKeyPassphrasePromptData(
+  record: SystemTaskJsonObject,
+): SshPrivateKeyPassphrasePromptData | null {
+  const promptId = readTrimmedString(record, 'promptId');
+  const host = readTrimmedString(record, 'host');
+  const username = readTrimmedString(record, 'username');
+  if (!promptId || !host || !username) {
+    return null;
+  }
+  return {
+    promptId,
+    host,
+    port: readPort(record, 'port'),
+    username,
+    keyLabel: readTrimmedString(record, 'keyLabel'),
+    attemptsRemaining: readPositiveInteger(record, 'attemptsRemaining'),
+  };
+}
+
+export function parseSshKeyboardInteractivePromptData(
+  record: SystemTaskJsonObject,
+): SshKeyboardInteractivePromptData | null {
+  const promptId = readTrimmedString(record, 'promptId');
+  const host = readTrimmedString(record, 'host');
+  const username = readTrimmedString(record, 'username');
+  if (!promptId || !host || !username) {
+    return null;
+  }
+  const prompts = (Array.isArray(record.prompts) ? record.prompts : []).flatMap((entry): SshKeyboardInteractivePromptEntry[] => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return [];
+    }
+    const item = entry as SystemTaskJsonObject;
+    const id = readTrimmedString(item, 'id');
+    const label = readTrimmedString(item, 'label');
+    if (!id || !label) {
+      return [];
+    }
+    return [{
+      id,
+      label,
+      echo: item.echo === true,
+    }];
+  });
+  return {
+    promptId,
+    host,
+    port: readPort(record, 'port'),
+    username,
+    name: readTrimmedString(record, 'name'),
+    instruction: readTrimmedString(record, 'instruction'),
+    prompts,
   };
 }

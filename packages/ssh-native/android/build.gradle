@@ -12,4 +12,17 @@ android {
     versionCode 1
     versionName version
   }
+
+  sourceSets {
+    main {
+      jniLibs.srcDirs += ["${buildDir}/generated/rustJniLibs"]
+    }
+  }
 }
+
+tasks.register("buildHappierSshRustAndroid", Exec) {
+  workingDir projectDir.parentFile
+  commandLine "bash", "scripts/build-rust-android.sh"
+}
+
+preBuild.dependsOn(tasks.named("buildHappierSshRustAndroid"))

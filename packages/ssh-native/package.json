@@ -6,15 +6,23 @@
   "types": "./src/index.ts",
   "files": [
     "src",
-    "ios",
-    "android",
+    "ios/HappierSshNativeModule.swift",
+    "ios/HappierSshNativeBridge.swift",
+    "ios/HappierSshNative.podspec",
+    "android/build.gradle",
+    "android/src",
+    "rust/happier-ssh-native/Cargo.toml",
+    "rust/happier-ssh-native/Cargo.lock",
+    "rust/happier-ssh-native/src",
+    "scripts",
     "expo-module.config.json",
     "package.json",
     "README.md"
   ],
   "scripts": {
+    "smoke:openssh": "node scripts/openssh-smoke.mjs",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "node ../../node_modules/typescript/lib/tsc.js -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "expo-modules-core": "55.0.20",

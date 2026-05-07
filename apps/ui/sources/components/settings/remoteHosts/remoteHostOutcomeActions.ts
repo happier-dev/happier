@@ -5,6 +5,9 @@ import { buildRemoteSshBootstrapMachineSystemTaskSpec } from '@/components/syste
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 import { parseSshTarget, type SshTunnelEnsureRequest } from '@happier-dev/protocol';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import type { NativeSshTunnelRequest } from '@/sync/runtime/nativeSshTunnels/types';
+import type { NativeSshTunnelCredentialResolution } from '@/sync/runtime/nativeSshTunnels/adapter';
+import { isEncryptedPrivateKeyPem } from '@/components/ssh/isEncryptedPrivateKeyPem';
 import {
     REMOTE_HOST_SSH_TUNNEL_REMOTE_HOST,
     REMOTE_HOST_SSH_TUNNEL_REMOTE_PORT,
@@ -134,6 +137,51 @@ export function buildSshTunnelEnsureRequestFromRemoteHostConfig(params: Readonly
         remotePort: REMOTE_HOST_SSH_TUNNEL_REMOTE_PORT,
         purpose: 'remote-host-access',
     };
+}
+
+export function buildNativeSshTunnelRequestFromRemoteHostConfig(params: Readonly<{
+    remoteHostId: string;
+    config: RemoteHostEffectiveSshConfig;
+}>): NativeSshTunnelRequest {
+    return {
+        remoteHostId: params.remoteHostId,
+        sshTarget: params.config.sshTarget,
+        ...(params.config.sshPort ? { sshPort: params.config.sshPort } : {}),
+        destinationHost: REMOTE_HOST_SSH_TUNNEL_REMOTE_HOST,
+        destinationPort: REMOTE_HOST_SSH_TUNNEL_REMOTE_PORT,
+        purpose: 'server-http',
+        credentialsRef: {
+            remoteHostId: params.remoteHostId,
+            credentialId: `remote-host:${params.remoteHostId}:ssh`,
+            storage: 'session-memory',
+        },
+    };
+}
+
+export function buildNativeSshTunnelCredentialsFromRemoteHostConfig(
+    config: RemoteHostEffectiveSshConfig,
+): NativeSshTunnelCredentialResolution | null {
+    const username = parseSshTarget(config.sshTarget).username.trim();
+    if (!username) {
+        return null;
+    }
+    if (config.sshAuth === 'password' && config.password) {
+        return {
+            auth: {
+                username,
+                password: config.password,
+            },
+        };
+    }
+    if (config.sshAuth === 'keyfile' && config.identityPrivateKey && !isEncryptedPrivateKeyPem(config.identityPrivateKey)) {
+        return {
+            auth: {
+                username,
+                privateKeyPem: config.identityPrivateKey,
+            },
+        };
+    }
+    return null;
 }
 
 export function buildSshCredentialsDraftFromRemoteHostConfig(

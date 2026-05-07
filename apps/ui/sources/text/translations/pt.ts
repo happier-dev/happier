@@ -1749,6 +1749,7 @@ export const pt: TranslationStructure = {
     remoteHostsConnectFromThisDeviceTitle: "Conectar deste dispositivo",
     remoteHostsConnectFromThisDeviceSubtitle: "Somente este dispositivo. Abre um túnel SSH local para esta sessão do app.",
     remoteHostsConnectFromThisDeviceFailed: "Não foi possível abrir o túnel SSH local.",
+    remoteHostsNativeSshTunnelRequiresEngine: "Os túneis SSH nativos precisam da build do mecanismo SSH nativo antes de poderem iniciar neste dispositivo.",
     remoteHostsSshTunnelGroupTitle: "Acessar host remoto deste dispositivo",
     remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `Túnel SSH ativo para ${host}`,
     remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `Somente este dispositivo. Endpoint local: ${url}`,
@@ -1778,6 +1779,15 @@ export const pt: TranslationStructure = {
     remoteHostsActiveTaskTitle: "Tarefa do sistema",
     remoteHostsHostTrustTitle: "Confiar no host SSH?",
     remoteHostsPasswordRequiredTitle: "Senha SSH necessária",
+    remoteHostsRememberHostKeyTitle: "Lembrar esta chave de host SSH?",
+    remoteHostsRememberHostKeyAction: "Confiar e lembrar",
+    remoteHostsTrustOnceAction: "Confiar uma vez",
+    remoteHostsPrivateKeyPassphraseTitle: "Frase secreta da chave privada SSH",
+    remoteHostsKeyboardInteractiveTitle: "Autenticação SSH",
+    remoteHostsKeyboardInteractivePromptLabel: "Prompt SSH",
+    remoteHostsTrustedHostKeysTitle: "Chaves de host SSH confiáveis",
+    remoteHostsTrustedHostKeyRemoveTitle: "Remover chave de host SSH confiável?",
+    remoteHostsTrustedHostKeysClearTitle: "Limpar chaves de host SSH confiáveis",
     remoteHostsConnectionSucceeded: "Conexão bem-sucedida.",
     remoteHostsConnectionFailed: "Falha na conexão.",
     sshConfiguredHostPickerTitle: "Hosts SSH sugeridos",
@@ -1961,37 +1971,79 @@ export const pt: TranslationStructure = {
       webHandoffSubtitle: 'Use a CLI para configurar o acesso ao relay e depois volte aqui e atualize.',
     },
     accessEndpoints: {
+      status: {
+        refreshing: 'A atualizar canais de acesso',
+      },
       scope: {
-        availableToOtherDevices: 'Available to other devices',
-        thisDeviceOnly: 'This device only',
+        availableToOtherDevices: 'Disponível para outros dispositivos',
+        thisDeviceOnly: 'Apenas este dispositivo',
       },
       direction: {
-        makeCurrentServerReachable: 'Make this server reachable',
-        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
-        unknown: 'Access channel',
+        makeCurrentServerReachable: 'Tornar este servidor acessível',
+        reachRemoteServerFromThisDevice: 'Aceder a um servidor remoto a partir deste dispositivo',
+        unknown: 'Canal de acesso',
       },
       kind: {
-        'relay-access-provider': 'Relay access',
-        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
-        'server-profile-url': 'Server URL',
-        'peer-mediation': 'Peer mediation',
-        'manual-url': 'Manual URL',
+        'relay-access-provider': 'Acesso relay',
+        'ssh-tunnel-desktop': 'Túnel SSH no computador',
+        'ssh-tunnel-native': 'Túnel SSH nativo',
+        'server-profile-url': 'URL do servidor',
+        'peer-mediation': 'Mediação entre pares',
+        'manual-url': 'URL manual',
       },
       recommendedUse: {
-        'multi-device': 'Best for other devices',
-        'native-this-device': 'Works in this native app',
-        'hosted-web': 'Works from hosted web',
-        'lan-only': 'LAN or private network only',
-        diagnostic: 'Needs attention',
+        'multi-device': 'Melhor para outros dispositivos',
+        'native-this-device': 'Funciona nesta app nativa',
+        'hosted-web': 'Funciona a partir da web alojada',
+        'lan-only': 'Apenas LAN ou rede privada',
+        diagnostic: 'Requer atenção',
       },
       limitation: {
-        'this-device-only': 'This device only',
-        'not-hosted-web-compatible': 'Not available to hosted web',
-        'not-public-share-url': 'Not a public share URL',
-        'session-scoped': 'Session scoped',
-        'foreground-only': 'Requires the app to stay in the foreground',
-        'requires-auth': 'Requires SSH authentication',
-        'requires-host-key-trust': 'Requires host-key trust',
+        'this-device-only': 'Apenas este dispositivo',
+        'not-hosted-web-compatible': 'Não disponível para a web alojada',
+        'not-public-share-url': 'Não é um URL público de partilha',
+        'session-scoped': 'Limitado à sessão',
+        'authentication-failed': 'A autenticação SSH falhou',
+        'foreground-only': 'Requer que a app permaneça em primeiro plano',
+        'host-key-mismatch': 'A chave SSH do host mudou',
+        'host-key-rejected': 'A chave SSH do host foi rejeitada',
+        'host-key-untrusted': 'A chave SSH do host ainda não é confiável',
+        'platform-suspended': 'Em pausa enquanto a app está suspensa',
+        'loopback-bind-failed': 'Não foi possível vincular a porta local do túnel',
+        'network-captive-portal': 'A rede interceptou a ligação SSH',
+        'remote-service-unreachable': 'O serviço remoto não está acessível através do túnel',
+        'requires-auth': 'Requer autenticação SSH',
+        'requires-host-key-trust': 'Requer confiar na chave do host',
+      },
+      remediation: {
+        tailscale: {
+          install: 'Instalar Tailscale',
+          login: 'Iniciar sessão no Tailscale',
+          serve: {
+            enable: 'Ativar Tailscale Serve',
+            approve: 'Aprovar Tailscale Serve',
+          },
+          funnel: {
+            approve: 'Aprovar Tailscale Funnel',
+          },
+        },
+        cloudflare: {
+          configure: 'Configurar túnel Cloudflare',
+        },
+        serverProfile: {
+          configureShareableUrl: 'Configurar URL partilhável',
+        },
+        remoteHost: {
+          add: 'Adicionar host remoto',
+          setup: 'Configurar host remoto',
+        },
+        sshTunnel: {
+          start: 'Iniciar túnel SSH',
+          reuse: 'Usar túnel SSH existente',
+          stop: 'Parar túnel SSH',
+          authenticate: 'Autenticar túnel SSH',
+          trustHost: 'Confiar na chave do host SSH',
+        },
       },
     },
     systemTaskStepPrepare: "Preparar tarefa",
@@ -2709,6 +2761,23 @@ export const pt: TranslationStructure = {
         invalidValueMessage: "Insira um número entre 1024 e 1073741824.",
       },
     },
+  },
+
+  settingsScmDiffSummary: {
+    title: 'Resumos de diffs',
+    enabledTitle: 'Ativar resumos de diffs',
+    enabledSubtitle:
+      'Permite resumos gerados por IA para diffs de controle de código-fonte.',
+    prefetchTitle: 'Pré-carregar resumos',
+    prefetchSubtitle:
+      'Gera resumos antecipadamente somente quando esta preferência está ativada.',
+    modelOverrideTitle: 'Modelo de resumo',
+    modelOverrideSubtitle:
+      'Perfil de runtime resolvido opcional usado para resumos de diffs.',
+    modelOverrideDefault: 'Usar padrão do runtime',
+    cacheTitle: 'Cache de resumos',
+    cacheSubtitle:
+      'Resumos de checkpoint são reutilizados por recibo; resumos do working tree permanecem temporários.',
   },
 
   settingsSourceControl: {
@@ -4430,6 +4499,34 @@ export const pt: TranslationStructure = {
 	    rollback: {
 	      latestTurnA11y: 'Reverter o ultimo turno',
 	      beforeUserMessageA11y: 'Reverter para antes desta mensagem',
+	      checkpointCode: {
+	        title: 'Opções de reversão',
+	        conversationUnavailable: 'A reversão da conversa não está disponível para esta sessão.',
+	        codeOnlyConfirmation: 'Entendo que a conversa permanecerá inalterada.',
+	        showAdvanced: 'Mostrar opções avançadas somente de código',
+	        choices: {
+	          conversation_only: {
+	            title: 'Somente conversa',
+	            description: 'Reverte a transcrição sem alterar arquivos.',
+	          },
+	          conversation_and_code_with_stash: {
+	            title: 'Conversa e código, com Git stash',
+	            description: 'Cria um checkpoint Happier, salva mudanças em stash e aplica o patch inverso.',
+	          },
+	          conversation_and_code_without_stash: {
+	            title: 'Conversa e código, sem Git stash',
+	            description: 'Cria um checkpoint Happier e aplica o patch inverso neste worktree.',
+	          },
+	          code_only_with_stash: {
+	            title: 'Somente código, com Git stash',
+	            description: 'Avançado: deixa a conversa inalterada e reverte arquivos após um stash.',
+	          },
+	          code_only_without_stash: {
+	            title: 'Somente código, sem Git stash',
+	            description: 'Avançado: deixa a conversa inalterada e reverte arquivos apenas com o checkpoint Happier.',
+	          },
+	        },
+	      },
 	    },
 	    resuming: "Retomando...",
 	    resumeFailed: "Falha ao retomar a sessão",
@@ -5056,7 +5153,7 @@ export const pt: TranslationStructure = {
     openProject: 'Abrir projeto',
   },
 
-  directSessions: {
+  externalSessions: {
     browseTitle: "Navegar pelas sessões do provedor",
     browseOpenExisting: "Navegar pelas sessões do provedor",
     browseActionSubtitle: "Escolha uma máquina, um provedor e uma sessão para abri-la aqui.",
@@ -8451,9 +8548,9 @@ settingsSession: {
     switchingToRemote: "Alternando para o modo remoto…",
     switchToRemote: "Alternar para remoto",
     detachLocalTerminal: "Desconectar terminal",
-    directSessionTakeoverAvailable:
+    externalSessionTakeoverAvailable:
       "Esta sessão direta está disponível na sua máquina. Assuma o controle no Happier para controlá-la aqui.",
-    directSessionMachineOffline:
+    externalSessionMachineOffline:
       "Esta sessão direta está indisponível no momento porque a máquina está offline.",
     switchingToDirectTakeover: "Assumindo o controle desta sessão direta…",
     switchingToPersistedTakeover: "Assumindo o controle e sincronizando esta sessão…",

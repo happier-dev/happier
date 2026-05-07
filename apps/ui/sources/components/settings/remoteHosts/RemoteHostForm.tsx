@@ -55,6 +55,7 @@ export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomMo
     savedRemoteHosts?: readonly RemoteHost[];
     systemTaskRunner?: SystemTaskRunner;
     secretMaterialAllowed: boolean;
+    remoteMaintenanceSupported?: boolean;
     onSave: (payload: Readonly<{ remoteHost: RemoteHost; localOverrides: RemoteHostLocalOverrides | null }>) => void;
     onDelete: (remoteHostId: string) => void;
     onTestConnection: (remoteHost: RemoteHost) => void;
@@ -62,6 +63,7 @@ export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomMo
     const { theme } = useUnistyles();
     const editing = Boolean(props.remoteHost);
     const existing = props.remoteHost;
+    const remoteMaintenanceSupported = props.remoteMaintenanceSupported !== false;
     const existingPasswordEnc = existing?.ssh.passwordEnc ?? null;
     const existingIdentityPrivateKeyEnc = existing?.ssh.identityPrivateKeyEnc ?? null;
     const [name, setName] = React.useState(() => existing?.name ?? '');
@@ -287,7 +289,7 @@ export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomMo
             ) : null}
 
             <ItemGroup title={t('common.actions')}>
-                {existing ? (
+                {existing && remoteMaintenanceSupported ? (
                     <Item
                         title={t('settings.remoteHostsTestConnectionTitle')}
                         onPress={handleTestConnection}

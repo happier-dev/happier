@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
+import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -31,6 +32,22 @@ vi.mock('@/text', async () => {
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
+
+vi.mock('@happier-dev/protocol', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
+    return {
+        ...actual,
+    buildSshTarget: ({ username, host }: { username: string; host: string }) =>
+        (username ? `${username}@${host}` : host),
+    parseSshTarget: (value: string) => {
+        const text = String(value ?? '').trim();
+        const atIndex = text.lastIndexOf('@');
+        return atIndex > 0
+            ? { username: text.slice(0, atIndex), host: text.slice(atIndex + 1) }
+            : { username: '', host: text };
+    },
+    };
+});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -127,6 +144,39 @@ function createDiscoveryRunner(): SystemTaskRunner {
 }
 
 describe('RemoteHostForm', () => {
+    it('hides the test connection action when remote maintenance is unsupported', async () => {
+        const existingRemoteHost: RemoteHost = {
+            id: 'host-a',
+            name: 'Dev box',
+            ssh: {
+                target: 'dev@10.0.0.5',
+                port: 22,
+                authMode: 'agent',
+            },
+            linkedMachineId: null,
+            linkedRelayProfileId: null,
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 0,
+        };
+        const { RemoteHostForm } = await import('./RemoteHostForm');
+        const screen = await renderScreen(React.createElement(RemoteHostForm, {
+            remoteHost: existingRemoteHost,
+            localOverrides: null,
+            savedRemoteHosts: [],
+            systemTaskRunner: createDiscoveryRunner(),
+            secretMaterialAllowed: false,
+            remoteMaintenanceSupported: false,
+            setChrome: vi.fn(),
+            onClose: vi.fn(),
+            onSave: vi.fn(),
+            onDelete: vi.fn(),
+            onTestConnection: vi.fn(),
+        }));
+
+        expect(screen.root.findAllByProps({ title: 'settings.remoteHostsTestConnectionTitle' })).toHaveLength(0);
+    });
+
     it('prefills SSH credential fields from a configured-host suggestion without saving', async () => {
         const onSave = vi.fn();
         const { RemoteHostForm } = await import('./RemoteHostForm');

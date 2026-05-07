@@ -23,10 +23,18 @@ import {
 } from '@/components/systemTasks/specs/localControl/buildSshTunnelSystemTaskSpec';
 import {
     buildRelayAccessSshTargetFromRemoteHostConfig,
+    buildNativeSshTunnelCredentialsFromRemoteHostConfig,
+    buildNativeSshTunnelRequestFromRemoteHostConfig,
     buildRemoteHostBootstrapSystemTaskSpec,
     buildSshTunnelEnsureRequestFromRemoteHostConfig,
     buildSshCredentialsDraftFromRemoteHostConfig,
 } from './remoteHostOutcomeActions';
+import {
+    getNativeSshTunnelRuntime,
+    setNativeSshTunnelCredentialResolution,
+    setNativeSshTunnelHostKeyPromptResolver,
+    startNativeSshTunnelRuntimeAppStateLifecycle,
+} from '@/sync/runtime/nativeSshTunnels/runtime';
 
 const REMOTE_HOST_FORM_NEW_SENTINEL_ID = '__new__';
 
@@ -66,8 +74,38 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
     const [activeTaskTitle, setActiveTaskTitle] = React.useState<string | null>(null);
     const [activeTaskKind, setActiveTaskKind] = React.useState<'setupAsMachine' | 'connectFromThisDevice' | null>(null);
     const [relayAccessSelection, setRelayAccessSelection] = React.useState<RelayAccessSelection | null>(null);
+    const nativeLoopbackTunnelAvailable = options.runner.mode === 'native'
+        && options.runner.capabilities?.nativeSsh?.available === true
+        && options.runner.capabilities.nativeSsh.supportsLoopbackTunnel === true;
     const activeTaskSnapshot = useSystemTaskSnapshot(options.runner, activeTaskId);
     const latestPrompt = React.useMemo(() => readLatestSystemTaskPrompt(activeTaskSnapshot), [activeTaskSnapshot]);
+
+    React.useEffect(() => {
+        if (!nativeLoopbackTunnelAvailable) {
+            setNativeSshTunnelHostKeyPromptResolver(null);
+            return;
+        }
+        setNativeSshTunnelHostKeyPromptResolver(async (event) => {
+            const accepted = await Modal.confirm(
+                t('setupOnboarding.remoteSshChecklist.trustHostTitle'),
+                `${event.host}\n${event.fingerprintSha256}`.trim(),
+                { confirmText: t('setupOnboarding.remoteSshChecklist.trustHostTitle'), cancelText: t('common.cancel') },
+            );
+            return accepted
+                ? {
+                    decision: 'accept-once',
+                    fingerprintSha256: event.fingerprintSha256,
+                }
+                : {
+                    decision: 'reject',
+                    reason: 'SSH host trust was declined.',
+                };
+        });
+        startNativeSshTunnelRuntimeAppStateLifecycle();
+        return () => {
+            setNativeSshTunnelHostKeyPromptResolver(null);
+        };
+    }, [nativeLoopbackTunnelAvailable]);
 
     useSshSystemTaskPromptModals({
         runner: options.runner,
@@ -138,6 +176,30 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
         const config = await resolveConfig(remoteHost);
         if (!config) return;
 
+        if (options.runner.mode === 'native') {
+            const credentials = buildNativeSshTunnelCredentialsFromRemoteHostConfig(config);
+            if (!credentials || !nativeLoopbackTunnelAvailable) {
+                Modal.alert(
+                    t('common.info'),
+                    t('settings.remoteHostsNativeSshTunnelRequiresEngine'),
+                );
+                return;
+            }
+            const tunnelRequest = buildNativeSshTunnelRequestFromRemoteHostConfig({
+                remoteHostId: remoteHost.id,
+                config,
+            });
+            setNativeSshTunnelCredentialResolution(tunnelRequest.credentialsRef, credentials);
+            try {
+                await getNativeSshTunnelRuntime().ensureTunnel(tunnelRequest);
+                options.onSshTunnelEnsured?.();
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error ?? '');
+                Modal.alert(t('common.error'), message || t('settings.remoteHostsConnectFromThisDeviceFailed'));
+            }
+            return;
+        }
+
         try {
             const taskId = await options.runner.start(buildSshTunnelEnsureSystemTaskSpec(
                 buildSshTunnelEnsureRequestFromRemoteHostConfig({
@@ -155,7 +217,7 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
             const message = error instanceof Error ? error.message : String(error ?? '');
             Modal.alert(t('common.error'), message || t('settings.systemTaskStartFailed'));
         }
-    }, [activeServerSnapshot.serverId, options.runner, resolveConfig]);
+    }, [activeServerSnapshot.serverId, nativeLoopbackTunnelAvailable, options, resolveConfig]);
 
     React.useEffect(() => {
         const result = activeTaskSnapshot?.result;

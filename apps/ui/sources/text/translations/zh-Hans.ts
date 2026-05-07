@@ -1562,6 +1562,7 @@ export const zhHans: TranslationStructure = {
     remoteHostsConnectFromThisDeviceTitle: "从此设备连接",
     remoteHostsConnectFromThisDeviceSubtitle: "仅限此设备。为此应用会话打开本地 SSH 隧道。",
     remoteHostsConnectFromThisDeviceFailed: "无法打开本地 SSH 隧道。",
+    remoteHostsNativeSshTunnelRequiresEngine: "原生 SSH 隧道需要先构建原生 SSH 引擎，才能从此设备启动。",
     remoteHostsSshTunnelGroupTitle: "从此设备访问远程主机",
     remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `${host} 的 SSH 隧道已启用`,
     remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `仅限此设备。本地端点：${url}`,
@@ -1591,6 +1592,15 @@ export const zhHans: TranslationStructure = {
     remoteHostsActiveTaskTitle: "系统任务",
     remoteHostsHostTrustTitle: "信任 SSH 主机？",
     remoteHostsPasswordRequiredTitle: "需要 SSH 密码",
+    remoteHostsRememberHostKeyTitle: "记住此 SSH 主机密钥？",
+    remoteHostsRememberHostKeyAction: "信任并记住",
+    remoteHostsTrustOnceAction: "仅信任一次",
+    remoteHostsPrivateKeyPassphraseTitle: "SSH 私钥口令",
+    remoteHostsKeyboardInteractiveTitle: "SSH 身份验证",
+    remoteHostsKeyboardInteractivePromptLabel: "SSH 提示",
+    remoteHostsTrustedHostKeysTitle: "受信任的 SSH 主机密钥",
+    remoteHostsTrustedHostKeyRemoveTitle: "移除受信任的 SSH 主机密钥？",
+    remoteHostsTrustedHostKeysClearTitle: "清除受信任的 SSH 主机密钥",
     remoteHostsConnectionSucceeded: "连接成功。",
     remoteHostsConnectionFailed: "连接失败。",
     sshConfiguredHostPickerTitle: "建议的 SSH 主机",
@@ -1774,37 +1784,79 @@ export const zhHans: TranslationStructure = {
       webHandoffSubtitle: '使用 CLI 配置 relay 访问，然后回到这里并刷新。',
     },
     accessEndpoints: {
+      status: {
+        refreshing: '正在刷新访问通道',
+      },
       scope: {
-        availableToOtherDevices: 'Available to other devices',
-        thisDeviceOnly: 'This device only',
+        availableToOtherDevices: '可供其他设备使用',
+        thisDeviceOnly: '仅此设备',
       },
       direction: {
-        makeCurrentServerReachable: 'Make this server reachable',
-        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
-        unknown: 'Access channel',
+        makeCurrentServerReachable: '让此服务器可被访问',
+        reachRemoteServerFromThisDevice: '从此设备访问远程服务器',
+        unknown: '访问通道',
       },
       kind: {
-        'relay-access-provider': 'Relay access',
-        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
-        'server-profile-url': 'Server URL',
-        'peer-mediation': 'Peer mediation',
-        'manual-url': 'Manual URL',
+        'relay-access-provider': 'Relay 访问',
+        'ssh-tunnel-desktop': '桌面 SSH 隧道',
+        'ssh-tunnel-native': '原生 SSH 隧道',
+        'server-profile-url': '服务器 URL',
+        'peer-mediation': '对等中介',
+        'manual-url': '手动 URL',
       },
       recommendedUse: {
-        'multi-device': 'Best for other devices',
-        'native-this-device': 'Works in this native app',
-        'hosted-web': 'Works from hosted web',
-        'lan-only': 'LAN or private network only',
-        diagnostic: 'Needs attention',
+        'multi-device': '最适合其他设备',
+        'native-this-device': '可在此原生应用中使用',
+        'hosted-web': '可从托管网页使用',
+        'lan-only': '仅限 LAN 或专用网络',
+        diagnostic: '需要处理',
       },
       limitation: {
-        'this-device-only': 'This device only',
-        'not-hosted-web-compatible': 'Not available to hosted web',
-        'not-public-share-url': 'Not a public share URL',
-        'session-scoped': 'Session scoped',
-        'foreground-only': 'Requires the app to stay in the foreground',
-        'requires-auth': 'Requires SSH authentication',
-        'requires-host-key-trust': 'Requires host-key trust',
+        'this-device-only': '仅此设备',
+        'not-hosted-web-compatible': '不可用于托管网页',
+        'not-public-share-url': '不是公开分享 URL',
+        'session-scoped': '仅限当前会话',
+        'authentication-failed': 'SSH 身份验证失败',
+        'foreground-only': '需要应用保持在前台',
+        'host-key-mismatch': 'SSH 主机密钥已更改',
+        'host-key-rejected': 'SSH 主机密钥已被拒绝',
+        'host-key-untrusted': 'SSH 主机密钥尚未受信任',
+        'platform-suspended': '应用被系统挂起时暂停',
+        'loopback-bind-failed': '无法绑定本地隧道端口',
+        'network-captive-portal': '网络拦截了 SSH 连接',
+        'remote-service-unreachable': '无法通过隧道访问远程服务',
+        'requires-auth': '需要 SSH 身份验证',
+        'requires-host-key-trust': '需要信任主机密钥',
+      },
+      remediation: {
+        tailscale: {
+          install: '安装 Tailscale',
+          login: '登录 Tailscale',
+          serve: {
+            enable: '启用 Tailscale Serve',
+            approve: '批准 Tailscale Serve',
+          },
+          funnel: {
+            approve: '批准 Tailscale Funnel',
+          },
+        },
+        cloudflare: {
+          configure: '配置 Cloudflare 隧道',
+        },
+        serverProfile: {
+          configureShareableUrl: '配置可分享 URL',
+        },
+        remoteHost: {
+          add: '添加远程主机',
+          setup: '设置远程主机',
+        },
+        sshTunnel: {
+          start: '启动 SSH 隧道',
+          reuse: '使用现有 SSH 隧道',
+          stop: '停止 SSH 隧道',
+          authenticate: '验证 SSH 隧道',
+          trustHost: '信任 SSH 主机密钥',
+        },
       },
     },
     systemTaskStepPrepare: "准备任务",
@@ -2501,6 +2553,19 @@ export const zhHans: TranslationStructure = {
         invalidValueMessage: "请输入 1024 到 1073741824 之间的数字。",
       },
     },
+  },
+
+  settingsScmDiffSummary: {
+  title: '差异摘要',
+  enabledTitle: '启用差异摘要',
+  enabledSubtitle: '允许为源代码管理差异生成 AI 摘要。',
+  prefetchTitle: '预取摘要',
+  prefetchSubtitle: '仅在启用此偏好设置时提前生成摘要。',
+  modelOverrideTitle: '摘要模型',
+  modelOverrideSubtitle: '用于差异摘要的可选已解析运行时配置。',
+  modelOverrideDefault: '使用运行时默认值',
+  cacheTitle: '摘要缓存',
+  cacheSubtitle: '检查点摘要按回执复用；working tree 摘要保持临时。',
   },
 
   settingsSourceControl: {
@@ -4137,6 +4202,34 @@ export const zhHans: TranslationStructure = {
 	    rollback: {
 	      latestTurnA11y: '回退最新一轮',
 	      beforeUserMessageA11y: '回退到这条消息之前',
+	      checkpointCode: {
+	        title: '回退选项',
+	        conversationUnavailable: '此会话不支持回退对话。',
+	        codeOnlyConfirmation: '我了解对话内容将保持不变。',
+	        showAdvanced: '显示高级仅代码选项',
+	        choices: {
+	          conversation_only: {
+	            title: '仅回退对话',
+	            description: '只回退转录内容，不更改文件。',
+	          },
+	          conversation_and_code_with_stash: {
+	            title: '回退对话和代码，使用 Git stash',
+	            description: '创建 Happier 备份检查点，stash 当前更改，然后应用反向补丁。',
+	          },
+	          conversation_and_code_without_stash: {
+	            title: '回退对话和代码，不使用 Git stash',
+	            description: '创建 Happier 备份检查点，然后在此 worktree 中应用反向补丁。',
+	          },
+	          code_only_with_stash: {
+	            title: '仅回退代码，使用 Git stash',
+	            description: '高级：保持对话不变，在 stash 备份后回退文件。',
+	          },
+	          code_only_without_stash: {
+	            title: '仅回退代码，不使用 Git stash',
+	            description: '高级：保持对话不变，仅使用 Happier 备份检查点回退文件。',
+	          },
+	        },
+	      },
 	    },
 	    resuming: "正在恢复...",
 	    resumeFailed: "恢复会话失败",
@@ -4746,7 +4839,7 @@ export const zhHans: TranslationStructure = {
     openProject: '打开项目',
   },
 
-  directSessions: {
+  externalSessions: {
     browseTitle: "浏览提供方会话",
     browseOpenExisting: "浏览提供方会话",
     browseActionSubtitle: "选择一台机器、一个提供方和一个会话，以便在这里打开。",
@@ -7955,9 +8048,9 @@ settingsSession: {
     switchingToRemote: "正在切换到远程模式…",
     switchToRemote: "切换到远程",
     detachLocalTerminal: "断开终端",
-    directSessionTakeoverAvailable:
+    externalSessionTakeoverAvailable:
       "此直连会话可在你的机器上使用。可在 Happier 中接管它并在这里控制。",
-    directSessionMachineOffline:
+    externalSessionMachineOffline:
       "此直连会话当前不可用，因为机器已离线。",
     switchingToDirectTakeover: "正在接管此直连会话…",
     switchingToPersistedTakeover: "正在接管并同步此会话…",

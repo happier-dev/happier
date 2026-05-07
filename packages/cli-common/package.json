@@ -105,6 +105,11 @@
       "types": "./dist/systemTasks/index.d.ts",
       "import": "./dist/systemTasks/index.js",
       "default": "./dist/systemTasks/index.js"
+    },
+    "./systemTasks/nativeRemoteSshBootstrap": {
+      "types": "./dist/systemTasks/nativeRemoteSshBootstrap.d.ts",
+      "import": "./dist/systemTasks/nativeRemoteSshBootstrap.js",
+      "default": "./dist/systemTasks/nativeRemoteSshBootstrap.js"
     }
   },
   "scripts": {
@@ -117,6 +122,8 @@
     "test": "yarn -s build && node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
   },
   "dependencies": {
+    "@noble/curves": "^1.9.0",
+    "@noble/hashes": "^1.8.0",
     "@happier-dev/agents": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
     "chalk": "^5.6.2",

@@ -1,14 +1,11 @@
 import type { SshTunnelSnapshot, SshTunnelStatus } from '@happier-dev/protocol';
 
-import type { AccessEndpoint, AccessEndpointStatus } from '../accessEndpointModel';
-import {
-    createAccessEndpointRemediationAction,
-    createScopedAccessEndpointRemediationAction,
-} from '../accessEndpointRemediation';
+import type { AccessEndpoint, AccessEndpointStatus } from '../model';
+import { createScopedAccessEndpointRemediationAction } from '../remediation';
 import {
     deriveAccessEndpointWsBaseUrl,
     normalizeAccessEndpointHttpBaseUrl,
-} from '../classifyAccessEndpoint';
+} from '../classify';
 
 export type SshTunnelAccessEndpointInput = SshTunnelSnapshot;
 
@@ -28,33 +25,15 @@ function toAccessEndpointStatus(status: SshTunnelStatus): AccessEndpointStatus {
 }
 
 function buildSshTunnelRemediationActions(snapshot: SshTunnelAccessEndpointInput) {
-    const actions = snapshot.status === 'needs-auth'
-        ? [createAccessEndpointRemediationAction('sshTunnel.authenticate')]
-        : [
-            createScopedAccessEndpointRemediationAction({
-                id: `ssh-tunnel:${snapshot.tunnelKey}:reuse`,
-                ownerSurface: 'sshTunnel.reuse',
-                payload: { tunnelKey: snapshot.tunnelKey },
-            }),
-            createScopedAccessEndpointRemediationAction({
-                id: `ssh-tunnel:${snapshot.tunnelKey}:stop`,
-                ownerSurface: 'sshTunnel.stop',
-                payload: { tunnelKey: snapshot.tunnelKey },
-            }),
-        ];
-
-    if (!snapshot.remoteHostId) {
-        return actions;
+    if (snapshot.status === 'needs-auth') {
+        return [];
     }
 
-    return [
-        ...actions,
-        createScopedAccessEndpointRemediationAction({
-            id: `remote-host:${snapshot.remoteHostId}:setup`,
-            ownerSurface: 'remoteHost.setup',
-            payload: { remoteHostId: snapshot.remoteHostId },
-        }),
-    ];
+    return [createScopedAccessEndpointRemediationAction({
+        id: `ssh-tunnel:${snapshot.tunnelKey}:stop`,
+        ownerSurface: 'sshTunnel.stop',
+        payload: { tunnelKey: snapshot.tunnelKey },
+    })];
 }
 
 export function buildSshTunnelAccessEndpoints(params: Readonly<{
@@ -69,7 +48,7 @@ export function buildSshTunnelAccessEndpoints(params: Readonly<{
         const wsBaseUrl = normalizeAccessEndpointHttpBaseUrl(snapshot.wsBaseUrl) ?? deriveAccessEndpointWsBaseUrl(httpBaseUrl);
         endpoints.push({
             id: `ssh-tunnel:${snapshot.tunnelKey}`,
-            label: `SSH tunnel ${snapshot.localPort}`,
+            label: 'settings.accessEndpoints.kind.ssh-tunnel-desktop',
             source: 'ssh-tunnel-desktop',
             reachability: 'loopback',
             hostedHttpsCompatibility: 'not-applicable',

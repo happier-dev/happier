@@ -39,7 +39,14 @@ export function normalizeNativeSshAvailability(value: unknown): NativeSshAvailab
     const engine = payload.engine;
     const moduleVersion = payload.moduleVersion;
     if ((platform === 'ios' || platform === 'android') && ENGINES.has(engine as NativeSshEngine) && typeof moduleVersion === 'string' && moduleVersion.length > 0) {
-      return payload as NativeSshAvailability;
+      return {
+        available: true,
+        platform,
+        engine: engine as NativeSshEngine,
+        moduleVersion,
+        supportsLoopbackTunnel: payload.supportsLoopbackTunnel === true,
+        supportsPersistentHostKeyStorage: payload.supportsPersistentHostKeyStorage === true,
+      };
     }
     return createUnavailableNativeSshAvailability(
       'engine-unavailable',

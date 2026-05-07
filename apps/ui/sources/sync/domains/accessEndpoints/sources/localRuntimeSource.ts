@@ -2,13 +2,13 @@ import type {
     AccessEndpoint,
     AccessEndpointClientContext,
     AccessEndpointReachability,
-} from '../accessEndpointModel';
+} from '../model';
 import {
     classifyAccessEndpointHostedHttpsCompatibility,
     classifyAccessEndpointReachability,
     deriveAccessEndpointWsBaseUrl,
     normalizeAccessEndpointHttpBaseUrl,
-} from '../classifyAccessEndpoint';
+} from '../classify';
 
 export type LocalRuntimeAccessEndpointCandidate = Readonly<{
     url: string;

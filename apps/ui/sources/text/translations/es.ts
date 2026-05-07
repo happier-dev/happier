@@ -1626,6 +1626,7 @@ export const es: TranslationStructure = {
     remoteHostsConnectFromThisDeviceTitle: "Conectar desde este dispositivo",
     remoteHostsConnectFromThisDeviceSubtitle: "Solo este dispositivo. Abre un túnel SSH local para esta sesión de la app.",
     remoteHostsConnectFromThisDeviceFailed: "No se pudo abrir el túnel SSH local.",
+    remoteHostsNativeSshTunnelRequiresEngine: "Los túneles SSH nativos necesitan la compilación del motor SSH nativo antes de poder iniciarse desde este dispositivo.",
     remoteHostsSshTunnelGroupTitle: "Acceder al host remoto desde este dispositivo",
     remoteHostsSshTunnelActiveTitle: ({ host }: { host: string }) => `Túnel SSH activo para ${host}`,
     remoteHostsSshTunnelActiveSubtitle: ({ url }: { url: string }) => `Solo este dispositivo. Endpoint local: ${url}`,
@@ -1655,6 +1656,15 @@ export const es: TranslationStructure = {
     remoteHostsActiveTaskTitle: "Tarea del sistema",
     remoteHostsHostTrustTitle: "¿Confiar en el host SSH?",
     remoteHostsPasswordRequiredTitle: "Se requiere contraseña SSH",
+    remoteHostsRememberHostKeyTitle: "¿Recordar esta clave de host SSH?",
+    remoteHostsRememberHostKeyAction: "Confiar y recordar",
+    remoteHostsTrustOnceAction: "Confiar una vez",
+    remoteHostsPrivateKeyPassphraseTitle: "Frase de contraseña de la clave privada SSH",
+    remoteHostsKeyboardInteractiveTitle: "Autenticación SSH",
+    remoteHostsKeyboardInteractivePromptLabel: "Solicitud SSH",
+    remoteHostsTrustedHostKeysTitle: "Claves de host SSH de confianza",
+    remoteHostsTrustedHostKeyRemoveTitle: "¿Eliminar la clave de host SSH de confianza?",
+    remoteHostsTrustedHostKeysClearTitle: "Borrar claves de host SSH de confianza",
     remoteHostsConnectionSucceeded: "Conexión correcta.",
     remoteHostsConnectionFailed: "La conexión falló.",
     sshConfiguredHostPickerTitle: "Hosts SSH sugeridos",
@@ -1838,37 +1848,79 @@ export const es: TranslationStructure = {
       webHandoffSubtitle: 'Usa el CLI para configurar el acceso al relay, luego vuelve aquí y actualiza.',
     },
     accessEndpoints: {
+      status: {
+        refreshing: 'Actualizando canales de acceso',
+      },
       scope: {
-        availableToOtherDevices: 'Available to other devices',
-        thisDeviceOnly: 'This device only',
+        availableToOtherDevices: 'Disponible para otros dispositivos',
+        thisDeviceOnly: 'Solo este dispositivo',
       },
       direction: {
-        makeCurrentServerReachable: 'Make this server reachable',
-        reachRemoteServerFromThisDevice: 'Reach a remote server from this device',
-        unknown: 'Access channel',
+        makeCurrentServerReachable: 'Hacer que este servidor sea accesible',
+        reachRemoteServerFromThisDevice: 'Acceder a un servidor remoto desde este dispositivo',
+        unknown: 'Canal de acceso',
       },
       kind: {
-        'relay-access-provider': 'Relay access',
-        'ssh-tunnel-desktop': 'Desktop SSH tunnel',
-        'server-profile-url': 'Server URL',
-        'peer-mediation': 'Peer mediation',
-        'manual-url': 'Manual URL',
+        'relay-access-provider': 'Acceso relay',
+        'ssh-tunnel-desktop': 'Túnel SSH de escritorio',
+        'ssh-tunnel-native': 'Túnel SSH nativo',
+        'server-profile-url': 'URL del servidor',
+        'peer-mediation': 'Mediación entre pares',
+        'manual-url': 'URL manual',
       },
       recommendedUse: {
-        'multi-device': 'Best for other devices',
-        'native-this-device': 'Works in this native app',
-        'hosted-web': 'Works from hosted web',
-        'lan-only': 'LAN or private network only',
-        diagnostic: 'Needs attention',
+        'multi-device': 'Mejor para otros dispositivos',
+        'native-this-device': 'Funciona en esta app nativa',
+        'hosted-web': 'Funciona desde la web alojada',
+        'lan-only': 'Solo LAN o red privada',
+        diagnostic: 'Requiere atención',
       },
       limitation: {
-        'this-device-only': 'This device only',
-        'not-hosted-web-compatible': 'Not available to hosted web',
-        'not-public-share-url': 'Not a public share URL',
-        'session-scoped': 'Session scoped',
-        'foreground-only': 'Requires the app to stay in the foreground',
-        'requires-auth': 'Requires SSH authentication',
-        'requires-host-key-trust': 'Requires host-key trust',
+        'this-device-only': 'Solo este dispositivo',
+        'not-hosted-web-compatible': 'No disponible para la web alojada',
+        'not-public-share-url': 'No es un URL público para compartir',
+        'session-scoped': 'Limitado a la sesión',
+        'authentication-failed': 'La autenticación SSH falló',
+        'foreground-only': 'Requiere que la app permanezca en primer plano',
+        'host-key-mismatch': 'La clave SSH del host cambió',
+        'host-key-rejected': 'Se rechazó la clave SSH del host',
+        'host-key-untrusted': 'La clave SSH del host aún no es de confianza',
+        'platform-suspended': 'Pausado mientras la app está suspendida',
+        'loopback-bind-failed': 'No se pudo enlazar el puerto local del túnel',
+        'network-captive-portal': 'La red interceptó la conexión SSH',
+        'remote-service-unreachable': 'No se puede acceder al servicio remoto a través del túnel',
+        'requires-auth': 'Requiere autenticación SSH',
+        'requires-host-key-trust': 'Requiere confiar en la clave del host',
+      },
+      remediation: {
+        tailscale: {
+          install: 'Instalar Tailscale',
+          login: 'Iniciar sesión en Tailscale',
+          serve: {
+            enable: 'Activar Tailscale Serve',
+            approve: 'Aprobar Tailscale Serve',
+          },
+          funnel: {
+            approve: 'Aprobar Tailscale Funnel',
+          },
+        },
+        cloudflare: {
+          configure: 'Configurar túnel de Cloudflare',
+        },
+        serverProfile: {
+          configureShareableUrl: 'Configurar URL compartible',
+        },
+        remoteHost: {
+          add: 'Añadir host remoto',
+          setup: 'Configurar host remoto',
+        },
+        sshTunnel: {
+          start: 'Iniciar túnel SSH',
+          reuse: 'Usar túnel SSH existente',
+          stop: 'Detener túnel SSH',
+          authenticate: 'Autenticar túnel SSH',
+          trustHost: 'Confiar en la clave del host SSH',
+        },
       },
     },
     systemTaskStepPrepare: "Preparar tarea",
@@ -2587,6 +2639,23 @@ export const es: TranslationStructure = {
         invalidValueMessage: "Introduce un número entre 1024 y 1073741824.",
       },
     },
+  },
+
+  settingsScmDiffSummary: {
+    title: 'Resúmenes de diferencias',
+    enabledTitle: 'Activar resúmenes de diferencias',
+    enabledSubtitle:
+      'Permite resúmenes generados con IA para diferencias de control de código fuente.',
+    prefetchTitle: 'Precargar resúmenes',
+    prefetchSubtitle:
+      'Genera resúmenes con antelación solo cuando esta preferencia está activada.',
+    modelOverrideTitle: 'Modelo de resumen',
+    modelOverrideSubtitle:
+      'Perfil de runtime resuelto opcional para los resúmenes de diferencias.',
+    modelOverrideDefault: 'Usar el valor predeterminado del runtime',
+    cacheTitle: 'Caché de resúmenes',
+    cacheSubtitle:
+      'Los resúmenes de checkpoint se reutilizan por recibo; los resúmenes del working tree son temporales.',
   },
 
   settingsSourceControl: {
@@ -4311,6 +4380,34 @@ export const es: TranslationStructure = {
 	    rollback: {
 	      latestTurnA11y: 'Revertir el ultimo turno',
 	      beforeUserMessageA11y: 'Revertir antes de este mensaje',
+	      checkpointCode: {
+	        title: 'Opciones de reversión',
+	        conversationUnavailable: 'La reversión de conversación no está disponible para esta sesión.',
+	        codeOnlyConfirmation: 'Entiendo que la conversación no cambiará.',
+	        showAdvanced: 'Mostrar opciones avanzadas solo de código',
+	        choices: {
+	          conversation_only: {
+	            title: 'Solo conversación',
+	            description: 'Revierte la transcripción sin cambiar archivos.',
+	          },
+	          conversation_and_code_with_stash: {
+	            title: 'Conversación y código, con Git stash',
+	            description: 'Crea un checkpoint de Happier, guarda cambios con stash y aplica el parche inverso.',
+	          },
+	          conversation_and_code_without_stash: {
+	            title: 'Conversación y código, sin Git stash',
+	            description: 'Crea un checkpoint de Happier y aplica el parche inverso en este worktree.',
+	          },
+	          code_only_with_stash: {
+	            title: 'Solo código, con Git stash',
+	            description: 'Avanzado: deja la transcripción intacta y revierte archivos tras un stash.',
+	          },
+	          code_only_without_stash: {
+	            title: 'Solo código, sin Git stash',
+	            description: 'Avanzado: deja la transcripción intacta y revierte archivos solo con el checkpoint de Happier.',
+	          },
+	        },
+	      },
 	    },
 	    resuming: "Reanudando...",
 	    resumeFailed: "No se pudo reanudar la sesión",
@@ -4939,7 +5036,7 @@ export const es: TranslationStructure = {
     openProject: 'Abrir proyecto',
   },
 
-  directSessions: {
+  externalSessions: {
     browseTitle: "Explorar sesiones del proveedor",
     browseOpenExisting: "Explorar sesiones del proveedor",
     browseActionSubtitle: "Elige una máquina, un proveedor y una sesión para abrirla aquí.",
@@ -8330,9 +8427,9 @@ settingsSession: {
     switchingToRemote: "Cambiando al modo remoto…",
     switchToRemote: "Cambiar a remoto",
     detachLocalTerminal: "Desconectar terminal",
-    directSessionTakeoverAvailable:
+    externalSessionTakeoverAvailable:
       "Esta sesión directa está disponible en tu máquina. Tómala en Happier para controlarla aquí.",
-    directSessionMachineOffline:
+    externalSessionMachineOffline:
       "Esta sesión directa no está disponible en este momento porque la máquina está sin conexión.",
     switchingToDirectTakeover: "Tomando esta sesión directa…",
     switchingToPersistedTakeover: "Tomando y sincronizando esta sesión…",

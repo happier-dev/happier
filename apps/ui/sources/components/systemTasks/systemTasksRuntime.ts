@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import { buildLocalMachineSetupSystemTaskSpec } from './buildLocalMachineSetupSystemTaskSpec';
@@ -7,18 +9,35 @@ import type { SystemTaskRunner, SystemTaskRunnerMode } from './types';
 
 let sharedRunner: SystemTaskRunner | null = null;
 
-function resolveRunnerMode(): SystemTaskRunnerMode {
-    const explicitMode = String(process.env.EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE ?? '').trim();
+export function resolveSystemTaskRunnerMode(params: Readonly<{
+    explicitMode: string;
+    isTauri: boolean;
+    nodeEnv: string | undefined;
+    platformOS: string;
+}>): SystemTaskRunnerMode {
+    const explicitMode = params.explicitMode.trim();
     if (explicitMode === 'tauri' || explicitMode === 'native' || explicitMode === 'dev' || explicitMode === 'unavailable') {
         return explicitMode;
     }
-    if (isTauriDesktop()) {
+    if (params.isTauri) {
         return 'tauri';
     }
-    if (process.env.NODE_ENV === 'test') {
+    if (params.platformOS === 'ios' || params.platformOS === 'android') {
+        return 'native';
+    }
+    if (params.nodeEnv === 'test') {
         return 'dev';
     }
     return 'unavailable';
+}
+
+function resolveRunnerMode(): SystemTaskRunnerMode {
+    return resolveSystemTaskRunnerMode({
+        explicitMode: String(process.env.EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE ?? ''),
+        isTauri: isTauriDesktop(),
+        nodeEnv: process.env.NODE_ENV,
+        platformOS: String(Platform.OS ?? ''),
+    });
 }
 
 export function getSystemTasksRunner(): SystemTaskRunner {

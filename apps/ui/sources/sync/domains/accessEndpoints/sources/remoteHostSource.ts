@@ -1,10 +1,10 @@
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 
-import type { AccessEndpointRemediationAction } from '../accessEndpointModel';
+import type { AccessEndpointRemediationAction } from '../model';
 import {
     createAccessEndpointRemediationAction,
     createScopedAccessEndpointRemediationAction,
-} from '../accessEndpointRemediation';
+} from '../remediation';
 
 export type RemoteHostAccessEndpointInput = Pick<RemoteHost, 'id' | 'name' | 'ssh'>;
 

@@ -31,6 +31,11 @@ export {
   buildRemoteBootstrapCommand,
   type RemoteBootstrapCommandLabel,
 } from './ssh/remoteBootstrapCommandBuilder.js';
+export {
+  buildRemoteSelfDownloadFirstPartyInstallCommand,
+  resolveRemoteSelfDownloadFirstPartyInstallPlan,
+  type RemoteSelfDownloadFirstPartyInstallPlan,
+} from './ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
 
 export {
   DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
