@@ -8,6 +8,7 @@ import type { Profile } from '@/sync/domains/profiles/profile';
 import { profileParse } from '@/sync/domains/profiles/profile';
 import { settingsParse, SUPPORTED_SCHEMA_VERSION } from '@/sync/domains/settings/settings';
 import { pickLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
@@ -22,12 +23,33 @@ export async function handleUpdateAccountSocketUpdate(params: {
     updateCreatedAt: number;
     currentProfile: Profile;
     encryption: Encryption;
+    settingsScope?: AccountSettingsScope | null;
     applyProfile: (profile: Profile) => void;
     applySettings: (settings: any, version: number) => void;
+    applySettingsForScope?: (scope: AccountSettingsScope, settings: any, version: number) => void;
     getLocalSettings?: () => unknown;
     log: { log: (message: string) => void };
 }): Promise<void> {
-    const { accountUpdate, updateCreatedAt, currentProfile, encryption, applyProfile, applySettings, getLocalSettings, log } = params;
+    const {
+        accountUpdate,
+        updateCreatedAt,
+        currentProfile,
+        encryption,
+        settingsScope,
+        applyProfile,
+        applySettings,
+        applySettingsForScope,
+        getLocalSettings,
+        log,
+    } = params;
+
+    const applyMergedSettings = (settings: any, version: number): void => {
+        if (settingsScope && applySettingsForScope) {
+            applySettingsForScope(settingsScope, settings, version);
+            return;
+        }
+        applySettings(settings, version);
+    };
 
     // Build updated profile with new data
     const updatedProfile: Profile = {
@@ -84,7 +106,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
                 ...localOnlyAccountSettings,
             };
 
-            applySettings(mergedSettings, version);
+            applyMergedSettings(mergedSettings, version);
             log.log(`📋 Settings synced from server (v2, version ${version})`);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -117,7 +139,7 @@ export async function handleUpdateAccountSocketUpdate(params: {
                 ...localOnlyAccountSettings,
             };
 
-            applySettings(mergedSettings, accountUpdate.settings.version);
+            applyMergedSettings(mergedSettings, accountUpdate.settings.version);
             log.log(
                 `📋 Settings synced from server (schema v${settingsSchemaVersion}, version ${accountUpdate.settings.version})`,
             );
@@ -132,8 +154,11 @@ export async function handleUpdateAccountSocketUpdate(params: {
 export async function fetchAndApplyProfile(params: {
     credentials: AuthCredentials;
     applyProfile: (profile: Profile) => void;
+    shouldContinue?: () => boolean;
 }): Promise<void> {
     const { credentials, applyProfile } = params;
+    const shouldContinue = params.shouldContinue ?? (() => true);
+    if (!shouldContinue()) return;
 
     const response = await serverFetch('/v1/account/profile', {
         headers: {
@@ -141,6 +166,7 @@ export async function fetchAndApplyProfile(params: {
             'Content-Type': 'application/json',
         },
     }, { includeAuth: false });
+    if (!shouldContinue()) return;
 
     if (!response.ok) {
         if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -151,6 +177,7 @@ export async function fetchAndApplyProfile(params: {
 
     const data = await response.json();
     const parsedProfile = profileParse(data);
+    if (!shouldContinue()) return;
 
     // Apply profile to storage
     applyProfile(parsedProfile);

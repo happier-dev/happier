@@ -15,5 +15,5 @@ export function buildPromptRegistryItemDetailsHref(args: Readonly<{
   if (typeof args.workspacePath === 'string' && args.workspacePath.trim().length > 0) {
     params.set('workspacePath', args.workspacePath.trim());
   }
-  return `/(app)/settings/prompts/registries/item?${params.toString()}`;
+  return `/settings/prompts/registries/item?${params.toString()}`;
 }

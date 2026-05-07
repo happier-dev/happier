@@ -15,7 +15,7 @@ export const MachineSetupEntryItem = React.memo(function MachineSetupEntryItem()
             title={t('settings.machineSetupCurrentMachineTitle')}
             subtitle={t('settings.machineSetupCurrentMachineSubtitle')}
             icon={<Ionicons name="laptop-outline" size={29} color={theme.colors.accent.blue} />}
-            onPress={() => router.push('/(app)/settings/machines/this-computer')}
+            onPress={() => router.push('/settings/machines/this-computer')}
         />
     );
 });

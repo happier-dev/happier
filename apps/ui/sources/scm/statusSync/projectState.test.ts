@@ -28,6 +28,55 @@ describe('getRepoScopeSessionIds', () => {
     expect(scoped).toEqual(['s1', 's2']);
   });
 
+  it('groups direct-session repo scopes by the linked direct machine id', () => {
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: {
+          id: 's1',
+          metadata: {
+            path: '/repo',
+            directSessionV1: {
+              v: 1,
+              providerId: 'codex',
+              machineId: 'm-direct',
+              remoteSessionId: 'remote-1',
+              source: { kind: 'codexHome', home: 'user' },
+            },
+          },
+        },
+        s2: {
+          id: 's2',
+          metadata: {
+            path: '/repo/apps/ui',
+            directSessionV1: {
+              v: 1,
+              providerId: 'codex',
+              machineId: 'm-direct',
+              remoteSessionId: 'remote-2',
+              source: { kind: 'codexHome', home: 'user' },
+            },
+          },
+        },
+        s3: {
+          id: 's3',
+          metadata: {
+            path: '/repo/apps/server',
+            directSessionV1: {
+              v: 1,
+              providerId: 'codex',
+              machineId: 'm-other',
+              remoteSessionId: 'remote-3',
+              source: { kind: 'codexHome', home: 'user' },
+            },
+          },
+        },
+      },
+    });
+
+    const scoped = getRepoScopeSessionIds('s1', '/repo').sort();
+    expect(scoped).toEqual(['s1', 's2']);
+  });
+
   it('returns only the reference session when scope is unknown', () => {
     getStateMock.mockReturnValue({
       sessions: {

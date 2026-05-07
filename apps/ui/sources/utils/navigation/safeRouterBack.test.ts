@@ -1,10 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const platformState = vi.hoisted(() => ({
+    os: 'web' as 'web' | 'ios' | 'android' | 'node',
+}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const reactNative = await createReactNativeWebMock();
+    return {
+        ...reactNative,
+        Platform: {
+            ...reactNative.Platform,
+            get OS() {
+                return platformState.os;
+            },
+        },
+    };
+});
+
 import { safeRouterBack } from './safeRouterBack';
 
 describe('safeRouterBack', () => {
     beforeEach(() => {
         vi.useRealTimers();
+        platformState.os = 'web';
         Object.defineProperty(globalThis, 'location', {
             value: { href: 'http://localhost/start', pathname: '/start' },
             writable: true,
@@ -57,6 +76,33 @@ describe('safeRouterBack', () => {
         vi.runAllTimers();
 
         expect(replaceSpy).toHaveBeenCalledWith('/fallback');
+    });
+
+    it('does not replace with the URL fallback on native when location is stale', () => {
+        vi.useFakeTimers();
+        platformState.os = 'ios';
+
+        const startHref = (globalThis as any).location.href as string;
+        const backSpy = vi.fn();
+        const replaceSpy = vi.fn();
+
+        safeRouterBack({
+            router: {
+                back: backSpy,
+                replace: replaceSpy,
+            },
+            navigation: {
+                canGoBack: () => true,
+            },
+            fallbackHref: '/fallback',
+        });
+
+        expect(backSpy).toHaveBeenCalled();
+        expect((globalThis as any).location.href).toBe(startHref);
+
+        vi.runAllTimers();
+
+        expect(replaceSpy).not.toHaveBeenCalled();
     });
 
     it('does not replace when back changes the URL before the fallback timer fires', () => {

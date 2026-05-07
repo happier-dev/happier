@@ -21,6 +21,10 @@ import type {
     ScmPushRejectPolicy,
     ScmRemoteConfirmPolicy,
 } from '@/scm/settings/preferences';
+import {
+    setRemoteConfirmationForKind,
+    shouldConfirmRemoteOperation,
+} from '@/scm/settings/remoteConfirmationPolicy';
 import { TextInput } from '@/components/ui/text/Text';
 
 
@@ -63,32 +67,6 @@ const GIT_REPO_BACKEND_OPTIONS: ReadonlyArray<{
         titleKey: 'settingsSourceControl.gitRoutingPreference.options.sapling.title',
         subtitleKey: 'settingsSourceControl.gitRoutingPreference.options.sapling.subtitle',
         iconName: 'git-branch-outline',
-    },
-];
-
-const REMOTE_CONFIRM_OPTIONS: ReadonlyArray<{
-    id: ScmRemoteConfirmPolicy;
-    titleKey: TranslationKey;
-    subtitleKey: TranslationKey;
-    iconName: IoniconName;
-}> = [
-    {
-        id: 'always',
-        titleKey: 'settingsSourceControl.remoteConfirmation.options.always.title',
-        subtitleKey: 'settingsSourceControl.remoteConfirmation.options.always.subtitle',
-        iconName: 'help-circle-outline',
-    },
-    {
-        id: 'push_only',
-        titleKey: 'settingsSourceControl.remoteConfirmation.options.pushOnly.title',
-        subtitleKey: 'settingsSourceControl.remoteConfirmation.options.pushOnly.subtitle',
-        iconName: 'arrow-up-circle-outline',
-    },
-    {
-        id: 'never',
-        titleKey: 'settingsSourceControl.remoteConfirmation.options.never.title',
-        subtitleKey: 'settingsSourceControl.remoteConfirmation.options.never.subtitle',
-        iconName: 'flash-outline',
     },
 ];
 
@@ -232,6 +210,13 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [filesEditorAutoSave, setFilesEditorAutoSave] = useSettingMutable('filesEditorAutoSave');
     const backendPlugins = scmBackendSettingsRegistry.listPlugins();
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};
+    const effectiveRemoteConfirmPolicy: ScmRemoteConfirmPolicy =
+        scmRemoteConfirmPolicy === 'pull_only'
+        || scmRemoteConfirmPolicy === 'push_only'
+        || scmRemoteConfirmPolicy === 'never'
+        || scmRemoteConfirmPolicy === 'always'
+            ? scmRemoteConfirmPolicy
+            : 'always';
     const effectiveFilesDiffSyntaxHighlightingMode = (filesDiffSyntaxHighlightingMode ?? 'off') as 'off' | 'simple' | 'advanced';
     const effectiveFilesDiffRendererMode = filesDiffRendererMode === 'happier' ? 'happier' : 'pierre';
     const effectiveFilesDiffPresentationStyle = filesDiffPresentationStyle === 'unified' || filesDiffPresentationStyle === 'split'
@@ -291,17 +276,48 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 title={t('settingsSourceControl.remoteConfirmation.title')}
                 footer={t('settingsSourceControl.remoteConfirmation.footer')}
             >
-                {REMOTE_CONFIRM_OPTIONS.map((option) => (
-                    <Item
-                        key={option.id}
-                        title={t(option.titleKey)}
-                        subtitle={t(option.subtitleKey)}
-                        icon={renderIcon(option.iconName)}
-                        rightElement={scmRemoteConfirmPolicy === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
-                        onPress={() => setScmRemoteConfirmPolicy(option.id)}
-                        showChevron={false}
-                    />
-                ))}
+                <Item
+                    title={t('settingsSourceControl.remoteConfirmation.pull.title')}
+                    subtitle={t('settingsSourceControl.remoteConfirmation.pull.subtitle')}
+                    icon={renderIcon('arrow-down-circle-outline')}
+                    rightElement={(
+                        <Switch
+                            value={shouldConfirmRemoteOperation(effectiveRemoteConfirmPolicy, 'pull')}
+                            onValueChange={(enabled) => setScmRemoteConfirmPolicy(
+                                setRemoteConfirmationForKind(effectiveRemoteConfirmPolicy, 'pull', enabled),
+                            )}
+                        />
+                    )}
+                    onPress={() => setScmRemoteConfirmPolicy(
+                        setRemoteConfirmationForKind(
+                            effectiveRemoteConfirmPolicy,
+                            'pull',
+                            !shouldConfirmRemoteOperation(effectiveRemoteConfirmPolicy, 'pull'),
+                        ),
+                    )}
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsSourceControl.remoteConfirmation.push.title')}
+                    subtitle={t('settingsSourceControl.remoteConfirmation.push.subtitle')}
+                    icon={renderIcon('arrow-up-circle-outline')}
+                    rightElement={(
+                        <Switch
+                            value={shouldConfirmRemoteOperation(effectiveRemoteConfirmPolicy, 'push')}
+                            onValueChange={(enabled) => setScmRemoteConfirmPolicy(
+                                setRemoteConfirmationForKind(effectiveRemoteConfirmPolicy, 'push', enabled),
+                            )}
+                        />
+                    )}
+                    onPress={() => setScmRemoteConfirmPolicy(
+                        setRemoteConfirmationForKind(
+                            effectiveRemoteConfirmPolicy,
+                            'push',
+                            !shouldConfirmRemoteOperation(effectiveRemoteConfirmPolicy, 'push'),
+                        ),
+                    )}
+                    showChevron={false}
+                />
             </ItemGroup>
 
             <ItemGroup

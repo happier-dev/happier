@@ -229,7 +229,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
             title={t('connectedServices.detail.actions.reconnect')}
             subtitle={t('connectedServices.profile.reconnectSubtitle')}
             icon={<Ionicons name="refresh-outline" size={22} color={theme.colors.accent.blue} />}
-            onPress={() => router.push({ pathname: '/(app)/settings/connected-services/oauth', params: { serviceId, profileId } })}
+            onPress={() => router.push({ pathname: '/settings/connected-services/oauth', params: { serviceId, profileId } })}
           />
         )}
       </ItemGroup>

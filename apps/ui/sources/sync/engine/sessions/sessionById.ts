@@ -28,12 +28,15 @@ export type SessionByIdEncryption = {
   getSessionEncryption: (sessionId: string) => SessionEncryption | null;
 };
 
+type SessionDataKeyEnvelopeCache = Map<string, string>;
+
 export async function fetchAndApplySessionById(params: Readonly<{
   sessionId: string;
   serverId?: string | null;
   credentials: AuthCredentials;
   encryption: SessionByIdEncryption;
   sessionDataKeys: Map<string, Uint8Array>;
+  sessionDataKeyEnvelopes?: SessionDataKeyEnvelopeCache;
   request: (path: string, init: RequestInit) => Promise<Response>;
   applySessions: (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
   getExistingSession?: (sessionId: string) => Session | null | undefined;
@@ -136,38 +139,49 @@ export async function fetchAndApplySessionById(params: Readonly<{
 
   const encryptionMode: 'e2ee' | 'plain' = row.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 
-  const sessionKeys = new Map<string, Uint8Array | null>();
-  if (typeof row.dataEncryptionKey === 'string' && row.dataEncryptionKey.length > 0) {
-    const decrypted = await params.encryption.decryptEncryptionKey(row.dataEncryptionKey);
-    if (decrypted) {
-      sessionKeys.set(sessionId, decrypted);
-      params.sessionDataKeys.set(sessionId, decrypted);
+  if (encryptionMode === 'plain') {
+    params.sessionDataKeys.delete(sessionId);
+    params.sessionDataKeyEnvelopes?.delete(sessionId);
+  } else {
+    const sessionKeys = new Map<string, Uint8Array | null>();
+    if (typeof row.dataEncryptionKey === 'string' && row.dataEncryptionKey.length > 0) {
+      const cachedKey = params.sessionDataKeys.get(sessionId);
+      const decrypted = cachedKey && params.sessionDataKeyEnvelopes?.get(sessionId) === row.dataEncryptionKey
+        ? cachedKey
+        : await params.encryption.decryptEncryptionKey(row.dataEncryptionKey);
+      if (decrypted) {
+        sessionKeys.set(sessionId, decrypted);
+        params.sessionDataKeys.set(sessionId, decrypted);
+        params.sessionDataKeyEnvelopes?.set(sessionId, row.dataEncryptionKey);
+      } else {
+        sessionKeys.set(sessionId, null);
+        params.sessionDataKeys.delete(sessionId);
+        params.sessionDataKeyEnvelopes?.delete(sessionId);
+      }
     } else {
       sessionKeys.set(sessionId, null);
       params.sessionDataKeys.delete(sessionId);
+      params.sessionDataKeyEnvelopes?.delete(sessionId);
     }
-  } else {
-    sessionKeys.set(sessionId, null);
-    params.sessionDataKeys.delete(sessionId);
+
+    await params.encryption.initializeSessions(sessionKeys);
   }
 
-  await params.encryption.initializeSessions(sessionKeys);
-
-  const sessionEncryption = params.encryption.getSessionEncryption(sessionId);
+  const sessionEncryption = encryptionMode === 'plain' ? null : params.encryption.getSessionEncryption(sessionId);
   if (encryptionMode === 'e2ee' && !sessionEncryption) {
     params.log.log(`[sessionById] Session encryption not found for ${sessionId}`);
     return { ok: false, session: null, errorCode: 'session_encryption_not_found' };
   }
 
-  const metadata =
-    encryptionMode === 'plain'
-      ? parsePlainSessionMetadata(row.metadata)
-      : await sessionEncryption!.decryptMetadata(row.metadataVersion, row.metadata);
-
-  const agentState =
-    encryptionMode === 'plain'
-      ? parsePlainSessionAgentState(row.agentState)
-      : await sessionEncryption!.decryptAgentState(row.agentStateVersion, row.agentState);
+  const [metadata, agentState] = encryptionMode === 'plain'
+    ? [
+      parsePlainSessionMetadata(row.metadata),
+      parsePlainSessionAgentState(row.agentState),
+    ] as const
+    : await Promise.all([
+      sessionEncryption!.decryptMetadata(row.metadataVersion, row.metadata),
+      sessionEncryption!.decryptAgentState(row.agentStateVersion, row.agentState),
+    ]);
 
   const accessLevel = row.share?.accessLevel;
   const normalizedAccessLevel = accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;

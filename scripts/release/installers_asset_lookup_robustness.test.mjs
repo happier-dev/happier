@@ -277,3 +277,232 @@ printf '%s' '${compactReleaseJson}'
 
   await rm(root, { recursive: true, force: true });
 });
+
+test('install.sh --version semver-sorts rolling remote release assets instead of trusting API order', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-remote-asset-order-'));
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(installDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const unameStubPath = join(binDir, 'uname');
+  await writeFile(
+    unameStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" = "-s" ]]; then
+  echo Linux
+  exit 0
+fi
+if [[ "$1" = "-m" ]]; then
+  echo x86_64
+  exit 0
+fi
+echo Linux
+`,
+    'utf8',
+  );
+  await chmod(unameStubPath, 0o755);
+
+  const newerVersion = '1.2.3-preview.42';
+  const olderVersion = '1.2.3-preview.7';
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+cat <<'JSON'
+{
+  "assets": [
+    {
+      "name": "happier-v${newerVersion}-linux-x64.tar.gz",
+      "browser_download_url": "https://example.test/happier-v${newerVersion}-linux-x64.tar.gz"
+    },
+    {
+      "name": "happier-v${olderVersion}-linux-x64.tar.gz",
+      "browser_download_url": "https://example.test/happier-v${olderVersion}-linux-x64.tar.gz"
+    }
+  ]
+}
+JSON
+`,
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_CHANNEL: 'preview',
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_GITHUB_TOKEN: '',
+    GITHUB_TOKEN: '',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--version'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+
+  assert.equal(res.status, 0, `expected remote-assets version check to succeed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.match(stdout, /channel:\s+preview/i);
+  assert.match(stdout, /version:\s+1\.2\.3-preview\.42/i);
+  assert.doesNotMatch(stdout, /version:\s+1\.2\.3-preview\.7/i);
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('install.sh --version orders strict-prefix prerelease identifiers for preview remote rolling assets', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-remote-prerelease-prefix-'));
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(installDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const unameStubPath = join(binDir, 'uname');
+  await writeFile(
+    unameStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" = "-s" ]]; then
+  echo Linux
+  exit 0
+fi
+if [[ "$1" = "-m" ]]; then
+  echo x86_64
+  exit 0
+fi
+echo Linux
+`,
+    'utf8',
+  );
+  await chmod(unameStubPath, 0o755);
+
+  const newerVersion = '1.0.0-preview.alpha.1';
+  const olderVersion = '1.0.0-preview.alpha';
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+cat <<'JSON'
+{
+  "assets": [
+    {
+      "name": "happier-v${newerVersion}-linux-x64.tar.gz",
+      "browser_download_url": "https://example.test/happier-v${newerVersion}-linux-x64.tar.gz"
+    },
+    {
+      "name": "happier-v${olderVersion}-linux-x64.tar.gz",
+      "browser_download_url": "https://example.test/happier-v${olderVersion}-linux-x64.tar.gz"
+    }
+  ]
+}
+JSON
+`,
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_CHANNEL: 'preview',
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_GITHUB_TOKEN: '',
+    GITHUB_TOKEN: '',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--version'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+
+  assert.equal(res.status, 0, `expected remote-assets version check to succeed:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.match(stdout, /version:\s+1\.0\.0-preview\.alpha\.1/i);
+  assert.doesNotMatch(stdout, /version:\s+1\.0\.0-preview\.alpha$/im);
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('install.sh --version reports a missing stable asset without shell variable crashes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-missing-stable-asset-'));
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(installDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const unameStubPath = join(binDir, 'uname');
+  await writeFile(
+    unameStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" = "-s" ]]; then
+  echo Linux
+  exit 0
+fi
+if [[ "$1" = "-m" ]]; then
+  echo x86_64
+  exit 0
+fi
+echo Linux
+`,
+    'utf8',
+  );
+  await chmod(unameStubPath, 0o755);
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+cat <<'JSON'
+{
+  "assets": [
+    {
+      "name": "happier-v9.9.9-preview.42-linux-x64.tar.gz",
+      "browser_download_url": "https://example.test/happier-v9.9.9-preview.42-linux-x64.tar.gz"
+    }
+  ]
+}
+JSON
+`,
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_CHANNEL: 'stable',
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_GITHUB_TOKEN: '',
+    GITHUB_TOKEN: '',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--version'], { env, encoding: 'utf8' });
+  const stdout = String(res.stdout ?? '');
+  const stderr = String(res.stderr ?? '');
+
+  assert.equal(res.status, 1, `expected missing stable asset to fail cleanly:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}\n`);
+  assert.match(stderr, /Unable to locate release assets for linux-x64/i);
+  assert.doesNotMatch(stderr, /unbound variable/i);
+
+  await rm(root, { recursive: true, force: true });
+});

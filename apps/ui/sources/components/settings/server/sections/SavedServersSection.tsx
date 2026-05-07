@@ -109,6 +109,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                             id: 'switch-device',
                             title: t('server.makeDefaultOnDevice'),
                             icon: 'phone-portrait-outline',
+                            inlineTestID: `saved-server-switch-${profile.id}`,
                             onPress: () => props.onSwitch(profile, 'device'),
                         },
                         {
@@ -130,6 +131,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                             id: 'switch',
                             title: t('server.switchToServer'),
                             icon: 'swap-horizontal-outline',
+                            inlineTestID: `saved-server-switch-${profile.id}`,
                             onPress: () => props.onSwitch(profile, 'device'),
                         },
                         {

@@ -24,6 +24,15 @@ describe('openExternalUrl', () => {
     expect(openUrlSpy).toHaveBeenCalledWith('https://example.com');
   });
 
+  it('allows mailto links through the shared external-url flow', async () => {
+    openUrlSpy.mockClear();
+    const { openExternalUrl } = await import('./openExternalUrl');
+
+    await openExternalUrl('mailto:person@example.com');
+
+    expect(openUrlSpy).toHaveBeenCalledWith('mailto:person@example.com');
+  });
+
   it('uses window.open on web when available', async () => {
     openUrlSpy.mockClear();
     const { openExternalUrl } = await import('./openExternalUrl');
@@ -37,5 +46,13 @@ describe('openExternalUrl', () => {
     } finally {
       (globalThis as any).open = prev;
     }
+  });
+
+  it('rejects unsafe schemes', async () => {
+    openUrlSpy.mockClear();
+    const { openExternalUrl } = await import('./openExternalUrl');
+
+    await expect(openExternalUrl('javascript:alert(1)')).resolves.toBe(false);
+    expect(openUrlSpy).not.toHaveBeenCalled();
   });
 });

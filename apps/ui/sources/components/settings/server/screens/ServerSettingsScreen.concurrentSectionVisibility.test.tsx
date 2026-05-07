@@ -32,7 +32,7 @@ installSettingsViewCommonModuleMocks({
 });
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
+    ItemList: ({ children, ...props }: any) => React.createElement('ItemList', props, children),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -141,7 +141,7 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
         expect(screen.findAllByType('ServerGroupsSection' as any)).toHaveLength(1);
     });
 
-    it('shows the relay drift banner when the controller reports drift', async () => {
+    it('omits relay drift repair prompts from the Relay settings screen', async () => {
         setController({
             relayDriftBanner: {
                 kind: 'warning',
@@ -159,10 +159,10 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
         expect(banners).toHaveLength(0);
 
         const notice = screen.findByTestId('settings.server.relayDrift.readOnlyNotice');
-        expect(notice?.props.subtitle).toBe('relay.banner.description');
+        expect(notice).toBeNull();
     });
 
-    it('shows the local relay control surfaces on the Relay settings screen', async () => {
+    it('omits local relay runtime and secure access controls from the Relay settings screen', async () => {
         setController({ relayDriftBanner: null });
 
         const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
@@ -171,10 +171,10 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
 
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(0);
         expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
-        expect(screen.findByTestId('settings.server.localControl.desktopOnlyNotice')).toBeTruthy();
+        expect(screen.findByTestId('settings.server.localControl.desktopOnlyNotice')).toBeNull();
     });
 
-    it('keeps secure-access local control desktop-only even when a known local relay alias exists', async () => {
+    it('omits secure-access local control even when a known local relay alias exists', async () => {
         setController({
             activeServerUrl: 'https://relay.example.test',
             activeLocalRelayUrl: 'http://127.0.0.1:4555',
@@ -186,6 +186,19 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
         const screen = await renderScreen(React.createElement(ServerSettingsScreen));
 
         expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
-        expect(screen.findByTestId('settings.server.localControl.desktopOnlyNotice')).toBeTruthy();
+        expect(screen.findByTestId('settings.server.localControl.desktopOnlyNotice')).toBeNull();
+    });
+
+    it('keeps relay form actions tappable while the keyboard is open', async () => {
+        setController({ relayDriftBanner: null });
+
+        const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
+
+        const screen = await renderScreen(React.createElement(ServerSettingsScreen));
+        const itemList = screen.findByType('ItemList' as any);
+
+        expect(itemList.props.keyboardShouldPersistTaps).toBe('handled');
+        expect(itemList.props.keyboardDismissMode).toBe('interactive');
+        expect(itemList.props.automaticallyAdjustKeyboardInsets).toBe(true);
     });
 });

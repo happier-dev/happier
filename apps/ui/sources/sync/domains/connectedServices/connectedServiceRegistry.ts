@@ -1,5 +1,7 @@
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
+import { buildGithubPersonalAccessTokenUrl } from './github/buildGithubPersonalAccessTokenUrl';
+
 export type ConnectedServiceRegistryEntry = Readonly<{
   serviceId: ConnectedServiceId;
   connectCommand: string;
@@ -12,7 +14,8 @@ export type ConnectedServiceRegistryEntry = Readonly<{
    */
   oauthAddActionModes?: ReadonlyArray<'device' | 'paste' | 'browser'>;
   supportsToken?: boolean;
-  tokenKind?: 'api-key' | 'setup-token';
+  tokenKind?: 'access-token' | 'api-key' | 'setup-token';
+  tokenSetupUrl?: string;
 }>;
 
 export const CONNECTED_SERVICES_REGISTRY: readonly ConnectedServiceRegistryEntry[] = Object.freeze([
@@ -49,6 +52,14 @@ export const CONNECTED_SERVICES_REGISTRY: readonly ConnectedServiceRegistryEntry
     connectCommand: 'happier connect gemini',
     supportsOauth: true,
     oauthAddActionModes: ['paste', 'browser'],
+  },
+  {
+    serviceId: 'github',
+    connectCommand: 'happier connect github --token',
+    supportsOauth: false,
+    supportsToken: true,
+    tokenKind: 'access-token',
+    tokenSetupUrl: buildGithubPersonalAccessTokenUrl(),
   },
 ]);
 

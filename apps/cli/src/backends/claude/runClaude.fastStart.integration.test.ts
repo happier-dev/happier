@@ -162,6 +162,7 @@ vi.mock('@/backends/claude/utils/startHookServer', () => ({
 vi.mock('@/backends/claude/utils/generateHookSettings', () => ({
   generateHookSettingsFile: vi.fn(() => '/tmp/happier-hooks.json'),
   cleanupHookSettingsFile: vi.fn(),
+  cleanupHookPluginDir: vi.fn(),
 }));
 
 vi.mock('@/backends/claude/utils/generateHookSettingsFileWithEnsuredRuntime', () => ({
@@ -169,6 +170,7 @@ vi.mock('@/backends/claude/utils/generateHookSettingsFileWithEnsuredRuntime', ()
     generateHookSettingsCalls += 1;
     return '/tmp/happier-hooks.json';
   }),
+  generateHookPluginDirWithEnsuredRuntime: vi.fn(async () => null),
 }));
 
 vi.mock('@/runtime/js/ensureJavaScriptRuntimeExecutable', () => ({
@@ -315,13 +317,17 @@ describe('runClaude fast-start', () => {
     let testError: unknown = null;
     const runPromise = runClaude(credentials, { startedBy: 'terminal', startingMode: 'local' }).catch((e) => {
       testError = e;
+      loopStarted.resolve();
     });
 
-	  try {
-	      await expect(waitFor(loopStarted.promise, loopStartWaitMs)).resolves.toBeUndefined();
-	      expect(initResolved).toBe(false);
-	      expect(lastLoopOpts?.precomputedMcpBridge?.mcpServers).toBeTruthy();
-	      expect(Object.keys(lastLoopOpts?.precomputedMcpBridge?.mcpServers ?? {})).toContain('happier');
+    try {
+      await expect(waitFor(loopStarted.promise, loopStartWaitMs)).resolves.toBeUndefined();
+      if (testError) {
+        throw testError;
+      }
+      expect(initResolved).toBe(false);
+      expect(lastLoopOpts?.precomputedMcpBridge?.mcpServers).toBeTruthy();
+      expect(Object.keys(lastLoopOpts?.precomputedMcpBridge?.mcpServers ?? {})).toContain('happier');
 
 	      const { startHappyServer } = await import('@/mcp/startHappyServer');
 	      expect(startHappyServer).toHaveBeenCalled();

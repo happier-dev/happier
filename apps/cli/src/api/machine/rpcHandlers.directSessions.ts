@@ -1,5 +1,8 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+  DirectSessionAttachRequestSchema,
+  DirectSessionDetachRequestSchema,
+  DirectSessionFollowPolicySetRequestSchema,
   DirectSessionLinkEnsureRequestSchema,
   DirectSessionStatusGetRequestSchema,
   DirectSessionTakeoverPersistRequestSchema,
@@ -8,6 +11,10 @@ import {
   DirectTranscriptPageRequestSchema,
   DirectTranscriptReadAfterRequestSchema,
   normalizeCodexBackendMode,
+  type DirectSessionAttachResponse,
+  type DirectSessionDetachResponse,
+  type DirectSessionFollowPolicySetResponse,
+  type DirectSessionTranscriptDeltaEphemeral,
   type DirectSessionLinkEnsureResponse,
   type DirectSessionStatusGetResponse,
   type DirectSessionTakeoverPersistResponse,
@@ -22,12 +29,16 @@ import { listSessionMarkers } from '@/daemon/sessionRegistry';
 import { getDirectSessionProviderOps } from '@/backends/catalog';
 
 import { importDirectSessionTranscript } from '@/api/directSessions/import/importDirectSessionTranscript';
+import { createManagedDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createManagedDirectSessionFollowLease';
+import { updateSessionMetadataWithDirectSessionFollowPolicy } from '@/api/directSessions/backgroundFollow/directSessionBackgroundFollowMetadata';
+import { createDirectSessionFollowLeaseManager } from '@/api/directSessions/leases/createDirectSessionFollowLeaseManager';
 import { ensureDirectSessionLink } from '@/api/directSessions/linking/ensureDirectSessionLink';
 import { validateDirectMachineSource } from '@/api/directSessions/security/validateDirectMachineSource';
 import { findTrustedDirectSessionOwner } from '@/api/directSessions/takeover/findTrustedDirectSessionOwner';
 import { loadLinkedDirectSession } from '@/api/directSessions/takeover/loadLinkedDirectSession';
 import { resolveDirectTakeoverSpawnOptions } from '@/api/directSessions/takeover/resolveDirectTakeoverSpawnOptions';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
@@ -65,6 +76,15 @@ function resolveRecentActivityWindowMs(): number {
   return Math.max(1000, Math.min(60 * 60 * 1000, configured));
 }
 
+function resolveDirectSessionAttachLeaseTtlMs(requestedTtlMs: number | undefined): number {
+  const raw = Number.parseInt(String(process.env.HAPPIER_DIRECT_SESSIONS_ATTACH_LEASE_TTL_MS ?? ''), 10);
+  const defaultTtlMs = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 45_000;
+  const configured = typeof requestedTtlMs === 'number' && Number.isFinite(requestedTtlMs) && requestedTtlMs > 0
+    ? Math.trunc(requestedTtlMs)
+    : defaultTtlMs;
+  return Math.max(1_000, Math.min(15 * 60_000, configured));
+}
+
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -78,8 +98,174 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession?: (sessionId: string) => Promise<boolean>;
+  emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
 }>): void {
-  const { rpcHandlerManager } = params;
+  const { rpcHandlerManager, emitDirectSessionTranscriptUpdate } = params;
+  const followLeaseManager = createDirectSessionFollowLeaseManager();
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH, async (raw: unknown) => {
+    const parsed = DirectSessionAttachRequestSchema.safeParse(raw);
+    if (!parsed.success) return err('invalid_request') satisfies DirectSessionAttachResponse;
+    const validatedSource = validateDirectMachineSource({
+      providerId: parsed.data.providerId,
+      source: parsed.data.source,
+      env: process.env,
+    });
+    if (!validatedSource.ok) {
+      return err('invalid_request', validatedSource.error) satisfies DirectSessionAttachResponse;
+    }
+
+    try {
+      const providerOps = await getDirectSessionProviderOps(parsed.data.providerId);
+      const attached = await followLeaseManager.attach({
+        sessionId: parsed.data.sessionId,
+        leaseId: parsed.data.leaseId,
+        ttlMs: resolveDirectSessionAttachLeaseTtlMs(parsed.data.ttlMs),
+        acquireFollowLease: providerOps.acquireFollowLease
+          ? async () => createManagedDirectSessionFollowLease({
+            sessionId: parsed.data.sessionId,
+            reason: 'attached_view',
+            acquireProviderFollowLease: () => providerOps.acquireFollowLease!({
+              source: validatedSource.source,
+              remoteSessionId: parsed.data.remoteSessionId,
+              reason: 'attached_view',
+            }),
+            emitDirectSessionTranscriptUpdate,
+            shouldProcessBackgroundFollowEffects: () => false,
+          })
+          : undefined,
+      });
+      return {
+        ok: true,
+        leaseId: attached.leaseId,
+        expiresAtMs: attached.expiresAtMs,
+        renewed: attached.renewed,
+      } satisfies DirectSessionAttachResponse;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return err('internal_error', message) satisfies DirectSessionAttachResponse;
+    }
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH, async (raw: unknown) => {
+    const parsed = DirectSessionDetachRequestSchema.safeParse(raw);
+    if (!parsed.success) return err('invalid_request') satisfies DirectSessionDetachResponse;
+    const detached = await followLeaseManager.detach({
+      sessionId: parsed.data.sessionId,
+      leaseId: parsed.data.leaseId,
+    });
+    return {
+      ok: true,
+      detached: detached.detached,
+    } satisfies DirectSessionDetachResponse;
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET, async (raw: unknown) => {
+    const parsed = DirectSessionFollowPolicySetRequestSchema.safeParse(raw);
+    if (!parsed.success) return err('invalid_request') satisfies DirectSessionFollowPolicySetResponse;
+    const validatedSource = validateDirectMachineSource({
+      providerId: parsed.data.providerId,
+      source: parsed.data.source,
+      env: process.env,
+    });
+    if (!validatedSource.ok) {
+      return err('invalid_request', validatedSource.error) satisfies DirectSessionFollowPolicySetResponse;
+    }
+
+    let providerOps: Awaited<ReturnType<typeof getDirectSessionProviderOps>>;
+    try {
+      providerOps = await getDirectSessionProviderOps(parsed.data.providerId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'follow_policy_set_failed';
+      return err('internal_error', message) satisfies DirectSessionFollowPolicySetResponse;
+    }
+
+    if (parsed.data.enabled && !providerOps.acquireFollowLease) {
+      return err('provider_unavailable', 'background_follow_not_supported') satisfies DirectSessionFollowPolicySetResponse;
+    }
+
+    const credentials = await readCredentials().catch(() => null);
+    if (!credentials) {
+      return err('provider_unavailable', 'not_authenticated') satisfies DirectSessionFollowPolicySetResponse;
+    }
+
+    try {
+      const rawSession = await fetchSessionById({
+        token: credentials.token,
+        sessionId: parsed.data.sessionId,
+      }).catch(() => null);
+      const updatedAtMs = Date.now();
+      const persistFollowPolicy = async (): Promise<DirectSessionFollowPolicySetResponse | null> => {
+        if (!rawSession) {
+          return null;
+        }
+        try {
+          await updateSessionMetadataWithDirectSessionFollowPolicy({
+            token: credentials.token,
+            credentials,
+            sessionId: parsed.data.sessionId,
+            rawSession,
+            policy: parsed.data.enabled ? 'background_follow' : 'attached_only',
+            updatedAtMs,
+          });
+          return null;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'follow_policy_persist_failed';
+          return err('internal_error', message) satisfies DirectSessionFollowPolicySetResponse;
+        }
+      };
+
+      if (!parsed.data.enabled) {
+        const persistError = await persistFollowPolicy();
+        if (persistError) {
+          return persistError;
+        }
+      }
+
+      await followLeaseManager.setBackgroundFollowEnabled({
+        sessionId: parsed.data.sessionId,
+        enabled: parsed.data.enabled,
+        acquireFollowLease: parsed.data.enabled && providerOps.acquireFollowLease
+          ? async () => createManagedDirectSessionFollowLease({
+            sessionId: parsed.data.sessionId,
+            reason: 'background_follow',
+            acquireProviderFollowLease: () => providerOps.acquireFollowLease!({
+              source: validatedSource.source,
+              remoteSessionId: parsed.data.remoteSessionId,
+              reason: 'background_follow',
+            }),
+            emitDirectSessionTranscriptUpdate,
+            shouldProcessBackgroundFollowEffects: () =>
+              followLeaseManager.isBackgroundFollowEnabled(parsed.data.sessionId)
+              && followLeaseManager.countActiveLeases(parsed.data.sessionId) === 0,
+          })
+          : undefined,
+      });
+
+      if (parsed.data.enabled) {
+        const persistError = await persistFollowPolicy();
+        if (persistError) {
+          await followLeaseManager.setBackgroundFollowEnabled({
+            sessionId: parsed.data.sessionId,
+            enabled: false,
+          }).catch(() => undefined);
+          return persistError;
+        }
+      }
+
+      return {
+        ok: true,
+        enabled: parsed.data.enabled,
+        leaseActive:
+          followLeaseManager.hasBackgroundFollowLease(parsed.data.sessionId)
+          || followLeaseManager.countActiveLeases(parsed.data.sessionId) > 0,
+        updatedAtMs,
+      } satisfies DirectSessionFollowPolicySetResponse;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return err('internal_error', message) satisfies DirectSessionFollowPolicySetResponse;
+    }
+  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST, async (raw: unknown) => {
     const parsed = DirectSessionsCandidatesListRequestSchema.safeParse(raw);

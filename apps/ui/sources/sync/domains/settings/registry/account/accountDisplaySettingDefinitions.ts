@@ -167,6 +167,13 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
+    mobileWorkspaceExperienceV1: {
+        schema: z.enum(['classic', 'cockpit']),
+        default: 'cockpit',
+        description: 'Preferred mobile session workspace experience mode',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
     terminalConnectLegacySecretExportEnabled: {
         schema: z.boolean(),
         default: false,

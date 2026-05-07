@@ -103,6 +103,7 @@ export async function claudeRemoteAgentSdk(opts: {
     // Dynamic parameters
     nextMessage: () => Promise<{ message: string; mode: EnhancedMode } | null>;
     onReady: () => void | Promise<void>;
+    onSubagentFlush?: () => void | Promise<void>;
     isAborted: (toolCallId: string) => boolean;
 
     // Callbacks
@@ -964,9 +965,8 @@ export async function claudeRemoteAgentSdk(opts: {
             // Belt-and-suspenders: if assistant text already reached the wire for THIS scope
             // (root or sidechain) via any channel this turn (streamed deltas, full-message emit,
             // buffered stream-event flush), re-emitting from the result message would duplicate
-            // the message AND write a synthetic uuid that later poisons `claudeLastAssistantUuid`
-            // resume anchors. Durable flushing is the preferred signal; this guard catches any
-            // other delivery path.
+            // the message with a synthetic uuid. Durable flushing is the preferred signal; this
+            // guard catches any other delivery path.
             if (sidechainsWithPublishedAssistantTextThisTurn.has(sidechainId)) {
                 return false;
             }
@@ -1273,6 +1273,16 @@ export async function claudeRemoteAgentSdk(opts: {
             }
             await opts.onReady();
             scheduleNextMessagePump();
+        };
+
+        const finalizeSubagentTurn = async () => {
+            lastTurnFlushSummary = await flushStreamedTranscriptWriter('turn-end');
+            logger.debug('[claudeRemoteAgentSdk] Subagent turn summary', {
+                ...turnDiagnostics,
+                didPublishAssistantTextThisTurn,
+            });
+            resetTurnDiagnostics();
+            await opts.onSubagentFlush?.();
         };
 
         // Fire-and-forget capability publication.
@@ -1635,7 +1645,7 @@ export async function claudeRemoteAgentSdk(opts: {
                             activeTaskId = null;
                         }
                         if (status === 'stopped' || status === 'failed' || status === 'completed') {
-                            await finalizeCurrentTurn();
+                            await finalizeSubagentTurn();
                         }
                     }
 

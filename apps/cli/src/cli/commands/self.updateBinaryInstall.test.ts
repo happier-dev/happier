@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const {
   fetchGitHubReleaseByTagMock,
@@ -132,6 +135,66 @@ describe('happier self update for binary installs', () => {
     } finally {
       process.argv = originalArgv;
       logSpy.mockRestore();
+    }
+  });
+
+  it('uses the raw hdev invoker when the packaged process argv path is generic', async () => {
+    const originalArgv = [...process.argv];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      process.argv[1] = 'self';
+      const { handleSelfCliCommand } = await import('./self');
+      await handleSelfCliCommand({
+        args: ['self', 'update'],
+        rawArgv: ['hdev', 'self', 'update'],
+        terminalRuntime: null,
+      });
+
+      expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledWith(expect.objectContaining({
+        channel: 'publicdev',
+      }));
+      expect(logSpy.mock.calls.flat().join('\n')).toContain('Updated hdev to');
+    } finally {
+      process.argv = originalArgv;
+      logSpy.mockRestore();
+    }
+  });
+
+  it('uses the persisted default channel for the unsuffixed happier invoker', async () => {
+    const originalArgv = [...process.argv];
+    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-self-update-default-channel-'));
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      process.env.HAPPIER_HOME_DIR = homeDir;
+      writeFileSync(
+        join(homeDir, 'default-cli-release-channel.json'),
+        `${JSON.stringify({ releaseChannel: 'publicdev' })}\n`,
+        'utf8',
+      );
+      process.argv[1] = 'self';
+      const { handleSelfCliCommand } = await import('./self');
+      await handleSelfCliCommand({
+        args: ['self', 'update'],
+        rawArgv: ['happier', 'self', 'update'],
+        terminalRuntime: null,
+      });
+
+      expect(updateInstalledCliPayloadFromReleaseAssetsMock).toHaveBeenCalledWith(expect.objectContaining({
+        channel: 'publicdev',
+      }));
+      expect(logSpy.mock.calls.flat().join('\n')).toContain('Updated hdev to');
+    } finally {
+      if (previousHomeDir === undefined) {
+        delete process.env.HAPPIER_HOME_DIR;
+      } else {
+        process.env.HAPPIER_HOME_DIR = previousHomeDir;
+      }
+      process.argv = originalArgv;
+      logSpy.mockRestore();
+      rmSync(homeDir, { recursive: true, force: true });
     }
   });
 

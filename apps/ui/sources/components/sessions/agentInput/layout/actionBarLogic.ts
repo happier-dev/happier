@@ -36,9 +36,9 @@ export function shouldShowSecondaryControlRow(
     actionBarLayout: AgentInputActionBarLayout,
     hasSecondaryControls: boolean,
 ): boolean {
-    // Secondary controls keep their own row only in the "wrap" layout.
-    // In "scroll" they fold into row 1; in "collapsed" they move into the popover menu.
-    return actionBarLayout === 'wrap' && hasSecondaryControls;
+    // Secondary controls keep their own row in both "wrap" and "scroll" layouts.
+    // Only the "collapsed" layout moves them into the popover menu.
+    return actionBarLayout !== 'collapsed' && hasSecondaryControls;
 }
 
 export function shouldShowPathAndResumeRow(actionBarLayout: AgentInputActionBarLayout): boolean {

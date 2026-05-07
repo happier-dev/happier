@@ -37,9 +37,13 @@ vi.mock('../../domains/state/warmCachePersistence', () => ({
     saveSessionListWarmCacheEntries: () => {},
 }));
 
-vi.mock('../../domains/state/warmCacheAdapters', () => ({
-    buildSessionListCacheEntriesFromRenderables: () => [],
-}));
+vi.mock('../../domains/state/warmCacheAdapters', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../domains/state/warmCacheAdapters')>();
+    return {
+        ...actual,
+        buildSessionListCacheEntriesFromRenderables: () => [],
+    };
+});
 
 vi.mock('./messages', () => ({
     applyAgentStateUpdateToSessionMessages: () => ({}),
@@ -133,6 +137,7 @@ function createHarness() {
         sessionLastViewed: {},
         sessionRepositoryTreeExpandedPathsBySessionId: {},
         reviewCommentsDraftsBySessionId: {},
+        reviewCommentsDraftsByWorkspaceCacheKey: {},
         actionDraftsBySessionId: {},
         isDataReady: false,
         machines: {},

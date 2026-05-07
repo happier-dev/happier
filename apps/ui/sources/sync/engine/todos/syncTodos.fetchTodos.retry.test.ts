@@ -95,4 +95,27 @@ describe('syncTodos fetchTodos retry semantics', () => {
 
         expect(runtimeFetchSpy).toHaveBeenCalledTimes(1);
     });
+
+    it('drops fetched todos when the captured sync scope is stale before apply', async () => {
+        upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'tab' });
+        runtimeFetchSpy.mockResolvedValue(new Response(JSON.stringify({
+            items: [],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+        const { fetchTodos } = await import('./syncTodos');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const applyTodos = vi.spyOn(storage.getState(), 'applyTodos');
+
+        const credentials: AuthCredentials = {
+            token: buildTokenWithSub('server-test'),
+            secret: encodeBase64(new Uint8Array(32).fill(1), 'base64url'),
+        };
+
+        await fetchTodos({
+            credentials,
+            shouldContinue: () => false,
+        } as Parameters<typeof fetchTodos>[0] & { shouldContinue: () => boolean });
+
+        expect(applyTodos).not.toHaveBeenCalled();
+    });
 });

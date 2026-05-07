@@ -1,16 +1,16 @@
 ---
 title: Git & Files
-description: Browse files, review diffs, edit workspace content, and manage source control directly from Happier.
+description: Browse files, review diffs, edit workspace content, and manage Git directly from Happier.
 ---
 
 Happier includes a repository-aware workspace surface inside sessions.
 
 On larger layouts, this appears as:
 
-- a **right sidebar** with **Source control** and **Files** tabs
+- a **right sidebar** with **Git** and **Files** tabs
 - a **details pane** for file previews, editors, review tabs, commit history details, and stash details
 
-On phone-sized or narrow layouts, the same workflows are shown as full-screen screens instead of trying to keep several docked panels visible at once.
+On phone-sized layouts, Happier uses the **session cockpit** by default: a bottom tab bar lets you switch between the agent chat, Files, Git, open details tabs, and Terminal when a terminal tab is available.
 
 This page covers the full user-facing workflow for:
 
@@ -18,14 +18,21 @@ This page covers the full user-facing workflow for:
 - creating, uploading, downloading, renaming, and deleting files/folders
 - previewing and editing files
 - reviewing uncommitted changes
-- staging, unstaging, committing, fetching, pulling, pushing, and reverting
+- leaving line-specific review comments on files and diffs
+- initializing a folder as a Git repository
+- staging, unstaging, committing, fetching, pulling, pushing, publishing branches, and reverting
+- publishing a local repository to GitHub
+- opening, reusing, checking out, and preparing pull requests / merge requests
 - browsing commit history and opening historical diffs
+- opening workspace file links from transcript messages
 - linking project files into the session composer
 
 ## Availability
 
 - **Files** browsing is part of the normal session UI.
-- **Source control write actions** remain behind **Settings → Features → Git operations**.
+- **Git write actions** remain behind **Settings → Features → Git operations**.
+- **Review comments** remain behind **Settings → Features → Review comments**.
+- The mobile cockpit layout is controlled by **Settings → Session → Mobile session layout** and defaults to **Cockpit**.
 - Some actions require the current machine/daemon to be reachable.
 - If the session is inactive but the machine is still online, Happier can still load repository/file data that comes from the machine-level workspace APIs.
 
@@ -38,7 +45,7 @@ The workspace UI is designed around two complementary surfaces:
 
 Typical flow:
 
-1. Open **Files** or **Source control** in the right sidebar.
+1. Open **Files** or **Git** in the right sidebar.
 2. Click an item to open it in the details pane.
 3. Keep that item as a temporary preview tab, or pin it so it stays open while you inspect other files.
 
@@ -67,7 +74,7 @@ The details pane includes a focus mode so you can temporarily hide the left sess
 This is useful when:
 
 - reviewing a large diff
-- editing a file side-by-side with the source-control sidebar
+- editing a file side-by-side with the Git sidebar
 - working on a smaller laptop or browser window
 
 ## Files
@@ -89,6 +96,8 @@ The **Files** tab is the in-session file manager for the current workspace.
 - Filter the file tree down to modified files only.
 - Watch transfer progress and cancel an upload or download that is still running.
 
+Opening a file uses the same details surface whether you start from the file tree, a changed-file row, a review diff, a transcript file link, a review-comment jump, or a linked-file chip in the composer.
+
 ### Tree rows and status badges
 
 The file tree is repository-aware.
@@ -100,6 +109,8 @@ When source-control data is available, Happier can show:
 - folder-level summaries aggregated from descendants
 
 This gives you a lightweight “what changed here?” signal without leaving the Files tab.
+
+Long paths are formatted so the filename stays readable. On web, deeply nested directories use start-side ellipsis behavior, so the left side of a long path is shortened before the filename gets squeezed.
 
 ### Search and modified-only filtering
 
@@ -172,6 +183,7 @@ Uploads and downloads run as managed transfers instead of fire-and-forget action
 - Happier shows transfer progress while the upload or download is still active.
 - You can cancel a transfer before it finishes.
 - Folder `.zip` downloads are built first, then streamed back in chunks.
+- Direct file preview, file download, folder download, and review/diff loading all use the same transfer/decryption path for session workspace data.
 
 Platform notes:
 
@@ -234,6 +246,21 @@ This matters when you:
 - jump between Review and an editor tab
 - switch sessions and come back later
 
+### File details action bar
+
+File details use one shared action bar for preview, diff, edit, commit selection, and revert actions.
+
+Depending on the file and repository state, it can include:
+
+- a file/diff view dropdown
+- a pending/included/combined diff dropdown
+- an edit action
+- **Select for commit** or **Remove from selection**
+- selected-line actions when line-level selection is supported
+- a revert action when the file can be reverted safely
+
+On wide layouts, the path and actions share one horizontal row. On narrow layouts, Happier wraps the actions into a compact second row so the path, filename, and important actions stay readable.
+
 ## Link project files from the session composer
 
 The session composer includes a **Link file** chip.
@@ -254,9 +281,27 @@ This is useful for prompts like:
 
 You can also use `@`-style file search in the composer where supported. The goal is the same: quickly attach relevant workspace context.
 
-## Source control
+## Open workspace file links from the transcript
 
-The **Source control** tab is the repository status surface for the current session.
+When an assistant response includes a markdown link to a file in the current workspace, Happier can turn that link into in-app file navigation instead of sending you to a broken browser URL.
+
+Supported link shapes include:
+
+- workspace-relative links such as `src/index.ts`
+- links with line and column suffixes such as `src/index.ts:12` or `src/index.ts:12:4`
+- absolute local paths inside the workspace
+- `file://` URLs inside the workspace
+- loopback-expanded links from the web app, such as `http://localhost:18829/Users/alice/project/src/index.ts:12`
+- Windows drive paths such as `C:\Users\Alice\project\src\index.ts`
+- Windows `file:///C:/...` links and UNC-style file URLs inside the workspace
+
+Happier only opens links that resolve inside the current workspace. Links outside the workspace, traversal paths, and arbitrary non-loopback `http`/`https` URLs stay external or are ignored for workspace navigation.
+
+On desktop, opening a workspace file link opens the right sidebar/details pane. On phone-sized layouts, it opens the file in the **Tabs** surface with the session header still visible.
+
+## Git
+
+The **Git** tab is the repository status surface for the current session.
 
 ### What you can do
 
@@ -265,11 +310,93 @@ The **Source control** tab is the repository status surface for the current sess
 - Select whole files or selected lines/hunks where supported
 - Commit staged work
 - Fetch, pull, and push when Git write operations are enabled
+- Initialize Git when the current folder is not a repository
+- Publish a local repository to GitHub
 - Switch branches
 - Create branches
 - Publish a branch that does not yet have an upstream
+- Open, reuse, and checkout pull requests or merge requests
+- Open a pull request / merge request in a separate worktree-backed session
 - Inspect and manage Happier-created stashes
 - Browse commit history and open historical commit diffs
+
+## Repository setup
+
+### Initialize Git from Happier
+
+If the selected folder is not a Git repository, Happier shows an initialization action instead of leaving the Git tab as a dead end.
+
+When you confirm, Happier runs `git init` for that folder and then refreshes the Git status.
+
+What initialization does:
+
+- creates the repository metadata for the current folder
+- keeps the folder contents as they are
+- does not stage files
+- does not create an initial commit
+- does not create or publish a remote
+
+If the folder is already a Git repository by the time the action runs, Happier treats that as success and refreshes status.
+
+### Publish a local repository to GitHub
+
+When a Git repository does not already have a detected GitHub remote, Happier can publish it to GitHub from the Git tab.
+
+The publish form lets you choose:
+
+- the GitHub owner, including organizations available to the authenticated account
+- the repository name
+- visibility: private, public, or internal when GitHub supports it for that owner
+- HTTPS or SSH remote URL
+- whether to push the current branch after creating the repository
+- what to do if the selected remote name already exists
+
+Happier creates the GitHub repository first, then updates the local Git remote through Happier's own SCM backend. Even when it uses the GitHub CLI as the network adapter, it does not let `gh repo create` mutate local Git state directly.
+
+Authentication order:
+
+1. a connected GitHub account token in Happier
+2. an already-authenticated local or managed `gh` CLI
+
+If neither is available, Happier explains the missing auth and points you toward connecting GitHub or authenticating/installing `gh`.
+
+Current scope:
+
+- GitHub repository publishing is supported.
+- GitLab and Bitbucket repository creation are not currently supported from Happier.
+- Publishing is explicit; Happier does not create a repository, remote, commit, or push without a user action.
+
+## Remote operations
+
+The remote-actions area covers routine network operations without leaving the session.
+
+Depending on repository state and capabilities, Happier can show:
+
+- **Fetch** to update remote refs
+- **Pull** when the current branch can fast-forward
+- **Push** when the current branch has an upstream
+- **Publish branch** when the current branch has no upstream yet
+- **Publish to GitHub** when the repository has no GitHub remote
+
+### Publish branch
+
+When the current branch has no upstream tracking branch, Happier shows **Publish** instead of a normal push action.
+
+Publishing sets the upstream and pushes the branch in one step, similar to desktop Git clients.
+
+You can trigger this from the branch menu and, when relevant, from the remote-actions area that would otherwise offer push/pull.
+
+### Remote operation safety
+
+Happier keeps the remote workflow conservative:
+
+- pull uses fast-forward only
+- pull requires a clean worktree
+- push is blocked when `HEAD` is detached
+- push is blocked while the local branch is behind upstream
+- push, pull, and revert are blocked while conflicts are present
+
+These rules are backend invariants. The UI explains the blocked state instead of offering an action that Git would reject or that could rewrite history.
 
 ## Changed files list
 
@@ -288,6 +415,31 @@ The list is optimized for fast scanning:
 - branch summary stays at the top
 - “Review” is available directly from the changed-files header
 - commit controls stay grouped at the bottom
+- file paths and filenames are aligned as a single readable label, with the filename kept prominent next to the line-change summary
+
+### Changed-files scopes
+
+When more than one changed-file scope is available, the changed-files header becomes a compact dropdown. The dropdown shows the active scope name and count, and keeps the **Review** button beside it.
+
+Possible scopes are:
+
+- **Changed files** / **Repository changed files**: all current repository changes from the latest SCM snapshot.
+- **Latest turn changes**: provider-backed changes attributed to the most recent completed turn, when the provider/runtime reported them.
+- **Session-attributed changes**: best-effort changes attributed to this session across more than one turn.
+- **Selected for commit**: only files that are currently fully or partially selected for the next commit. This appears only after at least one file is selected.
+
+The scope selector appears only when it is useful. If there is only the repository view, Happier shows the normal changed-files title instead of a redundant dropdown.
+
+Changing scope changes the list you are looking at; it does not rewrite repository state. Selecting files for commit does not make them “session changes”. It only makes the **Selected for commit** scope available.
+
+The **All** action is scope-aware:
+
+- in repository view, it selects all repository changed files;
+- in Latest turn changes, it selects only files in that turn scope;
+- in Session-attributed changes, it selects only files in that session scope;
+- in Selected for commit, it keeps the selection bounded to the already selected set.
+
+Repository view remains the source of truth. Turn/session scopes are convenience filters that depend on the quality of provider/runtime attribution.
 
 ## Review
 
@@ -317,6 +469,36 @@ Review is not a dead-end viewer.
 
 From Review you can open a changed file into its own details tab, edit it, then return to Review without losing the review context.
 
+On mobile cockpit layouts, Review opens in the **Tabs** surface. Use the back button to return to the Git list you opened it from, or use the bottom tabs to switch surfaces without adding extra tab switches to the back stack.
+
+## Review comments
+
+Review comments let you leave line-specific instructions while reading a file or diff, then send selected comments to an agent.
+
+Use review comments when you want to:
+
+- mark several exact lines during a manual review
+- ask the agent to fix or explain those lines later
+- collect comments in one session and send them from another session in the same workspace
+- keep some comments saved while sending only the comments selected for the next prompt
+
+Where they appear:
+
+- file details
+- changed-file diffs
+- Review
+- the session composer
+- new-session composer screens for the same workspace
+- transcript review-comment cards after comments are sent
+
+Each saved comment includes the workspace-relative path, the file/diff source, the visible line reference, a short snippet, and a stable line-content hash when available. The hash helps Happier relocate the same line content if nearby lines move; the line number and snippet remain as fallback context.
+
+In the composer, saved comments appear as a **Review** chip and attachment badge. Open it to review, edit, delete, select, or deselect comments before sending. Removing the chip asks whether to detach comments from the next prompt or discard them.
+
+When sent, review comments become structured transcript content. The card groups comments by file and includes a **Jump** action back to the referenced file or diff.
+
+Full guide: [Review comments](/docs/features/review-comments)
+
 ## Commit history
 
 The **History** sub-tab shows past commits for the current repository.
@@ -337,7 +519,7 @@ Typical use cases:
 
 ## Committing staged work
 
-The commit composer sits at the bottom of Source control.
+The commit composer sits at the bottom of the Git tab.
 
 ### Commit message generator
 
@@ -345,6 +527,8 @@ Happier includes a **Generate commit message** action in the commit composer.
 
 - It is **enabled by default**.
 - It uses a one-shot execution-run task to propose a commit message.
+- It uses the current commit selection/scope as input when applicable.
+- It applies the final suggested commit message text, not the structured response payload used internally by the generator.
 - You can choose the backend and add custom instructions in **Settings → Source Control**.
 
 Good use cases:
@@ -367,7 +551,7 @@ This lets you create more intentional commits without dropping into the terminal
 
 ## Branch management
 
-The branch summary at the top of Source control shows the current branch and branch state.
+The branch summary at the top of the Git tab shows the current branch and branch state.
 
 From the branch menu you can:
 
@@ -375,14 +559,8 @@ From the branch menu you can:
 - switch to another branch
 - create a new branch
 - publish the current branch when it has no upstream yet
-
-### Publish branch
-
-When the current branch has no upstream tracking branch, Happier shows **Publish** instead of a normal push action.
-
-Publishing sets the upstream and pushes the branch in one step, similar to desktop Git clients.
-
-You can trigger this from the branch menu and, when relevant, from the remote-actions area that would otherwise offer push/pull.
+- checkout a pull request or merge request into the current worktree
+- open a pull request or merge request in a separate worktree-backed session
 
 ### Branch switching with uncommitted changes
 
@@ -417,7 +595,7 @@ Use this when:
 
 Happier creates and tracks its own stash entries for branch-switch workflows.
 
-These stashes appear in Source control as **Managed stashes**.
+These stashes appear in the Git tab as **Managed stashes**.
 
 From the stash surface you can:
 
@@ -443,37 +621,154 @@ Transient stashes are internal safety rails for branch switching. If the carry-o
 
 If Git reports a conflict while restoring, Happier keeps the stash instead of silently dropping it.
 
-## Session view vs repository view
+## Pull requests and merge requests
 
-Changed-files view supports two modes:
+The Git tab includes a pull request / merge request surface for the current branch when Happier can detect a hosting provider from the repository remotes.
 
-- **Repository changes**: full source of truth from current SCM status
-- **Session-attributed changes**: best-effort attribution for a specific session
+It can show:
 
-Attribution uses direct operation signals first, for example stage/unstage actions. When multiple sessions are active on the same repository, attribution reliability is lower, so Happier favors repository truth over weak inference.
+- an existing pull request or merge request for the current branch
+- the target repository and branch direction
+- whether the branch is ready to open a request
+- blocked reasons and the next safe action when a request cannot be opened yet
 
-## Mobile and small-screen behavior
+### Provider support
 
-On smaller screens, Happier does not try to force the full desktop multi-pane layout into too little space.
+| Provider | Current support |
+| --- | --- |
+| GitHub | Remote detection, compare URLs, connected-account REST read/write, optional authenticated `gh` fallback, repository publishing, PR checkout, and PR worktree preparation. |
+| GitLab | Remote detection, compare URLs, optional authenticated `glab` read/write/checkout, and MR worktree preparation. GitLab connected accounts are not yet supported. |
+| Bitbucket | Remote detection and compare URLs. Authenticated Bitbucket PR creation is not currently supported. |
+| Unknown remotes | Safe unsupported state with no write actions. |
 
-Instead:
+GitHub Enterprise-style remotes can be detected. Connected-account REST operations are designed for GitHub.com; enterprise/self-hosted cases usually depend on CLI auth or compare URLs.
 
-- Files and Source control open as focused screens
-- opening a file/review/commit details surface replaces the list with a dedicated details screen
-- closing the details screen takes you back to the list you came from
+GitLab self-managed remotes keep their detected base URL. When `glab` is used, Happier checks authentication for the detected host when possible.
 
-The goal is to preserve the same workflows as desktop while matching the ergonomics of a phone/tablet screen.
+### Opening or reusing a request
+
+When the current branch is ready, Happier can open or reuse a pull request / merge request from the Git tab.
+
+Authentication order:
+
+- **GitHub**: connected GitHub account first, then authenticated `gh`, then no-auth compare URL.
+- **GitLab**: authenticated `glab`, then no-auth compare URL.
+- **Bitbucket**: no-auth compare URL.
+
+If Happier cannot create a request directly, it opens the provider's compare page so you can finish in the browser.
+
+### Default branch guard
+
+If the current branch is the repository's default branch, Happier avoids opening a request directly from that branch when the backend policy requires a feature branch.
+
+Instead, the UI offers the safe next step:
+
+- create a feature branch first, or
+- when local commits and capabilities allow it, create the feature branch and continue the pull-request flow as one guided action
+
+This keeps the user in Happier instead of blocking them with an instruction to go to the terminal.
+
+### Dirty and unpublished branches
+
+Happier does not silently create a pull request from a dirty unpublished branch.
+
+If the branch has uncommitted work or no published upstream, commit and publish the branch first. The stacked action can combine supported steps such as commit, push, and create request when the repository state allows it.
+
+### Checkout a PR or MR
+
+The branch menu can checkout a pull request or merge request into the current worktree.
+
+Accepted references include:
+
+- `42`
+- `#42`
+- a GitHub pull request URL
+- a GitLab merge request URL
+- `gh pr checkout 42`
+- `glab mr checkout 17`
+- a branch name when the text is not a URL or numeric request id
+
+Local checkout uses the existing Git protections for dirty worktrees and conflicts. Happier does not discard local changes to make checkout succeed.
+
+### Open a PR or MR in a worktree
+
+You can also open a pull request or merge request in a separate worktree-backed session.
+
+Happier resolves the request through the hosting-provider adapter, prepares the checkout through the existing worktree/source-controller path, and opens a new session at that worktree path.
+
+Use this when:
+
+- you want to review a request without disturbing your current branch
+- you want to test someone else's branch in isolation
+- you want to keep your current worktree clean while opening an external PR/MR
+
+## Lock recovery
+
+If Git reports a stale `index.lock` during branch checkout, Happier can offer a focused recovery prompt.
+
+When you confirm, Happier asks Git for the exact lock path and removes only that validated `index.lock` file inside the repository's Git directory. It then retries the failed checkout once.
+
+Happier does not run `git clean`, `git reset`, or broader repository cleanup as part of lock recovery.
+
+## Turn, session, selected, and repository views
+
+Changed-files view supports several scopes:
+
+- **Repository changes**: full source of truth from current SCM status.
+- **Latest turn changes**: provider-backed changes from the most recent completed turn.
+- **Session-attributed changes**: best-effort attribution for a specific session.
+- **Selected for commit**: the current commit selection, including partially selected files when supported.
+
+Attribution uses direct operation signals and provider/runtime change sets first. When multiple sessions are active on the same repository, attribution reliability is lower, so Happier favors repository truth over weak inference.
+
+If a scoped view cannot be supported confidently, Happier falls back to repository view or hides that scope rather than showing an empty or misleading list.
+
+## Mobile session cockpit
+
+On phone-sized layouts, Happier uses the session cockpit by default.
+
+The bottom session tab bar can include:
+
+- the current agent tab, named after the session backend such as **Claude**, **Codex**, or **OpenCode**
+- **Files**
+- **Git**
+- **Tabs** for file previews, editors, Review, commit details, stash details, and other detail surfaces
+- **Terminal** when the embedded terminal is enabled and available as a session tab
+
+The session header stays visible across cockpit tabs. The Files, Git, Tabs, and Terminal surfaces are laid out under the phone safe area instead of being hidden behind native status/navigation chrome.
+
+### Mobile navigation behavior
+
+Switching between cockpit tabs is treated as switching workspace surfaces, not as drilling deeper into history. This keeps the system back button focused on leaving the session instead of walking through every tab you touched.
+
+Opening a file, Review, a commit, a stash, a terminal detail, a transcript file link, or a review-comment jump is treated as opening a detail. In that case, the detail opens on the **Tabs** surface and the back button returns to the surface you came from when that context is known.
+
+Examples:
+
+- Files → open file → back returns to Files.
+- Git → open changed-file diff → back returns to Git.
+- Git → Review → back returns to Git.
+- Transcript link → file detail opens in Tabs without losing the session header.
+
+Tab animations follow the visual order of the tab bars: moving to a tab on the right slides from the right, and moving to a tab on the left slides from the left.
+
+### Classic mobile layout
+
+If you prefer the older focused-screen layout, choose **Settings → Session → Mobile session layout → Classic**.
 
 ## Safety rules
 
 SCM operations are intentionally conservative:
 
+- Git initialization and GitHub repository publishing require explicit user action
 - publish/push/pull are blocked when the repository state says the operation is unsafe
 - pull uses **fast-forward only**
 - pull and revert require a clean worktree
 - push/pull/revert are blocked when `HEAD` is detached
 - push is blocked when the local branch is behind upstream
 - push/pull/revert are blocked while conflicts are present
+- pull request / merge request external URLs are opened only when they match the detected provider origin
+- stale Git lock recovery removes only a validated `index.lock` path inside the repository's Git directory
 - destructive history-editing actions (reset/rebase/cherry-pick/drop) are not exposed in the app UI
 
 For file operations:
@@ -485,9 +780,15 @@ For file operations:
 ## Current limitations
 
 - Folder upload is web-only.
-- Some Source control actions still depend on Git write operations being enabled.
+- Some Git actions still depend on Git write operations being enabled.
 - Branch and stash management are implemented for Git repositories; unsupported SCM backends expose read-only behavior.
 - Line-level staging is for text diffs. Binary/conflict cases fall back to file-level actions.
 - Session attribution is best-effort and not a replacement for repository truth.
+- Review comments are line-specific workspace drafts. If a file changes heavily, Happier may not be able to relocate the exact line by hash, but the saved line number and snippet remain available.
 - The commit-message generator requires daemon support for execution runs.
+- GitHub repository publishing is supported; GitLab and Bitbucket repository publishing are not currently supported.
+- GitHub connected accounts support source-control REST operations. GitLab connected accounts are not currently available; GitLab MR workflows use `glab` when authenticated or compare URLs otherwise.
+- Bitbucket support is detection/compare-url only.
+- Cross-repository/fork request creation and dependent stacked PR chains are not currently exposed in the app.
+- PR body generation from turn-level change evidence is not currently automatic.
 - Git write operations remain experimental while we continue hardening.

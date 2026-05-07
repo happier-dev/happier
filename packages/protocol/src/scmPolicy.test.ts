@@ -221,6 +221,10 @@ describe('normalizeScmRemoteRequest', () => {
             ok: false,
             error: 'Remote name cannot start with "-"',
         });
+        expect(normalizeScmRemoteRequest({ remote: 'origin/main' })).toEqual({
+            ok: false,
+            error: 'Remote name contains unsupported syntax',
+        });
         expect(normalizeScmRemoteRequest({ branch: 'main..origin/main' })).toEqual({
             ok: false,
             error: 'Branch name contains unsupported syntax',

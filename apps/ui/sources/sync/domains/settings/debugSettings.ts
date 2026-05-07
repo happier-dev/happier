@@ -103,3 +103,18 @@ export function dbgSettings(
         // ignore
     }
 }
+
+export function warnSettings(
+    label: string,
+    data?: Record<string, unknown>,
+    opts?: { force?: boolean; env?: Record<string, string | undefined> }
+) {
+    const enabled = isSettingsSyncDebugEnabled(opts?.env);
+    if (!enabled && !opts?.force) return;
+    try {
+        // eslint-disable-next-line no-console
+        console.warn(`[settings-sync] ${label}`, data ?? {});
+    } catch {
+        // ignore
+    }
+}

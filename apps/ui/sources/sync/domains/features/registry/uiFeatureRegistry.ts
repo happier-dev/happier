@@ -43,6 +43,20 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'code-slash-outline', color: '#AF52DE' },
         },
     },
+    'pets.companion': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: false,
+            defaultEnabled: true,
+            serverVisibilityScope: 'main_selection',
+            titleKey: 'settingsFeatures.expPetsCompanion',
+            subtitleKey: 'settingsFeatures.expPetsCompanionSubtitle',
+            icon: { ioniconName: 'paw-outline', color: '#34C759' },
+        },
+    },
+    'pets.sync': {
+        settingsToggle: undefined,
+    },
     'encryption.plaintextStorage': {
         settingsToggle: undefined,
     },

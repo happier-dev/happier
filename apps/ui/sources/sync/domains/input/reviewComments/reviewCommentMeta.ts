@@ -1,11 +1,17 @@
 import { z } from 'zod';
 
+import { isLineContentHash, type LineContentHash } from '@/utils/text/lineContentHash';
+
 import type { ReviewCommentDraft } from './reviewCommentTypes';
+import { normalizeReviewCommentDrafts } from './reviewCommentDraftBody';
+
+const LineContentHashSchema = z.custom<LineContentHash>(isLineContentHash);
 
 export const ReviewCommentAnchorSchema = z.union([
     z.object({
         kind: z.literal('fileLine'),
         startLine: z.number().int().positive(),
+        lineHash: LineContentHashSchema.optional(),
     }),
     z.object({
         kind: z.literal('diffLine'),
@@ -13,6 +19,7 @@ export const ReviewCommentAnchorSchema = z.union([
         side: z.enum(['before', 'after']),
         oldLine: z.number().int().positive().nullable(),
         newLine: z.number().int().positive().nullable(),
+        lineHash: LineContentHashSchema.optional(),
     }),
 ]);
 
@@ -29,6 +36,7 @@ export const ReviewCommentDraftSchema = z.object({
     anchor: ReviewCommentAnchorSchema,
     snapshot: ReviewCommentSnapshotSchema,
     body: z.string(),
+    includeInPrompt: z.boolean().optional(),
     createdAt: z.number(),
 });
 
@@ -43,21 +51,25 @@ export function buildReviewCommentsV1MetaPayload(params: {
     sessionId: string;
     drafts: readonly ReviewCommentDraft[];
 }): ReviewCommentsV1 {
+    const drafts = normalizeReviewCommentDrafts(params.drafts);
     return {
         sessionId: params.sessionId,
-        comments: params.drafts.map((d) => ({
-            id: d.id,
-            filePath: d.filePath,
-            source: d.source,
-            anchor: d.anchor,
-            snapshot: {
-                selectedLines: [...d.snapshot.selectedLines],
-                beforeContext: [...d.snapshot.beforeContext],
-                afterContext: [...d.snapshot.afterContext],
-            },
-            body: d.body,
-            createdAt: d.createdAt,
-        })),
+        comments: drafts.map((d) => {
+            const comment = {
+                id: d.id,
+                filePath: d.filePath,
+                source: d.source,
+                anchor: d.anchor,
+                snapshot: {
+                    selectedLines: [...d.snapshot.selectedLines],
+                    beforeContext: [...d.snapshot.beforeContext],
+                    afterContext: [...d.snapshot.afterContext],
+                },
+                body: d.body,
+                createdAt: d.createdAt,
+            };
+            return d.includeInPrompt === undefined ? comment : { ...comment, includeInPrompt: d.includeInPrompt };
+        }),
     };
 }
 

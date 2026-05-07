@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { fetchAndApplySessionById } from './sessionById';
+import { fetchAndApplySessionById, type SessionByIdEncryption } from './sessionById';
 
 const onAgentRequest = vi.fn();
 
@@ -9,6 +9,17 @@ vi.mock('@/voice/context/voiceHooks', () => ({
     onAgentRequest: (...args: Parameters<typeof onAgentRequest>) => onAgentRequest(...args),
   },
 }));
+
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 describe('fetchAndApplySessionById', () => {
   it('accepts legacy-compatible single-session payloads when newer fields are omitted', async () => {
@@ -31,13 +42,14 @@ describe('fetchAndApplySessionById', () => {
       },
     }), { status: 200 }));
 
+    const getSessionEncryption = vi.fn(() => null);
     const result = await fetchAndApplySessionById({
       sessionId: 's_legacy_payload',
       credentials: { token: 't' } as any,
       encryption: {
         decryptEncryptionKey: async () => null,
         initializeSessions: async () => {},
-        getSessionEncryption: () => null,
+        getSessionEncryption,
       },
       sessionDataKeys: new Map<string, Uint8Array>(),
       request,
@@ -53,6 +65,7 @@ describe('fetchAndApplySessionById', () => {
         canApprovePermissions: true,
       }),
     ]);
+    expect(getSessionEncryption).not.toHaveBeenCalled();
   });
 
   it('falls back to scanning /v2/sessions when the single-session route is missing', async () => {
@@ -187,7 +200,7 @@ describe('fetchAndApplySessionById', () => {
         active: true,
         activeAt: 2,
         encryptionMode: 'plain',
-        dataEncryptionKey: null,
+        dataEncryptionKey: 'unused-plain-key',
         metadataVersion: 1,
         metadata: JSON.stringify({ readStateV1: null }),
         agentStateVersion: 2,
@@ -351,7 +364,9 @@ describe('fetchAndApplySessionById', () => {
     });
 
     expect(request).toHaveBeenCalledWith('/v2/sessions/s1', expect.any(Object));
-    expect(initializeSessions).toHaveBeenCalledWith(new Map([['s1', null]]));
+    expect(decryptEncryptionKey).not.toHaveBeenCalled();
+    expect(initializeSessions).not.toHaveBeenCalled();
+    expect(getSessionEncryption).not.toHaveBeenCalled();
     expect(applySessions).toHaveBeenCalledWith([
       expect.objectContaining({
         id: 's1',
@@ -438,12 +453,12 @@ describe('fetchAndApplySessionById', () => {
 
     await fetchAndApplySessionById({
       sessionId: 's1',
-      credentials: { token: 't' } as any,
+      credentials: { token: 't', secret: 's' },
       encryption: {
         decryptEncryptionKey,
         initializeSessions,
-        getSessionEncryption: () => ({ decryptMetadata, decryptAgentState } as any),
-      },
+        getSessionEncryption: () => ({ decryptMetadata, decryptAgentState }),
+      } satisfies SessionByIdEncryption,
       sessionDataKeys,
       request,
       applySessions,
@@ -455,5 +470,121 @@ describe('fetchAndApplySessionById', () => {
     expect(sessionDataKeys.get('s1')).toEqual(new Uint8Array([1, 2, 3]));
     expect(decryptMetadata).toHaveBeenCalledWith(1, 'enc-meta');
     expect(decryptAgentState).toHaveBeenCalledWith(1, 'enc-state');
+  });
+
+  it('reuses a cached session data key when the encrypted envelope is unchanged', async () => {
+    const applySessions = vi.fn();
+    const decryptEncryptionKey = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    const initializeSessions = vi.fn(async () => {});
+    const decryptMetadata = vi.fn(async () => ({ readStateV1: null }));
+    const decryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
+    const cachedKey = new Uint8Array([7, 7, 7]);
+
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      session: {
+        id: 's_cached',
+        createdAt: 1,
+        updatedAt: 2,
+        seq: 3,
+        active: true,
+        activeAt: 2,
+        encryptionMode: 'e2ee',
+        dataEncryptionKey: 'cached-envelope',
+        metadataVersion: 1,
+        metadata: 'enc-meta',
+        agentStateVersion: 1,
+        agentState: 'enc-state',
+        share: null,
+      },
+    }), { status: 200 }));
+
+    const sessionDataKeys = new Map<string, Uint8Array>([['s_cached', cachedKey]]);
+    const sessionDataKeyEnvelopes = new Map<string, string>([['s_cached', 'cached-envelope']]);
+
+    await fetchAndApplySessionById({
+      sessionId: 's_cached',
+      credentials: { token: 't', secret: 's' },
+      encryption: {
+        decryptEncryptionKey,
+        initializeSessions,
+        getSessionEncryption: () => ({ decryptMetadata, decryptAgentState }),
+      } satisfies SessionByIdEncryption,
+      sessionDataKeys,
+      sessionDataKeyEnvelopes,
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(decryptEncryptionKey).not.toHaveBeenCalled();
+    expect(initializeSessions).toHaveBeenCalledWith(new Map([['s_cached', cachedKey]]));
+    expect(sessionDataKeys.get('s_cached')).toBe(cachedKey);
+    expect(sessionDataKeyEnvelopes.get('s_cached')).toBe('cached-envelope');
+    expect(applySessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 's_cached',
+        metadata: { readStateV1: null },
+        agentState: { controlledByUser: true },
+      }),
+    ]);
+  });
+
+  it('starts encrypted metadata and agent-state decrypts before awaiting either result', async () => {
+    const applySessions = vi.fn();
+    const metadataDeferred = createDeferred<{ readStateV1: null }>();
+    const agentStateDeferred = createDeferred<{ controlledByUser: true }>();
+    const decryptMetadata = vi.fn(async () => metadataDeferred.promise);
+    const decryptAgentState = vi.fn(async () => agentStateDeferred.promise);
+
+    const request = vi.fn(async () => new Response(JSON.stringify({
+      session: {
+        id: 's_parallel',
+        createdAt: 1,
+        updatedAt: 2,
+        seq: 3,
+        active: true,
+        activeAt: 2,
+        encryptionMode: 'e2ee',
+        dataEncryptionKey: 'dek',
+        metadataVersion: 1,
+        metadata: 'enc-meta',
+        agentStateVersion: 1,
+        agentState: 'enc-state',
+        share: null,
+      },
+    }), { status: 200 }));
+
+    const fetchPromise = fetchAndApplySessionById({
+      sessionId: 's_parallel',
+      credentials: { token: 't', secret: 's' },
+      encryption: {
+        decryptEncryptionKey: async () => new Uint8Array([1, 2, 3]),
+        initializeSessions: async () => {},
+        getSessionEncryption: () => ({ decryptMetadata, decryptAgentState }),
+      } satisfies SessionByIdEncryption,
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    try {
+      await expect.poll(() => ({
+        metadata: decryptMetadata.mock.calls.length,
+        agentState: decryptAgentState.mock.calls.length,
+      }), { timeout: 100 }).toEqual({ metadata: 1, agentState: 1 });
+    } finally {
+      metadataDeferred.resolve({ readStateV1: null });
+      agentStateDeferred.resolve({ controlledByUser: true });
+      await fetchPromise;
+    }
+
+    expect(applySessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 's_parallel',
+        metadata: { readStateV1: null },
+        agentState: { controlledByUser: true },
+      }),
+    ]);
   });
 });

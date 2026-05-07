@@ -1,10 +1,38 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { logger } from '@/ui/logger';
+import { createTurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import { createGeminiBackendMessageHandler } from './createGeminiBackendMessageHandler';
 import { createGeminiTurnMessageState } from './geminiTurnMessageState';
 
 describe('createGeminiBackendMessageHandler (reasoning)', () => {
+  it('tracks the current turn assistant preview from structured model output', () => {
+    const state = createGeminiTurnMessageState();
+    const tracker = createTurnAssistantPreviewTracker();
+    const session = {
+      sendAgentMessage: vi.fn(),
+      keepAlive: vi.fn(),
+    };
+    const messageBuffer = {
+      addMessage: vi.fn(),
+      updateLastMessage: vi.fn(),
+      removeLastMessage: vi.fn(),
+    };
+
+    const handler = createGeminiBackendMessageHandler({
+      session: session as any,
+      messageBuffer: messageBuffer as any,
+      state,
+      diffProcessor: {} as any,
+      turnAssistantPreviewTracker: tracker,
+    });
+
+    handler({ type: 'model-output', textDelta: 'Hello' } as any);
+    handler({ type: 'model-output', textDelta: ' world' } as any);
+
+    expect(tracker.getPreview()).toBe('Hello world');
+  });
+
   it('streams thinking chunks through transcript-vNext instead of durable thinking rows', () => {
     const state = createGeminiTurnMessageState();
     const session = {

@@ -168,6 +168,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     buttonWrapper: {
         width: 260,
     },
+    sidebarStartButton: {
+        backgroundColor: theme.colors.button.primary.background,
+    },
+    sidebarStartButtonText: {
+        color: theme.colors.button.primary.tint,
+    },
 }));
 
 function titleForKind(kind: SessionGettingStartedDecisionKind): string {
@@ -470,6 +476,8 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                             title={t('components.emptySessionsTablet.startNewSessionButton')}
                             onPress={model.onStartNewSession}
                             size="normal"
+                            style={props.variant === 'sidebar' ? styles.sidebarStartButton : undefined}
+                            textStyle={props.variant === 'sidebar' ? styles.sidebarStartButtonText : undefined}
                         />
                     </View>
                 ) : null}

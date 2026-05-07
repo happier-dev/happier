@@ -265,10 +265,10 @@ describe('SettingsView', () => {
             screen.pressRowByTitle('settings.servers');
         });
 
-        expect(shared.routerPushSpy).toHaveBeenCalledWith('/server');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/server');
     });
 
-    it('includes a System Status entry that routes to /(app)/settings/system-status', async () => {
+    it('includes a System Status entry that routes to /settings/system-status', async () => {
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(React.createElement(SettingsView));
 
@@ -278,7 +278,7 @@ describe('SettingsView', () => {
             screen.pressRowByTitle('settings.systemStatus');
         });
 
-        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/system-status');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/system-status');
     });
 
     it('blurs the active element before routing to Features on web', async () => {
@@ -293,7 +293,7 @@ describe('SettingsView', () => {
 
         expect(shared.deferOnWebSpy).toHaveBeenCalledTimes(1);
         expect(shared.navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
-        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/features');
     });
 
     it('routes to the in-app bug report composer by default when Report issue is pressed', async () => {
@@ -306,7 +306,7 @@ describe('SettingsView', () => {
             await screen.pressRowByTitle('settings.reportIssue');
         });
 
-        expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
+        expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/report-issue');
         expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
     });
 
@@ -327,7 +327,7 @@ describe('SettingsView', () => {
 
             expect(shared.linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
             expect(shared.linkingOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
-            expect(shared.routerPushSpy).not.toHaveBeenCalledWith('/(app)/settings/report-issue');
+            expect(shared.routerPushSpy).not.toHaveBeenCalledWith('/settings/report-issue');
         } finally {
             if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
             else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;
@@ -351,7 +351,7 @@ describe('SettingsView', () => {
 
             expect(shared.linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
             expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
-            expect(shared.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/report-issue');
+            expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/report-issue');
         } finally {
             if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
             else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;

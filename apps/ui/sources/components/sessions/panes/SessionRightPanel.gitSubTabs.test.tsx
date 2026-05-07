@@ -82,6 +82,7 @@ function buildScmSnapshotMock(capabilities: any) {
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
+    TextInput: 'TextInput',
 }));
 
 vi.mock('@/constants/Typography', () => ({
@@ -137,10 +138,6 @@ vi.mock('@/components/sessions/sourceControl/commitComposer/ScmCommitComposerCar
     ScmCommitComposerCard: (props: any) => React.createElement('ScmCommitComposerCard', props),
 }));
 
-vi.mock('@/components/sessions/files/SourceControlOperationsPanel', () => ({
-    SourceControlOperationsPanel: (props: any) => React.createElement('SourceControlOperationsPanel', props),
-}));
-
 vi.mock('@/components/sessions/files/SourceControlOperationsHistorySection', () => ({
     SourceControlOperationsHistorySection: (props: any) => React.createElement('SourceControlOperationsHistorySection', props),
 }));
@@ -179,6 +176,22 @@ vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', ()
 
 vi.mock('@/scm/scmAttribution', () => ({
     getDefaultChangedFilesViewMode: () => 'session',
+    getSelectableChangedFilesViewModes: (input: { showTurnViewToggle: boolean; showSessionViewToggle: boolean }) => {
+        if (!input.showTurnViewToggle && !input.showSessionViewToggle) return [];
+        return [
+            'repository',
+            ...(input.showTurnViewToggle ? ['turn'] : []),
+            ...(input.showSessionViewToggle ? ['session'] : []),
+        ];
+    },
+    resolveChangedFilesViewMode: (input: { mode: string; showTurnViewToggle: boolean; showSessionViewToggle: boolean }) => {
+        if (input.mode === 'turn' && input.showTurnViewToggle) return 'turn';
+        if (input.mode === 'session' && input.showSessionViewToggle) return 'session';
+        if (input.mode === 'repository') return 'repository';
+        if (input.showTurnViewToggle) return 'turn';
+        if (input.showSessionViewToggle) return 'session';
+        return 'repository';
+    },
 }));
 
 vi.mock('@/scm/settings/commitStrategy', () => ({
@@ -369,6 +382,77 @@ describe('SessionRightPanel git sub-tabs', () => {
         expect(getOpacity(commitSurface!)).toBe(0);
         expect(getOpacity(updateSurface!)).toBe(0);
         expect(getOpacity(historySurface!)).toBe(1);
+    });
+
+    it('preserves the selected sub-tab when a pending commit-draft flush resolves after switching tabs', async () => {
+        const { SessionRightPanel } = await import('./SessionRightPanel');
+
+        let observedState: any = null;
+        useChangedFilesDataSpy.mockImplementation(() => ({
+            attributionReliability: 'explicit',
+            scmStatusFiles: {
+                includedFiles: [],
+                pendingFiles: [],
+                changeSetModel: 'index',
+                branch: 'main',
+                upstream: null,
+                ahead: 0,
+                behind: 0,
+                detached: false,
+                totalIncluded: 0,
+                totalPending: 0,
+            },
+            allRepositoryChangedFiles: [],
+            sessionAttributedFiles: [],
+            repositoryOnlyFiles: [],
+            suppressedInferredCount: 0,
+        }));
+        const Probe = () => {
+            const { state } = useAppPaneContext();
+            observedState = state;
+            return null;
+        };
+
+        scmWriteEnabledMock = true;
+        scmSnapshotMock = buildScmSnapshotMock({
+            readLog: true,
+            writeCommit: true,
+            writeRemoteFetch: true,
+            writeRemotePull: true,
+            writeRemotePush: true,
+            writeDiscard: true,
+            writeInclude: true,
+            writeExclude: true,
+        });
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionRightPanel sessionId="s1" scopeId="session:s1" />
+                <Probe />
+            </AppPaneProvider>,
+        );
+
+        const composer = screen.findByType('ScmCommitComposerCard' as any);
+
+        await act(async () => {
+            composer.props.onDraftMessageChange('wip: keep update tab');
+        });
+
+        await screen.pressByTestIdAsync('session-rightpanel-git-subtab:update');
+        await act(async () => {
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(observedState?.scopes?.['session:s1']?.right?.tabState?.git?.activeSubTabId).toBe('update');
+
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+        });
+
+        expect(observedState?.scopes?.['session:s1']?.right?.tabState?.git).toEqual({
+            activeSubTabId: 'update',
+            commitMessageDraft: 'wip: keep update tab',
+        });
     });
 
     it('does not repeatedly recompute changed files data when switching away from commit', async () => {

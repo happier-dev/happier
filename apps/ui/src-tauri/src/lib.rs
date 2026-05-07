@@ -5,7 +5,13 @@ mod autostart;
 mod tray;
 
 #[cfg(desktop)]
+mod pet_overlay;
+
+#[cfg(desktop)]
 mod system_tasks;
+
+#[cfg(desktop)]
+mod window_chrome;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -23,6 +29,7 @@ pub fn run() {
     {
         builder = builder
             .manage(app_updates::PendingUpdate::default())
+            .manage(pet_overlay::DesktopPetOverlayState::default())
             .manage(system_tasks::SystemTasksState::default())
             .invoke_handler(tauri::generate_handler![
                 app_updates::desktop_fetch_update,
@@ -31,11 +38,30 @@ pub fn run() {
                 autostart::desktop_get_autostart_enabled,
                 autostart::desktop_set_autostart_enabled,
                 tray::desktop_set_tray_state,
+                pet_overlay::sync_desktop_pet_overlay_state,
+                pet_overlay::desktop_pet_overlay_read_window_state,
+                pet_overlay::desktop_pet_overlay_set_input_locked,
+                pet_overlay::desktop_pet_overlay_sync_element_metrics,
+                pet_overlay::desktop_pet_overlay_start_drag_session,
+                pet_overlay::desktop_pet_overlay_apply_drag_delta,
+                pet_overlay::desktop_pet_overlay_release_drag_velocity,
+                pet_overlay::desktop_pet_overlay_apply_momentum_delta,
+                pet_overlay::desktop_pet_overlay_end_drag_session,
+                pet_overlay::desktop_pet_overlay_reset_position,
+                pet_overlay::emit_desktop_pet_overlay_interaction_result,
+                pet_overlay::desktop_pet_overlay_show_main_window,
                 system_tasks::start_system_task,
                 system_tasks::cancel_system_task,
                 system_tasks::get_system_task_snapshot,
                 system_tasks::system_tasks_open_log_path,
-                system_tasks::respond_system_task_prompt
+                system_tasks::respond_system_task_prompt,
+                window_chrome::desktop_get_window_chrome_policy,
+                window_chrome::desktop_get_window_state,
+                window_chrome::desktop_minimize_window,
+                window_chrome::desktop_toggle_window_maximize,
+                window_chrome::desktop_close_window,
+                window_chrome::desktop_show_main_window,
+                window_chrome::desktop_start_window_dragging
             ]);
     }
 
@@ -45,6 +71,7 @@ pub fn run() {
             {
                 autostart::register(app)?;
                 tray::register(app)?;
+                window_chrome::register(app)?;
             }
 
             #[cfg(desktop)]
@@ -60,8 +87,32 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            #[cfg(desktop)]
+            match event {
+                tauri::RunEvent::Ready => {
+                    window_chrome::present_main_window_for_lifecycle_event(
+                        app_handle,
+                        window_chrome::DesktopMainWindowLifecycleEvent::AppReady,
+                    );
+                }
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen {
+                    has_visible_windows,
+                    ..
+                } => {
+                    window_chrome::present_main_window_for_lifecycle_event(
+                        app_handle,
+                        window_chrome::DesktopMainWindowLifecycleEvent::MacOsReopen {
+                            has_visible_windows,
+                        },
+                    );
+                }
+                _ => {}
+            }
+        });
 }
 
 #[cfg(desktop)]

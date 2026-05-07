@@ -121,6 +121,11 @@ vi.mock('@/agents/catalog/catalog', () => ({
         permissions: { modeGroup: 'codexLike' },
         sessionModes: { kind: 'legacy' },
     }),
+    getAgentBehavior: (agentId: string) => ({
+        sessionUsage: {
+            supportsExactContextUsageBadge: agentId !== 'codex' && agentId !== 'gemini',
+        },
+    }),
 }));
 
 describe('AgentInput (image attachment thumbnails)', () => {

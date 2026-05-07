@@ -1,12 +1,161 @@
 const path = require("node:path");
+const fs = require("node:fs");
 const {
   getSentryExpoConfig
 } = require("@sentry/react-native/metro");
+
+const generatedWorkletModulePrefixes = [
+  "react-native-worklets/__generatedWorklets/",
+  "react-native-worklets/.worklets/",
+];
+const workletsPackageName = "react-native-worklets";
+
+function parseBooleanEnv(name, defaultValue) {
+  const value = String(process.env[name] ?? "").trim().toLowerCase();
+  if (!value) return defaultValue;
+  if (value === "1" || value === "true" || value === "yes" || value === "on") return true;
+  if (value === "0" || value === "false" || value === "no" || value === "off") return false;
+  return defaultValue;
+}
+
+const workletsBundleModeEnabled = parseBooleanEnv("HAPPIER_UI_WORKLETS_BUNDLE_MODE", false);
+let workletsPackageRoot = null;
+try {
+  workletsPackageRoot = path.dirname(require.resolve(`${workletsPackageName}/package.json`));
+} catch {
+  workletsPackageRoot = null;
+}
+
+function getWorkletsBundleModeEntryPoints() {
+  const entryPoints = [];
+  for (const candidate of [
+    "react-native-worklets/src/initializers/workletRuntimeEntry.native.ts",
+    "react-native-worklets/lib/module/initializers/workletRuntimeEntry.native.js",
+  ]) {
+    try {
+      entryPoints.push(require.resolve(candidate));
+    } catch {
+      // ignore unavailable package layouts
+    }
+  }
+  return entryPoints;
+}
+
+const workletsBundleModeEntryPoints = workletsBundleModeEnabled
+  ? getWorkletsBundleModeEntryPoints()
+  : [];
+
+function isGeneratedWorkletImport(moduleName) {
+  return typeof moduleName === "string"
+    && generatedWorkletModulePrefixes.some((prefix) => moduleName.startsWith(prefix));
+}
+
+function referencesGeneratedWorkletPath(moduleName) {
+  return typeof moduleName === "string"
+    && generatedWorkletModulePrefixes.some((prefix) => moduleName.includes(prefix));
+}
+
+function resolveGeneratedWorkletModule(moduleName) {
+  if (!workletsBundleModeEnabled || !workletsPackageRoot || !isGeneratedWorkletImport(moduleName)) return null;
+  const filePath = path.join(workletsPackageRoot, moduleName.slice(`${workletsPackageName}/`.length));
+  if (!fs.existsSync(filePath)) {
+    throw new Error(
+      `[Worklets] Generated Worklets Bundle Mode module "${moduleName}" does not exist at "${filePath}". `
+      + "This usually means Metro is serving stale worklet transforms or Bundle Mode was toggled without clearing the cache; clear Metro cache before restarting. "
+      + "Restart Metro with a cleared cache and keep HAPPIER_UI_WORKLETS_BUNDLE_MODE consistent between Babel and Metro.",
+    );
+  }
+  return {
+    type: "sourceFile",
+    filePath,
+  };
+}
+
+function resolveGeneratedWorkletsWatchFolders() {
+  if (!workletsBundleModeEnabled || !workletsPackageRoot) return null;
+  return generatedWorkletModulePrefixes.map((prefix) => {
+    const folder = path.resolve(workletsPackageRoot, prefix.slice(`${workletsPackageName}/`.length));
+    try {
+      fs.mkdirSync(folder, { recursive: true });
+    } catch {
+      // Metro will surface the underlying filesystem problem if the folder cannot be crawled.
+    }
+    return folder;
+  });
+}
+
+function resolveWorkletsRuntimeWatchFolders() {
+  if (!workletsBundleModeEnabled || !workletsPackageRoot || workletsBundleModeEntryPoints.length === 0) {
+    return null;
+  }
+  return [workletsPackageRoot];
+}
 
 const config = getSentryExpoConfig(__dirname, {
   // Enable CSS support for web
   isCSSEnabled: true,
 });
+
+const existingSerializer = config.serializer || {};
+const existingGetModulesRunBeforeMainModule = existingSerializer.getModulesRunBeforeMainModule;
+const existingCreateModuleIdFactory = existingSerializer.createModuleIdFactory;
+const ORDINARY_MODULE_ID_OFFSET = 1_000_000_000;
+
+function toOrdinaryModuleId(preferredModuleId, fallbackModuleId) {
+  const numericPreferred = Number(preferredModuleId);
+  if (Number.isSafeInteger(numericPreferred) && numericPreferred >= 0) {
+    const shiftedModuleId = numericPreferred + ORDINARY_MODULE_ID_OFFSET;
+    if (Number.isSafeInteger(shiftedModuleId)) {
+      return shiftedModuleId;
+    }
+  }
+  return fallbackModuleId;
+}
+
+config.serializer = {
+  ...existingSerializer,
+  getModulesRunBeforeMainModule(dirname) {
+    const existingModules = typeof existingGetModulesRunBeforeMainModule === "function"
+      ? existingGetModulesRunBeforeMainModule(dirname)
+      : [];
+    return [
+      ...workletsBundleModeEntryPoints,
+      ...existingModules,
+    ];
+  },
+  createModuleIdFactory() {
+    const existingFactory = typeof existingCreateModuleIdFactory === "function"
+      ? existingCreateModuleIdFactory()
+      : null;
+    let nextModuleId = 0;
+    let nextOrdinaryModuleId = ORDINARY_MODULE_ID_OFFSET;
+    const moduleIdByName = new Map();
+    const usedModuleIds = new Set();
+
+    return (moduleName) => {
+      if (moduleIdByName.has(moduleName)) return moduleIdByName.get(moduleName);
+      if (workletsBundleModeEnabled && referencesGeneratedWorkletPath(moduleName)) {
+        const moduleId = Number(path.basename(moduleName, ".js"));
+        usedModuleIds.add(moduleId);
+        moduleIdByName.set(moduleName, moduleId);
+        return moduleId;
+      }
+      const preferredModuleId = existingFactory ? existingFactory(moduleName) : nextModuleId++;
+      let moduleId = workletsBundleModeEnabled
+        ? toOrdinaryModuleId(preferredModuleId, nextOrdinaryModuleId)
+        : preferredModuleId;
+      while (usedModuleIds.has(moduleId)) {
+        moduleId += 1;
+      }
+      if (workletsBundleModeEnabled && moduleId >= nextOrdinaryModuleId) {
+        nextOrdinaryModuleId = moduleId + 1;
+      }
+      usedModuleIds.add(moduleId);
+      moduleIdByName.set(moduleName, moduleId);
+      return moduleId;
+    };
+  },
+};
 
 // Metro defaults to Watchman (and, when unavailable, falls back to the native `find` crawler). In large monorepos,
 // both Watchman and the native `find` crawler can be unreliable in non-interactive "stack/runtime build" contexts:
@@ -15,8 +164,11 @@ const config = getSentryExpoConfig(__dirname, {
 //
 // In CI/e2e and stack builds, prefer Metro's Node filesystem crawler (slower but deterministic).
 const isStackRun = Boolean((process.env.HAPPIER_STACK_STACK ?? '').toString().trim());
+const isWatchmanDisabledForLocalRun = /^(1|true|yes|on)$/i.test(
+  (process.env.HAPPIER_UI_METRO_DISABLE_WATCHMAN ?? '').toString().trim(),
+);
 
-if (process.env.CI || isStackRun) {
+if (process.env.CI || isStackRun || isWatchmanDisabledForLocalRun) {
   config.resolver.useWatchman = false;
   // `metro-file-map`'s watcher selection is driven by `watcher.useWatchman`, not
   // `resolver.useWatchman`. Set both to avoid "Failed to start watch mode"
@@ -30,6 +182,9 @@ if (process.env.CI || isStackRun) {
 // Add support for .wasm files (required by Skia for all platforms)
 // Source: https://shopify.github.io/react-native-skia/docs/getting-started/installation/
 config.resolver.assetExts.push('wasm');
+// Built-in pet packages ship Codex-compatible WebP spritesheets through Metro for web,
+// native mobile, and the Tauri desktop web export.
+config.resolver.assetExts.push('webp');
 
 // Enable inlineRequires for proper Skia and Reanimated loading
 // Source: https://shopify.github.io/react-native-skia/docs/getting-started/web/
@@ -65,6 +220,18 @@ config.watchFolders = existingWatchFolders.filter(
 
 const rootNodeModules = path.resolve(__dirname, "../../node_modules");
 const appNodeModules = path.resolve(__dirname, "node_modules");
+const generatedWorkletsWatchFolders = resolveGeneratedWorkletsWatchFolders() || [];
+for (const generatedWorkletsWatchFolder of generatedWorkletsWatchFolders) {
+  if (!config.watchFolders.includes(generatedWorkletsWatchFolder)) {
+    config.watchFolders.push(generatedWorkletsWatchFolder);
+  }
+}
+const workletsRuntimeWatchFolders = resolveWorkletsRuntimeWatchFolders() || [];
+for (const workletsRuntimeWatchFolder of workletsRuntimeWatchFolders) {
+  if (!config.watchFolders.includes(workletsRuntimeWatchFolder)) {
+    config.watchFolders.push(workletsRuntimeWatchFolder);
+  }
+}
 
 // Expo packages can be hoisted into the monorepo root `node_modules/**` and ship TypeScript entrypoints.
 // Metro needs these files in its watch set to compute SHA-1 hashes during export/build, but we still want
@@ -123,6 +290,9 @@ function isExpoModuleOrigin(originModulePath, suffixes) {
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  const generatedWorkletResolution = resolveGeneratedWorkletModule(moduleName);
+  if (generatedWorkletResolution) return generatedWorkletResolution;
+
   // Fix event-target-shim/index import - exports define "." not "./index"
   let resolvedModuleName = moduleName;
   if (moduleName === "event-target-shim/index") {
@@ -131,6 +301,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   // Some upstream packages import `@noble/hashes/crypto.js`, but noble-hashes only exports `./crypto`.
   // Metro can crash when resolution throws inside a large monorepo watch crawl; normalize to the exported subpath.
   if (moduleName === "@noble/hashes/crypto.js") {
+    resolvedModuleName = "@noble/hashes/crypto";
+  }
+  if (path.normalize(String(moduleName)) === path.resolve(rootNodeModules, "@noble/hashes/crypto.js")) {
     resolvedModuleName = "@noble/hashes/crypto";
   }
 

@@ -178,12 +178,50 @@ export function resolveWindowsDaemonWrapperPath(params: Readonly<{
   return win32Path.join(home, 'services', `${label}.ps1`);
 }
 
+/**
+ * Resolve the stdout/stderr log paths that the Windows scheduled-task wrapper
+ * redirects into. This is the canonical path computation for both wrapper
+ * rendering and post-mortem diagnostics, so those two call sites cannot drift.
+ */
+export function resolveWindowsDaemonServiceLogPaths(params: Readonly<{
+  happierHomeDir: string;
+  instanceId: string;
+  channel?: PublicReleaseRingId;
+  targetMode?: DaemonServiceTargetMode;
+}>): { stdoutPath: string; stderrPath: string } {
+  const channel = params.channel ?? 'stable';
+  const targetMode = params.targetMode ?? 'pinned';
+  const sanitizedInstanceId = sanitizeServiceInstanceId(params.instanceId);
+  const logInstanceId = targetMode === 'default-following' ? 'default' : sanitizedInstanceId;
+  const logPrefix = targetMode === 'default-following'
+    ? ''
+    : (() => {
+        const channelSegment = resolveDaemonServiceChannelSegment(channel);
+        return channelSegment ? `${channelSegment}.` : '';
+      })();
+  const home = String(params.happierHomeDir ?? '').trim();
+  const usePosix = home.startsWith('/');
+  const joinFn = usePosix ? join : win32Path.join;
+  return {
+    stdoutPath: joinFn(home, 'logs', `daemon-service.${logPrefix}${logInstanceId}.out.log`),
+    stderrPath: joinFn(home, 'logs', `daemon-service.${logPrefix}${logInstanceId}.err.log`),
+  };
+}
+
 function buildDaemonServiceProgramArgs(params: Readonly<{ nodePath: string; entryPath: string }>): string[] {
   const nodePath = String(params.nodePath ?? '').trim();
   if (!nodePath) throw new Error('nodePath is required');
   const entryPath = String(params.entryPath ?? '').trim();
-  if (entryPath) return [nodePath, entryPath, 'daemon', 'start-sync'];
-  return [nodePath, 'daemon', 'start-sync'];
+  // `--takeover` is always set on service-managed daemon starts: the
+  // background service is the legitimate owner of its relay profile, so if
+  // a manual daemon squatted the lock (e.g. running from an older CLI) the
+  // service should displace it on next launch. Without this, launchd
+  // respawns indefinitely and the service appears "stopped" to users even
+  // though it's actively crash-looping (see crash_looping finding).
+  // Policy: to run a manual daemon yourself, stop the background service
+  // first — it won't be respawning to fight you.
+  if (entryPath) return [nodePath, entryPath, 'daemon', 'start-sync', '--takeover'];
+  return [nodePath, 'daemon', 'start-sync', '--takeover'];
 }
 
 export function planDaemonServiceInstall(params: Readonly<{
@@ -290,8 +328,12 @@ export function planDaemonServiceInstall(params: Readonly<{
       channel,
       targetMode,
     });
-    const stdoutPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${logInstanceId}.out.log`);
-    const stderrPath = win32Path.join(params.happierHomeDir, 'logs', `daemon-service.${logPrefix}${logInstanceId}.err.log`);
+    const { stdoutPath, stderrPath } = resolveWindowsDaemonServiceLogPaths({
+      happierHomeDir: params.happierHomeDir,
+      instanceId,
+      channel,
+      targetMode,
+    });
 
     const wrapper = renderWindowsScheduledTaskWrapperPs1({
       workingDirectory: params.userHomeDir,
@@ -608,8 +650,17 @@ export function planDaemonServiceLifecycle(params: Readonly<{
       return {
         platform: 'darwin',
         commands: [
-          { cmd: 'launchctl', args: ['bootout', `gui/${uid}/${label}`] },
-          { cmd: 'launchctl', args: ['enable', `gui/${uid}/${label}`] },
+          // bootout may fail if service isn't currently loaded; enable is
+          // idempotent; both are pre-steps whose real purpose is to put
+          // launchd into the right state before bootstrap + kickstart. They
+          // should never block the lifecycle.
+          //
+          // bootstrap is NOT ignored — if it fails we want to surface the
+          // problem. The retry loop in apply.ts absorbs transient
+          // launchd async-teardown failures (bootout completes async so the
+          // following bootstrap can briefly fail until the teardown drains).
+          { cmd: 'launchctl', args: ['bootout', `gui/${uid}/${label}`], ignoreFailure: true },
+          { cmd: 'launchctl', args: ['enable', `gui/${uid}/${label}`], ignoreFailure: true },
           { cmd: 'launchctl', args: ['bootstrap', `gui/${uid}`, plistPath] },
           { cmd: 'launchctl', args: ['kickstart', '-k', `gui/${uid}/${label}`] },
         ],

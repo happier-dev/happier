@@ -34,6 +34,12 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
+import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
+import {
+  createSessionReadStateDropdownItem,
+  resolveSessionReadStateFromActionId,
+} from '@/components/sessions/actions/sessionReadStateActionItems';
+import { sessionSetManualReadStateWithServerScope } from '@/sync/ops';
 
 export function SessionHeaderActionMenu(props: Readonly<{
   sessionId: string;
@@ -118,6 +124,16 @@ export function SessionHeaderActionMenu(props: Readonly<{
       out.push(...props.extraItems);
     }
 
+    if (props.session.archivedAt == null) {
+      const readStateItem = createSessionReadStateDropdownItem(
+        resolveSessionReadStateAction(props.session),
+        theme.colors.header.tint,
+      );
+      if (readStateItem) {
+        out.push(readStateItem);
+      }
+    }
+
     if (showTeleportAction) {
       out.push({
         id: 'voice.teleport',
@@ -136,6 +152,7 @@ export function SessionHeaderActionMenu(props: Readonly<{
     settings,
     showTeleportAction,
     handoffAvailability.available,
+    theme.colors.header.tint,
   ]);
 
   if (actions.length === 0) return null;
@@ -160,6 +177,27 @@ export function SessionHeaderActionMenu(props: Readonly<{
           fireAndForget(teleportVoiceAgentToSessionRoot({ sessionId: props.sessionId }), {
             tag: 'SessionHeaderActionMenu.execute.voiceTeleport',
           });
+          return;
+        }
+        const manualReadState = resolveSessionReadStateFromActionId(actionId);
+        if (manualReadState) {
+          fireAndForget((async () => {
+            const result = await sessionSetManualReadStateWithServerScope(
+              props.sessionId,
+              manualReadState,
+              { serverId: sessionServerId ?? null },
+            );
+            if (!result.success) {
+              Modal.alert(
+                t('common.error'),
+                result.message || t(
+                  manualReadState === 'read'
+                    ? 'sessionInfo.failedToMarkSessionRead'
+                    : 'sessionInfo.failedToMarkSessionUnread',
+                ),
+              );
+            }
+          })(), { tag: 'SessionHeaderActionMenu.execute.sessionReadState' });
           return;
         }
         if (actionId === 'session.fork') {

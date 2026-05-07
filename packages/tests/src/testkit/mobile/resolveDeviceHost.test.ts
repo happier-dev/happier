@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveDeviceVisibleBaseUrl } from './resolveDeviceHost';
+import { resolveDeviceVisibleBaseUrl, resolveDeviceVisibleHostPattern } from './resolveDeviceHost';
 
 describe('resolveDeviceVisibleBaseUrl', () => {
   it('rewrites localhost to 10.0.2.2 for android emulator', () => {
@@ -31,5 +31,25 @@ describe('resolveDeviceVisibleBaseUrl', () => {
         env: { HAPPIER_E2E_MOBILE_DEVICE_HOST: '192.168.0.10' } as any,
       }),
     ).toBe('http://192.168.0.10:24580');
+  });
+
+  it('returns a regex-safe visible host pattern for android emulator flows', () => {
+    expect(
+      resolveDeviceVisibleHostPattern({
+        platform: 'android',
+        baseUrl: 'http://127.0.0.1:24580',
+        env: {},
+      }),
+    ).toBe('10\\.0\\.2\\.2');
+  });
+
+  it('returns a regex-safe visible host pattern for explicit device host overrides', () => {
+    expect(
+      resolveDeviceVisibleHostPattern({
+        platform: 'android',
+        baseUrl: 'http://127.0.0.1:24580',
+        env: { HAPPIER_E2E_MOBILE_DEVICE_HOST: '192.168.0.10' } as any,
+      }),
+    ).toBe('192\\.168\\.0\\.10');
   });
 });

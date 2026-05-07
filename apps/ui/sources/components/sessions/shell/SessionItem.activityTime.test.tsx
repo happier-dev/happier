@@ -9,6 +9,8 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
 const useSessionSpy = vi.hoisted(() => vi.fn(() => null));
 const useSessionListRenderableSpy = vi.hoisted(() => vi.fn(() => null));
+const AvatarMock = 'Avatar' as unknown as React.ComponentType<{ monochrome?: boolean }>;
+let platformOs: 'ios' | 'android' | 'web' = 'web';
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -37,7 +39,10 @@ installSessionShellCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'web',
+                get OS() {
+                    return platformOs;
+                },
+                select: (value: any) => value[platformOs] ?? value.default,
             },
         });
     },
@@ -148,6 +153,19 @@ let mockSessionStatus: MockSessionStatus = {
     ...defaultSessionStatus,
 };
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({
+            ...acc,
+            ...flattenStyle(entry),
+        }), {});
+    }
+    if (!style || typeof style !== 'object') {
+        return {};
+    }
+    return style as Record<string, unknown>;
+}
+
 function createSession(id: string) {
     return createSessionFixture({
         id,
@@ -165,6 +183,7 @@ describe('SessionItem activity time', () => {
         mockSessionStatus = {
             ...defaultSessionStatus,
         };
+        platformOs = 'web';
         useProfileSpy.mockClear();
         useSessionSpy.mockClear();
         useSessionListRenderableSpy.mockClear();
@@ -310,5 +329,104 @@ describe('SessionItem activity time', () => {
         expect(useSessionListRenderableSpy).toHaveBeenCalledWith('sess_row_state');
         expect(useSessionSpy).not.toHaveBeenCalled();
         expect(useProfileSpy).not.toHaveBeenCalled();
+    });
+
+    it('renders inactive online session avatars in monochrome', async () => {
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={{
+                    ...createSession('sess_inactive_online'),
+                    active: false,
+                    presence: 'online',
+                }}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        expect(screen.findAllByType(AvatarMock)[0].props.monochrome).toBe(true);
+    });
+
+    it('uses start-side overflow ellipsis for path subtitles on web without reordering the path', async () => {
+        platformOs = 'web';
+        const { SessionItem } = await import('./SessionItem');
+        const sessionPath = '~/Documents/Development/happier/remote-dev';
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_path_web')}
+                subtitleOverride={sessionPath}
+                secondaryLineMode="path"
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const outerSubtitle = screen.root.findAll((node) => {
+            const style = flattenStyle(node.props?.style);
+            return String(node.type) === 'Text'
+                && node.props.numberOfLines === 1
+                && style.writingDirection === 'rtl';
+        })[0];
+        const innerSubtitle = screen.root.findAll((node) =>
+            String(node.type) === 'Text'
+            && node.props.children === sessionPath,
+        )[0];
+
+        expect(screen.getTextContent()).toContain(sessionPath);
+        expect(outerSubtitle).toBeTruthy();
+        expect(innerSubtitle).toBeTruthy();
+        expect(flattenStyle(outerSubtitle?.props.style)).toMatchObject({
+            writingDirection: 'rtl',
+            textAlign: 'left',
+        });
+        expect(flattenStyle(innerSubtitle?.props.style)).toMatchObject({
+            writingDirection: 'ltr',
+            unicodeBidi: 'isolate',
+        });
+    });
+
+    it('uses native head ellipsis for path subtitles outside web', async () => {
+        platformOs = 'ios';
+        const { SessionItem } = await import('./SessionItem');
+        const sessionPath = '~/Documents/Development/happier/remote-dev';
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_path_native')}
+                subtitleOverride={sessionPath}
+                secondaryLineMode="path"
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const subtitle = screen.root.findAll((node) =>
+            String(node.type) === 'Text'
+            && node.props.children === sessionPath
+            && node.props.numberOfLines === 1,
+        )[0];
+
+        expect(subtitle?.props.ellipsizeMode).toBe('head');
     });
 });

@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { useNewSessionCapabilitiesPrefetch } from '@/components/sessions/new/hooks/useNewSessionCapabilitiesPrefetch';
-import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { sync } from '@/sync/sync';
 import { prefetchMachineCapabilities, prefetchMachineCapabilitiesIfStale } from '@/hooks/server/useMachineCapabilitiesCache';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -20,6 +20,7 @@ export function useNewSessionMachineRefreshState(params: Readonly<{
     selectedMachineId: string | null;
     machines: ReadonlyArray<Machine>;
     recentMachinePaths: ReadonlyArray<RecentMachinePath>;
+    sessions?: ReadonlyArray<Session | string> | null | undefined;
     favoriteMachines: ReadonlyArray<string>;
     useEnhancedSessionWizard: boolean;
     refreshMachineEnvPresence: () => void;
@@ -83,9 +84,9 @@ export function useNewSessionMachineRefreshState(params: Readonly<{
         return getRecentPathsForMachine({
             machineId: params.selectedMachineId,
             recentMachinePaths: params.recentMachinePaths,
-            sessions: null,
+            sessions: params.sessions,
         });
-    }, [params.recentMachinePaths, params.selectedMachineId]);
+    }, [params.recentMachinePaths, params.selectedMachineId, params.sessions]);
 
     return {
         refreshMachineData,

@@ -1,0 +1,59 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+
+- runFlow:
+    when:
+      platform: IOS
+    commands:
+      # Force-load this run's managed Metro URL. iOS Dev Client can otherwise
+      # resume an older loaded bundle and miss F10's runner-scoped probe flag.
+      - runFlow:
+          file: _shared/connectUsingLaunchUrl.yaml
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: _shared/configureServerIfNeeded.yaml
+
+- runFlow:
+    file: _shared/loginCreateAccount.yaml
+
+# Deep-link directly to the native runtime probe so this evidence stays separate
+# from JS unit parity tests.
+- runFlow:
+    when:
+      platform: IOS
+    commands:
+      # Use the bundle-id URL scheme on iOS to avoid collisions with other
+      # installed Dev Clients that also register the shared app scheme.
+      - openLink: ${HAPPIER_E2E_MOBILE_APP_ID}:///dev/native-crypto-worker
+
+- runFlow:
+    when:
+      platform: ANDROID
+    commands:
+      - openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///dev/native-crypto-worker
+
+- extendedWaitUntil:
+    visible:
+      id: native-crypto-worker-probe-status:pass
+    timeout: 240000
+
+- assertVisible:
+    id: native-crypto-worker-probe-module-available:pass
+- assertVisible:
+    id: native-crypto-worker-probe-batch-source:pass
+- assertVisible:
+    id: native-crypto-worker-probe-data-key:pass
+- assertVisible:
+    id: native-crypto-worker-probe-secretbox:pass
+- assertVisible:
+    id: native-crypto-worker-probe-aes-gcm:pass
+- assertVisible:
+    id: native-crypto-worker-probe-invalid-items:pass
+- assertVisible:
+    id: native-crypto-worker-probe-js-responsive:pass

@@ -26,6 +26,8 @@ const setSessionListGroupOrderV1 = vi.fn();
 
 let sessionTagsV1: Record<string, string[]> = {};
 const setSessionTagsV1 = vi.fn();
+let workspaceLabelsV1: Record<string, string> = {};
+const setWorkspaceLabelsV1 = vi.fn();
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const mockMachinesState = vi.hoisted(() => ({ current: [] as any[] }));
 const flatListMock = createCapturingFlatListMock({ renderItems: true });
@@ -115,6 +117,7 @@ installSessionShellCommonModuleMocks({
                     if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
                     if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
                     if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
+                    if (key === 'workspaceLabelsV1') return [workspaceLabelsV1, setWorkspaceLabelsV1];
                     return [null, vi.fn()];
                 },
             },
@@ -325,9 +328,11 @@ describe('SessionsList pinning + per-group ordering', () => {
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
+        workspaceLabelsV1 = {};
         setPinnedSessionKeysV1.mockClear();
         setSessionListGroupOrderV1.mockClear();
         setSessionTagsV1.mockClear();
+        setWorkspaceLabelsV1.mockClear();
         routerPushSpy.mockReset();
         mockAllowedServerIds = ['server_a'];
         capturedRootFlatListProps = null;
@@ -553,7 +558,70 @@ describe('SessionsList pinning + per-group ordering', () => {
             'expected sess_live_2 session row',
         );
 
-        expect(row1.props.subtitleOverride).toBe('Rebound workstation · /home/u/live-a');
-        expect(row2.props.subtitleOverride).toBe('rebound-2.local · /home/u/live-b');
+        expect(row1.props.subtitleOverride).toBe('Rebound workstation · ~/live-a');
+        expect(row2.props.subtitleOverride).toBe('rebound-2.local · ~/live-b');
+    });
+
+    it('uses renamed workspace labels for inactive date-grouped row subtitles', async () => {
+        workspaceLabelsV1 = {
+            wl_22e4d12c: 'Renamed Live Workspace',
+        };
+        mockMachinesState.current = [
+            { id: 'machine-live-1', metadata: { displayName: 'Rebound workstation' } },
+            { id: 'machine-live-2', metadata: { host: 'rebound-2.local' } },
+        ];
+
+        const sess1 = {
+            ...sessionA,
+            id: 'sess_live_1',
+            active: false,
+            presence: 'offline',
+            metadata: { machineId: 'machine-stale-1', host: 'Old workstation', path: '/home/u/stale-a', homeDir: '/home/u' },
+        } as any;
+
+        const sess2 = {
+            ...sessionA,
+            id: 'sess_live_2',
+            active: false,
+            presence: 'offline',
+            metadata: { machineId: 'machine-stale-2', host: 'Old workstation 2', path: '/home/u/stale-b', homeDir: '/home/u' },
+        } as any;
+
+        readMachineTargetForSessionMock.mockImplementation((sessionId: string) => {
+            if (sessionId === 'sess_live_1') {
+                return { machineId: 'machine-live-1', basePath: '/home/u/live-a' };
+            }
+            if (sessionId === 'sess_live_2') {
+                return { machineId: 'machine-live-2', basePath: '/home/u/live-b' };
+            }
+            return null;
+        });
+
+        mockVisibleSessionListViewData = [
+            {
+                type: 'header',
+                title: '3 days ago',
+                headerKind: 'date',
+                groupKey,
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            { type: 'session', session: sess1, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'session', session: sess2, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
+        ];
+
+        const screen = await renderSessionsList();
+
+        const row1 = expectPresent(
+            findSessionItem(screen, 'sess_live_1'),
+            'expected sess_live_1 session row',
+        );
+        const row2 = expectPresent(
+            findSessionItem(screen, 'sess_live_2'),
+            'expected sess_live_2 session row',
+        );
+
+        expect(row1.props.subtitleOverride).toBe('Rebound workstation · Renamed Live Workspace');
+        expect(row2.props.subtitleOverride).toBe('rebound-2.local · ~/live-b');
     });
 });

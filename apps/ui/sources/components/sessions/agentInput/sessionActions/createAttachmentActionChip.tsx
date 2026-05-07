@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Pressable, View, Platform } from 'react-native';
+import { InteractionManager, Pressable, View, Platform } from 'react-native';
 
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { Text } from '@/components/ui/text/Text';
@@ -10,6 +10,14 @@ import { t } from '@/text';
 import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 
 const WEB_PICKER_DOUBLE_OPEN_COOLDOWN_MS = 500;
+
+function runAfterNativePopoverDismiss(action: () => void): void {
+    if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
+        action();
+        return;
+    }
+    InteractionManager.runAfterInteractions(action);
+}
 
 export function createAttachmentActionChip(params: Readonly<{
     onPickFile: () => void;
@@ -60,7 +68,7 @@ export function createAttachmentActionChip(params: Readonly<{
                                 label: t('common.addImage'),
                                 onPress: () => {
                                     requestClose();
-                                    params.onPickImage();
+                                    runAfterNativePopoverDismiss(params.onPickImage);
                                 },
                             },
                             {
@@ -69,7 +77,7 @@ export function createAttachmentActionChip(params: Readonly<{
                                 label: t('common.addFile'),
                                 onPress: () => {
                                     requestClose();
-                                    params.onPickFile();
+                                    runAfterNativePopoverDismiss(params.onPickFile);
                                 },
                             },
                         ]}

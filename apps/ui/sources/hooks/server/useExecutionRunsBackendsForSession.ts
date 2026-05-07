@@ -6,10 +6,14 @@ import { useSession } from '@/sync/domains/state/storage';
 import { extractExecutionRunsBackendsFromMachineCapabilitiesState } from '@/sync/domains/executionRuns/extractExecutionRunsBackendsFromMachineCapabilities';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
-export function useExecutionRunsBackendsForSession(sessionId: string): Record<string, any> | null {
+export function useExecutionRunsBackendsForSession(
+  sessionId: string,
+  preferredServerIdOverride?: string | null,
+): Record<string, any> | null {
   const session = useSession(sessionId);
   const machineId = React.useMemo(() => resolveSessionMachineId((session as any)?.metadata), [(session as any)?.metadata]);
-  const serverId = usePreferredServerIdForSession(sessionId);
+  const resolvedServerId = usePreferredServerIdForSession(sessionId);
+  const serverId = preferredServerIdOverride ?? resolvedServerId;
 
   const machineCapabilities = useMachineCapabilitiesCache({
     machineId,

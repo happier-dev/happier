@@ -126,7 +126,7 @@ describe('ConnectedServiceDetailView profile id validation', () => {
 
     expect(connectedServicesModuleState.routerPushSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        pathname: '/(app)/settings/connected-services/oauth',
+        pathname: '/settings/connected-services/oauth',
         params: expect.objectContaining({
           serviceId: 'openai-codex',
           profileId: 'work',

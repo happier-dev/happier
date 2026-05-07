@@ -14,7 +14,6 @@ const shared = vi.hoisted(() => ({
         uiItemDensity: 'comfortable',
         uiMultiPanePanelsEnabled: true,
         detailsPaneTabsBehavior: 'preview',
-        editorFocusModeEnabled: false,
         avatarStyle: 'gradient',
         showFlavorIcons: true,
         preferredLanguage: null,
@@ -109,7 +108,9 @@ afterEach(() => {
 describe('Appearance settings item density', () => {
     it('renders the item density dropdown and updates the local setting', async () => {
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default));
+        const screen = await renderSettingsView(React.createElement(mod.default), {
+            flushOptions: { cycles: 0 },
+        });
 
         const dropdowns = screen.findAllByType('DropdownMenu' as any);
         const itemDensityDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.itemDensity');

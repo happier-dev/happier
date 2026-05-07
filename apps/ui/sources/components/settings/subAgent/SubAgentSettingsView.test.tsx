@@ -176,7 +176,7 @@ describe('SubAgentSettingsView', () => {
 
         screen.pressRowByTitle('subAgentGuidance.settings.overview.happierStatusTitle');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/features');
     });
 
     it('renders related subagent settings links and routes to Session settings', async () => {
@@ -189,7 +189,7 @@ describe('SubAgentSettingsView', () => {
 
         screen.pressRowByTitle('subAgentGuidance.settings.related.sessionTitle');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/session');
     });
 
     it('routes the related custom ACP backends entry to the providers settings screen', async () => {
@@ -202,7 +202,7 @@ describe('SubAgentSettingsView', () => {
 
         screen.pressRowByTitle('subAgentGuidance.settings.related.backendsTitle');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/providers');
     });
 
     it('renders configured ACP backend titles in rule subtitles', async () => {
@@ -235,7 +235,7 @@ describe('SubAgentSettingsView', () => {
                     id: 'claude-team-settings',
                     title: 'Agent Teams',
                     subtitle: 'Open Claude provider settings',
-                    route: '/(app)/settings/providers/claude',
+                    route: '/settings/providers/claude',
                     iconIonName: 'people-outline',
                 }],
             },
@@ -249,6 +249,6 @@ describe('SubAgentSettingsView', () => {
 
         screen.pressRowByTitle('Agent Teams');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers/claude');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/providers/claude');
     });
 });

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Session } from '@/sync/domains/state/storageTypes';
+import type { DecryptedMessage, Session } from '@/sync/domains/state/storageTypes';
 import { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { createSessionMessageApplyCoalescer } from './sessionMessageApplyCoalescer';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 function buildUpdate(params: {
     sid?: string;
@@ -108,6 +109,8 @@ describe('handleNewMessageSocketUpdate', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+        syncPerformanceTelemetry.configure({ enabled: false });
+        syncPerformanceTelemetry.reset();
     });
 
     it('preserves update message seq on normalized messages', async () => {
@@ -136,9 +139,34 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(onMessageGapDetected).not.toHaveBeenCalled();
     });
 
+    it('drops replayed new-message updates that are already materialized before decrypting', async () => {
+        const decryptMessage = vi.fn(async () => ({
+            id: 'm2',
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'hi' } },
+        }));
+        const { params, fetchSessions, applyMessages, applySessions, onMessageGapDetected, markSessionMaterializedMaxSeq } = buildHarness({
+            updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
+            getSessionEncryption: () => ({ decryptMessage }),
+            getSessionMaterializedMaxSeq: () => 2,
+            isSessionMessagesLoaded: () => true,
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(decryptMessage).not.toHaveBeenCalled();
+        expect(fetchSessions).not.toHaveBeenCalled();
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
+        expect(onMessageGapDetected).not.toHaveBeenCalled();
+    });
+
     it('applies plaintext realtime messages when the session is plain and session encryption is unavailable', async () => {
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
+            const getSessionEncryption = vi.fn(() => null);
             const { params, fetchSessions, applyMessages, applySessions, markSessionMaterializedMaxSeq } = buildHarness({
                 updateData: buildUpdate({
                     sid: 's1',
@@ -149,7 +177,7 @@ describe('handleNewMessageSocketUpdate', () => {
                         v: { role: 'user', content: { type: 'text', text: 'hello from plain realtime' } },
                     },
                 }),
-                getSessionEncryption: () => null as any,
+                getSessionEncryption,
                 getSession: () => ({ ...buildSession('s1'), encryptionMode: 'plain' } as Session),
             });
 
@@ -165,6 +193,7 @@ describe('handleNewMessageSocketUpdate', () => {
                 role: 'user',
             });
             expect(applySessions).toHaveBeenCalledTimes(1);
+            expect(getSessionEncryption).not.toHaveBeenCalled();
         } finally {
             consoleError.mockRestore();
         }
@@ -251,6 +280,49 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(applySessions).not.toHaveBeenCalled();
     });
 
+    it('drops in-flight message work when a known session is deleted before decrypt resolves', async () => {
+        let session: Session | undefined = buildSession('s1');
+        let resolveDecrypt!: (message: DecryptedMessage) => void;
+        const decryptedMessage = new Promise<DecryptedMessage>((resolve) => {
+            resolveDecrypt = resolve;
+        });
+        const decryptStarted = vi.fn();
+        const enqueueMessages = vi.fn();
+        const onNormalizedMessagesApplied = vi.fn();
+        const { params, applyMessages, applySessions, fetchSessions, markSessionMaterializedMaxSeq, onMessageGapDetected } = buildHarness({
+            getSession: () => session,
+            getSessionEncryption: () => ({
+                decryptMessage: async () => {
+                    decryptStarted();
+                    return await decryptedMessage;
+                },
+            }),
+            enqueueMessages,
+            onNormalizedMessagesApplied,
+        } as Partial<Parameters<typeof handleNewMessageSocketUpdate>[0]>);
+
+        const pending = handleNewMessageSocketUpdate(params);
+        expect(decryptStarted).toHaveBeenCalledTimes(1);
+
+        session = undefined;
+        resolveDecrypt({
+            id: 'm2',
+            seq: 2,
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'deleted while decrypting' } },
+        });
+        await pending;
+
+        expect(fetchSessions).not.toHaveBeenCalled();
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(enqueueMessages).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(onNormalizedMessagesApplied).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
+        expect(onMessageGapDetected).not.toHaveBeenCalled();
+    });
+
     it('does not log an error when session encryption is missing for an unknown session (fetches sessions)', async () => {
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
@@ -331,6 +403,32 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(onNormalizedMessagesApplied.mock.calls[0]?.[1]?.[0]?.id).toBe('m2');
     });
 
+    it('records read normalize and apply telemetry for realtime messages', async () => {
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+
+        const { params, applyMessages } = buildHarness({
+            updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(applyMessages).toHaveBeenCalledTimes(1);
+        const events = syncPerformanceTelemetry.snapshot().events;
+        const readEvent = events.find((event) => event.name === 'sync.sessions.socket.message.readMessage');
+        expect(readEvent?.fields.encrypted).toBe(1);
+        expect(readEvent?.fields.plain).toBe(0);
+        const normalizeEvent = events.find((event) => event.name === 'sync.sessions.socket.message.normalize');
+        expect(normalizeEvent?.fields.encrypted).toBe(1);
+        const applyEvent = events.find((event) => event.name === 'sync.sessions.socket.message.apply');
+        expect(applyEvent?.fields.normalized).toBe(1);
+        expect(applyEvent?.fields.queued).toBe(0);
+    });
+
     it('enqueues messages when enqueueMessages is provided (instead of applying immediately)', async () => {
         const enqueueMessages = vi.fn();
         const onNormalizedMessagesApplied = vi.fn();
@@ -383,12 +481,15 @@ describe('handleNewMessageSocketUpdate', () => {
             updateData: buildUpdate({ sid: 's1', messageId: 'm3', messageSeq: 3 }),
         });
 
-        expect(applyMessages).not.toHaveBeenCalled();
-        expect(onNormalizedMessagesApplied).not.toHaveBeenCalled();
+        expect(applied).toEqual([{ sessionId: 's1', ids: ['m2'] }]);
+        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(1);
 
         await vi.runAllTimersAsync();
 
-        expect(applied).toEqual([{ sessionId: 's1', ids: ['m2', 'm3'] }]);
-        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(1);
+        expect(applied).toEqual([
+            { sessionId: 's1', ids: ['m2'] },
+            { sessionId: 's1', ids: ['m3'] },
+        ]);
+        expect(onNormalizedMessagesApplied).toHaveBeenCalledTimes(2);
     });
 });

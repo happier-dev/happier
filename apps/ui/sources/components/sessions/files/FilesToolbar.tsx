@@ -5,7 +5,11 @@ import { Octicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import type { ChangedFilesPresentation, ChangedFilesViewMode } from '@/scm/scmAttribution';
+import {
+    type ChangedFilesPresentation,
+    type ChangedFilesViewMode,
+} from '@/scm/scmAttribution';
+import { ChangedFilesViewModeMenu } from './ChangedFilesViewModeMenu';
 
 type FilesToolbarProps = {
     theme: any;
@@ -151,28 +155,13 @@ export function FilesToolbar(props: FilesToolbarProps) {
 
                 {!showAllRepositoryFiles && changedFilesCount > 0 ? (
                     <>
-                        <Chip
-                            active={changedFilesViewMode === 'repository'}
-                            label={t('files.toolbar.repositoryView')}
-                            icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
-                            onPress={() => onChangedFilesViewMode('repository')}
+                        <ChangedFilesViewModeMenu
+                            theme={theme}
+                            changedFilesViewMode={changedFilesViewMode}
+                            showTurnViewToggle={showTurnViewToggle}
+                            showSessionViewToggle={showSessionViewToggle}
+                            onChangedFilesViewMode={onChangedFilesViewMode}
                         />
-                        {showTurnViewToggle && (
-                            <Chip
-                                active={changedFilesViewMode === 'turn'}
-                                label={t('files.toolbar.turnView')}
-                                icon={<Octicons name="clock" size={14} color={theme.colors.textSecondary} />}
-                                onPress={() => onChangedFilesViewMode('turn')}
-                            />
-                        )}
-                        {showSessionViewToggle && (
-                            <Chip
-                                active={changedFilesViewMode === 'session'}
-                                label={t('files.toolbar.sessionView')}
-                                icon={<Octicons name="history" size={14} color={theme.colors.textSecondary} />}
-                                onPress={() => onChangedFilesViewMode('session')}
-                            />
-                        )}
 
                         <Chip
                             active={changedFilesPresentation === 'review'}

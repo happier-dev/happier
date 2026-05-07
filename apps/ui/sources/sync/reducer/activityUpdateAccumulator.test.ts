@@ -465,6 +465,35 @@ describe('ActivityUpdateAccumulator Smart Debounce', () => {
             expect(mockFlushHandler).toHaveBeenCalledTimes(1);
         });
 
+        it('should drop pending updates whose guard becomes stale before debounce flush', () => {
+            let isCurrentScope = true;
+            const update1: ApiEphemeralActivityUpdate = {
+                type: 'activity',
+                id: 'session1',
+                active: true,
+                activeAt: 1000,
+                thinking: false
+            };
+
+            const update2: ApiEphemeralActivityUpdate = {
+                type: 'activity',
+                id: 'session1',
+                active: true,
+                activeAt: 1100,
+                thinking: false
+            };
+
+            accumulator.addUpdate(update1, { shouldContinue: () => isCurrentScope });
+            accumulator.addUpdate(update2, { shouldContinue: () => isCurrentScope });
+
+            expect(mockFlushHandler).toHaveBeenCalledTimes(1);
+
+            isCurrentScope = false;
+            timeoutCallbacks[0]?.callback();
+
+            expect(mockFlushHandler).toHaveBeenCalledTimes(1);
+        });
+
         it('should flush pending updates immediately', () => {
             const update1: ApiEphemeralActivityUpdate = {
                 type: 'activity',

@@ -28,6 +28,20 @@ describe("featuresRoutes", () => {
         resetEnv();
     });
 
+    describe("pets", () => {
+        it("returns pets companion enabled by default and disabled by server env", async () => {
+            let payload = await getFeaturesPayload();
+            expect(payload.features.pets.companion.enabled).toBe(true);
+
+            resetEnv({
+                HAPPIER_FEATURE_PETS_COMPANION__ENABLED: "0",
+            });
+
+            payload = await getFeaturesPayload();
+            expect(payload.features.pets.companion.enabled).toBe(false);
+        });
+    });
+
     describe("friends", () => {
         it("returns friends=false when HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED is off", async () => {
             resetEnv({

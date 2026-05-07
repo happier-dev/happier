@@ -220,10 +220,8 @@ export function getSessionAvatarId(session: SessionStatusSource): string {
     const reachablePath = readMachineTargetForSession(session.id)?.basePath ?? session.metadata?.path ?? null;
 
     if (reachableMachineId && reachablePath) {
-        // Combine machine ID and path for a unique, deterministic avatar
-        return `${reachableMachineId}:${reachablePath}`;
+        return `${session.id}:${reachableMachineId}:${reachablePath}`;
     }
-    // Fallback to session ID if metadata is missing
     return session.id;
 }
 

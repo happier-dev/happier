@@ -56,6 +56,9 @@ export type AgentUiBehavior = Readonly<{
     guidance?: Readonly<{
         includeInSessionGettingStartedCliExamples?: boolean;
     }>;
+    sessionUsage?: Readonly<{
+        supportsExactContextUsageBadge?: boolean;
+    }>;
     mcpServers?: Readonly<{
         supportsDetectedConfigScan?: boolean;
     }>;
@@ -189,6 +192,7 @@ export type NewSessionPreflightIssue = Readonly<{
 function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     return {
         ...(a.guidance || b.guidance ? { guidance: { ...(a.guidance ?? {}), ...(b.guidance ?? {}) } } : {}),
+        ...(a.sessionUsage || b.sessionUsage ? { sessionUsage: { ...(a.sessionUsage ?? {}), ...(b.sessionUsage ?? {}) } } : {}),
         ...(a.mcpServers || b.mcpServers ? { mcpServers: { ...(a.mcpServers ?? {}), ...(b.mcpServers ?? {}) } } : {}),
         ...(a.permissions || b.permissions
             ? {
@@ -226,6 +230,9 @@ function buildDefaultAgentUiBehavior(agentId: AgentId): AgentUiBehavior {
     const promptProtocol = getAgentCore(agentId).permissions.promptProtocol;
 
     return {
+        sessionUsage: {
+            supportsExactContextUsageBadge: true,
+        },
         permissions: {
             footer: {
                 usePermissionUpdates: promptProtocol === 'claude',

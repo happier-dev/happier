@@ -5,12 +5,21 @@ import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionR
 import { useSessionMessages } from '@/sync/domains/state/storage';
 import { sessionExecutionRunList } from '@/sync/ops/sessionExecutionRuns';
 import { deriveExecutionRunPollingRefreshKey } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 
 const EMPTY_EXECUTION_RUN_REFRESH_KEY = 'subagent:|started:|stopped:';
 
-export function useSessionExecutionRunsSupported(sessionId: string): boolean {
-    const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const backends = useExecutionRunsBackendsForSession(sessionId);
+export function useSessionExecutionRunsSupported(
+    sessionId: string,
+    options?: Readonly<{ serverId?: string | null }>,
+): boolean {
+    const preferredServerId = usePreferredServerIdForSession(sessionId);
+    const serverId = options?.serverId ?? preferredServerId;
+    const executionRunsEnabled = useFeatureEnabled('execution.runs', {
+        scopeKind: 'spawn',
+        serverId: serverId ?? null,
+    });
+    const backends = useExecutionRunsBackendsForSession(sessionId, serverId ?? null);
     const { messages } = useSessionMessages(sessionId);
     const [historicalRunsSupported, setHistoricalRunsSupported] = React.useState(false);
 
@@ -39,7 +48,7 @@ export function useSessionExecutionRunsSupported(sessionId: string): boolean {
 
         let cancelled = false;
         void (async () => {
-            const result = await sessionExecutionRunList(normalizedSessionId, {});
+            const result = await sessionExecutionRunList(normalizedSessionId, {}, { serverId: serverId ?? null });
             if (cancelled) return;
             const runs = Array.isArray((result as any)?.runs) ? (result as any).runs : [];
             setHistoricalRunsSupported(runs.length > 0);
@@ -48,7 +57,7 @@ export function useSessionExecutionRunsSupported(sessionId: string): boolean {
         return () => {
             cancelled = true;
         };
-    }, [executionRunsEnabled, hasLiveExecutionRunSupport, sessionId, transcriptHasExecutionRunSignals]);
+    }, [executionRunsEnabled, hasLiveExecutionRunSupport, serverId, sessionId, transcriptHasExecutionRunSignals]);
 
     return React.useMemo(() => {
         if (executionRunsEnabled !== true) {

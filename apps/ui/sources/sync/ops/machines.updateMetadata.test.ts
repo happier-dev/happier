@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Machine, MachineMetadata } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 const emitWithAckMock = vi.hoisted(() => vi.fn());
 const getMachineEncryptionMock = vi.hoisted(() => vi.fn());
@@ -42,6 +43,10 @@ function buildMachine(params: Readonly<{ id: string; metadataVersion: number; me
 
 const machinesModulePromise = import('./machines');
 
+function findTelemetryEvent(name: string) {
+    return syncPerformanceTelemetry.snapshot().events.find((event) => event.name === name);
+}
+
 describe('machineUpdateMetadata', () => {
     beforeEach(() => {
         storage.setState(initialStorageState, true);
@@ -56,7 +61,19 @@ describe('machineUpdateMetadata', () => {
         encryptRawMock.mockResolvedValue('enc_local');
     });
 
+    afterEach(() => {
+        syncPerformanceTelemetry.configure({ enabled: false });
+        syncPerformanceTelemetry.reset();
+    });
+
     it('applies the updated metadata locally on success', async () => {
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 1_000_000,
+        });
+        syncPerformanceTelemetry.reset();
+
         storage.getState().applyMachines([buildMachine({
             id: 'm1',
             metadataVersion: 1,
@@ -83,6 +100,9 @@ describe('machineUpdateMetadata', () => {
         const updated = storage.getState().machines['m1'];
         expect(updated?.metadataVersion).toBe(2);
         expect((updated?.metadata as any)?.displayName).toBe('New Name');
+        expect(findTelemetryEvent('sync.encryption.machine.encryptRaw.metadataWrite')).toMatchObject({
+            count: 1,
+            fields: { items: 1 },
+        });
     });
 });
-

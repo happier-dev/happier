@@ -22,6 +22,7 @@ const POST_LAYOUT_TICKS = 2;
 
 let mockPopoverContentDomRect: { width: number; height: number } | null = null;
 let mockPopoverContentRefKind: 'dom' | 'opaque' = 'dom';
+let capturedTimingConfigs: any[] = [];
 
 async function flushInitialPositioning() {
     await flushHookEffects({ cycles: 1, turns: INITIAL_POSITIONING_TICKS });
@@ -81,6 +82,17 @@ installPopoverCommonModuleMocks({
                 return React.createElement('View', props, props.children);
             }),
             Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+            Animated: {
+                Value: function Value(this: any, initial: number) {
+                    this.__value = initial;
+                    this.interpolate = () => this;
+                },
+                timing: (_value: any, config: any) => {
+                    capturedTimingConfigs.push(config);
+                    return { start: () => undefined };
+                },
+                View: (props: any) => React.createElement('AnimatedView', props, props.children),
+            },
         });
     },
 });
@@ -97,6 +109,7 @@ describe('Popover (web)', () => {
         restorePopoverWebGlobals = null;
         mockPopoverContentDomRect = null;
         mockPopoverContentRefKind = 'dom';
+        capturedTimingConfigs = [];
         vi.useRealTimers();
         vi.unstubAllGlobals();
     });
@@ -154,6 +167,76 @@ describe('Popover (web)', () => {
                 ));
 
         expect(screen.findAllByType('DismissableLayerBranch' as any).length).toBe(1);
+    });
+
+    it('keeps closing content mounted until the shared exit animation finishes', async () => {
+        vi.useFakeTimers();
+        const { Popover } = await import('./Popover');
+        const { motionTokens } = await import('@/components/ui/motion/motionTokens');
+
+        const anchorRef = { current: null } as any;
+
+        const screen = await renderScreen(React.createElement(
+            Popover,
+            {
+                open: true,
+                anchorRef,
+                backdrop: false,
+                onRequestClose: () => {},
+                children: () => React.createElement('PopoverChild'),
+            },
+        ));
+
+        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
+
+        await act(async () => {
+            screen.tree.update(React.createElement(
+                Popover,
+                {
+                    open: false,
+                    anchorRef,
+                    backdrop: false,
+                    onRequestClose: () => {},
+                    children: () => React.createElement('PopoverChild'),
+                },
+            ));
+        });
+
+        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(motionTokens.overlay.popover.exitMs - 1);
+        });
+        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(1);
+        });
+        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(0);
+    });
+
+    it('uses the shared popover enter animation on web', async () => {
+        const { Popover } = await import('./Popover');
+        const { motionTokens } = await import('@/components/ui/motion/motionTokens');
+
+        const anchorRef = { current: null } as any;
+
+        await renderScreen(React.createElement(
+            Popover,
+            {
+                open: true,
+                anchorRef,
+                backdrop: false,
+                onRequestClose: () => {},
+                children: () => React.createElement('PopoverChild'),
+            },
+        ));
+
+        expect(capturedTimingConfigs.some((cfg) => (
+            cfg.toValue === 1
+            && cfg.duration === motionTokens.overlay.popover.enterMs
+            && cfg.useNativeDriver === false
+        ))).toBe(true);
     });
 
     it('does not fall back to document.body when a boundary portal target is requested but not ready yet', async () => {

@@ -56,7 +56,7 @@ export async function approveTerminalAuthRequest(params: Readonly<{ publicKey: s
   const response = encryptForTerminal(recipientPk, buildApprovalPayload(creds));
 
   await axios.post(
-    `${configuration.serverUrl}/v1/auth/response`,
+    `${configuration.apiServerUrl}/v1/auth/response`,
     { publicKey: encodePublicKeyBase64(recipientPk), response },
     { headers: { Authorization: `Bearer ${creds.token}` } },
   );

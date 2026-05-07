@@ -11,15 +11,25 @@
     }
   },
   "app": {
+    "macOSPrivateApi": true,
     "withGlobalTauri": true,
     "security": {
       "capabilities": [
-        "default"
+        "default",
+        "pet_overlay"
       ]
     },
     "windows": [
       {
-        "title": "Happier Dev"
+        "title": "Happier Dev",
+        "width": 800,
+        "height": 600,
+        "visible": false,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "resizable": true,
+        "fullscreen": false
       }
     ]
   }

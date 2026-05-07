@@ -1,5 +1,10 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { PlannedChangeActions } from './changesPlanner';
+import {
+    classifyChangeForCheckpoint,
+    getChangeTargetMessageSeq,
+    type ChangeCheckpointBlockedReason,
+    type PlannedChangeActions,
+} from './changesPlanner';
 import { runTasksWithLimit } from './runTasksWithLimit';
 
 export type TodoSocketUpdate = Readonly<{
@@ -8,10 +13,27 @@ export type TodoSocketUpdate = Readonly<{
     version: number;
 }>;
 
+export type PlannedChangesApplyResult =
+    | Readonly<{
+        status: 'complete';
+        safeAdvanceCursor: string | null;
+        processedChanges: number;
+        blockedChanges: 0;
+    }>
+    | Readonly<{
+        status: 'partial';
+        safeAdvanceCursor: string | null;
+        blockedCursor: string;
+        blockedReason: ChangeCheckpointBlockedReason;
+        processedChanges: number;
+        blockedChanges: number;
+    }>;
+
 export async function applyPlannedChangeActions(params: {
     planned: PlannedChangeActions;
     credentials: AuthCredentials;
     isSessionMessagesLoaded: (sessionId: string) => boolean;
+    getSessionMaterializedMaxSeq?: (sessionId: string) => number;
     concurrencyLimit?: number;
     invalidate: {
         settings?: () => Promise<void>;
@@ -22,6 +44,7 @@ export async function applyPlannedChangeActions(params: {
         friendRequests?: () => Promise<void>;
         feed?: () => Promise<void>;
         automations?: () => Promise<void>;
+        pets?: () => Promise<void>;
         sessions?: () => Promise<void>;
         todos?: () => Promise<void>;
     };
@@ -29,7 +52,8 @@ export async function applyPlannedChangeActions(params: {
     invalidateScmStatusForSession: (sessionId: string) => void;
     applyTodoSocketUpdates: (changes: TodoSocketUpdate[]) => Promise<void>;
     kvBulkGet: (credentials: AuthCredentials, keys: string[]) => Promise<{ values: TodoSocketUpdate[] }>;
-}): Promise<void> {
+    convergePendingForSession?: (sessionId: string) => Promise<void>;
+}): Promise<PlannedChangesApplyResult> {
     const { planned } = params;
 
     const concurrencyLimit = typeof params.concurrencyLimit === 'number' && params.concurrencyLimit > 0
@@ -37,14 +61,17 @@ export async function applyPlannedChangeActions(params: {
         : 2;
 
     const tasks: Array<() => Promise<void>> = [];
+    const completedMessageCatchUpSessionIds = new Set<string>();
+    const failedMessageCatchUpSessionIds = new Set<string>();
+    const completedPendingSessionIds = new Set<string>();
+    const failedPendingSessionIds = new Set<string>();
 
-    let sessionsInvalidationDone: Promise<void> | null = null;
-    let resolveSessionsInvalidationDone: (() => void) | null = null;
-    let rejectSessionsInvalidationDone: ((error: unknown) => void) | null = null;
+    let sessionsInvalidationFailed = false;
+    let sessionsInvalidationDone: Promise<boolean> | null = null;
+    let resolveSessionsInvalidationDone: ((succeeded: boolean) => void) | null = null;
     if (planned.invalidate.sessions) {
-        sessionsInvalidationDone = new Promise<void>((resolve, reject) => {
+        sessionsInvalidationDone = new Promise<boolean>((resolve) => {
             resolveSessionsInvalidationDone = resolve;
-            rejectSessionsInvalidationDone = reject;
         });
     }
 
@@ -58,14 +85,15 @@ export async function applyPlannedChangeActions(params: {
     }
     if (planned.invalidate.feed) tasks.push(() => params.invalidate.feed?.() ?? Promise.resolve());
     if (planned.invalidate.automations) tasks.push(() => params.invalidate.automations?.() ?? Promise.resolve());
+    if (planned.invalidate.pets) tasks.push(() => params.invalidate.pets?.() ?? Promise.resolve());
     if (planned.invalidate.sessions) {
         tasks.push(async () => {
             try {
                 await params.invalidate.sessions?.();
-                resolveSessionsInvalidationDone?.();
-            } catch (error) {
-                rejectSessionsInvalidationDone?.(error);
-                throw error;
+                resolveSessionsInvalidationDone?.(true);
+            } catch {
+                sessionsInvalidationFailed = true;
+                resolveSessionsInvalidationDone?.(false);
             }
         });
     }
@@ -75,12 +103,46 @@ export async function applyPlannedChangeActions(params: {
             continue;
         }
         tasks.push(async () => {
-            if (sessionsInvalidationDone) {
-                await sessionsInvalidationDone;
+            try {
+                if (sessionsInvalidationDone) {
+                    const sessionsInvalidated = await sessionsInvalidationDone;
+                    if (!sessionsInvalidated) {
+                        failedMessageCatchUpSessionIds.add(sessionId);
+                        return;
+                    }
+                }
+                await params.invalidateMessagesForSession(sessionId);
+                completedMessageCatchUpSessionIds.add(sessionId);
+            } catch {
+                failedMessageCatchUpSessionIds.add(sessionId);
             }
-            await params.invalidateMessagesForSession(sessionId);
         });
         params.invalidateScmStatusForSession(sessionId);
+    }
+
+    const pendingSessionIds = new Set<string>();
+    for (const change of planned.changes) {
+        const classification = classifyChangeForCheckpoint(change, {
+            isSessionMessagesLoaded: params.isSessionMessagesLoaded,
+        });
+        if (classification.materializationProof === 'pending-queue-convergence') {
+            pendingSessionIds.add(classification.entityId);
+        }
+    }
+
+    for (const sessionId of pendingSessionIds) {
+        tasks.push(async () => {
+            try {
+                if (!params.convergePendingForSession) {
+                    failedPendingSessionIds.add(sessionId);
+                    return;
+                }
+                await params.convergePendingForSession(sessionId);
+                completedPendingSessionIds.add(sessionId);
+            } catch {
+                failedPendingSessionIds.add(sessionId);
+            }
+        });
     }
 
     if (planned.kv.type === 'refresh-feature' && planned.kv.feature === 'todos') {
@@ -109,4 +171,103 @@ export async function applyPlannedChangeActions(params: {
     }
 
     await runTasksWithLimit(tasks, concurrencyLimit);
+
+    let safeAdvanceCursor: string | null = null;
+    let processedChanges = 0;
+
+    for (const change of planned.changes) {
+        const classification = classifyChangeForCheckpoint(change, {
+            isSessionMessagesLoaded: params.isSessionMessagesLoaded,
+        });
+
+        if (classification.decision === 'unsupported') {
+            return {
+                status: 'partial',
+                safeAdvanceCursor,
+                blockedCursor: classification.cursor,
+                blockedReason: classification.blockedReason ?? 'unsupported-kind',
+                processedChanges,
+                blockedChanges: planned.changes.length - processedChanges,
+            };
+        }
+
+        if (classification.decision === 'intentionally-skipped-by-explicit-policy') {
+            safeAdvanceCursor = classification.cursor;
+            processedChanges += 1;
+            continue;
+        }
+
+        if (
+            sessionsInvalidationFailed
+            && (classification.kind === 'session' || classification.kind === 'share')
+        ) {
+            return {
+                status: 'partial',
+                safeAdvanceCursor,
+                blockedCursor: classification.cursor,
+                blockedReason: 'partial-materialization',
+                processedChanges,
+                blockedChanges: planned.changes.length - processedChanges,
+            };
+        }
+
+        if (classification.materializationProof === 'pending-queue-convergence') {
+            if (!completedPendingSessionIds.has(classification.entityId) || failedPendingSessionIds.has(classification.entityId)) {
+                return {
+                    status: 'partial',
+                    safeAdvanceCursor,
+                    blockedCursor: classification.cursor,
+                    blockedReason: 'pending-not-converged',
+                    processedChanges,
+                    blockedChanges: planned.changes.length - processedChanges,
+                };
+            }
+            safeAdvanceCursor = classification.cursor;
+            processedChanges += 1;
+            continue;
+        }
+
+        if (
+            (classification.kind === 'session' || classification.kind === 'share')
+            && params.isSessionMessagesLoaded(classification.entityId)
+            && (!completedMessageCatchUpSessionIds.has(classification.entityId) || failedMessageCatchUpSessionIds.has(classification.entityId))
+        ) {
+            return {
+                status: 'partial',
+                safeAdvanceCursor,
+                blockedCursor: classification.cursor,
+                blockedReason: 'partial-materialization',
+                processedChanges,
+                blockedChanges: planned.changes.length - processedChanges,
+            };
+        }
+
+        if (
+            (classification.kind === 'session' || classification.kind === 'share')
+            && params.isSessionMessagesLoaded(classification.entityId)
+        ) {
+            const targetSeq = getChangeTargetMessageSeq(change);
+            const materializedSeq = params.getSessionMaterializedMaxSeq?.(classification.entityId) ?? null;
+            if (targetSeq !== null && (materializedSeq === null || materializedSeq < targetSeq)) {
+                return {
+                    status: 'partial',
+                    safeAdvanceCursor,
+                    blockedCursor: classification.cursor,
+                    blockedReason: 'partial-materialization',
+                    processedChanges,
+                    blockedChanges: planned.changes.length - processedChanges,
+                };
+            }
+        }
+
+        safeAdvanceCursor = classification.cursor;
+        processedChanges += 1;
+    }
+
+    return {
+        status: 'complete',
+        safeAdvanceCursor,
+        processedChanges,
+        blockedChanges: 0,
+    };
 }

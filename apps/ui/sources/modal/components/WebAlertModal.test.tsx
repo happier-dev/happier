@@ -46,6 +46,38 @@ function getNodeByTestID(screen: { findByTestId: (testID: string) => any }, test
 }
 
 describe('WebAlertModal', () => {
+    it('keeps alert body content intrinsically measurable inside fit-layout cards', async () => {
+        const { WebAlertModal } = await import('./WebAlertModal');
+
+        const screen = await renderScreen(<WebAlertModal
+                    config={{
+                        id: 'remove-relay',
+                        type: 'confirm',
+                        title: 'Remove Relay',
+                        message: 'Remove "localhost:52753" from saved relays?',
+                        cancelText: 'Cancel',
+                        confirmText: 'Remove',
+                    }}
+                    onClose={vi.fn()}
+                    onConfirm={vi.fn()}
+                />);
+
+        const body = screen.findByTestId('modal-card-body');
+        if (body == null) {
+            throw new Error('expected modal card body to exist');
+        }
+        expect(body.props.style).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    flexGrow: 1,
+                    flexShrink: 1,
+                    flexBasis: 'auto',
+                    minHeight: 0,
+                }),
+            ]),
+        );
+    });
+
     it('wraps the dialog content in the shared card frame and keeps backdrop dismissal disabled', async () => {
         const { WebAlertModal } = await import('./WebAlertModal');
 

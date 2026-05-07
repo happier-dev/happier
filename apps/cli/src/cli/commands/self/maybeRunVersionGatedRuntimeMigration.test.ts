@@ -138,7 +138,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     expect(resolveDaemonServiceCliRuntimeFromEnvMock).toHaveBeenCalled();
     expect(resolveDaemonServiceListEntriesMock).toHaveBeenCalled();
     expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
-      argv: ['repair', '--yes', '--mode', 'user'],
+      argv: ['repair', '--migrate', '--yes', '--mode', 'user'],
       commandPath: 'happier doctor',
     });
   });
@@ -259,7 +259,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
 
     expect(handleServiceRepairCliCommandMock).toHaveBeenCalledTimes(1);
     expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
-      argv: ['repair', '--yes', '--mode', 'system', '--system-user', 'developer'],
+      argv: ['repair', '--migrate', '--yes', '--mode', 'system', '--system-user', 'developer'],
       commandPath: 'happier doctor',
     });
   });
@@ -322,7 +322,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     }
 
     expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
-      argv: ['repair', '--yes', '--mode', 'system', '--system-user', 'developer'],
+      argv: ['repair', '--migrate', '--yes', '--mode', 'system', '--system-user', 'developer'],
       commandPath: 'happier doctor',
     });
   });
@@ -385,7 +385,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     }
 
     expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
-      argv: ['repair', '--mode', 'system', '--yes', '--system-user', 'developer'],
+      argv: ['repair', '--mode', 'system', '--migrate', '--yes', '--system-user', 'developer'],
       commandPath: 'happier doctor',
     });
   });
@@ -448,7 +448,7 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
     }
 
     expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
-      argv: ['repair', '--mode=system', '--system-user=developer', '--yes'],
+      argv: ['repair', '--mode=system', '--system-user=developer', '--migrate', '--yes'],
       commandPath: 'happier doctor',
     });
   });
@@ -554,7 +554,134 @@ describe('maybeRunVersionGatedRuntimeMigration', () => {
 
     expect(handleServiceRepairCliCommandMock).toHaveBeenCalledTimes(1);
     expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
-      argv: ['repair', '--yes', '--mode', 'user'],
+      argv: ['repair', '--migrate', '--yes', '--mode', 'user'],
+      commandPath: 'happier doctor',
+    });
+  });
+
+  it('drops --yes and keeps --migrate when running in an interactive TTY', async () => {
+    const originalStdinIsTTY = process.stdin.isTTY;
+    const originalStdoutIsTTY = process.stdout.isTTY;
+    (process.stdin as { isTTY?: boolean }).isTTY = true;
+    (process.stdout as { isTTY?: boolean }).isTTY = true;
+
+    resolveDaemonServiceCliRuntimeFromEnvMock.mockImplementation((params?: unknown) => {
+      const normalizedParams = params as { mode?: 'user' | 'system' } | undefined;
+      return {
+        platform: 'linux',
+        mode: normalizedParams?.mode ?? 'user',
+        systemUser: '',
+        channel: 'preview',
+        targetMode: 'default-following',
+        instanceId: 'company',
+        uid: 1000,
+        userHomeDir: '/tmp/user',
+        happierHomeDir: '/tmp/user/.happier',
+        serverUrl: 'https://company.example.test',
+        publicServerUrl: 'https://company.example.test',
+        webappUrl: 'https://company.example.test',
+      };
+    });
+
+    resolveDaemonServiceListEntriesMock.mockImplementation(async (_runtime: unknown, options?: unknown) => {
+      const normalizedOptions = options as { mode?: 'user' | 'system' } | undefined;
+      if (normalizedOptions?.mode === 'user') {
+        return [{
+          serverId: 'company',
+          name: 'Company',
+          installed: true,
+          path: '/tmp/user/.config/systemd/user/happier-daemon.preview.company.service',
+          platform: 'linux',
+          mode: 'user',
+          releaseChannel: 'preview',
+          label: 'happier-daemon.preview.company',
+          targetMode: 'pinned',
+        }];
+      }
+      return [];
+    });
+
+    const { maybeRunVersionGatedRuntimeMigration } = await import('./maybeRunVersionGatedRuntimeMigration');
+
+    try {
+      await expect(maybeRunVersionGatedRuntimeMigration({
+        fromVersion: '0.2.2',
+        toVersion: '0.2.3',
+        hadLegacyCurrentInstallWithoutVersionMarkers: false,
+        argv: ['repair'],
+        commandPath: 'happier doctor',
+      })).resolves.toBe(true);
+    } finally {
+      (process.stdin as { isTTY?: boolean }).isTTY = originalStdinIsTTY;
+      (process.stdout as { isTTY?: boolean }).isTTY = originalStdoutIsTTY;
+    }
+
+    expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
+      argv: ['repair', '--migrate', '--mode', 'user'],
+      commandPath: 'happier doctor',
+    });
+  });
+
+  it('forces --yes when forceNonInteractive is set even in a TTY', async () => {
+    const originalStdinIsTTY = process.stdin.isTTY;
+    const originalStdoutIsTTY = process.stdout.isTTY;
+    (process.stdin as { isTTY?: boolean }).isTTY = true;
+    (process.stdout as { isTTY?: boolean }).isTTY = true;
+
+    resolveDaemonServiceCliRuntimeFromEnvMock.mockImplementation((params?: unknown) => {
+      const normalizedParams = params as { mode?: 'user' | 'system' } | undefined;
+      return {
+        platform: 'linux',
+        mode: normalizedParams?.mode ?? 'user',
+        systemUser: '',
+        channel: 'preview',
+        targetMode: 'default-following',
+        instanceId: 'company',
+        uid: 1000,
+        userHomeDir: '/tmp/user',
+        happierHomeDir: '/tmp/user/.happier',
+        serverUrl: 'https://company.example.test',
+        publicServerUrl: 'https://company.example.test',
+        webappUrl: 'https://company.example.test',
+      };
+    });
+
+    resolveDaemonServiceListEntriesMock.mockImplementation(async (_runtime: unknown, options?: unknown) => {
+      const normalizedOptions = options as { mode?: 'user' | 'system' } | undefined;
+      if (normalizedOptions?.mode === 'user') {
+        return [{
+          serverId: 'company',
+          name: 'Company',
+          installed: true,
+          path: '/tmp/user/.config/systemd/user/happier-daemon.preview.company.service',
+          platform: 'linux',
+          mode: 'user',
+          releaseChannel: 'preview',
+          label: 'happier-daemon.preview.company',
+          targetMode: 'pinned',
+        }];
+      }
+      return [];
+    });
+
+    const { maybeRunVersionGatedRuntimeMigration } = await import('./maybeRunVersionGatedRuntimeMigration');
+
+    try {
+      await expect(maybeRunVersionGatedRuntimeMigration({
+        fromVersion: '0.2.2',
+        toVersion: '0.2.3',
+        hadLegacyCurrentInstallWithoutVersionMarkers: false,
+        argv: ['repair'],
+        commandPath: 'happier doctor',
+        forceNonInteractive: true,
+      })).resolves.toBe(true);
+    } finally {
+      (process.stdin as { isTTY?: boolean }).isTTY = originalStdinIsTTY;
+      (process.stdout as { isTTY?: boolean }).isTTY = originalStdoutIsTTY;
+    }
+
+    expect(handleServiceRepairCliCommandMock).toHaveBeenCalledWith({
+      argv: ['repair', '--migrate', '--yes', '--mode', 'user'],
       commandPath: 'happier doctor',
     });
   });

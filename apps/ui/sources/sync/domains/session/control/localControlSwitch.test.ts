@@ -81,14 +81,13 @@ describe('localControlSwitch', () => {
     ).toBe(true);
   });
 
-  it('renders the chat timeline when shared local control can be attached even with no messages yet', () => {
+  it('does not render an empty chat timeline just to expose remote-to-local attachment UI', () => {
     expect(
       shouldRenderChatTimelineForSession({
         committedMessagesCount: 0,
         pendingMessagesCount: 0,
         controlledByUser: false,
-        showLocalControlFooter: true,
-      } as any),
-    ).toBe(true);
+      }),
+    ).toBe(false);
   });
 });

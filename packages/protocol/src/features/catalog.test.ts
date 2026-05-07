@@ -23,6 +23,14 @@ describe('feature catalog', () => {
     expect(isFeatureId('execution.runs')).toBe(true);
   });
 
+  it('includes pets feature ids', () => {
+    expect(isFeatureId('pets.companion')).toBe(true);
+    expect(isFeatureId('pets.sync')).toBe(true);
+    expect(FEATURE_CATALOG['pets.companion']?.representation).toBe('server');
+    expect(FEATURE_CATALOG['pets.sync']?.representation).toBe('server');
+    expect(FEATURE_CATALOG['pets.sync']?.dependencies).toEqual([]);
+  });
+
   it('includes connected services quotas feature id', () => {
     expect(isFeatureId('connectedServices.quotas')).toBe(true);
   });

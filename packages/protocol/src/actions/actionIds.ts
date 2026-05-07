@@ -57,6 +57,8 @@ export const ACTION_IDS = [
   // Voice global controls
   'ui.voice_global.reset',
   'ui.voice_agent.teleport',
+  // UI companion controls
+  'ui.pet.choose',
 
   // Daemon-local memory search (opt-in)
   'memory.search',

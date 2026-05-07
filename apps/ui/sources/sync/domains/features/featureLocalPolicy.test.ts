@@ -128,6 +128,22 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
+    it('keeps pets.companion enabled by default even when experiments are off', () => {
+        expect(resolveLocalFeaturePolicyEnabled('pets.companion', {
+            ...settingsDefaults,
+            experiments: false,
+            featureToggles: {},
+        })).toBe(true);
+    });
+
+    it('disables pets.companion when explicitly disabled', () => {
+        expect(resolveLocalFeaturePolicyEnabled('pets.companion', {
+            ...settingsDefaults,
+            experiments: false,
+            featureToggles: { 'pets.companion': false },
+        })).toBe(false);
+    });
+
     it('enables sessions.direct when explicitly enabled', () => {
         expect(resolveLocalFeaturePolicyEnabled('sessions.direct', {
             ...settingsDefaults,

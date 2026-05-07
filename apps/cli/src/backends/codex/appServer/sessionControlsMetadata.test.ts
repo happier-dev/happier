@@ -156,6 +156,53 @@ describe('publishCodexAppServerSessionControlsMetadata', () => {
         });
     });
 
+    it('includes Speed for GPT 5.5 when Codex app-server auth supports it', async () => {
+        const client = {
+            request: vi.fn(async (method: string) => {
+                if (method === 'collaborationMode/list') {
+                    return { data: [] };
+                }
+                if (method === 'model/list') {
+                    return {
+                        data: [
+                            {
+                                id: 'gpt-5.5',
+                                displayName: 'GPT-5.5',
+                                isDefault: true,
+                            },
+                        ],
+                    };
+                }
+                throw new Error(`Unexpected method: ${method}`);
+            }),
+        };
+        const { session, getMetadata } = createSessionHarness();
+
+        await publishCodexAppServerSessionControlsMetadata({
+            client,
+            session,
+            provider: 'codex',
+            updatedAt: 779,
+            authMethod: 'oauth_cli',
+            currentModelId: 'gpt-5.5',
+        });
+
+        expect(getMetadata()[SESSION_MODELS_STATE_KEY]).toMatchObject({
+            availableModels: [
+                {
+                    id: 'gpt-5.5',
+                    modelOptions: [
+                        {
+                            id: 'service_tier',
+                            name: 'Speed',
+                            currentValue: 'standard',
+                        },
+                    ],
+                },
+            ],
+        });
+    });
+
     it('accepts snake_case reasoning effort fields from model/list', async () => {
         const client = {
             request: vi.fn(async (method: string) => {

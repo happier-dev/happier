@@ -8,6 +8,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
 import { useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
@@ -37,6 +38,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
     const [defaultPermissionByTargetKey, setDefaultPermissionByTargetKey] = useSettingMutable('sessionDefaultPermissionModeByTargetKey');
     const [permissionModeApplyTiming, setPermissionModeApplyTiming] = useSettingMutable('sessionPermissionModeApplyTiming');
     const [permissionPromptSurface, setPermissionPromptSurface] = useSettingMutable('permissionPromptSurface');
+    const [rememberLastProjectSessionSelections, setRememberLastProjectSessionSelections] = useSettingMutable('rememberLastProjectSessionSelections');
     const [defaultTranscriptStorageMode, setDefaultTranscriptStorageMode] = useSettingMutable('newSessionDefaultPersistenceModeV1');
     const [defaultTranscriptStorageModeByTargetKey, setDefaultTranscriptStorageModeByTargetKey] = useSettingMutable('newSessionDefaultPersistenceModeByTargetKeyV1');
 
@@ -113,6 +115,7 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
 
     const normalizedPromptSurface: PermissionPromptSurfaceMenuOption =
         resolvePermissionPromptSurface(permissionPromptSurface);
+    const rememberProjectSelectionsEnabled = rememberLastProjectSessionSelections !== false;
 
     const promptSurfaceOptions: Array<{ key: PermissionPromptSurfaceMenuOption; title: string; subtitle: string }> = [
         {
@@ -142,6 +145,28 @@ export const PermissionsSettingsView = React.memo(function PermissionsSettingsVi
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
+            <ItemGroup
+                title={t('settingsSession.sessionCreation.title')}
+                footer={t('settingsSession.sessionCreation.footer')}
+            >
+                <Item
+                    title={t('settingsSession.sessionCreation.rememberLastProjectSelectionsTitle')}
+                    subtitle={t(
+                        rememberProjectSelectionsEnabled
+                            ? 'settingsSession.sessionCreation.rememberLastProjectSelectionsEnabledSubtitle'
+                            : 'settingsSession.sessionCreation.rememberLastProjectSelectionsDisabledSubtitle',
+                    )}
+                    icon={<Ionicons name="copy-outline" size={29} color={theme.colors.textSecondary} />}
+                    rightElement={
+                        <Switch
+                            value={rememberProjectSelectionsEnabled}
+                            onValueChange={(next) => setRememberLastProjectSessionSelections(Boolean(next) as any)}
+                        />
+                    }
+                    onPress={() => setRememberLastProjectSessionSelections((!rememberProjectSelectionsEnabled) as any)}
+                />
+            </ItemGroup>
+
             <ItemGroup
                 title={t('settingsSession.defaultPermissions.applyPermissionChangesTitle')}
                 footer={t('settingsSession.permissions.applyChangesFooter')}

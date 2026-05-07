@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const postMessageSpy = vi.fn();
 let lastWebViewProps: any = null;
+let webViewRenderCount = 0;
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -18,6 +19,7 @@ vi.mock('react-native', async () => {
 
 vi.mock('react-native-webview', () => ({
     WebView: React.forwardRef((props: any, ref: any) => {
+        webViewRenderCount += 1;
         lastWebViewProps = props;
         if (ref) {
             ref.current = {
@@ -72,6 +74,7 @@ describe('XtermWebViewSurface (native)', () => {
     it('buffers writes until ready and forwards input/resize', async () => {
         postMessageSpy.mockClear();
         lastWebViewProps = null;
+        webViewRenderCount = 0;
 
         const onInput = vi.fn();
         const onResize = vi.fn();
@@ -118,6 +121,7 @@ describe('XtermWebViewSurface (native)', () => {
     it('decodes chunked incoming messages', async () => {
         postMessageSpy.mockClear();
         lastWebViewProps = null;
+        webViewRenderCount = 0;
 
         const onInput = vi.fn();
         const onResize = vi.fn();
@@ -148,6 +152,7 @@ describe('XtermWebViewSurface (native)', () => {
     it('re-buffers writes after the webview html changes until ready fires again', async () => {
         postMessageSpy.mockClear();
         lastWebViewProps = null;
+        webViewRenderCount = 0;
 
         const onInput = vi.fn();
         const onResize = vi.fn();
@@ -192,6 +197,47 @@ describe('XtermWebViewSurface (native)', () => {
                 v: 1,
                 type: 'write',
                 payload: { data: 'after-reload' },
+            }),
+        );
+    });
+
+    it('reloads the WebView once when the embedded terminal reports a boot error', async () => {
+        postMessageSpy.mockClear();
+        lastWebViewProps = null;
+        webViewRenderCount = 0;
+
+        const onInput = vi.fn();
+        const onResize = vi.fn();
+        const onReady = vi.fn();
+        const ref = React.createRef<any>();
+
+        await renderScreen(React.createElement(XtermWebViewSurface, {
+            ref,
+            fontSize: 12,
+            lineHeightPx: 18,
+            onInput,
+            onResize,
+            onReady,
+            bridgeMaxChunkBytes: 64_000,
+        }));
+
+        const initialRenderCount = webViewRenderCount;
+        ref.current.write('queued while booting');
+        await act(async () => {
+            emitEnvelope({ v: 1, type: 'bootError', payload: { code: 'terminal_boot_failed' } });
+        });
+
+        expect(webViewRenderCount).toBeGreaterThan(initialRenderCount);
+        expect(onReady).not.toHaveBeenCalled();
+
+        emitEnvelope({ v: 1, type: 'ready', payload: { cols: 80, rows: 24 } });
+
+        expect(onReady).toHaveBeenCalledWith(80, 24);
+        expect(findPostedEnvelopeByType('write')).toEqual(
+            expect.objectContaining({
+                v: 1,
+                type: 'write',
+                payload: { data: 'queued while booting' },
             }),
         );
     });

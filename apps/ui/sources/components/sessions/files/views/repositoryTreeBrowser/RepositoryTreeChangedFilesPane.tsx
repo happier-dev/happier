@@ -5,7 +5,13 @@ import { ChangedFilesList } from '@/components/sessions/files/content/ChangedFil
 import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
 import { FilesToolbar } from '@/components/sessions/files/FilesToolbar';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
-import { getDefaultChangedFilesViewMode, type ChangedFilesPresentation, type ChangedFilesViewMode, type SessionAttributedFile } from '@/scm/scmAttribution';
+import {
+    getDefaultChangedFilesViewMode,
+    resolveChangedFilesViewMode,
+    type ChangedFilesPresentation,
+    type ChangedFilesViewMode,
+    type SessionAttributedFile,
+} from '@/scm/scmAttribution';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useProjectForSession, useProjectSessions, useSessionProjectScmOperationLog, useSessionProjectScmTouchedPaths, useSetting } from '@/sync/domains/state/storage';
@@ -47,28 +53,12 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
     const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
     const { latestTurnScopedChangeSet, latestTurnDiffByPath, sessionChangeSet, providerDiffByPath } = useDerivedSessionChangeSet(props.sessionId);
 
-    const [changedFilesViewMode, setChangedFilesViewMode] = React.useState<ChangedFilesViewMode>(() => {
+    const [requestedChangedFilesViewMode, setChangedFilesViewMode] = React.useState<ChangedFilesViewMode>(() => {
         if (latestTurnScopedChangeSet) return 'turn';
         if (sessionChangeSet) return 'session';
         return getDefaultChangedFilesViewMode();
     });
     const [changedFilesPresentation, setChangedFilesPresentation] = React.useState<ChangedFilesPresentation>('list');
-
-    React.useEffect(() => {
-        if (changedFilesViewMode === 'turn' && latestTurnScopedChangeSet) return;
-        if (changedFilesViewMode === 'session' && sessionChangeSet) return;
-        if (latestTurnScopedChangeSet) {
-            setChangedFilesViewMode('turn');
-            return;
-        }
-        if (sessionChangeSet) {
-            setChangedFilesViewMode('session');
-            return;
-        }
-        if (changedFilesViewMode !== 'repository') {
-            setChangedFilesViewMode(getDefaultChangedFilesViewMode());
-        }
-    }, [changedFilesViewMode, latestTurnScopedChangeSet, sessionChangeSet]);
 
     const changed = useChangedFilesData({
         sessionId: props.sessionId,
@@ -81,6 +71,12 @@ export const RepositoryTreeChangedFilesPane = React.memo((props: RepositoryTreeC
         latestTurnChangeSet: latestTurnScopedChangeSet,
         sessionChangeSet,
     });
+
+    const changedFilesViewMode = React.useMemo(() => resolveChangedFilesViewMode({
+        mode: requestedChangedFilesViewMode,
+        showTurnViewToggle: changed.showTurnViewToggle,
+        showSessionViewToggle: changed.showSessionViewToggle,
+    }), [changed.showSessionViewToggle, changed.showTurnViewToggle, requestedChangedFilesViewMode]);
 
     const filteredChanged = React.useMemo(() => {
         return {

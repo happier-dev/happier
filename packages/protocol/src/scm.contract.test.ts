@@ -8,10 +8,14 @@ import {
     ScmChangeDiscardRequestSchema,
     ScmChangeDiscardResponseSchema,
     ScmCommitCreateRequestSchema,
+    ScmDefaultBranchPushPolicySchema,
     isScmPatchBoundToPath,
     parseScmPatchPaths,
     ScmStatusSnapshotRequestSchema,
     ScmStatusSnapshotResponseSchema,
+    ScmRemoteAddRequestSchema,
+    ScmRemoteRemoveRequestSchema,
+    ScmRemoteSetUrlRequestSchema,
     ScmWorkingSnapshotSchema,
 } from './scm.js';
 
@@ -54,6 +58,100 @@ describe('scm protocol contracts', () => {
         expect(parsed.capabilities?.changeSetModel).toBe('working-copy');
         expect(parsed.capabilities?.supportedDiffAreas).toEqual(['pending', 'both']);
         expect(parsed.capabilities?.operationLabels?.commit).toBe('Commit changes');
+    });
+
+    it('parses repository provisioning requests and responses', async () => {
+        const mod = await import('./scmRepositoryProvisioning.js').catch(() => null);
+        expect(mod).not.toBeNull();
+        if (!mod) throw new Error('expected repository provisioning protocol module');
+
+        const initRequest = mod.ScmRepositoryInitRequestSchema.parse({
+            cwd: '.',
+            initialBranch: 'main',
+        });
+        expect(initRequest.initialBranch).toBe('main');
+
+        const removeLockRequest = mod.ScmRepositoryRemoveIndexLockRequestSchema.parse({
+            cwd: '.',
+        });
+        expect(removeLockRequest.cwd).toBe('.');
+
+        const removeLockResponse = mod.ScmRepositoryRemoveIndexLockResponseSchema.parse({
+            success: true,
+            removed: true,
+            lockPath: '/repo/.git/index.lock',
+        });
+        expect(removeLockResponse.success && removeLockResponse.removed).toBe(true);
+
+        const publishRequest = mod.ScmHostingRepositoryPublishRequestSchema.parse({
+            cwd: '.',
+            providerKind: 'github',
+            owner: 'happier-dev',
+            ownerKind: 'user',
+            repositoryName: 'happier',
+            visibility: 'private',
+            remoteName: 'origin',
+            remoteConflictStrategy: 'fail',
+            remoteUrlKind: 'https',
+            pushCurrentBranch: true,
+        });
+        expect(publishRequest.remoteConflictStrategy).toBe('fail');
+        expect(publishRequest.ownerKind).toBe('user');
+
+        const missingOwnerKind = mod.ScmHostingRepositoryPublishRequestSchema.safeParse({
+            cwd: '.',
+            providerKind: 'github',
+            owner: 'happier-dev',
+            repositoryName: 'happier',
+            visibility: 'private',
+        });
+        expect(missingOwnerKind.success).toBe(false);
+
+        const publishTargetsResponse = mod.ScmHostingRepositoryDescribePublishTargetsResponseSchema.parse({
+            success: true,
+            auth: {
+                kind: 'gh-cli',
+                authenticated: true,
+                installableKey: 'gh',
+            },
+            defaultRepositoryName: 'happier',
+            targets: [
+                {
+                    providerKind: 'github',
+                    owner: 'happier-dev',
+                    ownerKind: 'user',
+                    label: 'happier-dev',
+                    default: true,
+                    supportedVisibilities: ['private', 'public'],
+                },
+            ],
+        });
+        expect(publishTargetsResponse.success && publishTargetsResponse.targets[0]?.ownerKind).toBe('user');
+
+        const publishResponse = mod.ScmHostingRepositoryPublishResponseSchema.parse({
+            success: true,
+            repository: {
+                provider: {
+                    kind: 'github',
+                    name: 'GitHub',
+                    baseUrl: 'https://github.com',
+                    nameWithOwner: 'happier-dev/happier',
+                },
+                nameWithOwner: 'happier-dev/happier',
+                url: 'https://github.com/happier-dev/happier',
+                cloneUrl: 'https://github.com/happier-dev/happier.git',
+                sshUrl: 'git@github.com:happier-dev/happier.git',
+                visibility: 'private',
+                defaultBranch: 'main',
+            },
+            remote: {
+                name: 'origin',
+                fetchUrl: 'https://github.com/happier-dev/happier.git',
+                pushUrl: 'https://github.com/happier-dev/happier.git',
+            },
+            pushed: true,
+        });
+        expect(publishResponse.success && publishResponse.repository.visibility).toBe('private');
     });
 
     it('accepts the legacy workspaceWorktreeCreate capability alias', () => {
@@ -120,6 +218,13 @@ describe('scm protocol contracts', () => {
                         isMain: false,
                     },
                 ],
+                remotes: [
+                    {
+                        name: 'origin',
+                        fetchUrl: 'git@github.com:happier-dev/happier.git',
+                        pushUrl: 'git@github.com:happier-dev/happier.git',
+                    },
+                ],
             },
             capabilities: {
                 readStatus: true,
@@ -135,9 +240,38 @@ describe('scm protocol contracts', () => {
                 writeRemoteFetch: true,
                 writeRemotePull: true,
                 writeRemotePush: true,
+                readHostingProvider: true,
+                readPullRequests: true,
+                writePullRequestCreate: true,
+                writePullRequestCheckout: true,
+                writePullRequestPrepareWorktree: true,
+                writePullRequestRunStacked: true,
+                defaultBranchPushPolicy: 'requires-feature-branch',
                 worktreeCreate: true,
                 changeSetModel: 'index',
                 supportedDiffAreas: ['included', 'pending', 'both'],
+            },
+            hostingProvider: {
+                kind: 'github',
+                name: 'GitHub',
+                baseUrl: 'https://github.com',
+                nameWithOwner: 'happier-dev/happier',
+                remoteName: 'origin',
+            },
+            pullRequest: {
+                provider: {
+                    kind: 'github',
+                    name: 'GitHub',
+                    baseUrl: 'https://github.com',
+                    nameWithOwner: 'happier-dev/happier',
+                    remoteName: 'origin',
+                },
+                number: 42,
+                title: 'Add PR support',
+                url: 'https://github.com/happier-dev/happier/pull/42',
+                baseBranch: 'main',
+                headBranch: 'feature/pr-support',
+                state: 'open',
             },
             branch: {
                 head: 'main',
@@ -147,6 +281,12 @@ describe('scm protocol contracts', () => {
                 detached: false,
             },
             hasConflicts: false,
+            operationState: {
+                kind: 'merge',
+                sourceRef: 'feature/auth',
+                canContinue: true,
+                canAbort: true,
+            },
             entries: [],
             totals: {
                 includedFiles: 0,
@@ -169,9 +309,78 @@ describe('scm protocol contracts', () => {
         expect(response.snapshot?.repo.worktrees?.[1]?.branch).toBe('feature/auth');
         expect(response.snapshot?.repo.worktrees?.[0]?.isMain).toBe(true);
         expect(response.snapshot?.repo.worktrees?.[1]?.isMain).toBe(false);
+        expect(response.snapshot?.capabilities.defaultBranchPushPolicy).toBe('requires-feature-branch');
+        expect(response.snapshot?.hostingProvider?.kind).toBe('github');
+        expect(response.snapshot?.pullRequest?.number).toBe(42);
+        expect(response.snapshot?.repo.remotes).toEqual([
+            {
+                name: 'origin',
+                fetchUrl: 'git@github.com:happier-dev/happier.git',
+                pushUrl: 'git@github.com:happier-dev/happier.git',
+            },
+        ]);
+        expect(response.snapshot?.operationState).toEqual({
+            kind: 'merge',
+            sourceRef: 'feature/auth',
+            canContinue: true,
+            canAbort: true,
+        });
         expect(response.snapshot?.totals.pendingFiles).toBe(0);
         expect(response.snapshot?.capabilities.changeSetModel).toBe('index');
         expect(response.snapshot?.capabilities.supportedDiffAreas).toEqual(['included', 'pending', 'both']);
+    });
+
+    it('parses default branch push policy values', () => {
+        expect(ScmDefaultBranchPushPolicySchema.parse('allow')).toBe('allow');
+        expect(ScmDefaultBranchPushPolicySchema.parse('requires-feature-branch')).toBe('requires-feature-branch');
+        expect(ScmDefaultBranchPushPolicySchema.parse('deny')).toBe('deny');
+    });
+
+    it('parses remote management requests with shared safety validation', () => {
+        expect(ScmRemoteAddRequestSchema.parse({
+            cwd: '.',
+            name: ' origin ',
+            fetchUrl: ' /tmp/happier remote.git ',
+            pushUrl: 'git@github.com:happier-dev/happier.git',
+        })).toMatchObject({
+            name: 'origin',
+            fetchUrl: '/tmp/happier remote.git',
+            pushUrl: 'git@github.com:happier-dev/happier.git',
+        });
+        expect(ScmRemoteSetUrlRequestSchema.parse({
+            cwd: '.',
+            name: 'origin',
+            pushUrl: null,
+        })).toMatchObject({
+            name: 'origin',
+            pushUrl: null,
+        });
+        expect(ScmRemoteRemoveRequestSchema.parse({
+            cwd: '.',
+            name: 'origin',
+        })).toMatchObject({
+            name: 'origin',
+        });
+
+        expect(ScmRemoteAddRequestSchema.safeParse({
+            cwd: '.',
+            name: '--upload-pack=hack',
+            fetchUrl: '/tmp/remote.git',
+        }).success).toBe(false);
+        expect(ScmRemoteAddRequestSchema.safeParse({
+            cwd: '.',
+            name: 'origin/main',
+            fetchUrl: '/tmp/remote.git',
+        }).success).toBe(false);
+        expect(ScmRemoteAddRequestSchema.safeParse({
+            cwd: '.',
+            name: 'origin',
+            fetchUrl: '--upload-pack=hack',
+        }).success).toBe(false);
+        expect(ScmRemoteSetUrlRequestSchema.safeParse({
+            cwd: '.',
+            name: 'origin',
+        }).success).toBe(false);
     });
 
     it('supports backend-native commit scope in commit create requests', () => {

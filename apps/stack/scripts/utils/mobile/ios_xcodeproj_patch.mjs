@@ -21,7 +21,12 @@ async function listIosAppXcodeprojNames({ iosDir }) {
   }
 
   const names = entries
-    .filter((e) => e.isDirectory() && e.name.endsWith('.xcodeproj') && e.name.startsWith('Happy'))
+    .filter(
+      (e) =>
+        e.isDirectory() &&
+        e.name.endsWith('.xcodeproj') &&
+        (e.name.startsWith('Happy') || e.name.startsWith('Happier'))
+    )
     .map((e) => e.name);
 
   // Prefer the common names first to keep behavior stable if multiple projects exist.

@@ -29,22 +29,39 @@ function consumeLineBreak(buf) {
   return buf;
 }
 
-function writeWithPrefix(stream, prefix, bufState, chunk) {
+function consumeLineChunk(bufState, chunk) {
   const s = chunk.toString();
   bufState.buf += s;
+  const lines = [];
   while (true) {
     const idx = nextLineBreakIndex(bufState.buf);
     if (idx < 0) break;
     const line = bufState.buf.slice(0, idx);
     bufState.buf = consumeLineBreak(bufState.buf.slice(idx));
+    lines.push(line);
+  }
+  return lines;
+}
+
+function writePrefixedLines(stream, prefix, lines) {
+  for (const line of lines) {
     stream.write(`${prefix}${line}\n`);
   }
 }
 
-function flushPrefixed(stream, prefix, bufState) {
-  if (!bufState.buf) return;
-  stream.write(`${prefix}${bufState.buf}\n`);
+function writeWithPrefix(stream, prefix, bufState, chunk) {
+  writePrefixedLines(stream, prefix, consumeLineChunk(bufState, chunk));
+}
+
+function flushLineBuffer(bufState) {
+  if (!bufState.buf) return [];
+  const line = bufState.buf;
   bufState.buf = '';
+  return [line];
+}
+
+function flushPrefixed(stream, prefix, bufState) {
+  writePrefixedLines(stream, prefix, flushLineBuffer(bufState));
 }
 
 function sanitizeLogFileToken(raw) {
@@ -58,6 +75,7 @@ export function spawnProc(label, cmd, args, env, options = {}) {
     silent = false,
     teeFile,
     teeLabel,
+    onLine,
     ...spawnOptions
   } = options ?? {};
 
@@ -82,13 +100,22 @@ export function spawnProc(label, cmd, args, env, options = {}) {
     }
   }
   const teeStream = teePath ? createWriteStream(teePath, { flags: 'a' }) : null;
-  const teeOutState = { buf: '' };
-  const teeErrState = { buf: '' };
   const teePrefix = (() => {
     const t = typeof teeLabel === 'string' ? teeLabel.trim() : '';
     if (t) return `[${t}] `;
     return outPrefix;
   })();
+
+  const emitLines = (stream, lines) => {
+    if (typeof onLine !== 'function') return;
+    for (const line of lines) {
+      try {
+        onLine({ stream, line });
+      } catch {
+        // ignore observer failures; child process logging should stay best-effort
+      }
+    }
+  };
 
   const child = spawn(cmd, args, {
     env,
@@ -100,21 +127,29 @@ export function spawnProc(label, cmd, args, env, options = {}) {
   });
 
   child.stdout?.on('data', (d) => {
-    if (!silent) writeWithPrefix(process.stdout, outPrefix, outState, d);
-    if (teeStream) writeWithPrefix(teeStream, teePrefix, teeOutState, d);
+    const lines = consumeLineChunk(outState, d);
+    emitLines('stdout', lines);
+    if (!silent) writePrefixedLines(process.stdout, outPrefix, lines);
+    if (teeStream) writePrefixedLines(teeStream, teePrefix, lines);
   });
   child.stderr?.on('data', (d) => {
-    if (!silent) writeWithPrefix(process.stderr, errPrefix, errState, d);
-    if (teeStream) writeWithPrefix(teeStream, teePrefix, teeErrState, d);
+    const lines = consumeLineChunk(errState, d);
+    emitLines('stderr', lines);
+    if (!silent) writePrefixedLines(process.stderr, errPrefix, lines);
+    if (teeStream) writePrefixedLines(teeStream, teePrefix, lines);
   });
   child.on('close', () => {
+    const outLines = flushLineBuffer(outState);
+    const errLines = flushLineBuffer(errState);
+    emitLines('stdout', outLines);
+    emitLines('stderr', errLines);
     if (!silent) {
-      flushPrefixed(process.stdout, outPrefix, outState);
-      flushPrefixed(process.stderr, errPrefix, errState);
+      writePrefixedLines(process.stdout, outPrefix, outLines);
+      writePrefixedLines(process.stderr, errPrefix, errLines);
     }
     if (teeStream) {
-      flushPrefixed(teeStream, teePrefix, teeOutState);
-      flushPrefixed(teeStream, teePrefix, teeErrState);
+      writePrefixedLines(teeStream, teePrefix, outLines);
+      writePrefixedLines(teeStream, teePrefix, errLines);
       try {
         teeStream.end();
       } catch {
@@ -141,7 +176,16 @@ export function spawnProc(label, cmd, args, env, options = {}) {
 }
 
 export function killProcessTree(child, signal) {
-  if (!child || child.exitCode != null || !child.pid) {
+  if (!child || child.exitCode != null) {
+    return;
+  }
+
+  if (!child.pid) {
+    try {
+      child.kill?.(signal);
+    } catch {
+      // ignore
+    }
     return;
   }
 
@@ -153,7 +197,11 @@ export function killProcessTree(child, signal) {
       child.kill(signal);
     }
   } catch {
-    // ignore
+    try {
+      child.kill?.(signal);
+    } catch {
+      // ignore
+    }
   }
 }
 

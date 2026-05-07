@@ -4,11 +4,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { layout } from '../ui/layout/layout';
-import { useHeaderHeight, useIsTablet } from '@/utils/platform/responsive';
+import { useHeaderHeight } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
+import { useDesktopWindowDragMouseProps } from '@/components/navigation/desktopWindowChrome/DesktopWindowDragRegion';
 
 
 interface HeaderProps {
@@ -47,6 +48,7 @@ export const Header = React.memo((props: HeaderProps) => {
     const insets = useSafeAreaInsets();
     const paddingTop = safeAreaEnabled ? insets.top : 0;
     const headerHeight = useHeaderHeight();
+    const desktopDragProps = useDesktopWindowDragMouseProps();
 
     const containerStyle = [
         styles.container,
@@ -65,19 +67,35 @@ export const Header = React.memo((props: HeaderProps) => {
     ];
 
     return (
-        <View style={[containerStyle]}>
-            <View style={styles.contentWrapper}>
-                <View style={[styles.content, { height: headerHeight }]}>
-                    <View style={styles.leftContainer}>
+        <View
+            {...desktopDragProps}
+            testID="desktop-route-header-drag-region"
+            style={containerStyle}
+        >
+            <View
+                testID="desktop-route-header-content-wrapper"
+                pointerEvents="box-none"
+                style={styles.contentWrapper}
+            >
+                <View
+                    testID="desktop-route-header-content"
+                    pointerEvents="box-none"
+                    style={[styles.content, { height: headerHeight }]}
+                >
+                    <View pointerEvents="box-none" style={styles.leftContainer}>
                         {headerLeft && headerLeft()}
                     </View>
 
-                    <View style={styles.centerContainer}>
+                    <View
+                        testID="desktop-route-header-center"
+                        pointerEvents="box-none"
+                        style={styles.centerContainer}
+                    >
                         {title}
                         {subtitle && <Text style={subtitleStyle} numberOfLines={1}>{subtitle}</Text>}
                     </View>
 
-                    <View style={styles.rightContainer}>
+                    <View pointerEvents="box-none" style={styles.rightContainer}>
                         {headerRight && headerRight()}
                     </View>
                 </View>
@@ -93,7 +111,7 @@ interface ExtendedNavigationOptions extends Partial<NativeStackHeaderProps['opti
 }
 
 // Default back button component
-const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void }> = ({ tintColor = '#000', onPress }) => {
+const DefaultBackButton: React.FC<{ tintColor: string; onPress: () => void }> = ({ tintColor, onPress }) => {
     return (
         <Pressable onPress={onPress} hitSlop={15}>
             <Ionicons
@@ -109,20 +127,8 @@ const DefaultBackButton: React.FC<{ tintColor?: string; onPress: () => void }> =
 const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((props) => {
     const { options, route, back, navigation } = props;
     const extendedOptions = options as ExtendedNavigationOptions;
-    const isTablet = useIsTablet();
-
-    // Check if we should hide back button on tablet
-    const shouldHideBackButton = React.useMemo(() => {
-        if (!isTablet) return false;
-
-        // Get navigation state to check stack depth
-        const state = navigation.getState();
-        const currentIndex = state?.index ?? 0;
-
-        // Hide back button if we're at the first or second screen in the stack
-        // In tablet mode, index 0 is the empty screen, index 1 is the first real screen
-        return currentIndex <= 1;
-    }, [isTablet, navigation]);
+    const { theme } = useUnistyles();
+    const headerTintColor = options.headerTintColor ?? theme.colors.header.tint;
 
     // Extract title - handle both string and function types
     let title: React.ReactNode | null = null;
@@ -130,7 +136,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
         if (typeof options.headerTitle === 'string') {
             title = (
                 <Text style={[
-                    { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
+                    { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: headerTintColor },
                     Typography.default('semiBold'),
                     options.headerTitleStyle
                 ]}>
@@ -139,12 +145,12 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
             );
         } else if (typeof options.headerTitle === 'function') {
             // Handle function type headerTitle
-            title = options.headerTitle({ children: route.name, tintColor: options.headerTintColor });
+            title = options.headerTitle({ children: route.name, tintColor: headerTintColor });
         }
     } else if (typeof options.title === 'string') {
         title = (
             <Text style={[
-                { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: options.headerTintColor || '#000' },
+                { fontSize: 16, textAlign: Platform.OS === 'ios' ? 'center' : 'left', color: headerTintColor },
                 Typography.default('semiBold'),
                 options.headerTitleStyle
             ]}>
@@ -157,13 +163,12 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
     let headerLeftContent: (() => React.ReactNode) | undefined | null = null;
     if (options.headerLeft) {
         // Use custom headerLeft if provided
-        headerLeftContent = () => options.headerLeft!({ canGoBack: !!back, tintColor: options.headerTintColor });
-    } else if (back && options.headerBackVisible !== false && !shouldHideBackButton) {
+        headerLeftContent = () => options.headerLeft!({ canGoBack: !!back, tintColor: headerTintColor });
+    } else if (back && options.headerBackVisible !== false) {
         // Show default back button if can go back and not explicitly hidden
-        // Also hide on tablet when at first or second screen
         headerLeftContent = () => (
             <DefaultBackButton
-                tintColor={options.headerTintColor}
+                tintColor={headerTintColor}
                 onPress={() => navigation.goBack()}
             />
         );
@@ -175,7 +180,7 @@ const NavigationHeaderComponent: React.FC<NativeStackHeaderProps> = React.memo((
             subtitle={extendedOptions.headerSubtitle}
             headerLeft={headerLeftContent}
             headerRight={options.headerRight ?
-                () => options.headerRight!({ canGoBack: !!back, tintColor: options.headerTintColor }) :
+                () => options.headerRight!({ canGoBack: !!back, tintColor: headerTintColor }) :
                 undefined
             }
             headerStyle={options.headerStyle}

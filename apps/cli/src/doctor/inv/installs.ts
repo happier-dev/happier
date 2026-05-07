@@ -2,6 +2,7 @@ import { basename, dirname, join } from 'node:path';
 import { readFile, realpath } from 'node:fs/promises';
 
 import { configuration } from '@/configuration';
+import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 
 import {
   listInstalledVersionIdsNewestFirst,
@@ -20,28 +21,6 @@ const CLI_CHANNELS: readonly PublicReleaseRingId[] = ['stable', 'preview', 'publ
 
 function toSnapshotRing(channel: PublicReleaseRingId): SnapshotRing {
   return getReleaseRingCatalogEntry(channel).publicLabel;
-}
-
-function resolveInvokerName(): string | null {
-  const envInvokerName = basename(String(process.env.HAPPIER_CLI_INVOKER_NAME ?? '').trim())
-    .replace(/\.exe$/i, '')
-    .replace(/\.m?js$/i, '')
-    .trim();
-  if (envInvokerName) {
-    return envInvokerName;
-  }
-
-  for (const candidate of [process.argv[1] ?? '', process.argv[0] ?? '']) {
-    const normalized = basename(String(candidate ?? '').trim())
-      .replace(/\.exe$/i, '')
-      .replace(/\.m?js$/i, '')
-      .trim();
-    if (normalized) {
-      return normalized;
-    }
-  }
-
-  return null;
 }
 
 async function readPackageVersion(packageRoot: string): Promise<string | null> {
@@ -104,7 +83,11 @@ async function readManagedInstallation(channel: PublicReleaseRingId): Promise<Ha
     channel,
     processEnv: process.env,
   });
-  const currentVersion = await readPackageVersion(paths.currentPath);
+  // Read package.json from the JUNCTION-FREE resolved path; on Windows the
+  // `current` junction is unreliable to traverse for fs reads. When the
+  // marker file is missing (legacy installs / fresh boxes) `paths.currentPath`
+  // is still used as a last resort so we don't regress non-Windows envs.
+  const currentVersion = await readPackageVersion(paths.resolvedCurrentPath ?? paths.currentPath);
   const fallbackVersion = currentVersion ?? (await listInstalledVersionIdsNewestFirst({
     componentId: 'happier-cli',
     channel,
@@ -116,7 +99,7 @@ async function readManagedInstallation(channel: PublicReleaseRingId): Promise<Ha
   }
 
   const binaryPath = currentVersion
-    ? paths.binaryPath
+    ? (paths.resolvedBinaryPath ?? paths.binaryPath)
     : resolveBinaryPathForVersion({
         channel,
         versionId: fallbackVersion,

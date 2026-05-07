@@ -131,7 +131,7 @@ function installMcpServersScreenMocks() {
         router: async () => {
             const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
             return createExpoRouterMock({
-                pathname: '/(app)/settings/mcp-servers',
+                pathname: '/settings/mcp-servers',
                 segments: ['(app)', 'settings', 'mcp-servers'],
                 router: {
                     push: routerPushSpy,

@@ -63,7 +63,7 @@ Default behavior when everything is online:
 Safety fallback:
 
 - if the session is **offline**, **resuming**, or the agent is **not ready yet**, Happier may store the message in the **pending queue first** to avoid losing it.
-- if the session is currently under **local control** during an attach/local-control flow, Happier may queue the message until the session is ready to resume remote processing.
+- if the session is currently under **local control** during an attach/local-control flow, Happier queues the message until the session is ready to resume remote processing.
 
 ### Interrupt & send
 
@@ -81,6 +81,23 @@ This is the best option when you want to:
 - keep messages editable until the agent starts processing them,
 - avoid losing a message when the agent is offline or not ready yet.
 
+## Local-control sessions
+
+Local control means the provider TUI is active in your terminal. Remote control means Happier is driving the same provider session in the background for the app.
+
+For **Claude** and **Codex**, local control is exclusive. While the provider TUI owns the session, Happier does not inject app messages directly into that terminal process. Instead:
+
+- the app stores the message in the session pending queue,
+- the local Happier process watches for pending messages,
+- if no local turn is running, Happier can switch the session back to remote processing and deliver the queued message,
+- if a local turn is still running, Happier waits for that turn to finish, abort, or exit before switching back to remote.
+
+This avoids interrupting an in-progress local Claude or Codex turn. Without this wait, sending an app message into a busy terminal TUI could cancel or corrupt the current provider turn.
+
+For **OpenCode**, local control is shared. The OpenCode TUI and Happier app can both stay connected to the same OpenCode session, so app messages do not need the same exclusive-control handoff path.
+
+You can always review queued messages from the **Pending messages** sheet before they run.
+
 ## Mixed-version behavior (server / agent compatibility)
 
 The pending queue feature requires support from both:
@@ -95,4 +112,4 @@ If your setup doesn’t support pending queues, the app will fall back to the no
 - If you’re queuing multiple thoughts, use **Move up / Move down** to ensure the agent processes them in the intended order.
 - If you decide something is no longer relevant, **Remove** it before it runs.
 - If you need something handled immediately, **Send now** is the fastest path.
-- During local ↔ remote switching, a short queued state is normal and helps avoid losing messages.
+- During local to remote switching, a short queued or waiting state is normal and helps avoid losing messages or interrupting an active local turn.

@@ -347,7 +347,7 @@ describe('ClaudeSdkAgentBackend', () => {
     }
   });
 
-  it('appends CHANGE_TITLE_INSTRUCTION to the first prompt only', async () => {
+  it('does not append hidden change-title instructions to user prompts', async () => {
     delete process.env.DEBUG;
 
     await withFakeClaudeBackend(
@@ -367,7 +367,8 @@ describe('ClaudeSdkAgentBackend', () => {
         const second = JSON.parse(lines[1] ?? 'null') as any;
         const third = JSON.parse(lines[2] ?? 'null') as any;
         expect(second).toMatchObject({ kind: 'user', turn: 1 });
-        expect(String(second?.content ?? '')).toContain(`hello\n\n${CHANGE_TITLE_INSTRUCTION}`);
+        expect(String(second?.content ?? '')).toBe('hello');
+        expect(String(second?.content ?? '')).not.toContain(CHANGE_TITLE_INSTRUCTION);
         expect(third).toMatchObject({ kind: 'user', turn: 2 });
         expect(String(third?.content ?? '')).toBe('again');
       },

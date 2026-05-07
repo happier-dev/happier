@@ -8,8 +8,8 @@ export const OPENCODE_UI: AgentUiConfig = {
     pickerIconScale: 0.9,
     tintColor: null,
     avatarOverlay: {
-        circleScale: 0.35,
-        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),
+        circleScale: 0.42,
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.32),
     },
     cliGlyph: '</>',
 };

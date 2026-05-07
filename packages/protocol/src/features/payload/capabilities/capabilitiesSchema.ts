@@ -26,10 +26,15 @@ import {
   DEFAULT_SERVER_CAPABILITIES,
   ServerCapabilitiesSchema,
 } from './serverCapabilities.js';
+import {
+  DEFAULT_PETS_CAPABILITIES,
+  PetsCapabilitiesSchema,
+} from './petsCapabilities.js';
 
 export const CapabilitiesSchema = z.object({
   bugReports: BugReportsCapabilitiesSchema.optional().default(DEFAULT_BUG_REPORTS_CAPABILITIES),
   voice: VoiceCapabilitiesSchema.optional().default(DEFAULT_VOICE_CAPABILITIES),
+  pets: PetsCapabilitiesSchema.optional().default(DEFAULT_PETS_CAPABILITIES),
   encryption: EncryptionCapabilitiesSchema.optional().default(DEFAULT_ENCRYPTION_CAPABILITIES),
   server: ServerCapabilitiesSchema.optional().default(DEFAULT_SERVER_CAPABILITIES),
   machines: z

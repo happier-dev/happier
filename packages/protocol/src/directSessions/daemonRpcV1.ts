@@ -144,6 +144,95 @@ export const DirectSessionStatusGetRequestSchema = z
   .passthrough();
 export type DirectSessionStatusGetRequest = z.infer<typeof DirectSessionStatusGetRequestSchema>;
 
+export const DirectSessionAttachRequestSchema = z
+  .object({
+    machineId: z.string().min(1),
+    sessionId: z.string().min(1),
+    providerId: DirectSessionsProviderIdSchema,
+    remoteSessionId: z.string().min(1).max(2000),
+    source: DirectSessionsSourceSchema,
+    leaseId: z.string().min(1).max(2000).optional(),
+    ttlMs: z.number().int().min(1_000).max(15 * 60_000).optional(),
+  })
+  .passthrough();
+export type DirectSessionAttachRequest = z.infer<typeof DirectSessionAttachRequestSchema>;
+
+export const DirectSessionAttachResponseSchema = z.union([
+  z
+    .object({
+      ok: z.literal(true),
+      leaseId: z.string().min(1),
+      expiresAtMs: z.number().int().min(0),
+      renewed: z.boolean().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      ok: z.literal(false),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      error: z.string().min(1),
+    })
+    .passthrough(),
+]);
+export type DirectSessionAttachResponse = z.infer<typeof DirectSessionAttachResponseSchema>;
+
+export const DirectSessionDetachRequestSchema = z
+  .object({
+    machineId: z.string().min(1),
+    sessionId: z.string().min(1),
+    leaseId: z.string().min(1).max(2000),
+  })
+  .passthrough();
+export type DirectSessionDetachRequest = z.infer<typeof DirectSessionDetachRequestSchema>;
+
+export const DirectSessionDetachResponseSchema = z.union([
+  z
+    .object({
+      ok: z.literal(true),
+      detached: z.boolean(),
+    })
+    .passthrough(),
+  z
+    .object({
+      ok: z.literal(false),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      error: z.string().min(1),
+    })
+    .passthrough(),
+]);
+export type DirectSessionDetachResponse = z.infer<typeof DirectSessionDetachResponseSchema>;
+
+export const DirectSessionFollowPolicySetRequestSchema = z
+  .object({
+    machineId: z.string().min(1),
+    sessionId: z.string().min(1),
+    providerId: DirectSessionsProviderIdSchema,
+    remoteSessionId: z.string().min(1).max(2000),
+    source: DirectSessionsSourceSchema,
+    enabled: z.boolean(),
+  })
+  .passthrough();
+export type DirectSessionFollowPolicySetRequest = z.infer<typeof DirectSessionFollowPolicySetRequestSchema>;
+
+export const DirectSessionFollowPolicySetResponseSchema = z.union([
+  z
+    .object({
+      ok: z.literal(true),
+      enabled: z.boolean(),
+      leaseActive: z.boolean(),
+      updatedAtMs: z.number().int().min(0),
+    })
+    .passthrough(),
+  z
+    .object({
+      ok: z.literal(false),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      error: z.string().min(1),
+    })
+    .passthrough(),
+]);
+export type DirectSessionFollowPolicySetResponse = z.infer<typeof DirectSessionFollowPolicySetResponseSchema>;
+
 export const DirectSessionStatusGetResponseSchema = z.union([
   z
     .object({

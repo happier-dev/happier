@@ -9,12 +9,14 @@ const mockNavigateToSession = vi.fn();
 let capturedSectionListProps: any | null = null;
 const mockSessions = vi.hoisted(() => ({
     all: [] as any[],
+    listViewDataByServerId: {} as Record<string, any[] | null>,
     hideInactiveSessions: false,
     pinnedSessionKeysV1: [] as string[],
 }));
 const modalMock = vi.hoisted(() => ({
     alert: vi.fn(),
 }));
+const fetchArchivedSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock('@/text', () => createTextModuleMock({ translate: (key: string) => key }));
 vi.mock('@expo/vector-icons', () => ({
@@ -77,6 +79,11 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
 vi.mock('@/sync/ops', () => ({
     sessionUnarchiveWithServerScope: vi.fn(async () => ({ success: true, archivedAt: null })),
 }));
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        fetchArchivedSessions: fetchArchivedSessionsSpy,
+    },
+}));
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleMock({
@@ -87,6 +94,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 machines: {},
             }),
             useAllSessions: () => mockSessions.all,
+            useSessionListViewDataByServerId: () => mockSessions.listViewDataByServerId,
             useSetting: (key: string) => {
                 if (key === 'hideInactiveSessions') return mockSessions.hideInactiveSessions;
                 if (key === 'pinnedSessionKeysV1') return mockSessions.pinnedSessionKeysV1;
@@ -104,10 +112,12 @@ describe('Archived sessions route', () => {
         mockNavigateToSession.mockReset();
         capturedSectionListProps = null;
         modalMock.alert.mockReset();
+        fetchArchivedSessionsSpy.mockReset();
         (sessionUnarchiveWithServerScope as any).mockReset?.();
         mockSessions.hideInactiveSessions = false;
         mockSessions.pinnedSessionKeysV1 = [];
         mockSessions.all = [];
+        mockSessions.listViewDataByServerId = {};
     });
 
     it('shows inactive sessions before archived sessions only when hide inactive sessions is enabled', async () => {
@@ -141,6 +151,37 @@ describe('Archived sessions route', () => {
         );
         expect(content).not.toContain('settingsFeatures.hiddenInactiveSessionsSectionSubtitle');
         expect(content).toContain('Inactive Session');
+    });
+
+    it('requests the archived session snapshot when the route opens', async () => {
+        const Screen = (await import('@/app/(app)/session/archived')).default;
+        await renderScreen(<Screen />);
+
+        expect(fetchArchivedSessionsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows archived cache-only list rows before full hydration finishes', async () => {
+        mockSessions.listViewDataByServerId = {
+            'server-cache': [
+                {
+                    type: 'session',
+                    serverId: 'server-cache',
+                    session: {
+                        id: 'archived-cache-only',
+                        active: false,
+                        archivedAt: 123,
+                        updatedAt: 20,
+                        metadata: { name: 'Cached Archived Session', path: '/tmp/archived-cache' },
+                        accessLevel: 'admin',
+                    },
+                },
+            ],
+        };
+
+        const Screen = (await import('@/app/(app)/session/archived')).default;
+        const screen = await renderScreen(<Screen />);
+
+        expect(screen.getTextContent()).toContain('Cached Archived Session');
     });
 
     it('does not show inactive sessions when hide inactive sessions is disabled', async () => {

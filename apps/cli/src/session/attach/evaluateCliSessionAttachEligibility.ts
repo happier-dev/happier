@@ -76,8 +76,6 @@ function buildTerminalAttachEligibility(params: Readonly<{
   currentTmuxSocketPath?: string | null;
 }>): CliSessionAttachEligibility {
   const localTerminal = params.localAttachmentInfo?.terminal ?? null;
-  const metadataTerminalValue = params.metadata?.terminal;
-  const metadataTerminal = asRecord(metadataTerminalValue) as NonNullable<Metadata['terminal']> | null;
 
   if (localTerminal) {
     const plan = createTerminalAttachPlan({
@@ -105,23 +103,6 @@ function buildTerminalAttachEligibility(params: Readonly<{
     };
   }
 
-  if (metadataTerminal) {
-    const plan = createTerminalAttachPlan({
-      terminal: metadataTerminal,
-      insideTmux: params.insideTmux,
-      currentTmuxSocketPath: params.currentTmuxSocketPath ?? null,
-    });
-    if (plan.type === 'not-attachable') {
-      return {
-        eligible: false,
-        agentId: resolveAgentId(params.metadata),
-        reasonCode: 'terminal_not_attachable',
-        reason: plan.reason,
-        metadata: params.metadata,
-      };
-    }
-  }
-
   return {
     eligible: false,
     agentId: resolveAgentId(params.metadata),
@@ -135,6 +116,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   credentials: Credentials;
   rawSession: RawSessionListRow | RawSessionRecord;
   currentMachineId: string | null;
+  currentMachineHost?: string | null;
   localAttachmentInfo: TerminalAttachmentInfo | null;
   insideTmux: boolean;
   currentTmuxSocketPath?: string | null;
@@ -176,6 +158,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
 
   const localControl = agentId ? getAgentLocalControlCapability(agentId) : null;
   const sessionMachineId = readMachineId(metadata);
+  const hasLocalTerminalEvidence = params.localAttachmentInfo !== null;
   if (!localControl) {
     return {
       eligible: false,
@@ -232,7 +215,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
     };
   }
 
-  if (!params.currentMachineId && !params.localAttachmentInfo) {
+  if (!params.currentMachineId && !hasLocalTerminalEvidence) {
     return {
       eligible: false,
       agentId,
@@ -241,7 +224,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
       metadata,
     };
   }
-  if (!sessionMachineId && !params.localAttachmentInfo) {
+  if (!sessionMachineId && !hasLocalTerminalEvidence) {
     return {
       eligible: false,
       agentId,
@@ -250,7 +233,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
       metadata,
     };
   }
-  if (sessionMachineId && params.currentMachineId && sessionMachineId !== params.currentMachineId) {
+  if (sessionMachineId && params.currentMachineId && sessionMachineId !== params.currentMachineId && !hasLocalTerminalEvidence) {
     return {
       eligible: false,
       agentId,

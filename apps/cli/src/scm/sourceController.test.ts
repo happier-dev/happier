@@ -106,6 +106,18 @@ function createTestBackend(input: {
         branchCheckout: async () => {
             throw new Error('not needed in this test');
         },
+        branchMerge: async () => {
+            throw new Error('not needed in this test');
+        },
+        branchRebase: async () => {
+            throw new Error('not needed in this test');
+        },
+        branchOperationContinue: async () => {
+            throw new Error('not needed in this test');
+        },
+        branchOperationAbort: async () => {
+            throw new Error('not needed in this test');
+        },
         worktreeCreate: async () => {
             throw new Error('not needed in this test');
         },
@@ -113,6 +125,15 @@ function createTestBackend(input: {
             throw new Error('not needed in this test');
         },
         worktreePrune: async () => {
+            throw new Error('not needed in this test');
+        },
+        remoteAdd: async () => {
+            throw new Error('not needed in this test');
+        },
+        remoteSetUrl: async () => {
+            throw new Error('not needed in this test');
+        },
+        remoteRemove: async () => {
             throw new Error('not needed in this test');
         },
         remoteFetch: async () => {

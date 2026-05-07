@@ -35,8 +35,12 @@ export function normalizeWorkingSnapshotForUi(
                 ...snapshot.repo,
                 backendId,
                 mode: snapshot.repo.mode ?? null,
+                worktrees: snapshot.repo.worktrees ?? [],
+                remotes: snapshot.repo.remotes ?? [],
             },
             capabilities,
+            hostingProvider: snapshot.hostingProvider ?? null,
+            pullRequest: snapshot.pullRequest ?? null,
         };
     }
 
@@ -55,6 +59,8 @@ function createEmptyScmSnapshot(input: {
         capabilities: EMPTY_SCM_CAPABILITIES,
         branch: { head: null, upstream: null, ahead: 0, behind: 0, detached: false },
         stashCount: 0,
+        hostingProvider: null,
+        pullRequest: null,
         hasConflicts: false,
         entries: [],
         totals: {

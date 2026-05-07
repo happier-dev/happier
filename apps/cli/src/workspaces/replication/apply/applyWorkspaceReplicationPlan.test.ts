@@ -45,6 +45,33 @@ function createSourceOffer(input: Readonly<{
   };
 }
 
+async function withIsolatedProcessHome<T>(
+  prefix: string,
+  run: (homeDir: string) => Promise<T>,
+): Promise<T> {
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const homeDir = await mkdtemp(join(tmpdir(), prefix));
+  process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
+
+  try {
+    return await run(homeDir);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    if (previousUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = previousUserProfile;
+    }
+    await rm(homeDir, { recursive: true, force: true });
+  }
+}
+
 describe('applyWorkspaceReplicationPlan', () => {
   it('materializes a transfer snapshot from a CAS-backed source offer', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-apply-plan-active-'));
@@ -229,28 +256,31 @@ describe('applyWorkspaceReplicationPlan', () => {
         sourcePath: sourceFilePath,
       });
 
-      await chmod(lockedRoot, 0o555);
-      try {
-        const result = await applyWorkspaceReplicationPlan({
-          activeServerDir,
-          targetPath: requestedTarget,
-          strategy: 'sync_changes',
-          conflictPolicy: 'replace_existing',
-          currentTargetManifest: { entries: [] },
-          sourceOffer: createSourceOffer({
-            digest,
-            sizeBytes: payload.byteLength,
-            relativePath: 'README.md',
-          }),
-        });
+      await withIsolatedProcessHome('happier-replication-apply-plan-home-', async (homeDir) => {
+        await chmod(lockedRoot, 0o555);
+        try {
+          const result = await applyWorkspaceReplicationPlan({
+            activeServerDir,
+            targetPath: requestedTarget,
+            strategy: 'sync_changes',
+            conflictPolicy: 'replace_existing',
+            currentTargetManifest: { entries: [] },
+            sourceOffer: createSourceOffer({
+              digest,
+              sizeBytes: payload.byteLength,
+              relativePath: 'README.md',
+            }),
+          });
 
-        expect(result.targetPath).not.toBe(requestedTarget);
-        expect(result.targetPath.startsWith(lockedRoot)).toBe(false);
-        await expect(readFile(join(result.targetPath, 'README.md'), 'utf8')).resolves.toBe('hello fallback\n');
-        await expect(access(requestedTarget, constants.F_OK)).rejects.toThrow();
-      } finally {
-        await chmod(lockedRoot, 0o755);
-      }
+          expect(result.targetPath).toBe(join(homeDir, 'repo'));
+          expect(result.targetPath).not.toBe(requestedTarget);
+          expect(result.targetPath.startsWith(lockedRoot)).toBe(false);
+          await expect(readFile(join(result.targetPath, 'README.md'), 'utf8')).resolves.toBe('hello fallback\n');
+          await expect(access(requestedTarget, constants.F_OK)).rejects.toThrow();
+        } finally {
+          await chmod(lockedRoot, 0o755);
+        }
+      });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
       await rm(root, { recursive: true, force: true });

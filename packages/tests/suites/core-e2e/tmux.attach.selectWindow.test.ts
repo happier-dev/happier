@@ -9,10 +9,7 @@ import { tmpdir } from 'node:os';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { repoRootDir } from '../../src/testkit/paths';
-
-function yarnCommand(): string {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-}
+import { resolveYarnCommandInvocation } from '../../src/testkit/process/commands';
 
 function tmuxAvailable(): boolean {
   if (process.platform === 'win32') return false;
@@ -97,11 +94,17 @@ describe('core e2e: tmux attach selects the correct window (isolated tmux server
         TMUX_PANE: '%0',
       };
 
-      const attachRes = spawnSync(
-        yarnCommand(),
-        ['-s', 'workspace', '@happier-dev/cli', 'dev', 'attach', sessionId],
-        { cwd: repoRootDir(), env: envForAttach, encoding: 'utf8' },
-      );
+      const invocation = resolveYarnCommandInvocation(['-s', 'workspace', '@happier-dev/cli', 'dev', 'attach', sessionId], {
+        npmExecPath: envForAttach.npm_execpath,
+      });
+      const attachRes = spawnSync(invocation.command, invocation.args, {
+        cwd: repoRootDir(),
+        env: envForAttach,
+        encoding: 'utf8',
+        ...(invocation.windowsVerbatimArguments
+          ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+          : {}),
+      });
       expect(attachRes.status).toBe(0);
 
       const windows = runTmux(['list-windows', '-t', tmuxSessionName, '-F', '#{window_active} #{window_name}'], {

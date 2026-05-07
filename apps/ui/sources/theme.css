@@ -58,6 +58,15 @@
     }
 }
 
+/* Expo Router / Vaul route modal backdrop.
+   Expo Router owns this element outside BaseModal, but it exposes a CSS variable
+   for the overlay color and stable Vaul data attributes for the backdrop node. */
+[data-vaul-overlay] {
+    --expo-router-modal-overlay-background: var(--colors-overlay-scrim-wizard, rgba(255, 255, 255, 0.52));
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+}
+
 /* Ensure scrollbars are visible on hover for macOS */
 ::-webkit-scrollbar:horizontal {
     height: 12px;

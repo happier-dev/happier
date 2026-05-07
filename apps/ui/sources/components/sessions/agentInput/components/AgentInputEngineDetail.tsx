@@ -4,6 +4,8 @@ import { StyleSheet } from "react-native-unistyles";
 
 import {
   OptionPickerOverlay,
+  type OptionPickerFavoriteOptions,
+  type OptionPickerOption,
   type OptionPickerProbeState,
 } from "@/components/sessions/pickers/OptionPickerOverlay";
 import type {
@@ -30,6 +32,9 @@ type AgentInputEngineDetailProps = Readonly<{
   modelEmptyText?: string;
   canEnterCustomModel?: boolean;
   modelProbe?: OptionPickerProbeState;
+  favoriteModelValues?: ReadonlySet<string>;
+  isModelFavoritable?: (option: AgentInputEngineModelOption) => boolean;
+  onToggleFavoriteModel?: (option: AgentInputEngineModelOption) => void;
   onSelectModel?: (value: string) => void;
   onSubmitCustomValue?: (value: string) => void | Promise<void>;
   selectedModelOptionControls?: ReadonlyArray<SessionConfigOptionControl> | null;
@@ -96,6 +101,26 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
     });
   }, [props.modelOptions]);
 
+  const favoriteOptions = React.useMemo<OptionPickerFavoriteOptions | undefined>(() => {
+    if (!props.onToggleFavoriteModel || !props.favoriteModelValues) {
+      return undefined;
+    }
+
+    return {
+      values: props.favoriteModelValues,
+      isFavoritable: props.isModelFavoritable
+        ? (option: OptionPickerOption) => props.isModelFavoritable?.(option as AgentInputEngineModelOption) === true
+        : undefined,
+      onToggle: (option: OptionPickerOption) => {
+        props.onToggleFavoriteModel?.(option as AgentInputEngineModelOption);
+      },
+    };
+  }, [
+    props.favoriteModelValues,
+    props.isModelFavoritable,
+    props.onToggleFavoriteModel,
+  ]);
+
   const sections: Record<"model" | "config", React.ReactNode | null> =
     {
       model: hasModelSection
@@ -118,6 +143,7 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
               canEnterCustomValue={props.canEnterCustomModel === true}
               customLabel={`${t("profiles.custom")}...`}
               customDescription={t("agentInput.model.customDescription")}
+              favoriteOptions={favoriteOptions}
               probe={props.modelProbe}
               selectedOptionControls={props.selectedModelOptionControls ?? undefined}
               onSelectOptionControlValue={props.onSelectModelOptionValue}

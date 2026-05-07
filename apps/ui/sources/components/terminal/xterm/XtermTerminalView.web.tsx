@@ -206,6 +206,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             fontFamily: DEFAULT_FONT_FAMILY,
             fontSize: Math.max(8, Math.round(props.fontSize)),
             scrollback: 5000,
+            screenReaderMode: false,
             theme: {
                 background: theme.colors.surface,
                 foreground: theme.colors.text,

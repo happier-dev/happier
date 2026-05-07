@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { PermissionHandler } from './permissionHandler';
 import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
+import { createPermissionHandlerSessionStubWithMetadata } from './permissionHandler.testkit';
+import type { EnhancedMode } from '../loop';
+import type { PermissionRpcPayload } from './permissionRpc';
 
 describe('PermissionHandler (late permission responses)', () => {
   async function expectResolvesWithin<T>(promise: Promise<T>, ms = 250): Promise<T> {
@@ -46,6 +49,92 @@ describe('PermissionHandler (late permission responses)', () => {
     expect((client.agentState as any).requests?.[permissionId]).toBeUndefined();
     expect((client.agentState as any).completedRequests?.[permissionId]?.status).toBe('approved');
     handler.dispose();
+  });
+
+  it('uses a detached late ExitPlanMode approval to satisfy a compatible same-id retry', async () => {
+    const { session, client } = createPermissionHandlerSessionStubWithMetadata({
+      sessionId: 's1-exit-late',
+      metadata: { acpSessionModeOverrideV1: { v: 1, updatedAt: 1, modeId: 'plan' } },
+    });
+    const handler = new PermissionHandler(session);
+
+    const firstController = new AbortController();
+    const permissionId = 'perm-late-exit-plan-1';
+    const mode = { permissionMode: 'yolo', agentModeId: 'plan', localId: 'm1' } as EnhancedMode;
+    const input = { plan: 'p1' };
+
+    const first = handler.handleToolCall(
+      'ExitPlanMode',
+      input,
+      mode,
+      { signal: firstController.signal, toolUseId: permissionId },
+    );
+
+    firstController.abort();
+    await expect(first).rejects.toBeTruthy();
+
+    const permissionRpc = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionRpc).toBeTruthy();
+    await permissionRpc?.({ id: permissionId, approved: true } satisfies PermissionRpcPayload);
+
+    const retry = handler.handleToolCall(
+      'ExitPlanMode',
+      input,
+      mode,
+      { signal: new AbortController().signal, toolUseId: permissionId },
+    );
+
+    await expect(expectResolvesWithin(retry)).resolves.toEqual({
+      behavior: 'allow',
+      updatedInput: input,
+    });
+    expect(client.getAgentStateSnapshot().requests[permissionId]).toBeUndefined();
+    expect(client.getAgentStateSnapshot().completedRequests[permissionId]).toMatchObject({ status: 'approved' });
+
+    await expect(
+      handler.handleToolCall(
+        'Bash',
+        { command: 'pwd' },
+        mode,
+        { signal: new AbortController().signal, toolUseId: 'perm-late-exit-plan-bash-1' },
+      ),
+    ).resolves.toMatchObject({ behavior: 'allow' });
+    handler.dispose();
+  });
+
+  it('ignores uncorrelated stale permission RPCs without mutating mode, allowlist, or completed state', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('s-stale-rpc');
+    const handler = new PermissionHandler(session);
+
+    const permissionRpc = client.rpcHandlerManager.getHandler('permission');
+    expect(permissionRpc).toBeTruthy();
+    await permissionRpc?.({
+      id: 'missing-permission-id',
+      approved: true,
+      mode: 'yolo',
+      allowedTools: ['Bash(ls:*)'],
+      updatedPermissions: [
+        {
+          type: 'addRules',
+          behavior: 'allow',
+          destination: 'session',
+          rules: [{ toolName: 'Bash', ruleContent: 'ls:*' }],
+        },
+      ],
+    } satisfies PermissionRpcPayload);
+
+    expect(session.setLastPermissionMode).not.toHaveBeenCalled();
+    expect(client.getAgentStateSnapshot().completedRequests['missing-permission-id']).toBeUndefined();
+
+    const future = handler.handleToolCall(
+      'Bash',
+      { command: 'ls src' },
+      { permissionMode: 'default' } as EnhancedMode,
+      { signal: new AbortController().signal, toolUseId: 'stale-rpc-future-1' },
+    );
+    expect(client.getAgentStateSnapshot().requests['stale-rpc-future-1']).toBeDefined();
+    handler.dispose();
+    await expect(future).rejects.toBeTruthy();
   });
 
   it('applies late approval side-effects to allowlists, permission mode, and matching pending requests', async () => {

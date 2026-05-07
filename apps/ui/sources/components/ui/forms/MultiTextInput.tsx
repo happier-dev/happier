@@ -55,6 +55,8 @@ interface MultiTextInputProps {
     onKeyPress?: OnKeyPressCallback;
     onSelectionChange?: (selection: { start: number; end: number }) => void;
     onStateChange?: (state: TextInputState) => void;
+    onFocus?: () => void;
+    onBlur?: () => void;
     submitBehavior?: MultiTextInputSubmitBehavior;
     onSubmitEditing?: () => void;
     // Web-only: file attachments via paste or drag-and-drop.
@@ -77,7 +79,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
 
     const { theme } = useUnistyles();
     // Track latest selection in a ref
-    const selectionRef = React.useRef({ start: 0, end: 0 });
+    const selectionRef = React.useRef({ start: value.length, end: value.length });
     const inputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
 
     const handleKeyPress = React.useCallback((e: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
@@ -173,18 +175,18 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                     text: text,
                     selection: selection
                 });
-                
-                // Update our ref
-                selectionRef.current = selection;
-                
-                // Notify through callbacks
-                onChangeText(text);
-                if (onStateChange) {
-                    onStateChange({ text, selection });
-                }
-                if (onSelectionChange) {
-                    onSelectionChange(selection);
-                }
+            }
+
+            // Update our ref
+            selectionRef.current = selection;
+
+            // Notify through callbacks
+            onChangeText(text);
+            if (onStateChange) {
+                onStateChange({ text, selection });
+            }
+            if (onSelectionChange) {
+                onSelectionChange(selection);
             }
         },
         focus: () => {
@@ -231,6 +233,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 textContentType="none"
                 submitBehavior={props.submitBehavior ?? 'newline'}
                 onSubmitEditing={props.onSubmitEditing ? () => props.onSubmitEditing?.() : undefined}
+                onFocus={props.onFocus}
+                onBlur={props.onBlur}
             />
         </View>
     );

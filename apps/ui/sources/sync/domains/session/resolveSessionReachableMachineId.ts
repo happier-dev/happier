@@ -64,6 +64,7 @@ export type SessionMachineTargetPeer = Readonly<{
 
 export function resolveSessionMachineRpcTarget(input: Readonly<{
     sessionId: string;
+    sessionActive?: boolean | null;
     sessionMachineId?: string | null;
     sessionHostHint?: string | null;
     sessionPath?: string | null;
@@ -73,8 +74,8 @@ export function resolveSessionMachineRpcTarget(input: Readonly<{
     machines: ReadonlyArray<Machine>;
     peerSessions?: ReadonlyArray<SessionMachineTargetPeer>;
 }>): { machineId: string; basePath: string } | null {
-    const basePath = normalizeNonEmptyString(input.projectPath) ?? normalizeNonEmptyString(input.sessionPath);
-    if (!basePath) return null;
+    const sessionPath = normalizeNonEmptyString(input.sessionPath);
+    const projectPath = normalizeNonEmptyString(input.projectPath);
 
     const machineById = new Set(input.machines.map((machine) => machine.id));
     const knownMachineCandidate = (candidateMachineId: string | null): string | null => {
@@ -82,12 +83,29 @@ export function resolveSessionMachineRpcTarget(input: Readonly<{
         return machineById.has(candidateMachineId) ? candidateMachineId : null;
     };
 
+    const sessionMachineId = normalizeNonEmptyString(input.sessionMachineId);
+    const projectMachineId = normalizeNonEmptyString(input.projectMachineId);
     const primaryResolved = resolveSessionReachableMachineId({
-        machineId: input.sessionMachineId ?? null,
-        fallbackMachineId: input.projectMachineId ?? null,
+        machineId: sessionMachineId,
+        fallbackMachineId: projectMachineId,
         hostHint: input.sessionHostHint ?? null,
         machines: input.machines,
     });
+    const shouldUseActiveSessionPath =
+        input.sessionActive === true
+        && Boolean(sessionPath)
+        && (
+            !projectPath
+            || !projectMachineId
+            || !sessionMachineId
+            || projectMachineId === sessionMachineId
+            || primaryResolved === sessionMachineId
+        );
+    const basePath = shouldUseActiveSessionPath
+        ? sessionPath
+        : projectPath ?? sessionPath;
+    if (!basePath) return null;
+
     const knownPrimary = knownMachineCandidate(primaryResolved);
     if (knownPrimary) {
         return { machineId: knownPrimary, basePath };

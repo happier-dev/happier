@@ -63,6 +63,8 @@ const mocks = vi.hoisted(() => {
     return {
         serverFetch: vi.fn(),
         loadPendingSettings: vi.fn(() => ({})),
+        loadPendingAccountSettings: vi.fn(() => ({})),
+        loadAccountSettings: vi.fn(() => ({ settings: createBaseMockSettings(), version: 1 })),
         callSequence,
         tracking: {
             capture: vi.fn((..._args: unknown[]) => {
@@ -90,8 +92,11 @@ const mocks = vi.hoisted(() => {
         storageState: {
             settings: createBaseMockSettings(),
             settingsVersion: 9,
+            settingsScope: { serverId: 'server-a', accountId: 'account-a' },
             applySettings: vi.fn(),
             replaceSettings: vi.fn(),
+            applySettingsForScope: vi.fn(),
+            replaceSettingsForScope: vi.fn(),
             applySettingsLocal: vi.fn(),
         },
     };
@@ -178,6 +183,11 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     clearPersistence: vi.fn(),
 }));
 
+vi.mock('@/sync/domains/state/accountSettingsPersistence', () => ({
+    loadPendingAccountSettings: mocks.loadPendingAccountSettings,
+    loadAccountSettings: mocks.loadAccountSettings,
+}));
+
 vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/encryption/secretSettings')>();
     return {
@@ -212,6 +222,10 @@ describe('syncSettings local-only server-selection settings', () => {
         mocks.serverFetch.mockReset();
         mocks.loadPendingSettings.mockReset();
         mocks.loadPendingSettings.mockReturnValue({});
+        mocks.loadPendingAccountSettings.mockReset();
+        mocks.loadPendingAccountSettings.mockReturnValue({});
+        mocks.loadAccountSettings.mockReset();
+        mocks.loadAccountSettings.mockReturnValue({ settings: createBaseMockSettings(), version: 1 });
         mocks.callSequence.length = 0;
         mocks.tracking.capture.mockClear();
         mocks.tracking.identify.mockClear();
@@ -228,8 +242,11 @@ describe('syncSettings local-only server-selection settings', () => {
             };
         });
         mocks.storageState.settingsVersion = 9;
+        mocks.storageState.settingsScope = { serverId: 'server-a', accountId: 'account-a' };
         mocks.storageState.applySettings.mockReset();
         mocks.storageState.replaceSettings.mockReset();
+        mocks.storageState.applySettingsForScope.mockReset();
+        mocks.storageState.replaceSettingsForScope.mockReset();
         mocks.storageState.applySettingsLocal.mockReset();
         (encryptionStub.decryptRaw as unknown as ReturnType<typeof vi.fn>).mockReset();
         (encryptionStub.encryptRaw as unknown as ReturnType<typeof vi.fn>).mockReset();
@@ -404,6 +421,106 @@ describe('syncSettings local-only server-selection settings', () => {
             }),
             12,
         );
+    });
+
+    it('reloads pending settings for the captured scope before applying fetched settings', async () => {
+        const settingsScope = { serverId: 'server-b', accountId: 'account-b' };
+        mocks.storageState.settingsScope = settingsScope;
+        mocks.loadPendingAccountSettings.mockReturnValueOnce({
+            sessionReplayEnabled: true,
+        } as any);
+
+        mocks.storageState.settings = {
+            analyticsOptOut: false,
+            sessionReplayEnabled: false,
+            terminalConnectLegacySecretExportEnabled: false,
+        };
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: null, version: 4 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            settingsScope,
+            pendingSettings: {},
+            clearPendingSettings: () => {},
+        });
+
+        expect(mocks.loadPendingAccountSettings).toHaveBeenCalledWith(settingsScope);
+        expect(mocks.storageState.applySettingsForScope).toHaveBeenCalledWith(
+            settingsScope,
+            expect.objectContaining({
+                analyticsOptOut: false,
+                sessionReplayEnabled: true,
+                terminalConnectLegacySecretExportEnabled: false,
+            }),
+            4,
+        );
+        expect(mocks.storageState.applySettings).not.toHaveBeenCalled();
+        expect(mocks.loadPendingSettings).not.toHaveBeenCalled();
+    });
+
+    it('applies in-flight settings sync results only through the captured stale scope after the active scope changes', async () => {
+        const capturedScope = { serverId: 'server-a', accountId: 'account-a' };
+        const activeScope = { serverId: 'server-b', accountId: 'account-b' };
+        mocks.storageState.settingsScope = activeScope;
+        mocks.loadAccountSettings.mockReturnValue({
+            settings: {
+                analyticsOptOut: false,
+                terminalConnectLegacySecretExportEnabled: false,
+            },
+            version: 1,
+        });
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 2 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: null, version: 2 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+        const clearPendingSettings = vi.fn();
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            settingsScope: capturedScope,
+            pendingSettings: { analyticsOptOut: true },
+            clearPendingSettings,
+        });
+
+        expect(clearPendingSettings).toHaveBeenCalledTimes(1);
+        expect(mocks.storageState.applySettingsForScope).toHaveBeenCalledWith(
+            capturedScope,
+            expect.any(Object),
+            2,
+        );
+        expect(mocks.storageState.applySettings).not.toHaveBeenCalled();
+        expect(mocks.loadAccountSettings).toHaveBeenCalledWith(capturedScope);
     });
 
     it('does not sync server-selection settings keys to account settings payload', async () => {

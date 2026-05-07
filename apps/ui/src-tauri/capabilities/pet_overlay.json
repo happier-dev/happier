@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pet_overlay",
+  "description": "enables the desktop pet overlay permissions",
+  "windows": [
+    "pet_overlay"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-desktop-pet-overlay-read-window-state",
+    "allow-desktop-pet-overlay-start-drag-session",
+    "allow-desktop-pet-overlay-apply-drag-delta",
+    "allow-desktop-pet-overlay-release-drag-velocity",
+    "allow-desktop-pet-overlay-apply-momentum-delta",
+    "allow-desktop-pet-overlay-end-drag-session",
+    "allow-desktop-pet-overlay-sync-element-metrics",
+    "allow-desktop-pet-overlay-show-main-window"
+  ]
+}

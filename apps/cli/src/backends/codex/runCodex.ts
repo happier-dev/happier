@@ -24,6 +24,7 @@ import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTermina
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { createCurrentSessionTranscriptPort } from '@/api/session/createCurrentSessionTranscriptPort';
 import { DeferredApiSessionClient } from '@/agent/runtime/startup/DeferredApiSessionClient';
 import { configuration } from '@/configuration';
 import { isExperimentalCodexAcpEnabled } from '@/backends/codex/experiments';
@@ -50,7 +51,8 @@ import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRu
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { codexLocalLauncher, type CodexLauncherResult } from './codexLocalLauncher';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
-import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
+import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
+import { createTurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import { applyLocalControlLaunchGating } from '@/agent/localControl/launchGating';
 import {
     formatCodexLocalControlLaunchFallbackMessage,
@@ -82,6 +84,7 @@ import {
 import { createLocalRemoteModeController } from '@/agent/localControl/createLocalRemoteModeController';
 import { createCodexRemoteTerminalUi } from './runtime/createCodexRemoteTerminalUi';
 import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
+import { resolveRemoteModeControlSurface } from '@/ui/remoteControl/remoteModeControl';
 import { abortAcpRuntimeTurnIfNeeded } from '@/agent/acp/runtime/createAcpRuntime';
 import { createSwitchToLocalAbortPromise } from './localControl/createSwitchToLocalAbortPromise';
 import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
@@ -649,6 +652,7 @@ export async function runCodex(opts: {
     const keepAliveInterval = setInterval(() => {
         session.keepAlive(thinking, mode);
     }, 2000);
+    const turnAssistantPreviewTracker = createTurnAssistantPreviewTracker();
 
     let resumeIdFromLocalControl: string | null = null;
     if (mode === 'local') {
@@ -678,7 +682,7 @@ export async function runCodex(opts: {
             waitingForCommandLabel: 'Codex',
             logPrefix: '[Codex]',
             sessionTitle: getSessionNotificationTitle(session.getMetadataSnapshot.bind(session)),
-            assistantPreviewText: getLatestAssistantMessagePreview(messageBuffer),
+            assistantPreviewText: turnAssistantPreviewTracker.getPreview(),
             accountSettings: opts.accountSettingsContext?.settings ?? null,
             settingsSecretsReadKeys: opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
             includeAssistantPreviewText:
@@ -792,6 +796,7 @@ export async function runCodex(opts: {
     async function handleAbort() {
         logger.debug('[Codex] Abort requested - stopping current task');
         try {
+            await permissionHandler.abortPendingRequestsAndFlush('Aborted by user');
             startOrLoadAbortController.abort();
             // Store the current session ID before aborting for potential resume
             if (useCodexAcp || useCodexAppServer) {
@@ -912,6 +917,16 @@ export async function runCodex(opts: {
         stdinIsTTY: process.stdin.isTTY,
         startedBy: opts.startedBy,
     });
+    const remoteControlSurface = opts.startedBy === 'daemon'
+        ? resolveRemoteModeControlSurface({
+            stdoutIsTTY: process.stdout.isTTY,
+            stdinIsTTY: process.stdin.isTTY,
+            startedBy: opts.startedBy,
+            terminalMode: opts.terminalRuntime?.mode ?? null,
+        })
+        : hasTTY
+            ? 'ink'
+            : 'none';
     let requestedSwitchToLocal = false;
     const createSwitchToLocalBarrier = (): { promise: Promise<void>; resolve: () => void } => {
         let resolve!: () => void;
@@ -958,6 +973,7 @@ export async function runCodex(opts: {
         messageBuffer,
         logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
         hasTTY,
+        surface: remoteControlSurface,
         stdin: process.stdin,
         onExit: async () => {
             logger.debug('[codex]: Exiting agent via Ctrl-C');
@@ -1126,6 +1142,7 @@ export async function runCodex(opts: {
             processEnv: codexAppServerProcessEnv,
             configOverrides: codexAppServerConfigOverrides,
             session,
+            transcriptSession: createCurrentSessionTranscriptPort(() => session),
             onThinkingChange: (value) => { thinking = value; },
             permissionHandler,
             getPermissionMode: () => runtimePermissionModeRef.current,
@@ -1161,6 +1178,7 @@ export async function runCodex(opts: {
             setThinking: (next) => {
                 thinking = next;
             },
+            turnAssistantPreviewTracker,
         });
         client.setHandler((msg) => {
             handleMcpMessage(msg);

@@ -110,15 +110,20 @@ describe('generateHookPluginDir', () => {
     envScope = createEnvKeyScope(envKeys);
   });
 
-  it('writes a session-scoped hooks/hooks.json containing SessionStart by default', () => {
+  it('writes a session-scoped hooks/hooks.json containing Claude lifecycle hooks by default', () => {
     const pluginDir = generateHookPluginDir(43123);
     expect(pluginDir).toBeTruthy();
     createdPluginDirs.push(pluginDir!);
 
     const hooksPath = join(pluginDir!, 'hooks', 'hooks.json');
     const parsed = JSON.parse(readFileSync(hooksPath, 'utf8')) as any;
+    const lifecycleHookNames = ['SessionStart', 'UserPromptSubmit', 'Stop', 'StopFailure', 'SessionEnd'];
+    for (const hookName of lifecycleHookNames) {
+      const command = parsed.hooks?.[hookName]?.[0]?.hooks?.[0]?.command as string;
+      expect(command).toContain('session_hook_forwarder.cjs');
+      expect(command).toContain(hookName);
+    }
     const command = parsed.hooks?.SessionStart?.[0]?.hooks?.[0]?.command as string;
-    expect(command).toContain('session_hook_forwarder.cjs');
     // Prefer execPath over `node` so hooks still work when PATH is minimal (common on Windows/GUI contexts).
     expect(command).toContain(process.execPath);
     expect(parsed.hooks?.PermissionRequest).toBeUndefined();

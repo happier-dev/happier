@@ -1,4 +1,4 @@
-export function shouldShowDesktopUpdateBanner({
+export function shouldShowDesktopUpdateStatus({
     availableVersion,
     dismissedVersion
 }: {
@@ -10,4 +10,3 @@ export function shouldShowDesktopUpdateBanner({
     }
     return availableVersion !== dismissedVersion;
 }
-

@@ -37,17 +37,45 @@ function mergePermissionRequestArgumentsPreservingExecpolicy(
     return merged;
 }
 
-function shouldRestorePendingPermissionFromAgentState(message: Readonly<{ tool?: ToolCall | null }>): boolean {
+function readToolResultError(result: unknown): string | null {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+    const error = (result as { error?: unknown }).error;
+    return typeof error === 'string' ? error : null;
+}
+
+function hasRequestInterruptedPlaceholderText(message: Readonly<{ tool?: ToolCall | null }>): boolean {
+    return message.tool?.permission?.reason === 'Request interrupted'
+        || readToolResultError(message.tool?.result) === 'Request interrupted';
+}
+
+function shouldRestorePendingPermissionFromAgentState(params: Readonly<{
+    message: Readonly<{ tool?: ToolCall | null }>;
+    requestCreatedAt?: number | null;
+}>): boolean {
+    const { message, requestCreatedAt } = params;
     const permission = message.tool?.permission;
     if (!permission || permission.status === 'pending') return false;
 
     // The reducer locally synthesizes "Request interrupted" cancellations during reconnect/abort
     // flows. Those placeholders may be safely reopened if AgentState still advertises the request
     // as pending. Real terminal provider outcomes should not be resurrected by stale requests.
-    return isRequestInterruptedPlaceholder({
+    if (isRequestInterruptedPlaceholder({
         permission,
         result: message.tool?.result as { error?: unknown } | null | undefined,
-    });
+    })) {
+        return true;
+    }
+
+    // Explicit abort decisions are normally terminal, but a newer AgentState.requests entry means
+    // the provider has reopened/reissued that request after the local interruption placeholder.
+    if (permission.decision !== 'abort' || !hasRequestInterruptedPlaceholderText(message)) {
+        return false;
+    }
+
+    const completedAt = message.tool?.completedAt;
+    return typeof requestCreatedAt === 'number'
+        && typeof completedAt === 'number'
+        && requestCreatedAt > completedAt;
 }
 
 export function runAgentStatePermissionsPhase(params: Readonly<{
@@ -163,7 +191,10 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             };
                             hasChanged = true;
                         }
-                        if (message.tool.permission && shouldRestorePendingPermissionFromAgentState(message)) {
+                        if (message.tool.permission && shouldRestorePendingPermissionFromAgentState({
+                            message,
+                            requestCreatedAt: request.createdAt ?? null,
+                        })) {
                             // AgentState.requests is the authoritative source of truth for pending user input.
                             // If a tool was previously marked canceled/denied due to a transient UI disconnect
                             // (e.g. web reload), restore it back to pending so the user can answer.

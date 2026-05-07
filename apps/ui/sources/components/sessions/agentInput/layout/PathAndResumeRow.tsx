@@ -18,6 +18,7 @@ export type PathAndResumeRowStyles = {
 export type PathAndResumeRowProps = {
     styles: PathAndResumeRowStyles;
     leadingControls?: ReadonlyArray<React.ReactNode>;
+    fillAvailableWidth?: boolean;
     showChipLabels: boolean;
     iconColor: string;
     currentPath?: string | null;
@@ -36,10 +37,11 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
     const hasPath = Boolean(props.onPathClick);
     const hasResume = Boolean(props.onResumeClick);
     if (leadingControls.length === 0 && !hasPath && !hasResume) return null;
+    const widthFillStyle = props.fillAvailableWidth === false ? null : { flex: 1, minWidth: 0 };
 
     return (
-        <View style={[props.styles.pathRow, { flex: 1, minWidth: 0 }]} testID="agentInput-pathResumeRow">
-            <View style={[props.styles.actionButtonsLeft, { flex: 1, minWidth: 0 }]}>
+        <View style={[props.styles.pathRow, widthFillStyle]} testID="agentInput-pathResumeRow">
+            <View style={[props.styles.actionButtonsLeft, widthFillStyle]}>
                 {leadingControls}
                 {hasPath ? (
                     <Pressable

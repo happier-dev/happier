@@ -113,6 +113,11 @@ vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
+    getAgentBehavior: (agentId: string) => ({
+        sessionUsage: {
+            supportsExactContextUsageBadge: agentId !== 'codex' && agentId !== 'gemini',
+        },
+    }),
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
@@ -253,7 +258,7 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
 }));
 
 describe('AgentInput (context usage badge)', () => {
-    it('shows a persistent context usage badge and opens a detail popover from the status row', async () => {
+    it('does not render a context usage badge for codex sessions even when telemetry is present', async () => {
         captured.last = null;
         const { AgentInput } = await import('./AgentInput');
 
@@ -299,28 +304,12 @@ describe('AgentInput (context usage badge)', () => {
         );
 
         expect(screen.findByTestId('agent-input-status-trailing')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-context-usage-badge')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('6');
-        expect(screen.findByTestId('agent-input-context-usage-ring')?.props.width).toBe(20);
-        expect(screen.findByTestId('agent-input-context-usage-ring')?.props.height).toBe(20);
-        expect(screen.tree.findAllByType('Circle' as any)).toHaveLength(2);
-
-        act(() => {
-            screen.pressByTestId('agent-input-context-usage-badge');
-        });
-
-        const popoverProps = captured.last as CapturedPopoverProps | null;
-        expect(popoverProps?.open).toBe(true);
-        expect(screen.findByTestId('agent-input-context-usage-popover')).toBeTruthy();
-        expect(String(screen.findByTestId('agent-input-context-usage-popover-detail')?.props.children)).toContain('6.2');
-        expect(String(screen.findByTestId('agent-input-context-usage-popover-detail')?.props.children)).toContain('16k');
-        expect(String(screen.findByTestId('agent-input-context-usage-popover-detail')?.props.children)).toContain('258k');
-        expect(screen.findByTestId('agent-input-context-usage-popover-description')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-context-usage-badge')).toBeNull();
 
         act(() => screen.tree.unmount());
     });
 
-    it('shows a zero-state context usage badge when always-show is enabled before any usage data exists', async () => {
+    it('does not render a zero-state context usage badge for codex when always-show is enabled', async () => {
         captured.last = null;
         const { AgentInput } = await import('./AgentInput');
 
@@ -353,20 +342,12 @@ describe('AgentInput (context usage badge)', () => {
             />,
         );
 
-        expect(screen.findByTestId('agent-input-context-usage-badge')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('0');
-
-        act(() => {
-            screen.pressByTestId('agent-input-context-usage-badge');
-        });
-
-        expect(String(screen.findByTestId('agent-input-context-usage-popover-detail')?.props.children)).toContain('0');
-        expect(String(screen.findByTestId('agent-input-context-usage-popover-detail')?.props.children)).toContain('258k');
+        expect(screen.findByTestId('agent-input-context-usage-badge')).toBeNull();
 
         act(() => screen.tree.unmount());
     });
 
-    it('uses live context-window telemetry when metadata is missing', async () => {
+    it('does not render a codex context usage badge from live telemetry when metadata is missing', async () => {
         captured.last = null;
         const { AgentInput } = await import('./AgentInput');
 
@@ -392,19 +373,12 @@ describe('AgentInput (context usage badge)', () => {
             />,
         );
 
-        expect(screen.findByTestId('agent-input-context-usage-badge')).toBeTruthy();
-        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('0');
-
-        act(() => {
-            screen.pressByTestId('agent-input-context-usage-badge');
-        });
-
-        expect(String(screen.findByTestId('agent-input-context-usage-popover-detail')?.props.children)).toContain('258k');
+        expect(screen.findByTestId('agent-input-context-usage-badge')).toBeNull();
 
         act(() => screen.tree.unmount());
     });
 
-    it('rounds the ring label to the same integer percentage shown in the badge detail', async () => {
+    it('still renders the context usage badge for providers that support exact context telemetry', async () => {
         captured.last = null;
         const { AgentInput } = await import('./AgentInput');
 
@@ -416,7 +390,7 @@ describe('AgentInput (context usage badge)', () => {
                 onSend={() => {}}
                 autocompletePrefixes={[]}
                 autocompleteSuggestions={async () => []}
-                agentType={"codex" as any}
+                agentType={"claude" as any}
                 onAgentClick={() => {}}
                 usageData={{
                     inputTokens: 0,
@@ -426,25 +400,11 @@ describe('AgentInput (context usage badge)', () => {
                     contextSize: 38_691,
                 }}
                 alwaysShowContextSize={true}
-                metadata={{
-                    sessionModelsV1: {
-                        v: 1,
-                        provider: 'codex',
-                        updatedAt: 1,
-                        currentModelId: 'gpt-5.4',
-                        availableModels: [
-                            {
-                                id: 'gpt-5.4',
-                                name: 'GPT 5.4',
-                                contextWindowTokens: 258_000,
-                            },
-                        ],
-                    },
-                } as any}
             />,
         );
 
-        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('15');
+        expect(screen.findByTestId('agent-input-context-usage-badge')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-context-usage-value')?.props.children).toBe('19');
 
         act(() => screen.tree.unmount());
     });

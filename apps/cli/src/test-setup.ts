@@ -11,6 +11,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs'
 import { ensureBuildArtifactsReadyOnce } from './testSetupBuildCoordinator'
 
 export type CliTestBuildMode = 'shared-only' | 'full'
@@ -92,6 +93,18 @@ function resolveBundledProtocolReadyMarkers(projectRoot: string): string[] {
   ]
 }
 
+function spawnYarnSync(args: readonly string[], cwd: string) {
+  const invocation = resolveYarnCommandInvocation(args)
+  return spawnSync(invocation.command, invocation.args, {
+    cwd,
+    stdio: 'pipe',
+    encoding: 'utf8',
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
+  })
+}
+
 async function ensureSharedDepsBuiltOnce(projectRoot: string): Promise<void> {
   const markers = resolveBundledProtocolReadyMarkers(projectRoot)
   await ensureBuildArtifactsReadyOnce({
@@ -99,12 +112,7 @@ async function ensureSharedDepsBuiltOnce(projectRoot: string): Promise<void> {
     markerPaths: markers,
     lockLabel: 'CLI shared deps build',
     runBuild: () => {
-      const yarnCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn'
-      const buildResult = spawnSync(yarnCommand, ['-s', 'build:shared'], {
-        cwd: projectRoot,
-        stdio: 'pipe',
-        encoding: 'utf8',
-      })
+      const buildResult = spawnYarnSync(['-s', 'build:shared'], projectRoot)
 
       if (buildResult.error) {
         throw new Error(`CLI test globalSetup failed to run build:shared: ${buildResult.error.message}`)
@@ -133,12 +141,7 @@ async function ensureDistBuiltOnce(projectRoot: string): Promise<void> {
     markerPaths: [distEntrypoint],
     lockLabel: 'CLI dist build',
     runBuild: () => {
-      const yarnCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn'
-      const buildResult = spawnSync(yarnCommand, ['build'], {
-        cwd: projectRoot,
-        stdio: 'pipe',
-        encoding: 'utf8',
-      })
+      const buildResult = spawnYarnSync(['build'], projectRoot)
 
       if (buildResult.error) {
         throw new Error(`CLI test globalSetup failed to run build: ${buildResult.error.message}`)

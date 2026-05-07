@@ -225,4 +225,52 @@ describe('AgentInputChipPickerPanel', () => {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         expect(onRequestClose).not.toHaveBeenCalled();
     });
+
+    it('keeps a preserved detail option focused when an immediate selection updates the selected option', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[
+                {
+                    id: 'favorites',
+                    label: 'Favorites',
+                    preserveFocusOnExternalSelectionChange: true,
+                    renderDetailContent: () => React.createElement('View', { testID: 'detail:favorites' }),
+                },
+                {
+                    id: 'engine:codex',
+                    label: 'Codex',
+                    renderDetailContent: () => React.createElement('View', { testID: 'detail:codex' }),
+                },
+            ]}
+            selectedOptionId="favorites"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.option.id).toBe('favorites');
+
+        await screen.update(<AgentInputChipPickerPanel
+            title="Pick"
+            options={[
+                {
+                    id: 'favorites',
+                    label: 'Favorites',
+                    preserveFocusOnExternalSelectionChange: true,
+                    renderDetailContent: () => React.createElement('View', { testID: 'detail:favorites' }),
+                },
+                {
+                    id: 'engine:codex',
+                    label: 'Codex',
+                    renderDetailContent: () => React.createElement('View', { testID: 'detail:codex' }),
+                },
+            ]}
+            selectedOptionId="engine:codex"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+        />);
+
+        expect(screen.findByTestId('agent-input-chip-picker.detail-pane')?.props.option.id).toBe('favorites');
+    });
 });

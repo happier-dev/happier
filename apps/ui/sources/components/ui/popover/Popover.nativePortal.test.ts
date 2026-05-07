@@ -62,6 +62,7 @@ describe('Popover (native portal)', () => {
     afterEach(() => {
         restorePopoverWebGlobals?.();
         restorePopoverWebGlobals = null;
+        vi.useRealTimers();
     });
 
     it('positions using anchor coordinates relative to the portal root when available (avoids iOS header/sheet offsets)', async () => {
@@ -414,8 +415,10 @@ describe('Popover (native portal)', () => {
     });
 
     it('renders into OverlayPortalHost when usePortalOnNative is enabled', async () => {
+        vi.useFakeTimers();
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');
+        const { motionTokens } = await import('@/components/ui/motion/motionTokens');
 
         const anchorRef = {
             current: {
@@ -471,6 +474,12 @@ describe('Popover (native portal)', () => {
                     ),
                 ),
             );
+        });
+
+        expect(findFirstHostNodeByTestId(tree, 'host-slot')?.findAllByType('PopoverChild' as any).length).toBe(1);
+
+        await act(async () => {
+            vi.advanceTimersByTime(motionTokens.overlay.popover.exitMs);
         });
 
         expect(findFirstHostNodeByTestId(tree, 'host-slot')?.findAllByType('PopoverChild' as any).length).toBe(0);

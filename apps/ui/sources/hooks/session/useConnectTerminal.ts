@@ -64,14 +64,14 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             });
 
             if (effectiveParsedServerUrl) {
-                if (currentServerUrl !== effectiveParsedServerUrl) {
-                    setPendingTerminalConnect({ publicKeyB64Url: parsed.publicKeyB64Url, serverUrl: effectiveParsedServerUrl });
-                    await upsertActivateAndSwitchServer({
-                        serverUrl: effectiveParsedServerUrl,
-                        source: 'url',
-                        scope: 'device',
-                        refreshAuth: auth.refreshFromActiveServer,
-                    });
+                setPendingTerminalConnect({ publicKeyB64Url: parsed.publicKeyB64Url, serverUrl: effectiveParsedServerUrl });
+                const switched = await upsertActivateAndSwitchServer({
+                    serverUrl: effectiveParsedServerUrl,
+                    source: 'url',
+                    scope: 'device',
+                    refreshAuth: auth.refreshFromActiveServer,
+                });
+                if (switched) {
                     activeCredentials = await TokenStorage.getCredentials();
                 }
             }

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useSessionServerId } from '@/sync/store/hooks';
 
 function normalizeServerId(value: unknown): string | null {
@@ -10,11 +10,7 @@ function normalizeServerId(value: unknown): string | null {
 
 export function usePreferredServerIdForSession(sessionId: string): string | null {
     const sessionServerId = useSessionServerId(sessionId);
-    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
-
-    React.useEffect(() => {
-        return subscribeActiveServer(setActiveServerSnapshot);
-    }, []);
+    const activeServerSnapshot = useActiveServerSnapshot();
 
     return React.useMemo(
         () => normalizeServerId(sessionServerId) ?? normalizeServerId(activeServerSnapshot.serverId),

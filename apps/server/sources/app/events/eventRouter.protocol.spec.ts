@@ -72,6 +72,7 @@ describe("eventRouter payloads (protocol container)", () => {
                 lastViewedSessionSeq: 7,
                 pendingPermissionRequestCount: 2,
                 pendingUserActionRequestCount: 1,
+                archivedAt: 123,
             },
         );
 
@@ -81,6 +82,7 @@ describe("eventRouter payloads (protocol container)", () => {
         expect((payload.body as any).lastViewedSessionSeq).toBe(7);
         expect((payload.body as any).pendingPermissionRequestCount).toBe(2);
         expect((payload.body as any).pendingUserActionRequestCount).toBe(1);
+        expect((payload.body as any).archivedAt).toBe(123);
     });
 
     it("buildDeleteSessionUpdate emits a full container", () => {

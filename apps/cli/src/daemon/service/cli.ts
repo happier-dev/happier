@@ -3,13 +3,18 @@ import * as os from 'node:os';
 import { basename, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { configuration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
 import { readCredentials, readDaemonState, readSettings } from '@/persistence';
+import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
 import { isBun } from '@/utils/runtime';
+import { buildMissingLocalRelayError, resolveLocalRelay } from '@/utils/localRelay';
 import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
-import { runDaemonServiceCommands } from './apply';
+import { defaultNameFromUrl, defaultWebappUrlFromServerUrl } from '@/cli/commands/server/commandUtilities';
+import { applyDaemonServiceInstallPlan, runDaemonServiceCommands } from './apply';
 import { buildServiceCommandEnv } from '@happier-dev/cli-common/service';
+
+import { resolveCliVersionFromBinary } from './resolveCliVersionFromBinary';
 import {
   describeDaemonServiceInstallConflict,
   installDaemonService,
@@ -25,19 +30,24 @@ import {
   resolveSystemdSystemUnitPath,
   resolveWindowsDaemonWrapperPath,
   resolveWindowsDaemonTaskName,
+  resolveWindowsDaemonServiceLogPaths,
   resolveDaemonServiceLaunchdLabel,
   resolveDaemonServiceSystemdUnitName,
   resolveDaemonServiceChannelSegment,
   type DaemonServiceMode,
   type DaemonServiceTargetMode,
 } from './plan';
+import { collectWindowsServiceLaunchDiagnostics } from './collectWindowsServiceLaunchDiagnostics';
 import { commandExistsInPath } from './commandExistsInPath';
 import { resolveDaemonServiceRuntimeTarget } from './runtimeTarget';
 import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
 import { resolveLinuxSystemUserPaths } from './resolveLinuxSystemUserPaths';
-import { inferPublicReleaseRingIdFromEnvAndArgv } from '@/cli/runtime/publicReleaseChannel';
-import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { getReleaseRingPublicLabel, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { expandHomeDirPath } from '@happier-dev/cli-common/providers';
+import {
+  DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
+  resolveManagedCliReleaseChannelSync,
+} from '@happier-dev/cli-common/firstPartyRuntime';
 import { stopDaemon } from '@/daemon/controlClient';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
 
@@ -544,6 +554,17 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
   expectedInstalledServiceContents?: string | null;
   installedServicePath?: string | null;
   healthCommand?: Readonly<{ cmd: string; args: readonly string[] }> | null;
+  /**
+   * Windows-only post-mortem hooks. When the wait times out on Windows we
+   * query scheduled-task launch metadata and tail the wrapper's stdout/stderr
+   * logs so the resulting error tells the user *why* the daemon never claimed
+   * ownership instead of just "180000ms".
+   */
+  windowsLaunchDiagnostics?: Readonly<{
+    taskName: string;
+    stdoutPath: string;
+    stderrPath: string;
+  }> | null;
 }>): Promise<void> {
   const waitTimeoutOverrideRaw = String(process.env.HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS ?? '').trim();
   const defaultTimeoutMs = params.platform === 'win32' ? 120_000 : 15_000;
@@ -597,10 +618,22 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
 
   const effectiveTimeoutMs = serviceHealthyButStillConverging ? timeoutMs + activeGraceTimeoutMs : timeoutMs;
 
-  throw new Error(
+  let message =
     `Background service ${params.action} completed, but the expected background service did not become the active daemon for the selected relay ` +
-    `within ${effectiveTimeoutMs}ms. Run \`happier service status\` to inspect the active owner and system service state.`,
-  );
+    `within ${effectiveTimeoutMs}ms. Run \`happier service status\` to inspect the active owner and system service state.`;
+
+  if (params.platform === 'win32' && params.windowsLaunchDiagnostics) {
+    const diagnostics = collectWindowsServiceLaunchDiagnostics({
+      taskName: params.windowsLaunchDiagnostics.taskName,
+      stdoutPath: params.windowsLaunchDiagnostics.stdoutPath,
+      stderrPath: params.windowsLaunchDiagnostics.stderrPath,
+    });
+    if (diagnostics) {
+      message += `\n\n${diagnostics}`;
+    }
+  }
+
+  throw new Error(message);
 }
 
 async function withManualRelayTakeoverRecovery<T>(params: Readonly<{
@@ -768,16 +801,16 @@ export function resolveDaemonServiceCliRuntimeFromEnv(options: Readonly<{
     explicitEntryPath,
   });
   const channel = options.channel ||
-    normalizePublicReleaseRingId(String(processEnv.HAPPIER_DAEMON_SERVICE_CHANNEL ?? '').trim()) ||
-    inferPublicReleaseRingIdFromEnvAndArgv({
-      env: processEnv,
+    resolveManagedCliReleaseChannelSync({
+      processEnv,
       argv: process.argv,
+      envKeys: DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
       additionalCandidates: [
         explicitEntryPath,
         runtimeTarget.entryPath,
         runtimeTarget.nodePath,
       ],
-    });
+    }).ringId;
 
   return {
     platform,
@@ -867,13 +900,6 @@ export function resolveDaemonServicePaths(
   stderrPath: string;
 }> {
   const mode: DaemonServiceMode = options.mode === 'system' ? 'system' : 'user';
-  const logPrefix = runtime.targetMode === 'default-following'
-    ? ''
-    : (() => {
-        const channelSegment = resolveDaemonServiceChannelSegment(runtime.channel);
-        return channelSegment ? `${channelSegment}.` : '';
-      })();
-  const logInstanceId = runtime.targetMode === 'default-following' ? 'default' : runtime.instanceId;
   const label = resolveDaemonServiceLaunchdLabel(runtime.instanceId, runtime.channel, runtime.targetMode);
   const unitName = resolveDaemonServiceSystemdUnitName(runtime.instanceId, runtime.channel, runtime.targetMode);
   const plistPath = resolveLaunchAgentPlistPath({
@@ -907,6 +933,26 @@ export function resolveDaemonServicePaths(
     : runtime.platform === 'linux'
       ? unitPath
       : wrapperPath;
+  const logPaths = runtime.platform === 'win32'
+    ? resolveWindowsDaemonServiceLogPaths({
+        happierHomeDir: runtime.happierHomeDir,
+        instanceId: runtime.instanceId,
+        channel: runtime.channel,
+        targetMode: runtime.targetMode,
+      })
+    : (() => {
+        const logPrefix = runtime.targetMode === 'default-following'
+          ? ''
+          : (() => {
+              const channelSegment = resolveDaemonServiceChannelSegment(runtime.channel);
+              return channelSegment ? `${channelSegment}.` : '';
+            })();
+        const logInstanceId = runtime.targetMode === 'default-following' ? 'default' : runtime.instanceId;
+        return {
+          stdoutPath: join(runtime.happierHomeDir, 'logs', `daemon-service.${logPrefix}${logInstanceId}.out.log`),
+          stderrPath: join(runtime.happierHomeDir, 'logs', `daemon-service.${logPrefix}${logInstanceId}.err.log`),
+        };
+      })();
   return {
     platform: runtime.platform,
     label,
@@ -916,8 +962,8 @@ export function resolveDaemonServicePaths(
     wrapperPath,
     taskName,
     installedPath,
-    stdoutPath: join(runtime.happierHomeDir, 'logs', `daemon-service.${logPrefix}${logInstanceId}.out.log`),
-    stderrPath: join(runtime.happierHomeDir, 'logs', `daemon-service.${logPrefix}${logInstanceId}.err.log`),
+    stdoutPath: logPaths.stdoutPath,
+    stderrPath: logPaths.stderrPath,
   };
 }
 
@@ -1096,35 +1142,14 @@ function mapDaemonServiceListEntriesToInventory(
     if (configuredCliVersionByBinaryPathCache.has(binaryPath)) {
       return configuredCliVersionByBinaryPathCache.get(binaryPath) ?? null;
     }
-    if (!fs.existsSync(binaryPath)) {
-      configuredCliVersionByBinaryPathCache.set(binaryPath, null);
-      return null;
-    }
-
-    try {
-      const versionTimeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_VERSION_TIMEOUT_MS', 2000);
-      let res = spawnSync(binaryPath, ['--version'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: versionTimeoutMs,
-        env: buildServiceCommandEnv({ cmd: binaryPath, args: ['--version'], env: process.env }),
-      });
-      if (res.status !== 0 && entry.platform !== 'win32') {
-        res = spawnSync('bash', [binaryPath, '--version'], {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: versionTimeoutMs,
-          env: buildServiceCommandEnv({ cmd: 'bash', args: [binaryPath, '--version'], env: process.env }),
-        });
-      }
-      const version = String(res.stdout ?? '').trim().split(/\r?\n/u)[0]?.trim() || null;
-      const normalizedVersion = res.status === 0 && version ? version : null;
-      configuredCliVersionByBinaryPathCache.set(binaryPath, normalizedVersion);
-      return normalizedVersion;
-    } catch {
-      configuredCliVersionByBinaryPathCache.set(binaryPath, null);
-      return null;
-    }
+    const versionTimeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_VERSION_TIMEOUT_MS', 2000);
+    const version = resolveCliVersionFromBinary({
+      binaryPath,
+      platform: entry.platform,
+      timeoutMs: versionTimeoutMs,
+    });
+    configuredCliVersionByBinaryPathCache.set(binaryPath, version);
+    return version;
   };
 
   const resolveRunningStateForEntry = (entry: DaemonServiceListEntry): boolean => {
@@ -1269,8 +1294,45 @@ export async function resolveDaemonServiceInventoryEntries(params: Readonly<{
   });
 }
 
+/**
+ * When `--local-relay` is passed to `service install`, resolve the current
+ * channel's local relay URL and ensure it's the active server profile before
+ * the install runs (install uses the active profile to bake `HAPPIER_ACTIVE_SERVER_ID`
+ * for pinned services, or as the default-follow target for default-following).
+ *
+ * Returns the argv with `--local-relay` stripped.
+ */
+async function handleLocalRelayFlag(argv: readonly string[]): Promise<string[]> {
+  if (!argv.includes('--local-relay')) {
+    return [...argv];
+  }
+  const match = await resolveLocalRelay();
+  if (!match) {
+    const currentChannel = getReleaseRingPublicLabel(
+      resolveManagedCliReleaseChannelSync({ processEnv: process.env, argv: process.argv }).ringId,
+    );
+    throw new Error(await buildMissingLocalRelayError(currentChannel));
+  }
+  // Surface the resolved channel so the user sees which relay is being picked.
+  console.log(`  (local relay on ${match.channel} channel: ${match.url})`);
+  const activeBefore = await getActiveServerProfile();
+  const needsActivate = activeBefore.id === 'cloud'
+    || (activeBefore.serverUrl !== match.url && activeBefore.localServerUrl !== match.url);
+  if (needsActivate) {
+    await upsertServerProfileByUrl({
+      name: defaultNameFromUrl(match.url),
+      serverUrl: match.url,
+      webappUrl: defaultWebappUrlFromServerUrl(match.url),
+      use: true,
+    });
+    reloadConfiguration();
+  }
+  return argv.filter((a) => a !== '--local-relay');
+}
+
 export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readonly string[] }>): Promise<void> {
-  const parsed = parseDaemonServiceCliInvocation(params.argv);
+  const argvAfterLocalRelay = await handleLocalRelayFlag(params.argv);
+  const parsed = parseDaemonServiceCliInvocation(argvAfterLocalRelay);
   const flags = parsed.flags;
   const mode = parsed.mode;
   const systemUser = parsed.systemUser;
@@ -1308,7 +1370,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
         '  happier service list [--json]',
         '  happier service paths [--json]',
         '  happier service status [--json]',
-        '  happier service install [--dry-run] [--yes] [--takeover] [--replace-existing=ring|all] [--json]',
+        '  happier service install [--local-relay] [--dry-run] [--yes] [--takeover] [--replace-existing=ring|all] [--json]',
         '  happier service uninstall [--ring <stable|preview|dev>] [--instance <id>] [--all] [--yes] [--dry-run] [--json]',
         '  happier service repair [--yes] [--json] (legacy alias for `happier doctor repair`)',
         '  happier service start|stop|restart [--dry-run] [--takeover] [--json]',
@@ -1561,6 +1623,21 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
               runtime: installRuntime,
               mode,
             }),
+            windowsLaunchDiagnostics: installRuntime.platform === 'win32'
+              ? {
+                  taskName: resolveWindowsDaemonTaskName({
+                    instanceId: installRuntime.instanceId,
+                    channel: installRuntime.channel,
+                    targetMode: installRuntime.targetMode,
+                  }),
+                  ...resolveWindowsDaemonServiceLogPaths({
+                    happierHomeDir: installRuntime.happierHomeDir,
+                    instanceId: installRuntime.instanceId,
+                    channel: installRuntime.channel,
+                    targetMode: installRuntime.targetMode,
+                  }),
+                }
+              : null,
           });
         },
       });
@@ -1765,6 +1842,47 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       && ownership.owner.serviceManaged === true
       && ownership.owner.state.serviceLabel === paths.label;
 
+    // Auto-refresh drifted plist: an installed plist written by an older CLI
+    // may not reflect current defaults (e.g. missing the `--takeover` arg).
+    // launchctl bootout → bootstrap re-reads whatever's on disk, so if we
+    // don't rewrite the file before the lifecycle commands, the daemon will
+    // spawn with stale args. Only triggered for start/restart; stop doesn't
+    // care about content drift.
+    if (action === 'start' || action === 'restart') {
+      try {
+        const expectedPlan = planDaemonServiceInstall({
+          platform: runtime.platform,
+          mode,
+          systemUser: mode === 'system' ? systemUser : undefined,
+          channel: runtime.channel,
+          targetMode: runtime.targetMode,
+          instanceId: runtime.instanceId,
+          uid: runtime.uid ?? undefined,
+          userHomeDir: runtime.userHomeDir,
+          happierHomeDir: runtime.happierHomeDir,
+          serverUrl: runtime.serverUrl,
+          webappUrl: runtime.webappUrl,
+          publicServerUrl: runtime.publicServerUrl,
+          nodePath: runtime.nodePath,
+          entryPath: runtime.entryPath,
+        });
+        const expectedFile = expectedPlan.files[0];
+        if (expectedFile) {
+          const matches = doesInstalledDaemonServiceDefinitionMatchExpected({
+            installedPath: paths.installedPath,
+            expectedContents: expectedFile.content,
+          });
+          if (!matches) {
+            process.stderr.write('Refreshing background service definition (drifted from current template).\n');
+            await applyDaemonServiceInstallPlan(expectedPlan, { runCommands: false });
+          }
+        }
+      } catch (err) {
+        // Drift-refresh is best-effort; never block the lifecycle command on it.
+        process.stderr.write(`Drift check skipped: ${err instanceof Error ? err.message : String(err)}\n`);
+      }
+    }
+
     const plan = planDaemonServiceLifecycle({
       platform: runtime.platform,
       action,
@@ -1873,6 +1991,21 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
               runtime,
               mode,
             }),
+            windowsLaunchDiagnostics: runtime.platform === 'win32'
+              ? {
+                  taskName: resolveWindowsDaemonTaskName({
+                    instanceId: runtime.instanceId,
+                    channel: runtime.channel,
+                    targetMode: runtime.targetMode,
+                  }),
+                  ...resolveWindowsDaemonServiceLogPaths({
+                    happierHomeDir: runtime.happierHomeDir,
+                    instanceId: runtime.instanceId,
+                    channel: runtime.channel,
+                    targetMode: runtime.targetMode,
+                  }),
+                }
+              : null,
           });
         },
       });
@@ -1885,7 +2018,12 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
         });
         return;
       }
-      process.stdout.write(`Background service ${action} requested.\n`);
+      // By this point the ownership wait has succeeded (see
+      // assertExpectedDaemonServiceOwnership above) — the service IS the
+      // active daemon. Use past-tense so users see the real outcome, not a
+      // vague "requested" that implies async completion.
+      const pastTense = action === 'start' ? 'started' : action === 'restart' ? 'restarted' : `${action}ed`;
+      process.stdout.write(`✓ Background service ${pastTense}.\n`);
       if (takeoverNotice) {
         process.stdout.write(`${takeoverNotice.title}\n`);
         for (const line of takeoverNotice.lines) {
@@ -1941,7 +2079,11 @@ export async function runDaemonServiceCliCommand(params: Readonly<{ argv: readon
       });
       return;
     }
-    process.stdout.write(`Background service ${action} requested.\n`);
+    // `stop` runs bootout (which deregisters the service synchronously at
+    // launchctl-api level even though the process teardown is async). Past
+    // tense reflects what the user can observe via `launchctl list`.
+    const pastTense = action === 'stop' ? 'stopped' : action === 'start' ? 'started' : action === 'restart' ? 'restarted' : `${action}ed`;
+    process.stdout.write(`✓ Background service ${pastTense}.\n`);
     if (stopOwnershipNote) {
       process.stdout.write(`${stopOwnershipNote.title}\n`);
       for (const line of stopOwnershipNote.lines) {

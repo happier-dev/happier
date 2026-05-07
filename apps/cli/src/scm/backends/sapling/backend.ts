@@ -84,6 +84,34 @@ export function createSaplingBackend(): ScmBackend {
                 error: 'The selected backend does not support branch operations',
             };
         },
+        async branchMerge() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support branch integration operations',
+            };
+        },
+        async branchRebase() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support branch integration operations',
+            };
+        },
+        async branchOperationContinue() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support branch integration operations',
+            };
+        },
+        async branchOperationAbort() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support branch integration operations',
+            };
+        },
         async worktreeCreate() {
             return {
                 success: false,
@@ -110,6 +138,27 @@ export function createSaplingBackend(): ScmBackend {
         remoteFetch: saplingRemoteFetch,
         remotePull: saplingRemotePull,
         remotePush: saplingRemotePush,
+        async remoteAdd() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support remote management operations',
+            };
+        },
+        async remoteSetUrl() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support remote management operations',
+            };
+        },
+        async remoteRemove() {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                error: 'The selected backend does not support remote management operations',
+            };
+        },
         async remotePublish() {
             return {
                 success: false,

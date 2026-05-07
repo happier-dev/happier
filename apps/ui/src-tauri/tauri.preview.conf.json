@@ -11,9 +11,18 @@
     }
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Happier (preview)"
+        "title": "Happier (preview)",
+        "width": 800,
+        "height": 600,
+        "visible": false,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "resizable": true,
+        "fullscreen": false
       }
     ]
   }

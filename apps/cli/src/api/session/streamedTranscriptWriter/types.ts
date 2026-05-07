@@ -8,11 +8,16 @@ export type StreamedTranscriptWriterSession = Readonly<{
     body: ACPMessageData,
     opts?: { localId?: string; meta?: Record<string, unknown> },
   ) => void;
-  sendAgentMessageCommitted: (
+  sendAgentMessageCommitted?: (
     provider: ACPProvider,
     body: ACPMessageData,
     opts: { localId: string; meta?: Record<string, unknown> },
   ) => Promise<void>;
+  sendAgentMessageEphemeral?: (
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+  ) => void;
 }>;
 
 export type StreamedTranscriptWriter = Readonly<{

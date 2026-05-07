@@ -189,7 +189,7 @@ describe('PromptDocEditorScreen', () => {
 
         await screen.pressByTestIdAsync('promptDoc.manageExternalAssets');
 
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1/export');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/docs/doc-1/export');
     });
 
     it('renders linked exports and a settings footer for existing docs', async () => {

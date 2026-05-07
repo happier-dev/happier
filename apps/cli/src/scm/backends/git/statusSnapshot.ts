@@ -1,12 +1,18 @@
 import {
+    type ScmHostingProvider,
+    type ScmRemoteInfo,
     type ScmWorktree,
     createGitScmCapabilities,
+    type ScmOperationState,
     type ScmWorkingEntry,
     type ScmWorkingSnapshot,
 } from '@happier-dev/protocol';
 
 import { parseGitStatusPorcelainV2Z, parseNumStatZ } from './statusParser';
 import { parseGitWorktreeListPorcelain } from './worktreeListParser';
+import { parseGitRemoteVerbose } from './remoteListParser';
+import { defaultScmHostingProviderRegistry } from '../../hostingProviders/registry';
+import { defaultPrStatusCache, type PrStatusCache } from '../../hostingProviders/prStatusCache';
 
 function detectEntryKind(includeStatus: string, pendingStatus: string): ScmWorkingEntry['kind'] {
     if (includeStatus === 'U' || pendingStatus === 'U') return 'conflicted';
@@ -26,6 +32,66 @@ export function createGitCapabilities() {
     return createGitScmCapabilities();
 }
 
+function detectHostingProviderForRemote(remote: ScmRemoteInfo): ScmHostingProvider | null {
+    return (
+        defaultScmHostingProviderRegistry.detectRemote({
+            remoteName: remote.name,
+            remoteUrl: remote.fetchUrl ?? '',
+        })
+        ?? defaultScmHostingProviderRegistry.detectRemote({
+            remoteName: remote.name,
+            remoteUrl: remote.pushUrl ?? '',
+        })
+    );
+}
+
+function extractUpstreamRemoteName(upstreamRef: string | null | undefined): string | null {
+    const upstream = upstreamRef?.trim();
+    if (!upstream) return null;
+    const slashIndex = upstream.indexOf('/');
+    if (slashIndex <= 0) return null;
+    return upstream.slice(0, slashIndex);
+}
+
+function resolveHostingProviderFromRemotes(input: {
+    remotes: readonly ScmRemoteInfo[];
+    upstreamRef: string | null | undefined;
+}): ScmHostingProvider | null {
+    const detectedProviders = input.remotes
+        .map((remote) => ({
+            remoteName: remote.name,
+            provider: detectHostingProviderForRemote(remote),
+        }))
+        .filter((entry): entry is { remoteName: string; provider: ScmHostingProvider } => entry.provider !== null);
+    if (detectedProviders.length === 0) return null;
+
+    const upstreamRemoteName = extractUpstreamRemoteName(input.upstreamRef);
+    if (upstreamRemoteName) {
+        const upstreamMatch = detectedProviders.find((entry) => entry.remoteName === upstreamRemoteName);
+        if (upstreamMatch) return upstreamMatch.provider;
+    }
+
+    const originMatch = detectedProviders.find((entry) => entry.remoteName === 'origin');
+    if (originMatch) return originMatch.provider;
+
+    return detectedProviders
+        .slice()
+        .sort((left, right) => left.remoteName.localeCompare(right.remoteName))[0]
+        ?.provider ?? null;
+}
+
+export function resolveGitHostingProviderFromOutputs(input: {
+    statusOutput: string;
+    remotesOutput?: string;
+}): ScmHostingProvider | null {
+    const parsedStatus = parseGitStatusPorcelainV2Z(input.statusOutput);
+    const remotes = parseGitRemoteVerbose(input.remotesOutput ?? '');
+    return resolveHostingProviderFromRemotes({
+        remotes,
+        upstreamRef: parsedStatus.branch.upstream ?? null,
+    });
+}
+
 export function buildGitSnapshot(input: {
     projectKey: string;
     fetchedAt: number;
@@ -37,6 +103,11 @@ export function buildGitSnapshot(input: {
     pendingNumStatOutput: string;
     untrackedStatsByPath?: Record<string, { pendingAdded: number; isBinary: boolean }>;
     worktreesOutput?: string;
+    remotesOutput?: string;
+    operationState?: ScmOperationState | null;
+    hostingProvider?: ScmHostingProvider | null;
+    prStatusCache?: PrStatusCache;
+    pullRequestAuthProfileKey?: string | null;
 }): ScmWorkingSnapshot {
     const parsedStatus = parseGitStatusPorcelainV2Z(input.statusOutput);
     const includedSummary = parseNumStatZ(input.includedNumStatOutput);
@@ -128,6 +199,21 @@ export function buildGitSnapshot(input: {
             mainWorktreePath: input.mainWorktreePath ?? input.rootPath,
         })]
         : [];
+    const remotes = parseGitRemoteVerbose(input.remotesOutput ?? '');
+    const hostingProvider = input.hostingProvider ?? resolveHostingProviderFromRemotes({
+        remotes,
+        upstreamRef: parsedStatus.branch.upstream ?? null,
+    });
+    const pullRequest = (() => {
+        if (!hostingProvider || detached || !headRaw || !input.rootPath || !input.pullRequestAuthProfileKey) return null;
+        const cached = (input.prStatusCache ?? defaultPrStatusCache).getFresh({
+            repoRootPath: input.rootPath,
+            provider: hostingProvider,
+            head: headRaw,
+            authProfileKey: input.pullRequestAuthProfileKey,
+        });
+        return cached?.kind === 'success' ? (cached.pullRequests[0] ?? null) : null;
+    })();
 
     return {
         projectKey: input.projectKey,
@@ -138,6 +224,7 @@ export function buildGitSnapshot(input: {
             backendId: 'git',
             mode: '.git',
             worktrees,
+            remotes,
         },
         capabilities: createGitCapabilities(),
         branch: {
@@ -148,6 +235,9 @@ export function buildGitSnapshot(input: {
             detached,
         },
         stashCount: parsedStatus.stashCount,
+        operationState: input.operationState ?? null,
+        hostingProvider,
+        pullRequest,
         hasConflicts: sortedEntries.some((entry) => entry.kind === 'conflicted'),
         entries: sortedEntries,
         totals: {

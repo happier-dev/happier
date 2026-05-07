@@ -204,7 +204,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
         // Popover `edgePadding` is implemented as container padding (transparent background).
         // For left/right menus this creates visible empty space above/below the overlay, which looks
         // like a "mystery bottom padding" on context menus. Disable edge padding for side placements.
-        const placement = props.placement ?? 'bottom';
+        const placement = props.placement ?? 'auto-vertical';
         if (placement === 'left' || placement === 'right') return 0;
 
         // When the menu is meant to visually "connect" to the trigger, horizontal edge padding
@@ -396,7 +396,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 <Popover
                     open={props.open}
                     anchorRef={resolvedAnchorRef}
-                    placement={props.placement ?? 'bottom'}
+                    placement={props.placement ?? 'auto-vertical'}
                     gap={props.gap ?? 0}
                     maxHeightCap={props.maxHeightCap ?? 320}
                     maxWidthCap={maxWidthCap}
@@ -421,12 +421,21 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                 // Dropdowns should be shadow-only (no borders).
                                 { borderWidth: 0, borderColor: 'transparent' } as any,
                                 props.connectToTrigger
-                                    ? ({
-                                        borderTopLeftRadius: 0,
-                                        borderTopRightRadius: 0,
-                                        marginTop: -1,
-                                        borderTopWidth: 0,
-                                    } as any)
+                                    ? (
+                                        placement === 'top'
+                                            ? {
+                                                borderBottomLeftRadius: 0,
+                                                borderBottomRightRadius: 0,
+                                                marginBottom: -1,
+                                                borderBottomWidth: 0,
+                                            }
+                                            : {
+                                                borderTopLeftRadius: 0,
+                                                borderTopRightRadius: 0,
+                                                marginTop: -1,
+                                                borderTopWidth: 0,
+                                            }
+                                    )
                                     : null,
                                 props.overlayStyle ?? null,
                             ]}

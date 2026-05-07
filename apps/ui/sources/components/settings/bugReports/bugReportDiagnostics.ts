@@ -18,9 +18,10 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getStorage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
-import { loadProfile } from '@/sync/domains/state/persistence';
+import { loadProfile, loadSyncReliabilityEvents } from '@/sync/domains/state/persistence';
 import { serverFetch } from '@/sync/http/client';
 import { machineCollectBugReportDiagnostics, machineGetBugReportLogTail } from '@/sync/ops/machines';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { getBugReportLogText } from '@/utils/system/bugReportLogBuffer';
@@ -111,6 +112,8 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
         userActions: { status: 'skipped', detail: 'no recent user actions' },
         preRestartSnapshot: { status: 'skipped', detail: 'no pre-restart snapshot found' },
         latestSession: { status: 'skipped', detail: 'no recent session found' },
+        syncReliability: { status: 'skipped', detail: 'no persisted sync reliability events' },
+        syncPerformance: { status: 'skipped', detail: 'sync performance telemetry disabled or empty' },
         serverDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
         machineDiagnostics: { status: 'skipped', detail: 'source kind not accepted' },
         pastedCliDoctorSnapshot: { status: 'skipped', detail: 'no pasted snapshot' },
@@ -174,6 +177,56 @@ export async function collectBugReportDiagnosticsArtifacts(input: {
             }, null, 2),
         }, input);
         if (pushed) diagnosticsCollection.userActions = { status: 'collected' };
+    }
+
+    try {
+        const syncReliabilityEvents = loadSyncReliabilityEvents()
+            .filter((event) => event.atMs >= sinceMs);
+        if (syncReliabilityEvents.length > 0) {
+            const pushed = pushArtifact(artifacts, {
+                filename: 'sync-reliability-events.json',
+                sourceKind: 'ui-mobile',
+                contentType: 'application/json',
+                content: JSON.stringify({
+                    capturedAt: new Date(nowMs).toISOString(),
+                    contextWindowMs,
+                    eventCount: syncReliabilityEvents.length,
+                    events: syncReliabilityEvents,
+                }, null, 2),
+            }, input);
+            if (pushed) {
+                diagnosticsCollection.syncReliability = { status: 'collected' };
+            } else {
+                diagnosticsCollection.syncReliability = { status: 'skipped', detail: 'source kind not accepted or artifact was empty' };
+            }
+        }
+    } catch {
+        diagnosticsCollection.syncReliability = { status: 'error', detail: 'failed to read persisted sync reliability events' };
+    }
+
+    try {
+        if (syncPerformanceTelemetry.isEnabled()) {
+            const syncPerformanceSnapshot = syncPerformanceTelemetry.snapshot();
+            if (syncPerformanceSnapshot.events.length > 0) {
+                const pushed = pushArtifact(artifacts, {
+                    filename: 'sync-performance-telemetry.json',
+                    sourceKind: 'ui-mobile',
+                    contentType: 'application/json',
+                    content: JSON.stringify({
+                        capturedAt: new Date(nowMs).toISOString(),
+                        eventCount: syncPerformanceSnapshot.events.length,
+                        telemetry: syncPerformanceSnapshot,
+                    }, null, 2),
+                }, input);
+                if (pushed) {
+                    diagnosticsCollection.syncPerformance = { status: 'collected' };
+                } else {
+                    diagnosticsCollection.syncPerformance = { status: 'skipped', detail: 'source kind not accepted or artifact was empty' };
+                }
+            }
+        }
+    } catch {
+        diagnosticsCollection.syncPerformance = { status: 'error', detail: 'failed to read sync performance telemetry snapshot' };
     }
 
     const storageState = getStorage().getState();

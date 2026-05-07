@@ -1,6 +1,5 @@
 import React from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, View } from 'react-native';
-import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,7 +9,7 @@ import { layout } from '@/components/ui/layout/layout';
 import { Text } from '@/components/ui/text/Text';
 import { useFeatureDetails } from '@/hooks/server/useFeatureDetails';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useAllMachines, useProfile } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
@@ -32,7 +31,7 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
   const { theme } = useUnistyles();
   const machines = useAllMachines();
   const profile = useProfile();
-  const serverUrlDefault = React.useMemo(() => getActiveServerSnapshot().serverUrl, []);
+  const serverUrlDefault = useActiveServerSnapshot().serverUrl;
   const bugReportsEnabled = useFeatureEnabled('bugReports');
   const bugReportsCapabilities = useFeatureDetails({
     featureId: 'bugReports',
@@ -61,13 +60,6 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
   });
 
   return (
-    <>
-      <Stack.Screen
-        options={{
-          headerShown: true,
-          headerTitle: t('settings.reportIssue'),
-        }}
-      />
       <View style={styles.container}>
         <KeyboardAvoidingView {...keyboardProps} style={{ flex: 1 }}>
           <ScrollView
@@ -191,6 +183,5 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
           </ScrollView>
         </KeyboardAvoidingView>
       </View>
-    </>
   );
 });

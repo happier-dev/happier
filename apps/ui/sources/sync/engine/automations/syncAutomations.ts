@@ -11,10 +11,13 @@ export async function fetchAndApplyAutomations(params: {
     loadedAutomationRunIds?: readonly string[];
     setAutomationRuns?: (automationId: string, runs: AutomationRun[]) => void;
     runsLimit?: number;
+    shouldContinue?: () => boolean;
 }): Promise<void> {
     if (!params.credentials) {
         return;
     }
+    const shouldContinue = params.shouldContinue ?? (() => true);
+    if (!shouldContinue()) return;
 
     const { serverId } = getActiveServerSnapshot();
     const automationsEnabled = await isRuntimeFeatureEnabled({
@@ -22,11 +25,13 @@ export async function fetchAndApplyAutomations(params: {
         serverId,
         timeoutMs: 400,
     });
+    if (!shouldContinue()) return;
     if (!automationsEnabled) {
         return;
     }
 
     const rows = await listAutomations(params.credentials);
+    if (!shouldContinue()) return;
     params.applyAutomations(rows);
 
     if (!params.setAutomationRuns) {
@@ -51,6 +56,7 @@ export async function fetchAndApplyAutomations(params: {
             automationId,
             limit,
         });
+        if (!shouldContinue()) return;
         params.setAutomationRuns?.(automationId, result.runs);
     }));
 }
@@ -60,10 +66,13 @@ export async function fetchAndApplyAutomationRuns(params: {
     automationId: string;
     limit?: number;
     setAutomationRuns: (automationId: string, runs: AutomationRun[]) => void;
+    shouldContinue?: () => boolean;
 }): Promise<{ nextCursor: string | null }> {
     if (!params.credentials) {
         return { nextCursor: null };
     }
+    const shouldContinue = params.shouldContinue ?? (() => true);
+    if (!shouldContinue()) return { nextCursor: null };
 
     const { serverId } = getActiveServerSnapshot();
     const automationsEnabled = await isRuntimeFeatureEnabled({
@@ -71,6 +80,7 @@ export async function fetchAndApplyAutomationRuns(params: {
         serverId,
         timeoutMs: 400,
     });
+    if (!shouldContinue()) return { nextCursor: null };
     if (!automationsEnabled) {
         return { nextCursor: null };
     }
@@ -80,6 +90,7 @@ export async function fetchAndApplyAutomationRuns(params: {
         automationId: params.automationId,
         limit: params.limit,
     });
+    if (!shouldContinue()) return { nextCursor: null };
     params.setAutomationRuns(params.automationId, result.runs);
     return { nextCursor: result.nextCursor };
 }

@@ -1,0 +1,239 @@
+---
+title: Pets
+description: Enable Happier pet companions, choose built-in or Codex-compatible pets, and understand how they appear across app surfaces.
+---
+
+Happier pets are optional animated companions for the authenticated app experience. They can sit in the web app shell, in the mobile app shell, and on desktop in a small native overlay that can stay outside the main window.
+
+Pets are a user opt-in feature. A server can allow the feature while each person still keeps pets disabled until they turn them on from **Settings -> Pets**.
+
+## What pets do
+
+Pets give session activity a small visual presence without replacing normal notifications or inbox flows.
+
+- They idle quietly when nothing needs attention.
+- They react to clicks or taps with a short jump.
+- They occasionally perform small idle actions instead of animating constantly.
+- They switch animation state when a session is running, waiting for you, failed, or ready for review.
+- On desktop, they can show compact session bubbles above the pet for active or attention-worthy sessions.
+
+Pets never approve permissions or send messages by themselves. They only open the relevant UI or send a quick reply after you type and submit it.
+
+## Enable pets
+
+Open **Settings -> Pets**.
+
+1. Turn on **Enable pets** for your account.
+2. Choose a built-in pet or import one from a connected machine.
+3. Adjust **Companion size** if you want the pet smaller or larger.
+4. On desktop, configure the desktop overlay if you want the pet outside the main window.
+
+The account setting is off by default. Device overrides let one device inherit, force-enable, or force-disable pets without changing the account preference.
+
+Pets only render inside signed-in app surfaces. They do not appear on sign-in, onboarding, or other public routes.
+
+## Built-in pets
+
+Happier ships with built-in pets that are available without importing anything:
+
+- Blink
+- Fury
+- Milo
+- Oli
+- Titi
+
+The built-in pets appear as selectable tiles in **Settings -> Pets**. Selecting one updates the current account default unless the device is using a local-only override.
+
+## Companion size
+
+The **Companion size** slider is device-local and applies to every pet surface on that device:
+
+- web app-shell companion
+- mobile app-shell companion
+- desktop native overlay
+- pet previews in settings
+
+The available range is 75% to 150%. The pet keeps the Codex-compatible sprite aspect ratio while resizing.
+
+## Import Codex-compatible pets
+
+Happier can detect Codex-compatible pet packages from connected machines.
+
+Use **Detect Codex pets** in **Settings -> Pets** to scan the active daemon machine. Detection is explicit: Happier does not scan local Codex homes until you request it or trigger the refresh command.
+
+Detected pets can be:
+
+- used from the detected Codex home,
+- imported into Happier as a managed local pet,
+- imported into the account library when pet sync is enabled,
+- removed from the device list later.
+
+Local pets stay on the current machine unless you explicitly import them into the account library.
+
+## Package format
+
+A pet package is a directory with this shape:
+
+```text
+<pet-id>/
+  pet.json
+  spritesheet.webp
+```
+
+`spritesheet.png` is also accepted. The manifest must use one of those literal file names.
+
+`pet.json` has this format:
+
+```json
+{
+  "id": "milo",
+  "displayName": "Milo",
+  "description": "A compact tabby companion.",
+  "spritesheetPath": "spritesheet.webp"
+}
+```
+
+The V1 spritesheet is Codex-compatible:
+
+| Property | Value |
+| --- | --- |
+| Size | `1536x1872` |
+| Grid | 8 columns by 9 rows |
+| Frame size | `192x208` |
+| Supported formats | `image/webp`, `image/png` |
+
+Rows map to these states:
+
+| Row | State |
+| --- | --- |
+| 0 | `idle` |
+| 1 | `running-right` |
+| 2 | `running-left` |
+| 3 | `waving` |
+| 4 | `jumping` |
+| 5 | `failed` |
+| 6 | `waiting` |
+| 7 | `running` |
+| 8 | `review` |
+
+Happier validates the manifest, media type, dimensions, package size, and path safety before importing or syncing a custom pet.
+
+## Desktop overlay
+
+On Tauri desktop builds, the pet can live in its own native overlay window.
+
+The desktop overlay:
+
+- stays outside the main app window,
+- avoids rendering a duplicate in-app pet while the overlay owns the companion,
+- grows when session bubbles are shown and shrinks back to the mascot when they are hidden,
+- can be dragged by grabbing the mascot,
+- keeps tray buttons, reply fields, and other controls as non-drag regions,
+- can be reset to the default bottom-right position from **Settings -> Pets**.
+
+Desktop overlay settings include:
+
+- account default on/off,
+- per-device inherit / enabled / disabled override,
+- visibility mode,
+- reset position.
+
+Visibility modes:
+
+| Mode | Behavior |
+| --- | --- |
+| Always when enabled | Show the pet whenever pets and the overlay are enabled. |
+| Attention or active | Show when a session is active, running, or needs attention. |
+| Attention only | Show only for waiting, failed, or review activity. |
+
+Clicking the mascot brings the main Happier window forward. Right-clicking the mascot opens the pet context menu so you can tuck it away.
+
+## Session bubbles
+
+When the desktop overlay has activity to show, compact bubbles appear above the pet. They use the session title and latest relevant message so you can recognize the session quickly.
+
+Bubble states are prioritized as:
+
+1. waiting for you
+2. failed
+3. ready for review
+4. running
+5. idle
+
+The bubbles can open the session in the main app, be dismissed, or expand a quick-reply field. Quick replies are sent to the targeted session only after you submit them.
+
+## Mobile app companion
+
+On mobile, the companion is rendered in the app shell after you enable pets.
+
+The mobile companion:
+
+- respects safe areas, keyboard space, and app foreground/background state,
+- can be dragged with a native pan gesture,
+- stores position as normalized screen coordinates so it adapts to screen size changes,
+- uses nearest-neighbor rendering for crisp pixel art,
+- gives light haptic feedback on tap when the platform allows it.
+
+Reduced-motion preferences are respected by freezing animated playback.
+
+## Sync and privacy
+
+Pet companion display and pet account sync are separate server features.
+
+- `pets.companion` controls whether the pet companion feature is available at all.
+- `pets.sync` controls account pet library sync.
+
+The server allows `pets.companion` by default so users can see the setting, but the account-level pet setting is off by default. `pets.sync` is off by default unless the server enables it.
+
+When sync is disabled, built-in and local managed pets still work on the device that owns them. Account-library pet import and account pet selection require `pets.sync`.
+
+Synced settings and pet records store sanitized references, metadata, digests, and size information. They do not store raw `data:` URIs, local filesystem paths, private object keys supplied by a client, or spritesheet bytes in settings.
+
+## Server administration
+
+Self-hosted and managed deployments can disable pet features through server feature flags.
+
+```bash
+HAPPIER_FEATURE_PETS_COMPANION__ENABLED=0
+HAPPIER_FEATURE_PETS_SYNC__ENABLED=0
+```
+
+When `pets.companion` is disabled by the server:
+
+- clients hide or disable the pet companion surfaces,
+- **Settings -> Pets** shows a disabled notice instead of the pet library,
+- daemon pet RPCs return a stable feature-disabled response,
+- custom pet import, discovery, preview, and removal actions are blocked.
+
+When only `pets.sync` is disabled:
+
+- local and built-in pets still work,
+- account-library import and synced account pet selection are unavailable.
+
+## Troubleshooting
+
+### The pet does not appear
+
+Check these in order:
+
+1. You are signed in and inside the app shell.
+2. The selected server allows `pets.companion`.
+3. **Settings -> Pets -> Enable pets** is on.
+4. This device has not forced the pet setting to **Disabled**.
+5. On desktop, the overlay is enabled or the app-shell pet is allowed to render.
+
+### Codex pets are not detected
+
+Make sure the active daemon machine is online, then press **Detect Codex pets** again. Detection scans the active machine and can use a short discovery cache, so newly created packages may need another refresh after a few seconds.
+
+The package must contain a valid `pet.json` and a literal `spritesheet.webp` or `spritesheet.png` file inside the package directory.
+
+### Imported local pets disappear on another device
+
+Local imports are intentionally device-local. Import the pet into the account library if your server enables `pets.sync` and you want to use it across devices.
+
+## Related pages
+
+- [Server feature flags](/docs/features/feature-flags)
+- [Notifications](/docs/advanced/notifications)
+- [Codex provider](/docs/providers/codex)

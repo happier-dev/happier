@@ -31,6 +31,17 @@ export type AgentInputPopoverAnchor = 'chip' | 'actionMenu';
  */
 export type ChipLabelPolicy = 'always' | 'auto-hide';
 
+export type AgentInputComposerAttachmentBadge = Readonly<{
+    key: string;
+    label: string;
+    testID?: string;
+    accessibilityLabel?: string;
+    icon?: (tint: string) => React.ReactNode;
+    onPress?: () => void;
+    onRemove?: () => void;
+    removeAccessibilityLabel?: string;
+}>;
+
 export type AgentInputExtraActionChip = Readonly<{
     key: string;
     controlId?: AgentInputControlId;
@@ -76,6 +87,7 @@ export type AgentInputExtraActionChip = Readonly<{
         edgeIndicators?: AgentInputContentPopoverConfig['edgeIndicators'];
         initialVisibility?: AgentInputContentPopoverConfig['initialVisibility'];
     }>;
+    composerAttachmentBadge?: AgentInputComposerAttachmentBadge;
     render: (ctx: AgentInputExtraActionChipRenderContext) => React.ReactNode;
 }>;
 

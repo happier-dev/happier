@@ -8,7 +8,9 @@ vi.mock('expo-notifications', () => ({
 
 describe('applyExpoNativeBadgeState', () => {
     beforeEach(() => {
+        vi.resetModules();
         setBadgeCountAsync.mockClear();
+        setBadgeCountAsync.mockResolvedValue(true);
     });
 
     it('applies the numeric badge count', async () => {
@@ -25,5 +27,14 @@ describe('applyExpoNativeBadgeState', () => {
         await applyExpoNativeBadgeState({ count: 0, showNonNumericDot: true });
 
         expect(setBadgeCountAsync).toHaveBeenCalledWith(0);
+    });
+
+    it('returns false when the native platform refuses the badge update', async () => {
+        setBadgeCountAsync.mockResolvedValueOnce(false);
+        const { applyExpoNativeBadgeState } = await import('./applyExpoNativeBadgeState');
+
+        const result = await applyExpoNativeBadgeState({ count: 2, showNonNumericDot: false });
+
+        expect(result).toBe(false);
     });
 });

@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { resolveCodeEditorFontMetrics } from '@/components/ui/code/editor/codeEditorFontMetrics';
 import { Text } from '@/components/ui/text/Text';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 import { XtermWebViewSurface, type XtermWebViewSurfaceHandle } from '@/components/terminal/xterm/webview/XtermWebViewSurface.native';
@@ -35,6 +36,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     const uiFontScale = useLocalSetting('uiFontScale');
     const osFontScale = typeof PixelRatio.getFontScale === 'function' ? PixelRatio.getFontScale() : 1;
     const fontMetrics = React.useMemo(() => resolveCodeEditorFontMetrics({ uiFontScale, osFontScale }), [osFontScale, uiFontScale]);
+    const keyboardBottomInset = useKeyboardHeight();
     const webViewRef = props.terminalRef as React.MutableRefObject<XtermWebViewSurfaceHandle | null>;
 
     const onPaste = React.useCallback(async () => {
@@ -75,6 +77,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
             toolbarActionsStart={props.toolbarActionsStart}
             testIdPrefix={props.testIdPrefix}
             footer={footer}
+            keyboardBottomInset={keyboardBottomInset}
             platformOS={Platform.OS === 'android' ? 'android' : 'ios'}
             surface={(
                 <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>

@@ -333,7 +333,7 @@ describe('PromptAssetsScreen', () => {
                 }),
             ],
         }));
-        expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
+        expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills/bundle-1');
     });
 
     it('clears project-scoped discovery after the selected machine changes until a workspace path is chosen again', async () => {
@@ -476,7 +476,7 @@ describe('PromptAssetsScreen', () => {
                 }),
             ],
         }));
-        expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1');
+        expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/docs/doc-1');
     });
 
     it('uses the persisted context selection when refreshing external assets', async () => {

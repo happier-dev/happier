@@ -20,8 +20,9 @@ import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendAp
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
-import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
+import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
+import { createTurnAssistantPreviewTracker, type TurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import type { InFlightSteerController } from '@/agent/runtime/permission/bindPermissionModeQueue';
@@ -112,6 +113,7 @@ export type StandardAcpProviderConfig = {
     getPermissionMode: () => PermissionMode;
     setThinking: (value: boolean) => void;
     memoryRecallGuidanceEnabled: boolean;
+    turnAssistantPreviewTracker: TurnAssistantPreviewTracker;
   }) => RuntimeForLoop;
   resolveRuntimeDirectory?: (params: { session: ApiSessionClient; metadata: Metadata }) => string;
   createSendReady?: (params: { session: ApiSessionClient; api: ApiClient }) => () => void;
@@ -268,6 +270,7 @@ export async function runStandardAcpProvider(
   }
   const { messageQueue } = permissionModeState;
   const promptArtifactBodyCache = new Map<string, string | null>();
+  const turnAssistantPreviewTracker = createTurnAssistantPreviewTracker();
   const runtimeContext = resolveAttachedRunRuntimeContext({
     session,
     metadata,
@@ -338,6 +341,7 @@ export async function runStandardAcpProvider(
       thinking = value;
     },
     memoryRecallGuidanceEnabled,
+    turnAssistantPreviewTracker,
   });
   runtimeForInFlightSteer = runtime;
 
@@ -345,6 +349,11 @@ export async function runStandardAcpProvider(
   const cleanupOnce = async () => {
     if (cleanupRan) return;
     cleanupRan = true;
+    try {
+      await permissionHandler.abortPendingRequestsAndFlush('Session ended');
+    } catch (error) {
+      logger.debug(`${config.uiLogPrefix} Failed to clean up pending permissions during session cleanup (non-fatal)`, error);
+    }
     await cleanupBackendRunResourcesFn({
       keepAliveInterval,
       reconnectionHandle,
@@ -357,8 +366,8 @@ export async function runStandardAcpProvider(
 
   const handleAbort = async () => {
     logger.debug(`${config.uiLogPrefix} Abort requested`);
+    await permissionHandler.abortPendingRequestsAndFlush('Aborted by user');
     session.sendAgentMessage(config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
-    permissionHandler.reset();
     try {
       abortController.abort();
       abortController = new AbortController();
@@ -408,7 +417,7 @@ export async function runStandardAcpProvider(
         waitingForCommandLabel: config.waitingForCommandLabel,
         logPrefix: config.uiLogPrefix,
         sessionTitle: getSessionNotificationTitle(session.getMetadataSnapshot?.bind(session) ?? null),
-        assistantPreviewText: getLatestAssistantMessagePreview(messageBuffer),
+        assistantPreviewText: turnAssistantPreviewTracker.getPreview(),
         accountSettings: opts.accountSettingsContext?.settings ?? null,
         settingsSecretsReadKeys: opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
         includeAssistantPreviewText:

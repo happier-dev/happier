@@ -211,7 +211,7 @@ describe('MachinesSettingsView', () => {
         await act(async () => {
             await pressTestInstanceAsync(setupThisComputerItem!);
         });
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/machines/this-computer');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/machines/this-computer');
     });
 
     it('renders relay drift on web as a read-only notice instead of a repair action card', async () => {

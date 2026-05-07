@@ -127,7 +127,7 @@ function HeaderRightNotAuth() {
     return (
         <Pressable
             testID="home-header-open-server-config"
-            onPress={() => router.push('/server')}
+            onPress={() => router.push('/settings/server')}
             hitSlop={15}
             style={styles.headerButton}
         >

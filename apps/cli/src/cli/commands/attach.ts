@@ -21,7 +21,15 @@ import { focusWindowsConsoleWindow } from '@/terminal/attachment/windowsConsoleA
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import type { SessionActionSelectorRow } from '@/ui/ink/SessionActionSelector';
 import { evaluateCliSessionAttachEligibility } from '@/session/attach/evaluateCliSessionAttachEligibility';
-import { buildAttachSelectionModel } from './attachInteractiveSelection';
+import {
+  explainAttachIneligibility,
+  type AgentAttachStrategyForExplainer,
+} from '@/session/attach/explainAttachIneligibility';
+import { getAgentLocalControlCapability } from '@happier-dev/agents';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { hostname } from 'node:os';
+import { buildAttachSelectionModel, formatAttachIneligibilityFooter } from './attachInteractiveSelection';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -61,6 +69,7 @@ type AttachCommandDeps = Readonly<{
   runTmuxAttachFn?: (params: {
     sessionId: string;
     terminal: NonNullable<TerminalAttachmentInfo['terminal']>;
+    refreshRemoteControl?: boolean;
   }) => Promise<number>;
   runWindowsTerminalAttachFn?: (params: {
     sessionId: string;
@@ -80,6 +89,7 @@ type AttachCommandDeps = Readonly<{
   selectAttachableSessionIdFn?: (params: {
     rows: SessionActionSelectorRow[];
     probeSessionIdFn?: (sessionId: string) => Promise<{ reachable: boolean; reason?: string }>;
+    footerHint?: string | null;
   }) => Promise<
     | { type: 'selected'; sessionId: string }
     | { type: 'cancelled' }
@@ -98,6 +108,7 @@ type ResolvedAttachContext = Readonly<{
 async function defaultRunTmuxAttach(params: {
   sessionId: string;
   terminal: NonNullable<TerminalAttachmentInfo['terminal']>;
+  refreshRemoteControl?: boolean;
 }, deps?: Readonly<{
   isTmuxAvailableFn?: typeof isTmuxAvailable;
 }>): Promise<number> {
@@ -137,6 +148,14 @@ async function defaultRunTmuxAttach(params: {
   if (selectExit !== 0) {
     console.error(chalk.red('Error:'), `Failed to select tmux window (${plan.target}).`);
     return selectExit;
+  }
+
+  if (params.refreshRemoteControl === true) {
+    await spawnTmux({
+      args: ['send-keys', '-t', plan.target, 'C-l'],
+      env,
+      stdio: 'ignore',
+    });
   }
 
   if (!plan.shouldAttach) return 0;
@@ -183,6 +202,10 @@ function printMissingAttachInfo(sessionId: string): void {
   console.error(chalk.gray('This usually means the session was not started with an attachable terminal host, or it was started on another machine.'));
 }
 
+function shouldRefreshRemoteControlOnAttach(metadata: Record<string, unknown> | null): boolean {
+  return metadata?.startedBy === 'daemon';
+}
+
 async function resolveAttachContext(
   sessionIdOrPrefix: string,
   deps: AttachCommandDeps,
@@ -221,6 +244,7 @@ function isAttachSuccess(exitCode: number | false): boolean {
 async function selectAttachableSessionId(params: Readonly<{
   rows: SessionActionSelectorRow[];
   probeSessionIdFn?: (sessionId: string) => Promise<{ reachable: boolean; reason?: string }>;
+  footerHint?: string | null;
 }>): Promise<
   | { type: 'selected'; sessionId: string }
   | { type: 'cancelled' }
@@ -230,7 +254,7 @@ async function selectAttachableSessionId(params: Readonly<{
   return await runSessionActionSelector({
     title: 'Attach to a running session',
     actionVerb: 'attach',
-    footerHint: 'Use `happier resume` for stopped sessions.',
+    footerHint: params.footerHint ?? 'Use `happier resume` for stopped sessions.',
     rows: params.rows,
     onProbe: params.probeSessionIdFn,
   });
@@ -293,27 +317,42 @@ export async function handleAttachCommand(
     currentMachineId = typeof settings.machineId === 'string' && settings.machineId.trim().length > 0
       ? settings.machineId.trim()
       : null;
-    if (!currentMachineId) {
-      console.error(chalk.red('Error:'), 'Current machine id is unavailable. Start the daemon or reconnect this machine first.');
-      process.exit(1);
-    }
+    // Soft fallback (was a hard exit previously): when the machineId is
+    // unavailable we can still surface attachable sessions if the local
+    // attachment file exists and/or the host name matches. The selector
+    // will mark anything ambiguous as disabled-with-reason so the user
+    // sees the underlying cause instead of a generic error.
+    const accountSettings = await bootstrapAccountSettingsContext({
+      credentials: credentialsForInteractive,
+      mode: 'fast',
+    }).then((ctx) => ctx.settings).catch(() => accountSettingsParse({}));
+
     const selectionModel = await buildAttachSelectionModel({
       credentials: credentialsForInteractive,
       currentMachineId,
+      currentMachineHost: hostname(),
       fetchSessionsPageFn,
       readTerminalAttachmentInfoFn,
+      isTmuxAvailableFn: deps.isTmuxAvailableFn ?? isTmuxAvailable,
+      accountSettings,
     });
+    const footerHint = formatAttachIneligibilityFooter(selectionModel.hint)
+      ?? 'Use `happier resume` for stopped sessions.';
     const selected = await selectAttachableSessionIdFn({
       rows: selectionModel.rows,
       probeSessionIdFn: selectionModel.probeSessionIdFn,
+      footerHint,
     });
     if (selected.type === 'cancelled') {
       console.log(chalk.blue('Attach cancelled'));
       return;
     }
     if (selected.type === 'none') {
-      console.log('No active local sessions found.');
-      console.log('Hint: use `happier resume` for stopped sessions.');
+      // Empty list — distinguish between "nothing running" and
+      // "running but unattachable from here" so the user sees the actual
+      // cause. Today we only land here when 0 candidate rows survived.
+      console.log('No active sessions on this machine.');
+      console.log('Hint: use `happier resume` for stopped sessions, or `happier session list --active` to see remote sessions.');
       return;
     }
     sessionIdOrPrefix = selected.sessionId;
@@ -342,13 +381,32 @@ export async function handleAttachCommand(
       credentials: context.credentials,
       rawSession: context.rawSession,
       currentMachineId: effectiveMachineId,
+      currentMachineHost: hostname(),
       localAttachmentInfo: localInfo,
       insideTmux: Boolean(process.env.TMUX),
       currentTmuxSocketPath: typeof process.env.TMUX === 'string' ? process.env.TMUX.split(',')[0]?.trim() || null : null,
     });
 
     if (!eligibility.eligible) {
-      console.error(chalk.red('Error:'), eligibility.reason);
+      // Route through the same explainer the interactive selector uses so
+      // explicit `happier attach <id>` produces the same friendly,
+      // user-actionable message instead of the raw eligibility reason.
+      const tmuxAvailable = await (deps.isTmuxAvailableFn ?? isTmuxAvailable)().catch(() => false);
+      const agentId = eligibility.agentId ?? null;
+      const agentAttachStrategy: AgentAttachStrategyForExplainer = agentId
+        ? (getAgentLocalControlCapability(agentId)?.attachStrategy ?? 'unsupported')
+        : null;
+      const explanation = explainAttachIneligibility({
+        eligibility,
+        metadata: eligibility.metadata,
+        currentMachineHost: hostname(),
+        tmuxAvailable,
+        agentAttachStrategy,
+      });
+      console.error(chalk.red('Error:'), explanation.fullReason);
+      if (explanation.nextStepHint) {
+        console.error(chalk.gray(explanation.nextStepHint));
+      }
       process.exit(1);
     }
 
@@ -384,6 +442,7 @@ export async function handleAttachCommand(
         exitCode = await runTmuxAttachFn({
           sessionId: resolvedSessionId,
           terminal: eligibility.terminal,
+          refreshRemoteControl: shouldRefreshRemoteControlOnAttach(eligibility.metadata),
         });
         break;
       case 'windows_terminal_host':

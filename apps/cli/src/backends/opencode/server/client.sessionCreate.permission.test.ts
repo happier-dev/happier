@@ -11,7 +11,7 @@ function jsonResponse(payload: unknown): Response {
   });
 }
 
-describe('createOpenCodeServerRuntimeClient sessionCreate', () => {
+describe('createOpenCodeServerRuntimeClient session permissions', () => {
   const originalFetch = globalThis.fetch;
   const originalUrl = process.env.HAPPIER_OPENCODE_SERVER_URL;
 
@@ -64,5 +64,47 @@ describe('createOpenCodeServerRuntimeClient sessionCreate', () => {
 
     expect(seenBodies).toHaveLength(1);
     expect(seenBodies[0]).toMatchObject({ permission: ruleset });
+  });
+
+  it('updates an existing session with the provided permission ruleset', async () => {
+    const seenRequests: Array<{ pathname: string; method: string; body: unknown }> = [];
+    globalThis.fetch = vi.fn(async (input, init) => {
+      const url = typeof input === 'string' ? input : String((input as { url?: string })?.url ?? '');
+      if (url.includes('/global/health')) {
+        return jsonResponse({ healthy: true, version: '1.2.15' });
+      }
+      const pathname = (() => {
+        try {
+          return new URL(url).pathname;
+        } catch {
+          return '';
+        }
+      })();
+      if (pathname === '/session/ses_1' && init?.method === 'PATCH') {
+        const raw = typeof init.body === 'string' ? init.body : '';
+        seenRequests.push({ pathname, method: init.method, body: raw ? JSON.parse(raw) : null });
+        return jsonResponse({ id: 'ses_1', directory: '/repo' });
+      }
+      return jsonResponse({});
+    }) as typeof fetch;
+
+    const client = await createOpenCodeServerRuntimeClient({
+      directory: '/repo',
+      messageBuffer: new MessageBuffer(),
+    });
+
+    const ruleset = [
+      { permission: '*', pattern: '*', action: 'deny' },
+      { permission: 'read', pattern: '*', action: 'allow' },
+    ];
+    await client.sessionUpdate({ sessionId: 'ses_1', permission: ruleset });
+
+    expect(seenRequests).toEqual([
+      {
+        pathname: '/session/ses_1',
+        method: 'PATCH',
+        body: { permission: ruleset },
+      },
+    ]);
   });
 });

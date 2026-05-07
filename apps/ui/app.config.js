@@ -67,7 +67,7 @@ const DEFAULTS = {
 // Allow opt-in overrides for local dev tooling without changing upstream defaults.
 const nameOverride = (process.env.EXPO_APP_NAME || process.env.HAPPY_STACKS_IOS_APP_NAME || '').trim();
 const iosBundleIdOverride = (process.env.EXPO_APP_BUNDLE_ID || process.env.HAPPY_STACKS_IOS_BUNDLE_ID || '').trim();
-const androidPackageOverride = (process.env.EXPO_ANDROID_PACKAGE || process.env.EXPO_APP_BUNDLE_ID || '').trim();
+const androidPackageOverride = (process.env.EXPO_ANDROID_PACKAGE || '').trim();
 const ownerOverride = (process.env.EXPO_APP_OWNER || '').trim();
 const slugOverride = (process.env.EXPO_APP_SLUG || '').trim();
 const versionOverride = (process.env.EXPO_APP_VERSION || '').trim();
@@ -212,6 +212,11 @@ const iosBackgroundAudioOverride = parseOptionalBoolean(
     process.env.EXPO_PUBLIC_IOS_BACKGROUND_AUDIO ?? process.env.EXPO_IOS_BACKGROUND_AUDIO
 );
 const iosBackgroundAudioEnabled = iosBackgroundAudioOverride ?? true;
+const syncTuningJson = (
+    process.env.EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON ||
+    process.env.HAPPIER_SYNC_TUNING_JSON ||
+    ''
+).trim();
 
 // Native model packs (Sherpa-ONNX) are download-on-demand. Expo "public" env vars are embedded
 // at bundle time, so we provide a dev-safe default mapping that can be overridden in EAS/env.
@@ -353,6 +358,12 @@ const baseExpoConfig = {
             "react-native-vision-camera",
             "@more-tech/react-native-libsodium",
             [
+                "react-native-enriched-markdown",
+                {
+                    enableMath: true
+                }
+            ],
+            [
                 "react-native-audio-api",
                 {
                     // Enables UIBackgroundModes=audio when true (required for realtime voice calls in background).
@@ -420,7 +431,8 @@ const baseExpoConfig = {
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
                 revenueCatGoogleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE,
-                revenueCatStripeKey: process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE
+                revenueCatStripeKey: process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE,
+                ...(syncTuningJson ? { syncTuningJson } : {})
             }
         },
         owner

@@ -7,14 +7,17 @@ function parseOptionalBoolean(raw) {
 }
 
 export function resolveUiPostinstallTasks({ env }) {
-    const tasks = ['patch-package']
+    const tasks = [
+        'patch-package',
+        'verify-expo-router-web-modal-patch',
+        'verify-react-native-enriched-markdown-web-streaming-patch',
+    ]
 
     const vendorWebAssetsOverride = parseOptionalBoolean(env?.HAPPIER_UI_VENDOR_WEB_ASSETS)
     const vendorWebAssetsEnabled = vendorWebAssetsOverride ?? true
 
     if (vendorWebAssetsEnabled) {
         tasks.push(
-            'verify-expo-router-web-modal-patch',
             'setup-skia-web',
             'vendor-monaco',
             'vendor-kokoro-web',

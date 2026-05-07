@@ -121,20 +121,27 @@ export function generateHookPluginDir(port: number, options: GenerateHookSetting
 
     const nodeExecutable = resolveNodeExecutable();
     const sessionForwarderScript = resolveCliRuntimeAssetPath('scripts', 'session_hook_forwarder.cjs');
-    const sessionHookCommand = `${JSON.stringify(nodeExecutable)} ${JSON.stringify(sessionForwarderScript)} ${port}`;
+    const buildSessionHookCommand = (hookEventName: string): string =>
+        `${JSON.stringify(nodeExecutable)} ${JSON.stringify(sessionForwarderScript)} ${port} ${JSON.stringify(hookEventName)}`;
+
+    const buildSessionHook = (hookEventName: string): unknown[] => [
+        {
+            matcher: '',
+            hooks: [
+                {
+                    type: 'command',
+                    command: buildSessionHookCommand(hookEventName),
+                },
+            ],
+        },
+    ];
 
     const hooks: Record<string, unknown> = {
-        SessionStart: [
-            {
-                matcher: '',
-                hooks: [
-                    {
-                        type: 'command',
-                        command: sessionHookCommand,
-                    },
-                ],
-            },
-        ],
+        SessionStart: buildSessionHook('SessionStart'),
+        UserPromptSubmit: buildSessionHook('UserPromptSubmit'),
+        Stop: buildSessionHook('Stop'),
+        StopFailure: buildSessionHook('StopFailure'),
+        SessionEnd: buildSessionHook('SessionEnd'),
     };
 
     if (options.enableLocalPermissionBridge) {

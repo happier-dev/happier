@@ -8,6 +8,7 @@ import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPan
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let terminalFeatureEnabled = false;
+let terminalFeatureEnabledForServerId: string | null = null;
 let embeddedTerminalDockLocation: 'sidebar' | 'details' | 'bottom' = 'sidebar';
 
 const openRightSpy = vi.fn();
@@ -47,7 +48,11 @@ vi.mock('@/utils/platform/deferOnWeb', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'terminal.embeddedPty' ? terminalFeatureEnabled : false,
+    useFeatureEnabled: (featureId: string, scope?: { serverId?: string | null }) => {
+        if (featureId !== 'terminal.embeddedPty') return false;
+        if (!terminalFeatureEnabled) return false;
+        return terminalFeatureEnabledForServerId == null || scope?.serverId === terminalFeatureEnabledForServerId;
+    },
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -79,6 +84,7 @@ vi.mock('@/components/sessions/panes/terminal/SessionRightPanelTerminalView', ()
 describe('SessionRightPanel (terminal tab)', () => {
     beforeEach(() => {
         terminalFeatureEnabled = false;
+        terminalFeatureEnabledForServerId = null;
         embeddedTerminalDockLocation = 'sidebar';
         scopeState = { right: { isOpen: true, activeTabId: 'git', tabState: {} } };
         openRightSpy.mockClear();
@@ -86,11 +92,11 @@ describe('SessionRightPanel (terminal tab)', () => {
         vi.clearAllMocks();
     });
 
-    async function renderPanel() {
+    async function renderPanel(serverId?: string) {
         const mod = await import('./SessionRightPanel');
         const SessionRightPanel = mod.SessionRightPanel;
         let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />)).tree;
+        tree = (await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" serverId={serverId} />)).tree;
         return { tree: tree!, SessionRightPanel };
     }
 
@@ -106,6 +112,15 @@ describe('SessionRightPanel (terminal tab)', () => {
 
         embeddedTerminalDockLocation = 'sidebar';
         const enabled = await renderPanel();
+        expect(enabled.tree.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(1);
+    });
+
+    it('uses the viewed session server scope when deciding terminal-tab availability', async () => {
+        terminalFeatureEnabled = true;
+        terminalFeatureEnabledForServerId = 'server-b';
+
+        const enabled = await renderPanel('server-b');
+
         expect(enabled.tree.findAll((node) => node.props?.testID === 'session-rightpanel-tab:terminal')).toHaveLength(1);
     });
 });

@@ -8,6 +8,11 @@ import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popove
 
 const ModalContext = createContext<ModalContextValue | undefined>(undefined);
 
+type ModalProviderProps = Readonly<{
+    active?: boolean;
+    children: React.ReactNode;
+}>;
+
 export function useModal() {
     const context = useContext(ModalContext);
     if (!context) {
@@ -16,7 +21,7 @@ export function useModal() {
     return context;
 }
 
-export function ModalProvider({ children }: { children: React.ReactNode }) {
+export function ModalProvider({ active = true, children }: ModalProviderProps) {
     const [state, setState] = useState<ModalState>({
         modals: []
     });
@@ -64,10 +69,18 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
         }));
     }, []);
 
-    // Initialize ModalManager with functions
     useEffect(() => {
-        Modal.setFunctions(showModal, hideModal, hideAllModals, updateCustomModalProps);
-    }, [showModal, hideModal, hideAllModals, updateCustomModalProps]);
+        if (!active) {
+            return undefined;
+        }
+
+        return Modal.registerProvider({
+            showModal,
+            hideModal,
+            hideAllModals,
+            updateCustomModalProps,
+        });
+    }, [active, showModal, hideModal, hideAllModals, updateCustomModalProps]);
 
     const contextValue: ModalContextValue = {
         state,

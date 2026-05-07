@@ -11,11 +11,14 @@ import { useLocalSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useOptionalSessionScreenTestId } from '../shell/sessionScreenTestIds';
 
-export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessionId: string; scopeId: string }>) => {
+export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessionId: string; scopeId: string; serverId?: string | null }>) => {
     const { theme } = useUnistyles();
     const deviceType = useDeviceType();
     const pane = useAppPaneScope(_props.scopeId);
-    const terminalEnabled = useFeatureEnabled('terminal.embeddedPty');
+    const terminalEnabled = useFeatureEnabled('terminal.embeddedPty', {
+        scopeKind: 'spawn',
+        serverId: _props.serverId ?? null,
+    });
     const dockLocationRaw = useLocalSetting('embeddedTerminalDockLocation');
     const dockLocation = (deviceType === 'phone' ? 'sidebar' : dockLocationRaw) as EmbeddedTerminalDockLocation;
     const testId = useOptionalSessionScreenTestId('session-header-terminal-button');

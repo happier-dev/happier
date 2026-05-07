@@ -66,6 +66,71 @@ describe('runAgentStatePermissionsPhase (pending request resets canceled tool)',
     expect(changed.has(messageId)).toBe(true);
   });
 
+  it('restores a locally interrupted pending permission even when the placeholder completed after the request was created', () => {
+    const state = createReducer();
+    const changed = new Set<string>();
+
+    const permId = 'perm_waiting';
+    const messageId = 'msg_perm_waiting';
+
+    state.toolIdToMessageId.set(permId, messageId);
+    state.messages.set(messageId, {
+      id: messageId,
+      localId: null,
+      realID: null,
+      seq: null,
+      role: 'agent',
+      createdAt: 100,
+      text: null,
+      event: null,
+      tool: {
+        id: permId,
+        name: 'Bash',
+        state: 'error',
+        input: { command: 'find . -type f | head' },
+        createdAt: 100,
+        startedAt: null,
+        completedAt: 150,
+        description: null,
+        result: { error: 'Request interrupted' },
+        permission: {
+          id: permId,
+          status: 'canceled',
+          kind: 'permission',
+          reason: 'Request interrupted',
+          decision: 'abort',
+        },
+      },
+    });
+
+    runAgentStatePermissionsPhase({
+      state,
+      agentState: {
+        controlledByUser: null,
+        requests: {
+          [permId]: {
+            tool: 'Bash',
+            kind: 'permission',
+            arguments: { command: 'find . -type f | head' },
+            createdAt: 100,
+          },
+        },
+        completedRequests: null,
+      },
+      incomingToolIds: new Set<string>(),
+      changed,
+      allocateId: () => 'alloc',
+      enableLogging: false,
+    });
+
+    const message = state.messages.get(messageId);
+    expect(message?.tool?.permission?.status).toBe('pending');
+    expect(message?.tool?.state).toBe('running');
+    expect(message?.tool?.completedAt).toBeNull();
+    expect(message?.tool?.result).toBeUndefined();
+    expect(changed.has(messageId)).toBe(true);
+  });
+
   it('does not restore a real canceled permission back to pending when AgentState.requests is stale', () => {
     const state = createReducer();
     const changed = new Set<string>();

@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -43,6 +43,27 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => navigateToSessionSpy,
 }));
 
+const modalPromptSpy = vi.fn(async () => null as string | null);
+const sessionRenameSpy = vi.fn(async () => ({ success: true }));
+
+function hasRenameMenuItem(items: unknown): boolean {
+    if (!Array.isArray(items)) return false;
+    return items.some((item: unknown) => {
+        if (!item || typeof item !== 'object') return false;
+        return (item as { id?: unknown }).id === 'rename';
+    });
+}
+
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            sessionRename: sessionRenameSpy,
+        },
+    });
+});
+
 let platformOs: 'ios' | 'android' = 'ios';
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -67,6 +88,14 @@ installSessionShellCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                prompt: modalPromptSpy,
+            },
+        }).module;
     },
     storage: async (_importOriginal) => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -94,6 +123,10 @@ describe('SessionItem context menu press suppression', () => {
     afterEach(() => {
         standardCleanup();
         navigateToSessionSpy.mockClear();
+        modalPromptSpy.mockReset();
+        modalPromptSpy.mockResolvedValue(null);
+        sessionRenameSpy.mockReset();
+        sessionRenameSpy.mockResolvedValue({ success: true });
         platformOs = 'ios';
         vi.useRealTimers();
     });
@@ -253,5 +286,53 @@ describe('SessionItem context menu press suppression', () => {
 
         const itemPressable = screen.findByProps({ testID: 'session-list-item-sess_3' });
         expect(itemPressable.props.onLongPress).toBeUndefined();
+    });
+
+    it('opens the rename prompt after the native context menu close turn', async () => {
+        vi.useFakeTimers();
+        modalPromptSpy.mockResolvedValueOnce('Renamed Session');
+
+        const { SessionItem } = await import('./SessionItem');
+
+        const session = createSessionFixture({
+            id: 'sess_rename',
+            active: true,
+            metadata: null,
+        });
+
+        const onNativeContextMenuOpenChange = vi.fn();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_a"
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                nativeContextMenuOpen={true}
+                onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
+            />,
+        );
+
+        const contextMenu = screen.findByType('DropdownMenu' as React.ElementType);
+        expect(hasRenameMenuItem(contextMenu.props.items)).toBe(true);
+
+        await act(async () => {
+            contextMenu.props.onSelect('rename');
+        });
+
+        expect(onNativeContextMenuOpenChange).toHaveBeenCalledWith(false);
+        expect(modalPromptSpy).not.toHaveBeenCalled();
+
+        await act(async () => {
+            vi.advanceTimersByTime(0);
+            await Promise.resolve();
+        });
+
+        expect(modalPromptSpy).toHaveBeenCalledTimes(1);
+        expect(sessionRenameSpy).toHaveBeenCalledWith('sess_rename', 'Renamed Session', { serverId: 'server_a' });
     });
 });

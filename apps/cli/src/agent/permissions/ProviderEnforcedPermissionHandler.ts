@@ -146,10 +146,8 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       return { decision: 'approved_for_session' };
     }
 
-    return await new Promise<PermissionResult>((resolve, reject) => {
-      this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
-      this.addPendingRequestToState(toolCallId, toolName, input);
-      logger.debug(`${this.getLogPrefix()} Permission request sent for tool: ${toolName} (${toolCallId})`);
-    });
+    const pending = this.requestPermissionDecision(toolCallId, toolName, input);
+    logger.debug(`${this.getLogPrefix()} Permission request sent for tool: ${toolName} (${toolCallId})`);
+    return await pending;
   }
 }

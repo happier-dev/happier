@@ -13,7 +13,12 @@ import { useSegments } from 'expo-router';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
-import { buildCommandPaletteCommands } from './buildCommandPaletteCommands';
+import { resetDesktopPetOverlayPosition } from '@/components/pets/desktop/bridge/desktopPetOverlayBridge';
+import { requestCodexPetRefresh } from '@/components/settings/pets/petSettingsCommandEvents';
+import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { isTauriDesktop } from '@/utils/platform/tauri';
+import { buildCommandPaletteCommands, type PetCommandControls } from './buildCommandPaletteCommands';
 
 function readActiveSessionIdFromSegments(segments: readonly string[]): string | null {
     // expo-router segments look like: ['(app)', 'session', '<id>', ...]
@@ -33,6 +38,9 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const voiceEnabled = useFeatureEnabled('voice');
     const memorySearchEnabled = useFeatureEnabled('memory.search');
+    const petsCompanionEnabled = useFeatureEnabled('pets.companion');
+    const applySettings = useApplySettings();
+    const applyLocalSettings = useApplyLocalSettings();
     const actionExecutor = useMemo(
         () => createDefaultActionExecutor({
             resolveServerIdForSessionId: resolveServerIdForSessionIdFromLocalCache,
@@ -42,6 +50,39 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
         }),
         [router],
     );
+    const petControls = useMemo<PetCommandControls>(() => {
+        const desktop = isTauriDesktop();
+        const surface = desktop ? 'desktopOverlay' : Platform.OS === 'web' ? 'appShell' : 'none';
+        return {
+            surface,
+            wake: () => {
+                applySettings({ petsEnabled: true });
+                applyLocalSettings(desktop
+                    ? { petsEnabledOverride: 'enabled', desktopPetOverlayEnabledOverride: 'enabled' }
+                    : { petsEnabledOverride: 'enabled' });
+            },
+            tuck: () => {
+                applyLocalSettings(desktop
+                    ? { desktopPetOverlayEnabledOverride: 'disabled' }
+                    : { petsEnabledOverride: 'disabled' });
+            },
+            resetPosition: desktop
+                ? () => {
+                    applyLocalSettings({
+                        desktopPetOverlayOffset: { x: 0, y: 0 },
+                        desktopPetOverlayAnchor: 'bottomRight',
+                    });
+                    fireAndForget(resetDesktopPetOverlayPosition(), {
+                        tag: 'CommandPaletteProvider.resetDesktopPetOverlayPosition',
+                    });
+                }
+                : undefined,
+            refreshCodexPets: () => {
+                router.push('/settings/pets' as any);
+                requestCodexPetRefresh();
+            },
+        };
+    }, [applyLocalSettings, applySettings, router]);
 
     // Define available commands
     const commands = useMemo((): Command[] => {
@@ -51,7 +92,8 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
             sessionsById: sessions as any,
             isDev: __DEV__ === true,
             activeSessionId,
-            features: { executionRunsEnabled, voiceEnabled, memorySearchEnabled },
+            features: { executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled },
+            petControls,
             nav: {
                 push: (path) => router.push(path as any),
                 navigateToSession,
@@ -64,7 +106,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [segments, sessions, executionRunsEnabled, voiceEnabled, memorySearchEnabled, router, navigateToSession, logout, actionExecutor]);
+    }, [segments, sessions, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, petControls, router, navigateToSession, logout, actionExecutor]);
 
     const showCommandPalette = useCallback(() => {
         if (Platform.OS !== 'web' || !commandPaletteEnabled) return;

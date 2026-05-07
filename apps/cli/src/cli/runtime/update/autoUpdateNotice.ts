@@ -9,10 +9,27 @@ import {
   spawnDetachedNode,
   writeUpdateCache,
 } from '@happier-dev/cli-common/update';
+import { resolveManagedCliToolNameForRing } from '@happier-dev/cli-common/firstPartyRuntime';
 import { getReleaseRingPublicLabel, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 const DEFAULT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_CHECK_LOCK_TTL_MS = 2 * 60 * 1000;
+
+/**
+ * The `next` npm dist-tag is shared between preview and dev channels — a
+ * cached `latest` may have been fetched from the other channel. Reject
+ * cross-channel versions so we don't announce bogus updates (e.g. dev 0.2.5
+ * "updating" to preview 0.2.2). The cache self-heals on next `self check`.
+ */
+function doesVersionMatchRing(version: string | null, ring: PublicReleaseRingId): boolean {
+  const v = String(version ?? '').trim();
+  if (!v) return false;
+  const dashIndex = v.indexOf('-');
+  const prerelease = dashIndex >= 0 ? v.slice(dashIndex + 1) : '';
+  if (ring === 'stable') return prerelease === '';
+  if (ring === 'preview') return prerelease.startsWith('preview.') || prerelease === 'preview';
+  return prerelease.startsWith('dev.') || prerelease === 'dev';
+}
 
 function envNumber(env: NodeJS.ProcessEnv, key: string): number | null {
   const raw = String(env[key] ?? '').trim();
@@ -46,9 +63,7 @@ function resolveSelfChannelArgs(ring: PublicReleaseRingId): string[] {
 }
 
 function resolveUpdateCommand(ring: PublicReleaseRingId): string {
-  if (ring === 'preview') return 'hprev self update';
-  if (ring === 'publicdev') return 'hdev self update';
-  return 'happier self update';
+  return `${resolveManagedCliToolNameForRing(ring)} self update`;
 }
 
 const LONG_FLAGS_WITH_VALUE = new Set([
@@ -141,8 +156,12 @@ export function maybeAutoUpdateNotice(params: Readonly<{
 
   const shouldCheck = !checkedAt || (Number.isFinite(checkInterval) && now - checkedAt > checkInterval);
 
-  const updateAvailable = Boolean(cached?.updateAvailable);
-  const latest = typeof cached?.latest === 'string' ? cached.latest : null;
+  const cachedLatest = typeof cached?.latest === 'string' ? cached.latest : null;
+  // Cross-channel cache entries can exist if the cache was populated before
+  // the `self check` filter was added. Suppress the notice; it'll self-heal.
+  const latestMatchesRing = doesVersionMatchRing(cachedLatest, publicReleaseRing);
+  const updateAvailable = Boolean(cached?.updateAvailable) && latestMatchesRing;
+  const latest = latestMatchesRing ? cachedLatest : null;
   const current = typeof cached?.current === 'string' ? cached.current : null;
   const notifiedAt = typeof cached?.notifiedAt === 'number' ? cached.notifiedAt : null;
 
@@ -159,7 +178,7 @@ export function maybeAutoUpdateNotice(params: Readonly<{
   if (shouldNotify && cached) {
     const from = current || cached.runtimeVersion || cached.invokerVersion || 'current';
     const msg = formatUpdateNotice({
-      toolName: publicReleaseRing === 'preview' ? 'hprev' : publicReleaseRing === 'publicdev' ? 'hdev' : 'happier',
+      toolName: resolveManagedCliToolNameForRing(publicReleaseRing),
       from,
       to: latest ?? 'latest',
       updateCommand: resolveUpdateCommand(publicReleaseRing),

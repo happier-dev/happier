@@ -25,6 +25,7 @@ import {
     unmarkSessionScmCommitSelectionPaths,
     upsertSessionScmCommitSelectionPatch,
 } from './projectScmSelectionState';
+import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 
 /**
  * Unique project identifier based on machine ID and path
@@ -34,8 +35,12 @@ export interface ProjectKey {
     path: string;
 }
 
-export function resolveProjectMachineScopeId(metadata: { machineId?: string | null; host?: string | null }): string {
-    const machineId = typeof metadata.machineId === 'string' ? metadata.machineId.trim() : '';
+export function resolveProjectMachineScopeId(metadata: {
+    machineId?: string | null;
+    host?: string | null;
+    directSessionV1?: unknown;
+}): string {
+    const machineId = resolveSessionMachineId(metadata) ?? '';
     if (machineId) return machineId;
     const host = typeof metadata.host === 'string' ? metadata.host.trim() : '';
     if (host) return `host:${host}`;

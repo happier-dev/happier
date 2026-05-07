@@ -13,7 +13,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useSettings } from '@/sync/domains/state/storage';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {
     DEFAULT_NOTIFICATIONS_SETTINGS_V1,
     NotificationsSettingsV1Schema,
@@ -133,8 +133,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
         }
     }, [notificationsRaw]);
 
-    const [activeServer, setActiveServer] = React.useState(() => getActiveServerSnapshot());
-    React.useEffect(() => subscribeActiveServer(setActiveServer), []);
+    const activeServer = useActiveServerSnapshot();
 
     const [permission, setPermission] = React.useState<PushPermissionInfo | null>(null);
     const [currentToken, setCurrentToken] = React.useState<string | null>(null);

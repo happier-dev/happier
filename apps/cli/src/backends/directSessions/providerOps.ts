@@ -4,6 +4,10 @@ import type {
   DirectTranscriptRawMessageV1,
 } from '@happier-dev/protocol';
 
+import type {
+  DirectSessionFollowLease,
+  DirectSessionFollowLeaseReason,
+} from '@/api/directSessions/backgroundFollow/createManagedDirectSessionFollowLease';
 import type { LoadedLinkedDirectSession } from '@/api/directSessions/takeover/loadLinkedDirectSession';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 
@@ -57,6 +61,11 @@ export type DirectSessionProviderOps = Readonly<{
     maxBytes: number;
     maxItems: number;
   }>) => Promise<DirectSessionTranscriptReadAfter>;
+  acquireFollowLease?: (params: Readonly<{
+    source: DirectSessionsSource;
+    remoteSessionId: string;
+    reason: DirectSessionFollowLeaseReason;
+  }>) => Promise<DirectSessionFollowLease | null>;
   resolveTakeoverSpawnOptions: (params: Readonly<{
     linked: LoadedLinkedDirectSession;
     sessionId: string;

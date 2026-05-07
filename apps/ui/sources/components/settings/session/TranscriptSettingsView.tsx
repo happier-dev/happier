@@ -222,8 +222,8 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
 
     const normalizedToolTapAction: ToolTapAction = toolViewTapAction === 'open' ? 'open' : 'expand';
 
-    const advancedRoute = '/(app)/settings/session/transcript/advanced';
-    const toolOverridesRoute = '/(app)/settings/session/tool-rendering';
+    const advancedRoute = '/settings/session/transcript/advanced';
+    const toolOverridesRoute = '/settings/session/tool-rendering';
 
     type ThinkingOptionId = 'inline_summary' | 'inline_full' | 'tool' | 'hidden';
     const normalizedThinkingSelectedId: ThinkingOptionId =

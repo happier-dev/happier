@@ -3,14 +3,15 @@ import { logger } from '@/ui/logger';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { randomUUID } from 'node:crypto';
 import { open as openFile } from 'node:fs/promises';
-import { PermissionRequestPushNotifier } from '@/settings/notifications/permissionRequestPushNotifier';
 import { basename } from 'node:path';
-import { applyAgentStateRequestPushNotifiedAt, clonePlainObjectToNullProto, cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
+import { clonePlainObjectToNullProto, cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
+import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
+import { createPermissionRequestCoordinator } from '@/agent/permissions/permissionRequestCoordinator';
+import type { PermissionRequestCoordinatorStore } from '@/agent/permissions/permissionRequestCoordinator';
 
 import type { Session } from '../session';
 import type { PermissionHookData, PermissionHookResponse } from '../utils/startHookServer';
-import { getToolName } from '../utils/getToolName';
 import { deepEqual } from '@/utils/deterministicJson';
 import type { PermissionRpcPayload } from '../utils/permissionRpc';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
@@ -30,14 +31,9 @@ type PendingPermissionRequest = {
     toolName: string;
     toolInput: unknown;
     createdAt: number;
-    timeout: NodeJS.Timeout | null;
-    resolve: (response: PermissionHookResponse) => void;
-    promise: Promise<PermissionHookResponse>;
 };
 
 type CompletionStatus = 'approved' | 'denied' | 'canceled';
-
-type AgentStateRequestEntry = NonNullable<AgentState['requests']>[string];
 
 const DEFAULT_RESPONSE_TIMEOUT_MS = 10 * 60 * 1000;
 const PERMISSION_TIMED_OUT_REASON = 'Timed out waiting for permission response';
@@ -54,12 +50,16 @@ export const DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE = {
 export class ClaudeLocalPermissionBridge {
     private readonly session: Session;
     private readonly responseTimeoutMs: number | null;
+    private readonly requestStore: AgentStateRequestStore;
+    private readonly permissionCoordinator: ReturnType<typeof createPermissionRequestCoordinator<PermissionHookResponse>>;
     private readonly pendingRequests = new Map<string, PendingPermissionRequest>();
-    private permissionRequestPushNotifier: PermissionRequestPushNotifier | null = null;
+    private readonly localWaitersByRequestId = new Map<string, Set<string>>();
+    private readonly localWaiterTimeouts = new Map<string, NodeJS.Timeout>();
     private readonly allowedToolIdentifiers = new Set<string>();
     private permissionMode: PermissionMode = 'default';
     private permissionModeUpdatedAt: number = 0;
     private metadataWatcherAbort: AbortController | null = null;
+    private localWaiterSequence = 0;
 
     constructor(session: Session, opts?: { responseTimeoutMs?: number | null }) {
         this.session = session;
@@ -70,6 +70,16 @@ export class ClaudeLocalPermissionBridge {
         } else {
             this.responseTimeoutMs = DEFAULT_RESPONSE_TIMEOUT_MS;
         }
+        this.requestStore = new AgentStateRequestStore({
+            session: this.session.client,
+            logPrefix: '[claude-local-permissions]',
+            pushSender: this.session.pushSender ?? null,
+            getAccountSettings: () => this.session.accountSettings ?? null,
+            getAccountSettingsSecretsReadKeys: () => this.session.accountSettingsSecretsReadKeys ?? [],
+        });
+        this.permissionCoordinator = createPermissionRequestCoordinator<PermissionHookResponse>({
+            store: this.createCoordinatorStore(),
+        });
     }
 
     activate(): void {
@@ -92,10 +102,12 @@ export class ClaudeLocalPermissionBridge {
             this.metadataWatcherAbort = null;
         }
 
+        for (const timeout of this.localWaiterTimeouts.values()) {
+            clearTimeout(timeout);
+        }
+        this.localWaiterTimeouts.clear();
+
         for (const pending of [...this.pendingRequests.values()]) {
-            if (pending.timeout) {
-                clearTimeout(pending.timeout);
-            }
             this.completeRequest({
                 requestId: pending.id,
                 toolName: pending.toolName,
@@ -105,10 +117,12 @@ export class ClaudeLocalPermissionBridge {
                 reason: 'Local permission bridge stopped',
                 hookResponse: DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE,
             });
+            this.permissionCoordinator.cancelRequest(pending.id, 'Local permission bridge stopped');
         }
         this.pendingRequests.clear();
-        this.permissionRequestPushNotifier?.dispose();
-        this.permissionRequestPushNotifier = null;
+        this.localWaitersByRequestId.clear();
+        this.permissionCoordinator.dispose();
+        this.requestStore.dispose();
     }
 
     async handlePermissionHook(data: PermissionHookData): Promise<PermissionHookResponse> {
@@ -123,15 +137,11 @@ export class ClaudeLocalPermissionBridge {
             logger.debug(`[claude-local-permissions] Permission hook missing tool_use_id; generated request id ${requestId}`);
         }
 
-        const existing = this.pendingRequests.get(requestId);
-        if (existing) {
-            return existing.promise;
-        }
-
         const toolName = this.resolveToolName(data);
         const toolInput = this.resolveToolInput(data);
         const permissionSuggestions = this.resolvePermissionSuggestions(data);
-        const createdAt = Date.now();
+        const existing = this.pendingRequests.get(requestId);
+        const createdAt = existing?.createdAt ?? Date.now();
 
         // If we already have an allowlist rule for this tool call, respond immediately without surfacing a prompt.
         // This mirrors Claude Code's "don't ask again" behavior, but is enforced by Happier for reliability.
@@ -189,39 +199,62 @@ export class ClaudeLocalPermissionBridge {
             return hookResponse;
         }
 
-        this.publishPendingRequest({ requestId, toolName, toolInput, permissionSuggestions, createdAt });
+        if (!existing) {
+            this.pendingRequests.set(requestId, {
+                id: requestId,
+                toolName,
+                toolInput,
+                createdAt,
+            });
+        }
 
-        let resolvePending: (response: PermissionHookResponse) => void = () => {};
-        const promise = new Promise<PermissionHookResponse>((resolve) => {
-            resolvePending = resolve;
-        });
-
-        const timeout = this.resolveResponseTimeout(toolName) === null
-            ? null
-            : setTimeout(() => {
-                this.completeRequest({
-                    requestId,
-                    toolName,
-                    toolInput,
-                    createdAt,
-                    status: 'canceled',
-                    reason: PERMISSION_TIMED_OUT_REASON,
-                    hookResponse: DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE,
-                });
-            }, this.resolveResponseTimeout(toolName)!);
-        timeout?.unref?.();
-
-        this.pendingRequests.set(requestId, {
-            id: requestId,
+        const waiter = this.createLocalWaiter({
+            requestId,
             toolName,
             toolInput,
             createdAt,
-            timeout,
-            resolve: resolvePending,
-            promise,
         });
 
-        return promise;
+        const coordinatorDecision = this.permissionCoordinator.requestDecision({
+            requestId,
+            toolName,
+            toolInput,
+            createdAt,
+            kind: resolveAgentRequestKind(toolName),
+            source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+            permissionSuggestions,
+        }, {
+            signal: waiter.signal,
+        });
+
+        return coordinatorDecision.then(
+            (response) => {
+                const remaining = this.finishLocalWaiter(requestId, waiter.id);
+                if (remaining === 0) {
+                    this.pendingRequests.delete(requestId);
+                }
+                return response;
+            },
+            (error) => {
+                const remaining = this.finishLocalWaiter(requestId, waiter.id);
+                if (waiter.wasTimedOut()) {
+                    if (remaining === 0) {
+                        this.completeRequest({
+                            requestId,
+                            toolName,
+                            toolInput,
+                            createdAt,
+                            status: 'canceled',
+                            reason: PERMISSION_TIMED_OUT_REASON,
+                            hookResponse: DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE,
+                        });
+                        this.permissionCoordinator.cancelRequest(requestId, PERMISSION_TIMED_OUT_REASON);
+                    }
+                    return DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE;
+                }
+                throw error;
+            },
+        );
     }
 
     private computePolicyDecision(toolName: string): 'prompt' | 'allow' | 'deny' {
@@ -242,6 +275,86 @@ export class ClaudeLocalPermissionBridge {
             return null;
         }
         return this.responseTimeoutMs;
+    }
+
+    private createCoordinatorStore(): PermissionRequestCoordinatorStore {
+        return {
+            publishRequest: (params) => {
+                this.requestStore.publishRequest({
+                    ...params,
+                    toolInput: withAskUserQuestionUiFreeformDefault(params.toolName, params.toolInput),
+                    source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+                    updateState: (state) => ({
+                        ...state,
+                        capabilities: {
+                            ...(state.capabilities ?? {}),
+                            askUserQuestionAnswersInPermission: true,
+                            localPermissionBridgeInLocalMode: true,
+                            permissionsInUiWhileLocal: true,
+                        },
+                    }),
+                });
+            },
+            completeRequest: (params) => {
+                this.requestStore.completeRequest(params);
+            },
+            cancelAllRequests: (params) => {
+                this.cancelLocalOutstandingRequests(params.reason);
+            },
+            hasOutstandingRequest: (requestId) => this.readLocalOutstandingRequest(requestId) !== null,
+            readOutstandingRequest: (requestId) => this.readLocalOutstandingRequest(requestId),
+        };
+    }
+
+    private createLocalWaiter(params: {
+        requestId: string;
+        toolName: string;
+        toolInput: unknown;
+        createdAt: number;
+    }): { id: string; signal: AbortSignal; wasTimedOut: () => boolean } {
+        const waiterId = `local-waiter-${++this.localWaiterSequence}`;
+        const controller = new AbortController();
+        let timedOut = false;
+
+        let waiters = this.localWaitersByRequestId.get(params.requestId);
+        if (!waiters) {
+            waiters = new Set();
+            this.localWaitersByRequestId.set(params.requestId, waiters);
+        }
+        waiters.add(waiterId);
+
+        const timeoutMs = this.resolveResponseTimeout(params.toolName);
+        if (timeoutMs !== null) {
+            const timeout = setTimeout(() => {
+                timedOut = true;
+                controller.abort(PERMISSION_TIMED_OUT_REASON);
+            }, timeoutMs);
+            timeout.unref?.();
+            this.localWaiterTimeouts.set(waiterId, timeout);
+        }
+
+        return {
+            id: waiterId,
+            signal: controller.signal,
+            wasTimedOut: () => timedOut,
+        };
+    }
+
+    private finishLocalWaiter(requestId: string, waiterId: string): number {
+        const timeout = this.localWaiterTimeouts.get(waiterId);
+        if (timeout) {
+            clearTimeout(timeout);
+            this.localWaiterTimeouts.delete(waiterId);
+        }
+
+        const waiters = this.localWaitersByRequestId.get(requestId);
+        if (!waiters) return 0;
+        waiters.delete(waiterId);
+        const remaining = waiters.size;
+        if (remaining === 0) {
+            this.localWaitersByRequestId.delete(requestId);
+        }
+        return remaining;
     }
 
     private syncPermissionModeFromMetadataSnapshot(): PermissionMode | null {
@@ -453,24 +566,57 @@ export class ClaudeLocalPermissionBridge {
             return false;
         }
 
-        const pending = this.pendingRequests.get(requestId);
-        const existingRequest = this.getOutstandingAgentStateRequest(requestId);
-        if (!pending && !existingRequest) {
-            return false;
-        }
-
         const allowedTools = Array.isArray(payload.allowedTools ?? payload.allowTools)
             ? [...(payload.allowedTools ?? payload.allowTools)!]
             : undefined;
         const resolvedMode = typeof payload.mode === 'string'
             ? (normalizePermissionModeToIntent(payload.mode) ?? payload.mode)
             : undefined;
-        const resolvedToolName = pending?.toolName ?? existingRequest?.toolName ?? 'unknown_tool';
-        const resolvedToolInput = pending?.toolInput ?? existingRequest?.toolInput ?? {};
 
-        const updatedPermissions = payload.updatedPermissions;
-        const hookResponse: PermissionHookResponse = payload.approved
-            ? {
+        let shouldApplySideEffects = false;
+        const handled = this.permissionCoordinator.handleResponse({
+            requestId,
+            buildCompletion: (context) => {
+                const updatedPermissions = payload.updatedPermissions;
+                const hookResponse = this.buildHookResponse({
+                    payload,
+                    toolName: context.toolName,
+                    toolInput: context.toolInput,
+                    updatedPermissions,
+                });
+                shouldApplySideEffects = true;
+
+                return {
+                    result: hookResponse,
+                    completedRequest: {
+                        status: payload.approved ? 'approved' : 'denied',
+                        reason: payload.reason,
+                        mode: resolvedMode,
+                        allowedTools,
+                        updatedPermissions,
+                    },
+                };
+            },
+        });
+
+        if (!handled) return false;
+
+        this.pendingRequests.delete(requestId);
+        if (shouldApplySideEffects) {
+            this.applyPermissionRpcState(payload, { allowedTools, resolvedMode, excludeRequestId: requestId });
+        }
+        return true;
+    }
+
+    private buildHookResponse(params: {
+        payload: PermissionRpcPayload;
+        toolName: string;
+        toolInput: unknown;
+        updatedPermissions: unknown;
+    }): PermissionHookResponse {
+        const { payload, toolName, toolInput, updatedPermissions } = params;
+        if (payload.approved) {
+            return {
                 continue: true,
                 suppressOutput: true,
                 hookSpecificOutput: {
@@ -478,14 +624,14 @@ export class ClaudeLocalPermissionBridge {
                     decision: {
                         behavior: 'allow',
                         ...(
-                            (resolvedToolName === 'AskUserQuestion' || resolvedToolName === 'ask_user_question')
+                            (toolName === 'AskUserQuestion' || toolName === 'ask_user_question')
                             && payload.answers
                             && typeof payload.answers === 'object'
                             && !Array.isArray(payload.answers)
                                 ? {
                                     updatedInput: {
-                                        ...(resolvedToolInput && typeof resolvedToolInput === 'object' && !Array.isArray(resolvedToolInput)
-                                            ? resolvedToolInput as Record<string, unknown>
+                                        ...(toolInput && typeof toolInput === 'object' && !Array.isArray(toolInput)
+                                            ? toolInput as Record<string, unknown>
                                             : {}),
                                         answers: payload.answers,
                                     },
@@ -495,37 +641,23 @@ export class ClaudeLocalPermissionBridge {
                         ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
                     },
                 },
-            }
-            : {
-                continue: true,
-                suppressOutput: true,
-                hookSpecificOutput: {
-                    hookEventName: 'PermissionRequest',
-                    decision: {
-                        behavior: 'deny',
-                        ...(typeof payload.reason === 'string' && payload.reason.length > 0 ? { message: payload.reason } : {}),
-                    },
-                },
-                ...(typeof payload.reason === 'string' && payload.reason.length > 0
-                    ? { systemMessage: payload.reason }
-                    : {}),
             };
+        }
 
-        this.completeRequest({
-            requestId,
-            toolName: resolvedToolName,
-            toolInput: resolvedToolInput,
-            createdAt: pending?.createdAt ?? existingRequest?.createdAt ?? Date.now(),
-            status: payload.approved ? 'approved' : 'denied',
-            reason: payload.reason,
-            mode: resolvedMode,
-            allowedTools,
-            updatedPermissions,
-            hookResponse,
-        });
-
-        this.applyPermissionRpcState(payload, { allowedTools, resolvedMode, excludeRequestId: requestId });
-        return true;
+        return {
+            continue: true,
+            suppressOutput: true,
+            hookSpecificOutput: {
+                hookEventName: 'PermissionRequest',
+                decision: {
+                    behavior: 'deny',
+                    ...(typeof payload.reason === 'string' && payload.reason.length > 0 ? { message: payload.reason } : {}),
+                },
+            },
+            ...(typeof payload.reason === 'string' && payload.reason.length > 0
+                ? { systemMessage: payload.reason }
+                : {}),
+        };
     }
 
     private isInteractiveTool(toolName: string): boolean {
@@ -588,15 +720,12 @@ export class ClaudeLocalPermissionBridge {
         }
     }
 
-    private getOutstandingAgentStateRequest(requestId: string): { toolName: string; toolInput: unknown; createdAt: number } | null {
+    private readLocalOutstandingRequest(requestId: string) {
         const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
         const requests = snapshot?.requests;
         const request = requests && typeof requests === 'object' ? (requests as Record<string, unknown>)[requestId] : null;
         if (!isClaudeLocalPermissionBridgeAgentStateRequest(request)) return null;
-        const toolName = typeof (request as any).tool === 'string' ? (request as any).tool : 'unknown_tool';
-        const toolInput = typeof (request as any).arguments !== 'undefined' ? (request as any).arguments : {};
-        const createdAt = typeof (request as any).createdAt === 'number' ? (request as any).createdAt : Date.now();
-        return { toolName, toolInput, createdAt };
+        return this.requestStore.readOutstandingRequest(requestId);
     }
 
     private seedAllowlistFromAgentState(): void {
@@ -622,37 +751,59 @@ export class ClaudeLocalPermissionBridge {
         updatedPermissions?: unknown;
         hookResponse: PermissionHookResponse;
     }): void {
-        const pending = this.pendingRequests.get(params.requestId);
-        if (pending) {
-            if (pending.timeout) {
-                clearTimeout(pending.timeout);
-            }
-            this.pendingRequests.delete(params.requestId);
+        const handledByCoordinator = this.permissionCoordinator.handleResponse({
+            requestId: params.requestId,
+            buildCompletion: () => ({
+                result: params.hookResponse,
+                completedRequest: {
+                    status: params.status,
+                    reason: params.reason,
+                    mode: params.mode,
+                    allowedTools: params.allowedTools,
+                    updatedPermissions: params.updatedPermissions,
+                },
+            }),
+        });
+
+        this.pendingRequests.delete(params.requestId);
+
+        if (!handledByCoordinator) {
+            this.requestStore.completeRequest({
+                requestId: params.requestId,
+                status: params.status,
+                reason: params.reason,
+                mode: params.mode,
+                allowedTools: params.allowedTools,
+                updatedPermissions: params.updatedPermissions,
+                fallback: {
+                    toolName: params.toolName,
+                    toolInput: params.toolInput,
+                    createdAt: params.createdAt,
+                    kind: resolveAgentRequestKind(params.toolName),
+                    source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+                },
+            });
         }
+    }
 
-        this.permissionRequestPushNotifier?.markCompleted(params.requestId);
-
+    private cancelLocalOutstandingRequests(reason: string): void {
         updateAgentStateBestEffort(
             this.session.client,
             (currentState) => {
                 const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
-                const existing = requests[params.requestId] as unknown;
-                delete requests[params.requestId];
-
                 const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
-                const completedEntry = clonePlainObjectToNullProto(existing) ?? Object.create(null);
-                if (!existing) {
-                    completedEntry['tool'] = params.toolName;
-                    completedEntry['arguments'] = params.toolInput;
-                    completedEntry['createdAt'] = params.createdAt;
+                const now = Date.now();
+
+                for (const [id, request] of Object.entries(requests)) {
+                    if (!isClaudeLocalPermissionBridgeAgentStateRequest(request)) continue;
+                    delete requests[id];
+                    const completedEntry = clonePlainObjectToNullProto(request) ?? Object.create(null);
+                    completedEntry.completedAt = now;
+                    completedEntry.status = 'canceled';
+                    completedEntry.reason = reason;
+                    completedRequests[id] = completedEntry;
+                    this.requestStore.markPermissionRequestCompletedBestEffort(id);
                 }
-                completedEntry['completedAt'] = Date.now();
-                completedEntry['status'] = params.status;
-                if (typeof params.reason === 'string' && params.reason.length > 0) completedEntry['reason'] = params.reason;
-                if (typeof params.mode === 'string') completedEntry['mode'] = params.mode;
-                if (Array.isArray(params.allowedTools) && params.allowedTools.length > 0) completedEntry['allowedTools'] = params.allowedTools;
-                if (typeof params.updatedPermissions !== 'undefined') completedEntry['updatedPermissions'] = params.updatedPermissions;
-                completedRequests[params.requestId] = completedEntry;
 
                 return {
                     ...currentState,
@@ -661,98 +812,8 @@ export class ClaudeLocalPermissionBridge {
                 };
             },
             '[claude-local-permissions]',
-            'complete_request',
+            'cancel_local_requests',
         );
-
-        pending?.resolve(params.hookResponse);
-    }
-
-    private getOrCreatePermissionRequestPushNotifier(): PermissionRequestPushNotifier | null {
-        if (!this.session.pushSender) return null;
-        if (this.permissionRequestPushNotifier) return this.permissionRequestPushNotifier;
-        this.permissionRequestPushNotifier = new PermissionRequestPushNotifier({
-            pushSender: this.session.pushSender,
-            getSettings: () => this.session.accountSettings ?? null,
-            getSettingsSecretsReadKeys: () => this.session.accountSettingsSecretsReadKeys,
-            sessionId: this.session.client.sessionId,
-            logPrefix: '[claude-local-permissions]',
-            onNotifiedAt: (permissionId, notifiedAtMs) => {
-                updateAgentStateBestEffort(
-                    this.session.client,
-                    (currentState) =>
-                        applyAgentStateRequestPushNotifiedAt({ state: currentState, permissionId, notifiedAtMs }),
-                    '[claude-local-permissions]',
-                    'permission_request_push_notified_at',
-                );
-            },
-        });
-        return this.permissionRequestPushNotifier;
-    }
-
-    private publishPendingRequest(params: {
-        requestId: string;
-        toolName: string;
-        toolInput: unknown;
-        permissionSuggestions?: unknown[] | null;
-        createdAt: number;
-    }): void {
-        const notifier = this.getOrCreatePermissionRequestPushNotifier();
-        if (notifier) {
-            try {
-                const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
-                const existing = snapshot?.requests?.[params.requestId] ?? null;
-                const notifiedAt = typeof (existing as any)?.pushNotifiedAt === 'number' ? (existing as any).pushNotifiedAt : null;
-                if (typeof notifiedAt === 'number' && Number.isFinite(notifiedAt) && notifiedAt > 0) {
-                    notifier.markAlreadyNotified(params.requestId);
-                } else {
-                    notifier.notify({
-                        permissionId: params.requestId,
-                        toolName: getToolName(params.toolName),
-                        toolInput: params.toolInput,
-                        requestKind: resolveAgentRequestKind(params.toolName),
-                        createdAtMs: params.createdAt,
-                    });
-                }
-            } catch {
-                notifier.notify({
-                    permissionId: params.requestId,
-                    toolName: getToolName(params.toolName),
-                    toolInput: params.toolInput,
-                    requestKind: resolveAgentRequestKind(params.toolName),
-                    createdAtMs: params.createdAt,
-                });
-            }
-        }
-
-                const uiToolInput = withAskUserQuestionUiFreeformDefault(params.toolName, params.toolInput);
-                updateAgentStateBestEffort(
-                    this.session.client,
-                    (currentState) => {
-                        const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
-                        const entry = Object.create(null) as AgentStateRequestEntry;
-                        entry.tool = params.toolName;
-                        entry.kind = resolveAgentRequestKind(params.toolName);
-                        (entry as AgentStateRequestEntry & { source?: string }).source = CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE;
-                        entry.arguments = uiToolInput;
-                        entry.createdAt = params.createdAt;
-                        if (Array.isArray(params.permissionSuggestions) && params.permissionSuggestions.length > 0) {
-                            entry.permissionSuggestions = params.permissionSuggestions;
-                        }
-                        requests[params.requestId] = entry;
-                        return {
-                            ...currentState,
-                            capabilities: {
-                            ...(currentState.capabilities ?? {}),
-                        askUserQuestionAnswersInPermission: true,
-                        localPermissionBridgeInLocalMode: true,
-                        permissionsInUiWhileLocal: true,
-                    },
-                    requests,
-                };
-            },
-            '[claude-local-permissions]',
-            'publish_pending_request',
-            );
     }
 
     private resolvePermissionSuggestions(data: PermissionHookData): unknown[] | null {

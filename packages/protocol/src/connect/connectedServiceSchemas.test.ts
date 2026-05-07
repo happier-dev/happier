@@ -14,6 +14,7 @@ describe('connectedServiceSchemas', () => {
         expect(ConnectedServiceIdSchema.parse('anthropic')).toBe('anthropic');
         expect(ConnectedServiceIdSchema.parse('claude-subscription')).toBe('claude-subscription');
         expect(ConnectedServiceIdSchema.parse('gemini')).toBe('gemini');
+        expect(ConnectedServiceIdSchema.parse('github')).toBe('github');
     });
 
     it('parses an oauth credential record', () => {
@@ -46,7 +47,7 @@ describe('connectedServiceSchemas', () => {
         const now = Date.now();
         const rec = ConnectedServiceCredentialRecordV1Schema.parse({
             v: 1,
-            serviceId: 'anthropic',
+            serviceId: 'github',
             profileId: 'default',
             kind: 'token',
             createdAt: now,
@@ -61,7 +62,7 @@ describe('connectedServiceSchemas', () => {
             },
         });
         expect(rec.kind).toBe('token');
-        expect(rec.serviceId).toBe('anthropic');
+        expect(rec.serviceId).toBe('github');
     });
 
     it('parses sealed credential payloads', () => {

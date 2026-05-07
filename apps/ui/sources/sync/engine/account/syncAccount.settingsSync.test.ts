@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { createAccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 vi.mock('expo-constants', () => ({
@@ -92,6 +93,52 @@ describe('handleUpdateAccountSocketUpdate settings merge', () => {
                 serverSelectionActiveTargetId: 'grp-dev',
             }),
             7,
+        );
+    });
+
+    it('applies account socket settings updates through the captured settings scope when provided', async () => {
+        const { handleUpdateAccountSocketUpdate } = await import('./syncAccount');
+
+        const settingsScope = createAccountSettingsScope('server-a', 'account-a');
+        expect(settingsScope).not.toBeNull();
+        const applyProfile = vi.fn();
+        const applySettings = vi.fn();
+        const applySettingsForScope = vi.fn();
+        const machineKey = new Uint8Array(32).fill(7);
+        const encryption = {
+            getContentPrivateKey: () => machineKey,
+            decryptRaw: vi.fn(),
+        } as any;
+
+        await handleUpdateAccountSocketUpdate({
+            accountUpdate: {
+                settingsV2: {
+                    content: { t: 'plain', v: { analyticsOptOut: true } },
+                    version: 3,
+                },
+            },
+            updateCreatedAt: 123,
+            currentProfile: { ...profileDefaults },
+            encryption,
+            settingsScope,
+            applyProfile,
+            applySettings,
+            applySettingsForScope,
+            getLocalSettings: () => settingsState.current,
+            log: { log: vi.fn() },
+        });
+
+        expect(applySettings).not.toHaveBeenCalled();
+        expect(applySettingsForScope).toHaveBeenCalledWith(
+            settingsScope,
+            expect.objectContaining({
+                analyticsOptOut: true,
+                lastUsedAgent: 'codex',
+                serverSelectionGroups: [
+                    { id: 'grp-dev', name: 'Dev', serverIds: ['server-a', 'server-b'], presentation: 'grouped' },
+                ],
+            }),
+            3,
         );
     });
 });

@@ -44,6 +44,19 @@ export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinit
         description: 'Last selected backend target for new sessions',
         storageScope: 'local',
     },
+    rememberLastProjectSessionSelections: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Use the newest session in a project to seed project new-session shortcuts',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'boolean',
+            privacy: 'safe',
+            identityScope: 'person',
+        },
+    },
     newSessionDefaultPersistenceModeV1: {
         schema: SessionTranscriptStorageModeSchema,
         default: 'persisted',

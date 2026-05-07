@@ -169,7 +169,7 @@ describe('checkRelayRuntimeHealth', () => {
       host: '127.0.0.1',
       port: 3005,
       path: '/v1/version',
-      timeoutMs: 5_000,
+      timeoutMs: 100,
       probePortOpen: async () => true,
       fetchJson: async () => ({ ok: true, status: 200, body: { version: '1.2.3' } }),
     })).resolves.toEqual({
@@ -185,7 +185,7 @@ describe('checkRelayRuntimeHealth', () => {
       host: '127.0.0.1',
       port: 3005,
       path: '/v1/version',
-      timeoutMs: 1,
+      timeoutMs: 100,
       probePortOpen: async () => true,
       fetchJson: async () => ({ ok: false, status: 503, body: null }),
     })).resolves.toEqual({

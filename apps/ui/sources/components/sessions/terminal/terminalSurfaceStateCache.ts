@@ -11,6 +11,7 @@ const TERMINAL_SURFACE_CACHE_MAX_ENTRIES = 12;
 const TERMINAL_SURFACE_CACHE_MAX_OUTPUT_CHARS = 64_000;
 
 const terminalSurfaceStateCache = new Map<string, TerminalSurfaceState>();
+const terminalSurfaceStateListeners = new Map<string, Set<(state: TerminalSurfaceState) => void>>();
 
 export function createEmptyTerminalSurfaceState(): TerminalSurfaceState {
     return {
@@ -40,6 +41,7 @@ export function replaceTerminalSurfaceState(terminalKey: string, state: Terminal
     terminalSurfaceStateCache.delete(terminalKey);
     terminalSurfaceStateCache.set(terminalKey, nextState);
     evictOverflowTerminalSurfaceStates();
+    notifyTerminalSurfaceStateListeners(terminalKey, nextState);
     return nextState;
 }
 
@@ -58,6 +60,39 @@ function evictOverflowTerminalSurfaceStates(): void {
             return;
         }
         terminalSurfaceStateCache.delete(oldestKey);
+    }
+}
+
+export function subscribeTerminalSurfaceState(
+    terminalKey: string,
+    listener: (state: TerminalSurfaceState) => void,
+): () => void {
+    const existing = terminalSurfaceStateListeners.get(terminalKey);
+    const listeners = existing ?? new Set<(state: TerminalSurfaceState) => void>();
+    listeners.add(listener);
+    if (!existing) {
+        terminalSurfaceStateListeners.set(terminalKey, listeners);
+    }
+
+    return () => {
+        const current = terminalSurfaceStateListeners.get(terminalKey);
+        if (!current) {
+            return;
+        }
+        current.delete(listener);
+        if (current.size === 0) {
+            terminalSurfaceStateListeners.delete(terminalKey);
+        }
+    };
+}
+
+function notifyTerminalSurfaceStateListeners(terminalKey: string, state: TerminalSurfaceState): void {
+    const listeners = terminalSurfaceStateListeners.get(terminalKey);
+    if (!listeners || listeners.size === 0) {
+        return;
+    }
+    for (const listener of listeners) {
+        listener(state);
     }
 }
 

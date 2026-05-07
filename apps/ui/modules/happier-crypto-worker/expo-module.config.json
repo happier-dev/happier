@@ -1,0 +1,10 @@
+{
+    "name": "HappierCryptoWorker",
+    "platforms": ["android", "ios"],
+    "android": {
+        "modules": ["dev.happier.cryptoworker.HappierCryptoWorkerModule"]
+    },
+    "ios": {
+        "modules": ["HappierCryptoWorkerModule"]
+    }
+}

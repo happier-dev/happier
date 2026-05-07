@@ -9,9 +9,15 @@ type DurableCall = {
   body: unknown;
 };
 
-function createSessionStub() {
+type LiveCall = DurableCall & {
+  createdAt: number;
+  updatedAt: number;
+};
+
+function createSessionStub(opts: { withLive?: boolean } = {}) {
   const durableCalls: DurableCall[] = [];
   const bestEffortCalls: DurableCall[] = [];
+  const liveCalls: LiveCall[] = [];
 
   const session = {
     sendAgentMessage: (provider: any, body: any, opts: any) => {
@@ -22,6 +28,20 @@ function createSessionStub() {
         body,
       });
     },
+    ...(opts.withLive
+      ? {
+          sendAgentMessageEphemeral: (provider: any, body: any, opts: any) => {
+            liveCalls.push({
+              provider: String(provider),
+              localId: String(opts.localId),
+              meta: opts?.meta,
+              body,
+              createdAt: Number(opts.createdAt),
+              updatedAt: Number(opts.updatedAt),
+            });
+          },
+        }
+      : {}),
     sendAgentMessageCommitted: async (provider: any, body: any, opts: any) => {
       durableCalls.push({
         provider: String(provider),
@@ -32,7 +52,7 @@ function createSessionStub() {
     },
   };
 
-  return { session, durableCalls, bestEffortCalls };
+  return { session, durableCalls, bestEffortCalls, liveCalls };
 }
 
 async function settleCommittedSnapshot() {
@@ -41,6 +61,179 @@ async function settleCommittedSnapshot() {
 }
 
 describe('createStreamedTranscriptWriter', () => {
+  it('emits live snapshots ahead of durable checkpoints and flushes the latest text on the live cadence', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, durableCalls, liveCalls } = createSessionStub({ withLive: true });
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'codex' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 0,
+      checkpointIntervalMs: 1_000,
+      checkpointMinChars: 999,
+      liveSnapshotIntervalMs: 40,
+      liveSnapshotMinChars: 1,
+    });
+
+    writer.appendAssistantDelta('H');
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(1);
+    expect(liveCalls).toHaveLength(1);
+    expect(liveCalls[0]).toMatchObject({
+      provider: 'codex',
+      localId: 'segment-1',
+      body: { type: 'message', message: 'H' },
+    });
+
+    vi.advanceTimersByTime(10);
+    writer.appendAssistantDelta('i');
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(1);
+    expect(liveCalls).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(30);
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(1);
+    expect(liveCalls).toHaveLength(2);
+    expect(liveCalls[1]).toMatchObject({
+      provider: 'codex',
+      localId: 'segment-1',
+      body: { type: 'message', message: 'Hi' },
+    });
+
+    await writer.flushAll({ reason: 'turn-end' });
+    await settleCommittedSnapshot();
+
+    expect(liveCalls[liveCalls.length - 1]!.meta).toMatchObject({
+      happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
+    });
+    expect(durableCalls[durableCalls.length - 1]!.meta).toMatchObject({
+      happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
+    });
+  });
+
+  it('preserves the session receiver when emitting live snapshots', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const liveCalls: LiveCall[] = [];
+    const session = {
+      liveCalls,
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendAgentMessageEphemeral(provider: any, body: any, opts: any) {
+        this.liveCalls.push({
+          provider: String(provider),
+          localId: String(opts.localId),
+          meta: opts?.meta,
+          body,
+          createdAt: Number(opts.createdAt),
+          updatedAt: Number(opts.updatedAt),
+        });
+      },
+    };
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'codex' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 0,
+      checkpointIntervalMs: 1_000,
+      checkpointMinChars: 999,
+      liveSnapshotIntervalMs: 40,
+      liveSnapshotMinChars: 1,
+    });
+
+    writer.appendAssistantDelta('H');
+    await settleCommittedSnapshot();
+
+    expect(liveCalls).toHaveLength(1);
+    expect(liveCalls[0]).toMatchObject({
+      provider: 'codex',
+      localId: 'segment-1',
+      body: { type: 'message', message: 'H' },
+    });
+  });
+
+  it('delays the first durable checkpoint until the configured initial checkpoint delay when live snapshots are available', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, durableCalls, liveCalls } = createSessionStub({ withLive: true });
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'codex' as any,
+      session: session as any,
+      makeLocalId: () => 'l1',
+      initialCheckpointDelayMs: 200,
+      checkpointIntervalMs: 2_000,
+      checkpointMinChars: 256,
+      liveSnapshotIntervalMs: 40,
+      liveSnapshotMinChars: 1,
+    });
+
+    writer.appendAssistantDelta('Hello');
+    await settleCommittedSnapshot();
+
+    expect(liveCalls).toHaveLength(1);
+    expect(durableCalls).toHaveLength(0);
+
+    vi.advanceTimersByTime(199);
+    await settleCommittedSnapshot();
+    expect(durableCalls).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(1);
+    expect(durableCalls[0]).toMatchObject({
+      provider: 'codex',
+      localId: 'l1',
+      body: { type: 'message', message: 'Hello' },
+    });
+  });
+
+  it('emits a scheduled durable checkpoint after the interval even without another delta', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, durableCalls } = createSessionStub({ withLive: true });
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'codex' as any,
+      session: session as any,
+      makeLocalId: () => 'l1',
+      initialCheckpointDelayMs: 0,
+      checkpointIntervalMs: 50,
+      checkpointMinChars: 1,
+      liveSnapshotIntervalMs: 40,
+      liveSnapshotMinChars: 1,
+    });
+
+    writer.appendAssistantDelta('Hello');
+    await settleCommittedSnapshot();
+    expect(durableCalls).toHaveLength(1);
+
+    writer.appendAssistantDelta(' world');
+    await settleCommittedSnapshot();
+    expect(durableCalls).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(2);
+    expect(durableCalls[1]).toMatchObject({
+      provider: 'codex',
+      localId: 'l1',
+      body: { type: 'message', message: 'Hello world' },
+    });
+  });
+
   it('emits durable checkpoints on the configured interval', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
@@ -63,19 +256,31 @@ describe('createStreamedTranscriptWriter', () => {
     await settleCommittedSnapshot();
     expect(durableCalls).toHaveLength(1);
 
-    vi.advanceTimersByTime(49);
+    await vi.advanceTimersByTimeAsync(49);
     await settleCommittedSnapshot();
     writer.appendAssistantDelta('!');
     await settleCommittedSnapshot();
     expect(durableCalls).toHaveLength(1);
 
-    vi.advanceTimersByTime(1);
-    await settleCommittedSnapshot();
-    writer.appendAssistantDelta('?');
+    await vi.advanceTimersByTimeAsync(1);
     await settleCommittedSnapshot();
 
     expect(durableCalls).toHaveLength(2);
     expect(durableCalls[1]).toMatchObject({
+      provider: 'codex',
+      localId: 'l1',
+      body: { type: 'message', message: 'Hello world!' },
+    });
+
+    writer.appendAssistantDelta('?');
+    await settleCommittedSnapshot();
+    expect(durableCalls).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(3);
+    expect(durableCalls[2]).toMatchObject({
       provider: 'codex',
       localId: 'l1',
       body: { type: 'message', message: 'Hello world!?' },

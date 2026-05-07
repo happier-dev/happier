@@ -21,6 +21,7 @@ export type FilesystemBrowserRowProps = Readonly<{
     onContextMenu?: (event: unknown) => void;
     selected?: boolean;
     testID?: string;
+    webRole?: React.AriaRole;
     density?: ItemProps['density'];
     basePaddingLeft?: number;
     depthIndent?: number;
@@ -40,6 +41,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
     const content = props.node.type === 'error'
         ? (
             <Item
+                testID={props.testID}
                 title={props.errorTitle ?? t('common.error')}
                 subtitle={props.errorSubtitle}
                 icon={<Ionicons name="alert-circle-outline" size={18} color={theme.colors.textSecondary} />}
@@ -50,11 +52,15 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                         void props.onRetryError(props.node);
                     }
                 }}
+                webRole={props.webRole}
                 showDivider={showDivider}
-                style={{
-                    paddingLeft,
-                    paddingRight: props.paddingRight ?? 12,
-                }}
+                style={[
+                    {
+                        paddingLeft,
+                        paddingRight: props.paddingRight ?? 12,
+                    },
+                    props.style,
+                ]}
             />
         )
         : props.node.type === 'info'
@@ -90,6 +96,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                 onDoublePress={props.onDoublePress}
                 onLongPress={props.onLongPress}
                 onContextMenu={props.onContextMenu}
+                webRole={props.webRole}
                 showDivider={showDivider}
                 style={[
                     {

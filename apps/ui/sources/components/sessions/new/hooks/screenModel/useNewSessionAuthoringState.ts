@@ -6,7 +6,7 @@ import {
     buildPersistedNewSessionDraftFromAuthoringDraft,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
-import { saveNewSessionDraft } from '@/sync/domains/state/persistence';
+import { clearNewSessionDraft, saveNewSessionDraft } from '@/sync/domains/state/persistence';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
@@ -16,6 +16,7 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 type PersistedDraft = ReturnType<typeof buildPersistedNewSessionDraftFromAuthoringDraft>;
 type BuildResolvedInputs = Parameters<typeof buildNewSessionAuthoringDraftFromResolvedInputs>[0];
@@ -49,6 +50,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     selectedSecretIdByProfileIdByEnvVarName: BuildPersistedInputs['selectedSecretIdByProfileIdByEnvVarName'];
     getSessionOnlySecretValueEncByProfileIdByEnvVarName: () => BuildPersistedInputs['sessionOnlySecretValueEncByProfileIdByEnvVarName'];
     agentNewSessionOptionStateByAgentId: Record<string, Record<string, unknown>>;
+    draftScope: ServerAccountScope | null;
 }>): Readonly<{
     authoringContext: ReturnType<typeof buildNewSessionAuthoringContext>;
     currentAuthoringDraft: SessionAuthoringDraft;
@@ -159,8 +161,12 @@ export function useNewSessionAuthoringState(params: Readonly<{
             return;
         }
 
+        if (params.draftScope) {
+            saveNewSessionDraft(draft, params.draftScope);
+            return;
+        }
         saveNewSessionDraft(draft);
-    }, []);
+    }, [params.draftScope]);
 
     const disableDraftPersistence = React.useCallback(() => {
         draftPersistenceEnabledRef.current = false;

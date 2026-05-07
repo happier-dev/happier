@@ -289,3 +289,72 @@ test('ensureWorkspacePackagesBuiltForComponent rebuilds internal workspaces when
   assert.match(out, /packages\/protocol :: -s build/);
   assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'machineTransfer', 'transferStream.js'), 'utf-8')), true);
 });
+
+test('ensureWorkspacePackagesBuiltForComponent serializes concurrent internal workspace builds', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-concurrent-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), {
+    name: '@happier-dev/server',
+    private: true,
+    dependencies: {
+      '@happier-dev/cli-common': '0.0.0',
+    },
+  });
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), { name: '@happier-dev/app', private: true });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
+
+  const cliCommonDir = join(root, 'packages', 'cli-common');
+  await mkdir(cliCommonDir, { recursive: true });
+  await writeJson(join(cliCommonDir, 'package.json'), {
+    name: '@happier-dev/cli-common',
+    version: '0.0.0',
+    type: 'module',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await mkdir(binDir, { recursive: true });
+  await writeFile(
+    join(binDir, 'yarn'),
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "$(pwd) :: $*" >> "${OUTPUT_PATH:?}"',
+      'if [[ "${1:-}" == "--version" ]]; then echo "1.22.22"; exit 0; fi',
+      'if [[ "${1:-}" == "-s" && "${2:-}" == "build" && "$(pwd)" == */packages/cli-common ]]; then',
+      '  sleep 0.12',
+      '  mkdir -p dist',
+      "  printf '%s\\n' 'export const ok = true;' > dist/index.js",
+      "  printf '%s\\n' 'export declare const ok: boolean;' > dist/index.d.ts",
+      '  exit 0',
+      'fi',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+  await chmod(join(binDir, 'yarn'), 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await Promise.all([
+    ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'server'), { quiet: true, env: process.env }),
+    ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'server'), { quiet: true, env: process.env }),
+  ]);
+
+  const out = await readFile(outputPath, 'utf-8');
+  const occurrences = out.split('\n').filter((line) => line.includes('/packages/cli-common :: -s build')).length;
+  assert.equal(occurrences, 1);
+});

@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import {
@@ -9,6 +10,11 @@ import {
   ScmCommitCreateResponseSchema,
   ScmDiffFileResponseSchema,
   ScmLogListResponseSchema,
+  ScmPullRequestOpenComposeResponseSchema,
+  ScmPullRequestOpenOrReuseResponseSchema,
+  ScmRepositoryInitResponseSchema,
+  ScmHostingRepositoryDescribePublishTargetsResponseSchema,
+  ScmHostingRepositoryPublishResponseSchema,
   ScmStatusSnapshotResponseSchema,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -38,6 +44,38 @@ function runGit(cwd: string, args: string[]): string {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
+}
+
+async function writeGhShim(dir: string): Promise<void> {
+  const fileName = process.platform === 'win32' ? 'gh.cmd' : 'gh';
+  const shimPath = join(dir, fileName);
+  const contents = process.platform === 'win32'
+    ? [
+      '@echo off',
+      'if "%1"=="auth" if "%2"=="status" exit /b 0',
+      'if "%1"=="pr" if "%2"=="list" (echo []& exit /b 0)',
+      'if "%1"=="pr" if "%2"=="create" (echo https://github.com/happier-dev/happier/pull/101& exit /b 0)',
+      'if "%1"=="pr" if "%2"=="view" (echo {"number":101,"title":"Core e2e PR","url":"https://github.com/happier-dev/happier/pull/101","state":"OPEN","baseRefName":"main","headRefName":"feature/e2e-pr"}& exit /b 0)',
+      'if "%1"=="api" if "%2"=="user" (echo {"login":"happier-dev"}& exit /b 0)',
+      'if "%1"=="api" if "%2"=="user/orgs" (echo []& exit /b 0)',
+      'if "%1"=="repo" if "%2"=="create" exit /b 0',
+      'if "%1"=="repo" if "%2"=="view" (echo {"nameWithOwner":"happier-dev/published-e2e-repo","url":"https://github.com/happier-dev/published-e2e-repo","sshUrl":"git@github.com:happier-dev/published-e2e-repo.git","defaultBranchRef":{"name":"main"},"visibility":"PRIVATE"}& exit /b 0)',
+      'exit /b 1',
+    ].join('\r\n')
+    : [
+      '#!/bin/sh',
+      'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then exit 0; fi',
+      'if [ "$1" = "pr" ] && [ "$2" = "list" ]; then echo \'[]\'; exit 0; fi',
+      'if [ "$1" = "pr" ] && [ "$2" = "create" ]; then echo "https://github.com/happier-dev/happier/pull/101"; exit 0; fi',
+      'if [ "$1" = "pr" ] && [ "$2" = "view" ]; then echo \'{"number":101,"title":"Core e2e PR","url":"https://github.com/happier-dev/happier/pull/101","state":"OPEN","baseRefName":"main","headRefName":"feature/e2e-pr"}\'; exit 0; fi',
+      'if [ "$1" = "api" ] && [ "$2" = "user" ]; then echo \'{"login":"happier-dev"}\'; exit 0; fi',
+      'if [ "$1" = "api" ] && [ "$2" = "user/orgs" ]; then echo \'[]\'; exit 0; fi',
+      'if [ "$1" = "repo" ] && [ "$2" = "create" ]; then exit 0; fi',
+      'if [ "$1" = "repo" ] && [ "$2" = "view" ]; then echo \'{"nameWithOwner":"happier-dev/published-e2e-repo","url":"https://github.com/happier-dev/published-e2e-repo","sshUrl":"git@github.com:happier-dev/published-e2e-repo.git","defaultBranchRef":{"name":"main"},"visibility":"PRIVATE"}\'; exit 0; fi',
+      'exit 1',
+    ].join('\n');
+  await writeFile(shimPath, contents, { encoding: 'utf8', mode: 0o755 });
+  if (process.platform !== 'win32') await chmod(shimPath, 0o755);
 }
 
 async function resolveDaemonMachineIdFromSettings(params: { daemonHomeDir: string }): Promise<string> {
@@ -145,8 +183,11 @@ describe('core e2e: scm git machine RPC', () => {
 
     const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
     const workspaceDir = resolve(join(testDir, 'workspace'));
+    const shimDir = resolve(join(testDir, 'shims'));
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
+    await mkdir(shimDir, { recursive: true });
+    await writeGhShim(shimDir);
 
     const secret = Uint8Array.from(randomBytes(32));
     await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, token: auth.token, secret });
@@ -157,6 +198,9 @@ describe('core e2e: scm git machine RPC', () => {
     runGit(workspaceDir, ['config', 'user.email', 'test@example.com']);
     runGit(workspaceDir, ['add', 'README.md']);
     runGit(workspaceDir, ['commit', '-m', 'initial commit']);
+    runGit(workspaceDir, ['branch', '-M', 'main']);
+    runGit(workspaceDir, ['remote', 'add', 'origin', 'https://github.com/happier-dev/happier.git']);
+    runGit(workspaceDir, ['checkout', '-b', 'feature/e2e-pr']);
     await writeFile(join(workspaceDir, 'README.md'), '# SCM e2e\n\npending line\n', 'utf8');
 
     daemon = await startTestDaemon({
@@ -174,6 +218,7 @@ describe('core e2e: scm git machine RPC', () => {
         HAPPIER_HOME_DIR: daemonHomeDir,
         HAPPIER_SERVER_URL: serverBaseUrl,
         HAPPIER_WEBAPP_URL: serverBaseUrl,
+        PATH: [shimDir, process.env.PATH].filter(Boolean).join(process.platform === 'win32' ? ';' : ':'),
       },
     });
     const machineId = await resolveDaemonMachineIdFromSettings({ daemonHomeDir });
@@ -221,8 +266,97 @@ describe('core e2e: scm git machine RPC', () => {
         if (!snapshot) throw new Error('Missing snapshot payload');
         expect(snapshot.repo.isRepo).toBe(true);
         expect(snapshot.repo.backendId).toBe('git');
+        expect(snapshot.hostingProvider).toMatchObject({
+          kind: 'github',
+          nameWithOwner: 'happier-dev/happier',
+        });
         expect(snapshot.totals.pendingFiles).toBeGreaterThanOrEqual(1);
       }
+
+      const composeRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
+        req: { cwd: workspaceDir, base: 'main', head: 'feature/e2e-pr' },
+        encryptParams,
+        decryptResult,
+        schema: ScmPullRequestOpenComposeResponseSchema,
+      });
+      expect(composeRes).toEqual({
+        success: true,
+        url: 'https://github.com/happier-dev/happier/compare/main...feature%2Fe2e-pr',
+      });
+
+      const publishWorkspaceDir = await mkdtemp(join(tmpdir(), 'happier-publish-e2e-'));
+      await writeFile(join(publishWorkspaceDir, 'README.md'), '# Published e2e repo\n', 'utf8');
+
+      const initRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_REPOSITORY_INIT,
+        req: { cwd: publishWorkspaceDir, initialBranch: 'main' },
+        encryptParams,
+        decryptResult,
+        schema: ScmRepositoryInitResponseSchema,
+      });
+      expect(initRes).toMatchObject({
+        success: true,
+        alreadyInitialized: false,
+      });
+      expect(runGit(publishWorkspaceDir, ['status', '--porcelain'])).toBe('?? README.md');
+
+      const publishTargetsRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS,
+        req: { cwd: publishWorkspaceDir, providerKind: 'github' },
+        encryptParams,
+        decryptResult,
+        schema: ScmHostingRepositoryDescribePublishTargetsResponseSchema,
+      });
+      expect(publishTargetsRes).toMatchObject({
+        success: true,
+        auth: {
+          kind: 'gh-cli',
+          authenticated: true,
+        },
+      });
+      if (publishTargetsRes.success) {
+        expect(publishTargetsRes.targets.some((target) => target.owner === 'happier-dev')).toBe(true);
+      }
+
+      const publishRepoRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH,
+        req: {
+          cwd: publishWorkspaceDir,
+          providerKind: 'github',
+          owner: 'happier-dev',
+          ownerKind: 'user',
+          repositoryName: 'published-e2e-repo',
+          visibility: 'private',
+          remoteName: 'origin',
+          remoteUrlKind: 'https',
+          remoteConflictStrategy: 'fail',
+          pushCurrentBranch: false,
+        },
+        encryptParams,
+        decryptResult,
+        schema: ScmHostingRepositoryPublishResponseSchema,
+      });
+      expect(publishRepoRes).toMatchObject({
+        success: true,
+        repository: {
+          nameWithOwner: 'happier-dev/published-e2e-repo',
+        },
+        remote: {
+          name: 'origin',
+          fetchUrl: 'https://github.com/happier-dev/published-e2e-repo.git',
+        },
+        pushed: false,
+      });
+      expect(runGit(publishWorkspaceDir, ['remote', 'get-url', 'origin'])).toBe('https://github.com/happier-dev/published-e2e-repo.git');
 
       const diffRes = await callMachineRpc({
         ui,
@@ -294,6 +428,31 @@ describe('core e2e: scm git machine RPC', () => {
         expect((commitRes.commitSha ?? '').length).toBeGreaterThan(0);
       }
 
+      const openOrReuseRes = await callMachineRpc({
+        ui,
+        machineId,
+        method: RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE,
+        req: {
+          cwd: workspaceDir,
+          base: 'main',
+          head: 'feature/e2e-pr',
+          title: 'Core e2e PR',
+          body: 'Created through the daemon-visible GitHub CLI shim.',
+        },
+        encryptParams,
+        decryptResult,
+        schema: ScmPullRequestOpenOrReuseResponseSchema,
+      });
+      expect(openOrReuseRes).toMatchObject({
+        success: true,
+        kind: 'opened',
+        pullRequest: {
+          number: 101,
+          title: 'Core e2e PR',
+          headBranch: 'feature/e2e-pr',
+        },
+      });
+
       const snapshotAfterCommitRes = await callMachineRpc({
         ui,
         machineId,
@@ -309,6 +468,11 @@ describe('core e2e: scm git machine RPC', () => {
         expect(snapshot?.totals.pendingFiles).toBe(0);
         expect(snapshot?.totals.includedFiles).toBe(0);
         expect(snapshot?.totals.untrackedFiles).toBe(0);
+        expect(snapshot?.pullRequest).toMatchObject({
+          number: 101,
+          title: 'Core e2e PR',
+          headBranch: 'feature/e2e-pr',
+        });
       }
 
       const logRes = await callMachineRpc({

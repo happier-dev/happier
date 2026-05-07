@@ -20,7 +20,7 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
                     id: 'claudeTeamsProviderSettings',
                     title: { key: 'subAgentGuidance.settings.providers.claude.openTitle' },
                     subtitle: { key: 'subAgentGuidance.settings.providers.claude.openSubtitle' },
-                    route: '/(app)/settings/providers/claude',
+                    route: '/settings/providers/claude',
                     iconIonName: 'sparkles-outline',
                 },
             ],

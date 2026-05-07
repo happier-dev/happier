@@ -14,7 +14,7 @@ import type { Credentials } from '@/persistence';
 import { parseConnectedServicesBindings } from '../parseConnectedServicesBindings';
 import { resolveConnectedServiceCredentials } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import { materializeConnectedServicesForSpawn } from '../materialize/materializeConnectedServicesForSpawn';
-import { refreshClaudeSubscriptionOauthTokens, refreshGeminiOauthTokens, refreshOpenAiCodexOauthTokens } from './serviceRefreshers';
+import { refreshConnectedAccountOauthTokens } from './serviceRefreshers';
 
 type BoundProfile = Readonly<{ serviceId: ConnectedServiceId; profileId: string }>;
 
@@ -64,7 +64,7 @@ function buildUpdatedOauthRecord(params: Readonly<{
       ...params.record.oauth,
       accessToken: params.next.accessToken,
       refreshToken: params.next.refreshToken,
-      idToken: params.next.idToken ?? params.record.oauth.idToken,
+      idToken: params.next.idToken,
     },
   });
 }
@@ -157,46 +157,17 @@ export class ConnectedServiceRefreshCoordinator {
     });
     if (record.kind !== 'oauth') return;
 
-    const next = await (async () => {
-      if (binding.serviceId === 'openai-codex') {
-        const refreshed = await refreshOpenAiCodexOauthTokens({
-          refreshToken: record.oauth.refreshToken,
-          now,
-        });
-        return {
-          accessToken: refreshed.accessToken,
-          refreshToken: refreshed.refreshToken,
-          idToken: refreshed.idToken,
-          expiresAt: refreshed.expiresAt,
-        };
-      }
-      if (binding.serviceId === 'claude-subscription') {
-        const refreshed = await refreshClaudeSubscriptionOauthTokens({
-          refreshToken: record.oauth.refreshToken,
-          now,
-        });
-        return {
-          accessToken: refreshed.accessToken,
-          refreshToken: refreshed.refreshToken,
-          idToken: record.oauth.idToken,
-          expiresAt: refreshed.expiresAt,
-        };
-      }
-      if (binding.serviceId === 'gemini') {
-        const refreshed = await refreshGeminiOauthTokens({
-          refreshToken: record.oauth.refreshToken,
-          now,
-        });
-        return {
-          accessToken: refreshed.accessToken,
-          refreshToken: refreshed.refreshToken,
-          idToken: refreshed.idToken,
-          expiresAt: refreshed.expiresAt,
-        };
-      }
-      return null;
-    })();
-    if (!next) return;
+    const refreshed = await refreshConnectedAccountOauthTokens({
+      serviceId: binding.serviceId,
+      refreshToken: record.oauth.refreshToken,
+      now,
+    });
+    const next = {
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken,
+      idToken: refreshed.idToken,
+      expiresAt: refreshed.expiresAt,
+    };
 
     const updated = buildUpdatedOauthRecord({
       now,

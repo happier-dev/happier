@@ -176,14 +176,14 @@ describe('ModalProvider', () => {
         expect(screen.findByType('DummyModalWithLabel' as any).props.label).toBe('after');
     });
 
-    it('restores the outer provider after a nested provider unmounts', async () => {
+    it('restores the outer provider after a later nested provider unmounts', async () => {
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
 
         let setShowInnerProvider: React.Dispatch<React.SetStateAction<boolean>> | null = null;
 
         function NestedProviders() {
-            const [showInnerProvider, setShowInnerProviderState] = React.useState(true);
+            const [showInnerProvider, setShowInnerProviderState] = React.useState(false);
             setShowInnerProvider = setShowInnerProviderState;
 
             return React.createElement(
@@ -211,11 +211,74 @@ describe('ModalProvider', () => {
         const screen = await renderScreen(React.createElement(NestedProviders));
 
         act(() => {
+            setShowInnerProvider?.(true);
+        });
+
+        act(() => {
             setShowInnerProvider?.(false);
         });
 
         act(() => {
             Modal.show({ component: DummyModalA });
+        });
+
+        expect(screen.findAllByType(DummyModalA)).toHaveLength(1);
+    });
+
+    it('keeps inactive nested providers from receiving global modal calls while they stay mounted', async () => {
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const ActiveModalProvider = ModalProvider as React.ComponentType<React.PropsWithChildren<{ active?: boolean }>>;
+
+        let setInnerActive: React.Dispatch<React.SetStateAction<boolean>> | null = null;
+        let setShowInnerProvider: React.Dispatch<React.SetStateAction<boolean>> | null = null;
+
+        function NestedProviders() {
+            const [innerActive, setInnerActiveState] = React.useState(true);
+            const [showInnerProvider, setShowInnerProviderState] = React.useState(false);
+            setInnerActive = setInnerActiveState;
+            setShowInnerProvider = setShowInnerProviderState;
+
+            return React.createElement(
+                ModalProvider,
+                null,
+                showInnerProvider
+                    ? React.createElement(
+                        ActiveModalProvider,
+                        { active: innerActive },
+                        React.createElement(InnerProviderMarker),
+                    )
+                    : null,
+                React.createElement(OuterProviderMarker),
+            );
+        }
+
+        function InnerProviderMarker() {
+            return React.createElement('InnerProviderMarker');
+        }
+
+        function OuterProviderMarker() {
+            return React.createElement('OuterProviderMarker');
+        }
+
+        const screen = await renderScreen(React.createElement(NestedProviders));
+
+        act(() => {
+            setShowInnerProvider?.(true);
+        });
+
+        act(() => {
+            setInnerActive?.(false);
+        });
+
+        act(() => {
+            Modal.show({ component: DummyModalA });
+        });
+
+        expect(screen.findAllByType(DummyModalA)).toHaveLength(1);
+
+        act(() => {
+            setShowInnerProvider?.(false);
         });
 
         expect(screen.findAllByType(DummyModalA)).toHaveLength(1);

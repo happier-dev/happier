@@ -483,6 +483,7 @@ export const it: TranslationStructure = {
     emptyDescription: "Nessuna richiesta o aggiornamento in sospeso al momento.",
     approvals: "Approvazioni",
     permissions: "Permessi",
+    unreadSessions: "Sessioni non lette",
     updates: "Attività",
   },
 
@@ -1960,6 +1961,8 @@ export const it: TranslationStructure = {
       channelBridgesSubtitle: "Collega chat esterne (Telegram) alle sessioni",
       featuresTitle: "Funzionalità",
       featuresSubtitle: "Abilita o disabilita le funzionalità dell'app",
+      pets: "Mascotte",
+      petsSubtitle: "Scegli Blink e le mascotte compagne del dispositivo",
     developer: "Sviluppatore",
     developerTools: "Strumenti sviluppatore",
     about: "Informazioni",
@@ -2405,6 +2408,7 @@ export const it: TranslationStructure = {
       openai: "Chiave API OpenAI",
       anthropic: "Chiave API Anthropic",
       gemini: "Gemini di Google",
+      github: "GitHub",
     },
     title: "Servizi connessi",
     authChip: {
@@ -2527,6 +2531,10 @@ export const it: TranslationStructure = {
       connectApiKeySubtitle: "Incolla una chiave API di Anthropic",
       connectSetupTokenTitle: "Connetti con setup-token",
       connectSetupTokenSubtitle: "Incolla un setup-token di Claude (da claude setup-token)",
+      connectAccessTokenTitle: "Connetti con token di accesso",
+      connectAccessTokenSubtitle: "Incolla un token di accesso personale di GitHub",
+      openGithubTokenTemplateTitle: "Crea token GitHub",
+      openGithubTokenTemplateSubtitle: "Apri GitHub con i permessi necessari a Happier già compilati",
       disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
         `Disconnettere ${service} (${profileId})?`,
       prompts: {
@@ -2538,6 +2546,9 @@ export const it: TranslationStructure = {
         setupTokenTitle: "Token di configurazione",
         setupTokenBody: "Incolla il tuo setup-token di Claude (da claude setup-token).",
         setupTokenPlaceholder: "es. sk-ant-oat01-…",
+        accessTokenTitle: "Token di accesso",
+        accessTokenBody: "Incolla il tuo token di accesso personale di GitHub. Usa un token fine-grained con Contenuti, Pull request e Amministrazione in lettura e scrittura, così i flussi di PR e pubblicazione repository possono funzionare.",
+        accessTokenPlaceholder: "github_pat_…",
         profileLabelTitle: "Etichetta profilo",
         profileLabelBody: "Facoltativo. Mostrato nei selettori di autenticazione.",
         profileLabelPlaceholder: "Account lavoro",
@@ -2549,6 +2560,7 @@ export const it: TranslationStructure = {
         unknownProfileTitle: "Profilo sconosciuto",
         unknownProfileBody: ({ profileId, service }: { profileId: string; service: string }) =>
           `Nessun profilo chiamato \"${profileId}\" esiste per ${service}.`,
+        failedToOpenTokenSetupUrl: "Impossibile aprire le impostazioni del token GitHub.",
       },
       profiles: {
         empty: "Nessun profilo ancora.",
@@ -2707,20 +2719,13 @@ export const it: TranslationStructure = {
     remoteConfirmation: {
       title: "Conferma remota",
       footer: "Controlla se le operazioni pull/push richiedono conferma.",
-      options: {
-        always: {
-          title: "Conferma sempre pull/push",
-          subtitle:
-            "Mostra finestre di conferma per le operazioni di pull e push.",
-        },
-        pushOnly: {
-          title: "Conferma solo push",
-          subtitle: "Pull immediato; push richiede conferma.",
-        },
-        never: {
-          title: "Non confermare mai",
-          subtitle: "Esegui pull e push immediatamente.",
-        },
+      pull: {
+        title: "Chiedi prima del pull",
+        subtitle: "Mostra una conferma prima di scaricare modifiche remote.",
+      },
+      push: {
+        title: "Chiedi prima del push",
+        subtitle: "Mostra una conferma prima di inviare commit locali.",
       },
     },
     pushRejectionRecovery: {
@@ -2856,6 +2861,86 @@ export const it: TranslationStructure = {
     footer: 'Controlla le integrazioni desktop di Tauri su questo computer.',
     startOnLoginTitle: 'Avvia all’accesso',
     startOnLoginSubtitle: 'Avvia Happier automaticamente quando accedi a questo computer.',
+  },
+
+  settingsPets: {
+    title: 'Mascotte',
+    previewTitle: 'Compagno Blink',
+    previewSubtitle: 'Un piccolo compagno per lo stato della sessione e le revisioni da seguire.',
+    disabledTitle: 'Le mascotte sono disattivate',
+    disabledSubtitle: 'Attiva Mascotte in Funzioni per usare i compagni su questo dispositivo.',
+    disabledByServerTitle: 'Questo server ha disattivato le mascotte',
+    disabledByServerSubtitle: 'L’amministratore ha disattivato i compagni mascotte per questo server.',
+    accountTitle: 'Impostazione predefinita account',
+    enabledTitle: 'Attiva mascotte',
+    enabledSubtitle: 'Mostra le superfici di compagnia per questo account.',
+    companionSizeTitle: 'Dimensione mascotte',
+    companionSizeSubtitle: 'Regola la dimensione del compagno su questo dispositivo.',
+    companionSizeValue: ({ percent }: { percent: number }) => `${percent}%`,
+    deviceOverrideTitle: 'Usa su questo dispositivo',
+    deviceOverrideSubtitle: 'Sovrascrivi localmente l’impostazione mascotte dell’account.',
+    sourceTitle: 'Origine mascotte',
+    builtInSubtitle: 'Incluso in Happier.',
+    builtInBlinkSubtitle: 'Trasforma i segnali di sessione in piccole luci di stato tranquille.',
+    builtInFurySubtitle: 'Stressa i flussi difficili prima che arrivino in produzione.',
+    builtInMiloSubtitle: 'Tiene ordinata la UI e sonnecchia sui test falliti.',
+    builtInOliSubtitle: 'Spedisce fix furtivi prima che la build se ne accorga.',
+    builtInTitiSubtitle: 'Smista le note di release con attenzione da staff senior.',
+    localLibraryTitle: 'Questo dispositivo',
+    localLibraryFooter: 'Le mascotte locali restano su questo dispositivo salvo importazione nell’account.',
+    helpDocsTitle: 'Aiuto mascotte',
+    helpDocsSubtitle: 'Apri la documentazione Happier per configurazione e risoluzione problemi.',
+    detectCodexPetsTitle: 'Rileva mascotte Codex',
+    detectCodexPetsSubtitle: 'Cerca mascotte compatibili nelle home Codex locali.',
+    detectedCodexPetsTileSubtitle: 'Trovata in Codex e pronta a unirsi a questo dispositivo.',
+    detectedCodexPetsEmptyTitle: 'Nessuna mascotte Codex trovata',
+    detectedCodexPetsEmptySubtitle: 'Creane una in Codex, quindi esegui di nuovo il rilevamento.',
+    detectedCodexPetsErrorTitle: 'Impossibile rilevare mascotte Codex',
+    detectedCodexPetsErrorSubtitle: 'Controlla che il daemon sia connesso e riprova.',
+    detectedCodexPetsNoTargetTitle: 'Nessun daemon disponibile',
+    detectedCodexPetsNoTargetSubtitle: 'Avvia Happier su questo computer, quindi rileva di nuovo le mascotte Codex.',
+    detectedCodexPetsDaemonMismatchTitle: 'Aggiorna il daemon per rilevare mascotte',
+    detectedCodexPetsDaemonMismatchSubtitle: 'Questo daemon non espone ancora il rilevamento mascotte. Aggiorna lo stack e riprova.',
+    useOnThisDeviceTitle: 'Usa su questo dispositivo',
+    useOnThisDeviceSubtitle: 'Seleziona una mascotte locale senza modificare il valore predefinito dell’account.',
+    importedLocalSubtitle: 'Importata da Codex su questo dispositivo.',
+    removeFromDeviceTitle: 'Rimuovi dal dispositivo',
+    removeFromDeviceSubtitle: 'Rimuovi questa mascotte locale da questo dispositivo.',
+    accountLibraryTitle: 'Libreria account',
+    accountLibraryFooter: 'Le mascotte sincronizzate sono disponibili sui dispositivi con accesso.',
+    accountPetTileSubtitle: 'Sincronizzata dal tuo account.',
+    removeFromDeviceDaemonErrorTitle: 'Rimossa localmente; pulizia del daemon non riuscita',
+    removeFromDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `La mascotte è stata rimossa dall’elenco di questo dispositivo, ma la pulizia del daemon ha restituito ${code}.`,
+    importToDeviceDaemonErrorTitle: 'Impossibile importare la mascotte',
+    importToDeviceDaemonErrorSubtitle: ({ code }: { code: string }) => `Il daemon non ha potuto importare questa mascotte. Rileva di nuovo le mascotte Codex e riprova. (${code})`,
+    importToAccountTitle: 'Importa nell’account',
+    importToAccountSubtitle: 'Carica una mascotte locale compatibile per usarla tra dispositivi.',
+    desktopOverlayTitle: 'Sovrapposizione desktop',
+    overlayTrayTitle: 'Attività della mascotte',
+    overlayStatusWaiting: 'In attesa',
+    overlayStatusFailed: 'Non riuscito',
+    overlayStatusReview: 'Revisione',
+    overlayStatusRunning: 'In esecuzione',
+    overlayQuickReplyPlaceholder: 'Risposta rapida',
+    overlayReplyAction: 'Rispondi',
+    overlayQuickReplyAction: 'Invia risposta rapida',
+    overlayDismissAction: 'Ignora attività',
+    overlayTuckAction: 'Nascondi',
+    overlayClosePetAction: 'Chiudi mascotte',
+    desktopOverlayEnabledTitle: 'Attiva sovrapposizione desktop',
+    desktopOverlayEnabledSubtitle: 'Mostra la mascotte in una finestra desktop trasparente.',
+    desktopOverlayDeviceOverrideTitle: 'Sovrapposizione desktop su questo dispositivo',
+    desktopOverlayVisibilityModeTitle: 'Visibilità della sovrapposizione su questo dispositivo',
+    desktopOverlayVisibilityModeSubtitle: 'Scegli quando la mascotte desktop appare localmente.',
+    desktopOverlayResetPositionTitle: 'Ripristina posizione',
+    desktopOverlayResetPositionSubtitle: 'Riporta la sovrapposizione nell’angolo in basso a destra.',
+    overrideInherit: 'Valore account',
+    overrideEnabled: 'Attivato',
+    overrideDisabled: 'Disattivato',
+    visibilityModeInherit: 'Valore account',
+    visibilityModeAlwaysWhenEnabled: 'Sempre quando attiva',
+    visibilityModeAttentionOrActive: 'Attenzione o attività',
+    visibilityModeAttentionOnly: 'Solo attenzione',
   },
 
   settingsNotifications: {
@@ -3419,6 +3504,12 @@ export const it: TranslationStructure = {
       },
   },
 
+  workspaceCockpit: {
+    openCockpit: 'Apri cockpit',
+    openClassicView: 'Apri vista classica',
+    tabs: 'Schede',
+  },
+
   settingsAppearance: {
     ...settingsAppearanceTranslationExtension,
     // Appearance settings screen
@@ -3450,9 +3541,6 @@ export const it: TranslationStructure = {
       preview: "Scheda anteprima",
       persistent: "Schede persistenti",
     },
-    editorFocusMode: "Modalità focus editor",
-    editorFocusModeDescription:
-      "Nasconde conversazione e barra laterale mentre rivedi i file (web/tablet)",
     inlineToolCalls: "Chiamate strumenti inline",
     inlineToolCallsDescription:
       "Mostra le chiamate agli strumenti direttamente nei messaggi di chat",
@@ -3494,6 +3582,23 @@ export const it: TranslationStructure = {
       pixelated: "Pixelato",
       gradient: "Gradiente",
       brutalist: "Brutalista",
+      meshGradient: "Gradiente mesh",
+      meshGradientOrganic: "Gradiente mesh: organico",
+      meshGradientRows: "Gradiente mesh: righe",
+      meshGradientColumns: "Gradiente mesh: colonne",
+      meshGradientDiagonal: "Gradiente mesh: diagonale",
+      meshGradientOval: "Gradiente mesh: ovale",
+      meshGradientWaves: "Gradiente mesh: onde",
+      meshGradientSoftNoise: "Gradiente mesh: rumore morbido",
+      photoGradient: "Gradiente stratificato",
+      photoGradientRows: "Gradiente stratificato: righe",
+      photoGradientColumns: "Gradiente stratificato: colonne",
+      photoGradientDiagonal: "Gradiente stratificato: diagonale",
+      photoGradientWaves: "Gradiente stratificato: onde",
+      photoGradientOval: "Gradiente stratificato: ovale",
+      photoGradientValueNoise: "Gradiente stratificato: rumore morbido",
+      photoGradientVoronoi: "Gradiente stratificato: celle",
+      photoGradientMeshGrid: "Gradiente stratificato: griglia",
     },
     showFlavorIcons: "Mostra icone provider IA",
     showFlavorIconsDescription:
@@ -3623,6 +3728,8 @@ export const it: TranslationStructure = {
         "Abilita schermate e impostazioni di ricerca memoria locale",
     expSessionsDirect: "Sessioni dirette",
     expSessionsDirectSubtitle: "Mostra e apri nella barra laterale le sessioni dirette basate sul provider",
+    expPetsCompanion: "Mascotte",
+    expPetsCompanionSubtitle: "Attiva le superfici compagno di Blink e la selezione locale delle mascotte",
     expFriends: "Amici",
     expFriendsSubtitle: "Abilita le funzioni Amici (scheda Posta in arrivo e condivisione sessioni)",
     webFeatures: "Funzionalità web",
@@ -3791,6 +3898,9 @@ export const it: TranslationStructure = {
       },
       codexAcp: {
         title: "Adattatore Codex ACP",
+      },
+      githubCli: {
+        title: "CLI GitHub",
       },
     },
     ui: {
@@ -4043,6 +4153,19 @@ export const it: TranslationStructure = {
       description:
         "Questo installa un adattatore ACP sperimentale per Codex che supporta il caricamento/la ripresa dei thread.",
     },
+        githubCliBanner: {
+            title: 'GitHub CLI',
+            install: 'Installa',
+            update: 'Aggiorna',
+            reinstall: 'Reinstalla',
+        },
+    githubCliInstallModal: {
+      installTitle: "Installare GitHub CLI?",
+      updateTitle: "Aggiornare GitHub CLI?",
+      reinstallTitle: "Reinstallare GitHub CLI?",
+      description:
+        "Questo installa GitHub CLI così Happier può usare la tua autenticazione GitHub locale per i flussi di pull request.",
+    },
   },
 
   sessionHistory: {
@@ -4060,6 +4183,11 @@ export const it: TranslationStructure = {
 
   session: {
     inputPlaceholder: "Scrivi un messaggio ...",
+    rightPanel: {
+      tabs: {
+        git: "Git",
+      },
+    },
     toolCalls: "Chiamate strumento",
     toolCallsCollapsedPreviewMore: ({ count }: { count: number }) => `+${count} in più…`,
     forking: {
@@ -4194,8 +4322,8 @@ export const it: TranslationStructure = {
               unpinTabA11y: "Rimuovi fissaggio scheda",
               pinnedTabA11y: "Scheda fissata",
               closeTabA11y: "Chiudi scheda",
-              enterFocusModeA11y: "Entra in modalità focus editor",
-              exitFocusModeA11y: "Esci dalla modalità focus editor",
+              enterFocusModeA11y: "Entra in modalità focus pannello",
+              exitFocusModeA11y: "Esci dalla modalità focus pannello",
         },
   
       actionsDraft: {
@@ -4398,6 +4526,19 @@ export const it: TranslationStructure = {
   commandPalette: {
     placeholder: "Digita un comando o cerca...",
     noCommandsFound: "Nessun comando trovato",
+    pets: {
+      category: "Mascotte",
+      wakeTitle: "Sveglia mascotte",
+      wakeSubtitle: "Mostra la compagna su questa superficie.",
+      tuckTitle: "Metti via la mascotte",
+      tuckSubtitle: "Nasconde la compagna su questa superficie.",
+      resetPositionTitle: "Ripristina posizione mascotte",
+      resetPositionSubtitle: "Riporta la compagna nella posizione predefinita.",
+      chooseTitle: "Scegli mascotte",
+      chooseSubtitle: "Apri le impostazioni delle mascotte.",
+      refreshCodexTitle: "Aggiorna mascotte Codex",
+      refreshCodexSubtitle: "Apri le impostazioni e rileva le mascotte Codex locali.",
+    },
   },
 
   commandView: {
@@ -4646,6 +4787,7 @@ export const it: TranslationStructure = {
   directSessions: {
     browseTitle: "Sfoglia le sessioni del provider",
     browseOpenExisting: "Sfoglia le sessioni del provider",
+    browseActionSubtitle: "Scegli una macchina, un provider e una sessione per aprirla qui.",
     browseFiltersTitle: "Seleziona origine",
     browseMachines: "Macchine",
     browseProviders: "Provider",
@@ -4745,6 +4887,10 @@ export const it: TranslationStructure = {
     lastUpdated: "Ultimo aggiornamento",
     sequence: "Sequenza",
     quickActions: "Azioni rapide",
+    markSessionRead: "Segna come letta",
+    markSessionReadSubtitle: "Rimuovi l'attenzione non letta per questa sessione",
+    markSessionUnread: "Segna come non letta",
+    markSessionUnreadSubtitle: "Mantieni questa sessione nell'elenco dei non letti",
     executionRunsSubtitle: "Vedi le esecuzioni di questa sessione",
     automationsTitle: "Automazioni",
     automationsSubtitle: "Gestisci i messaggi programmati per questa sessione",
@@ -4811,7 +4957,11 @@ export const it: TranslationStructure = {
     renameSessionPlaceholder: "Inserisci nome sessione...",
     forkSession: "Deriva sessione",
     forkSessionSubtitle: "Crea una nuova sessione dal contesto più recente",
+    newSessionSameSetup: "Nuova sessione con la stessa configurazione",
+    newSessionSameSetupSubtitle: "Riutilizza macchina, cartella, motore, modello e opzioni di questa sessione.",
     failedToRenameSession: "Impossibile rinominare la sessione",
+    failedToMarkSessionRead: "Impossibile segnare la sessione come letta",
+    failedToMarkSessionUnread: "Impossibile segnare la sessione come non letta",
     sessionRenamed: "Sessione rinominata con successo",
   },
 
@@ -5370,6 +5520,24 @@ export const it: TranslationStructure = {
         removeFailed: "Impossibile rimuovere il worktree.",
         pruneFailed: "Impossibile pulire i worktree obsoleti.",
       },
+      pullRequests: {
+        checkoutLocalTitle: "Checkout della pull request",
+        checkoutLocalSubtitle: "Incolla l'URL di una PR o merge request, un numero o un comando di checkout.",
+        openWorktreeTitle: "Apri pull request in un worktree",
+        openWorktreeSubtitle: "Prepara la pull request in un worktree separato e avvia una sessione lì.",
+        promptTitle: "Riferimento pull request",
+        promptBody: "Incolla l'URL di una pull request o merge request, un numero o un comando di checkout.",
+        promptPlaceholder: "https://github.com/owner/repo/pull/123",
+        invalidReferenceBody: "Inserisci un riferimento valido a una pull request o merge request.",
+        checkoutFailed: "Checkout della pull request non riuscito.",
+        worktreeFailed: "Preparazione del worktree della pull request non riuscita.",
+      },
+      indexLock: {
+        title: "Rimuovere il lock Git obsoleto?",
+        body: "Git ha segnalato un lock dell'indice. Se non è in esecuzione un altro comando Git, Happier può rimuovere il lock obsoleto e riprovare.",
+        confirm: "Rimuovi lock e riprova",
+        recoveryFailed: "Impossibile rimuovere il lock dell'indice Git.",
+      },
       stashOverwrite: {
         title: "Sovrascrivere lo stash del ramo?",
         body: ({ branch }: { branch: string }) =>
@@ -5437,6 +5605,8 @@ export const it: TranslationStructure = {
       `Modifiche attribuite alla sessione (${count})`,
     latestTurnChanges: ({ count }: { count: number }) =>
       `Modifiche dell'ultimo turno (${count})`,
+    selectedForCommitChanges: ({ count }: { count: number }) =>
+      `Selezionati per il commit (${count})`,
     latestTurnDescription:
       'Modifiche supportate dal provider per il turno completato più recente.',
     otherRepositoryChanges: ({ count }: { count: number }) =>
@@ -5456,6 +5626,15 @@ export const it: TranslationStructure = {
       "Nessuna modifica dell'ultimo turno rilevata.",
     notRepo: "Non è un repository di controllo versione",
     notUnderSourceControl: "Questa directory non è sotto controllo versione",
+    repositoryInit: {
+      initialize: "Inizializza repository",
+      initializing: "Inizializzazione…",
+      confirmTitle: "Inizializzare il repository?",
+      confirmBody: "Crea un repository Git in questa cartella. I file esistenti non verranno aggiunti allo stage né committati.",
+      errors: {
+        failed: "Impossibile inizializzare il repository.",
+      },
+    },
     searching: "Ricerca file...",
       noFilesFound: "Nessun file trovato",
       noFilesInProject: "Nessun file nel progetto",
@@ -5505,6 +5684,13 @@ export const it: TranslationStructure = {
           addCommentA11y: "Aggiungi commento",
           closeCommentA11y: "Chiudi commento",
           draftsChipLabel: ({ count }: { count: number }) => `Revisione (${count})`,
+          modalSubtitle: "Rivedi quali commenti verranno inviati con il prossimo messaggio.",
+          modalSummary: ({ included, count }: { included: number; count: number }) =>
+            `${included} di ${count} selezionati per il prossimo prompt`,
+          detachOrDiscardTitle: "Rimuovere i commenti di revisione?",
+          detachOrDiscardBody:
+            "Scollega li mantiene salvati ma li esclude dal prossimo prompt. Scarta li elimina.",
+          detachFromPrompt: "Scollega dal prompt",
             errors: {
               empty: "Il commento non può essere vuoto",
               couldNotMapSelection: "Impossibile associare la selezione a una riga del diff",
@@ -5538,6 +5724,17 @@ export const it: TranslationStructure = {
 	          generateFailed: "Impossibile generare il messaggio di commit",
 	          generatorDisabled: "Il generatore di messaggi di commit è disabilitato",
 	        },
+      commitAdjacentPush: {
+        accessibilityLabel: ({ target }: { target: string }) => `Push verso ${target}`,
+        confirm: {
+          title: "Inviare i commit locali?",
+          body: ({ target }: { target: string }) =>
+            `Invia i tuoi commit locali a ${target}.`,
+          push: "Sì",
+          notNow: "Non ora",
+          pushAndDontAskAgain: "Push e non chiedere più",
+        },
+      },
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Caricamento ${fileName}...`,
         binaryFile: "File binario",
@@ -5545,6 +5742,7 @@ export const it: TranslationStructure = {
         cannotDisplayBinary: "Impossibile mostrare il contenuto del file binario",
         diff: "Differenze",
       file: "Documento",
+      markdown: "Markdown",
     diffModes: {
       pending: "In sospeso",
       included: "Incluso",
@@ -5573,8 +5771,10 @@ export const it: TranslationStructure = {
       uploadFolder: "Carica cartella",
       allRepositoryFiles: "Tutti i file del repository",
       repositoryView: "Vista repository",
+      selectedForCommitView: "Selezionati per il commit",
       turnView: "Vista turno",
       sessionView: "Vista sessione",
+      view: "Vista",
       review: "Revisione",
       list: "Elenco",
       scm: "Git",
@@ -5659,6 +5859,120 @@ export const it: TranslationStructure = {
         commitBlocked: "Commit bloccato",
         pullBlocked: "Pull bloccato",
         pushBlocked: "Push bloccato",
+      },
+      update: {
+        remotes: {
+          title: "Remoti",
+          empty: "Nessun remoto configurato per questo repository.",
+          addTitle: "Aggiungi remoto",
+          editTitle: ({ name }: { name: string }) => `Modifica ${name}`,
+          add: "Aggiungi remoto",
+          remove: "Rimuovi",
+          nameLabel: "Nome remoto",
+          fetchUrlLabel: "URL di fetch",
+          pushUrlLabel: "URL di push",
+          namePlaceholder: "origin",
+          fetchUrlPlaceholder: "URL di fetch",
+          pushUrlPlaceholder: "URL di push (opzionale)",
+          noFetchUrl: "Nessun URL di fetch",
+          removeConfirmTitle: "Rimuovere il remoto?",
+          removeConfirmBody: ({ name }: { name: string }) =>
+            `Rimuovere ${name} da questo repository?`,
+          errors: {
+            nameRequired: "Inserisci un nome remoto.",
+            fetchUrlRequired: "Inserisci un URL di fetch.",
+            addFailed: "Impossibile aggiungere il remoto.",
+            saveFailed: "Impossibile aggiornare il remoto.",
+            removeFailed: "Impossibile rimuovere il remoto.",
+          },
+        },
+        publishRepository: {
+          title: "Pubblica su GitHub",
+          body: "Crea un repository GitHub e aggiungilo come origin.",
+          ownerLabel: "Proprietario",
+          repositoryNameLabel: "Nome repository",
+          repositoryNamePlaceholder: "nome-repository",
+          visibilityLabel: "Visibilità",
+          private: "Privato",
+          public: "Pubblico",
+          internal: "Interno",
+          remoteKindLabel: "URL remoto",
+          httpsRemote: "Remoto HTTPS",
+          sshRemote: "Remoto SSH",
+          originConflictLabel: "Origin esistente",
+          keepOrigin: "Non sostituire",
+          setOriginUrl: "Imposta URL di origin",
+          pushCurrentBranch: "Esegui push del branch attuale",
+          publish: "Pubblica repository",
+          publishing: "Pubblicazione…",
+          noTargets: "Connetti GitHub o accedi con gh CLI per pubblicare questo repository.",
+          errors: {
+            targetRequired: "Scegli un account o un'organizzazione GitHub.",
+            nameRequired: "Inserisci un nome repository.",
+            loadTargetsFailed: "Impossibile caricare le destinazioni di pubblicazione GitHub.",
+            publishFailed: "Impossibile pubblicare il repository.",
+          },
+        },
+        branchIntegration: {
+          title: "Merge e rebase",
+          sourceLabel: "Branch sorgente",
+          sourcePlaceholder: "Branch o riferimento remoto",
+          merge: "Unisci",
+          rebase: "Ribasa",
+          continue: "Continua",
+          abort: "Interrompi",
+          operationInProgress: ({ operation, source }: { operation: string; source: string }) =>
+            `${operation} in corso da ${source}`,
+          errors: {
+            sourceRequired: "Inserisci un branch o riferimento sorgente.",
+            mergeFailed: "Impossibile eseguire il merge del branch.",
+            rebaseFailed: "Impossibile eseguire il rebase del branch.",
+            continueFailed: "Impossibile continuare l’operazione.",
+            abortFailed: "Impossibile interrompere l’operazione.",
+          },
+        },
+        pullRequests: {
+          title: "Richiesta pull",
+          readyTitle: "Pronto per aprire una pull request",
+          view: "Apri PR",
+          openOrReuse: "Apri o riusa PR",
+          pushAndOpen: "Pubblica e apri PR",
+          createFeatureBranch: "Crea branch di funzionalità",
+          createFeatureBranchAndOpen: "Crea branch e apri PR",
+          featureBranchPromptTitle: "Nome branch di funzionalità",
+          featureBranchPromptBody: "Happier passerà a questo branch prima di continuare.",
+          defaultBranchRequiresFeature: "Crea un branch di funzionalità prima di aprire una pull request dal branch predefinito.",
+          defaultBranchDenied: "Non è possibile aprire pull request direttamente dal branch predefinito.",
+          states: {
+            ready: "Pronto",
+            open: "Aperta",
+            closed: "Chiusa",
+            merged: "Unita",
+          },
+          status: {
+            creating: "Apertura pull request…",
+            creatingFeatureBranch: "Creazione branch di funzionalità…",
+            creatingFeatureBranchPullRequest: "Creazione branch di funzionalità e apertura pull request…",
+            pushingAndCreating: "Pubblicazione branch e apertura pull request…",
+          },
+          unavailable: {
+            notRepositoryTitle: "Nessun repository rilevato",
+            notRepositoryBody: "Le azioni pull request appaiono quando questa sessione è collegata a un repository di controllo versione.",
+            unknownProviderTitle: "Nessun provider di hosting rilevato",
+            unknownProviderBody: "Aggiungi un remoto GitHub, GitLab o Bitbucket per abilitare le azioni pull request.",
+            noBranchTitle: "Nessun branch selezionato",
+            noBranchBody: "Passa a un branch prima di aprire una pull request.",
+            detachedHeadTitle: "HEAD scollegato",
+            detachedHeadBody: "Passa a un branch prima di aprire una pull request.",
+          },
+          errors: {
+            featureBranchRequired: "Crea un branch di funzionalità prima di aprire una pull request.",
+            openFailed: "Impossibile aprire la pull request.",
+            branchNameRequired: "Inserisci un nome di branch di funzionalità.",
+            createBranchFailed: "Impossibile creare il branch di funzionalità.",
+            stackedFailed: "Impossibile completare il flusso pull request.",
+          },
+        },
       },
     },
   },
@@ -5812,17 +6126,27 @@ export const it: TranslationStructure = {
     },
 
 settingsSession: {
-      sessionList: {
-          title: 'Elenco sessioni',
-          footer: 'Personalizza cosa appare in ogni riga della sessione.',
-          tagsTitle: 'Tag della sessione',
-          tagsEnabledSubtitle: "Controlli tag visibili nell'elenco sessioni",
-          tagsDisabledSubtitle: 'Controlli tag nascosti',
-      },
-      input: {
-          title: 'Aspetto dell\'immissione',
-          footer: "Configura l'aspetto della barra di input dell'agente.",
-      },
+	      sessionList: {
+	          title: 'Elenco sessioni',
+	          footer: 'Personalizza cosa appare in ogni riga della sessione.',
+	          tagsTitle: 'Tag della sessione',
+	          tagsEnabledSubtitle: "Controlli tag visibili nell'elenco sessioni",
+	          tagsDisabledSubtitle: 'Controlli tag nascosti',
+	      },
+	      mobileWorkspaceExperience: {
+	          title: 'Layout sessione mobile',
+	          subtitle: 'Scegli il layout per telefono usato nelle sessioni.',
+	          options: {
+	              cockpitTitle: 'Cruscotto',
+	              cockpitSubtitle: 'Usa schede in basso per chat, file, Git, schede e terminale.',
+	              classicTitle: 'Classico',
+	              classicSubtitle: 'Usa il layout sessione precedente.',
+	          },
+	      },
+	      input: {
+	          title: 'Aspetto dell\'immissione',
+	          footer: "Configura l'aspetto della barra di input dell'agente.",
+	      },
       inputBehavior: {
           title: 'Comportamento dell\'immissione',
           footer: 'Configura Invio con Enter e il comportamento della cronologia dei messaggi.',
@@ -5831,6 +6155,9 @@ settingsSession: {
       windows: {
           title: 'Windows',
           defaultModeTitle: 'Modalità remota predefinita di Windows',
+          windowNameTitle: 'Nome finestra di Windows Terminal',
+          windowNamePlaceholder: 'happier',
+          windowNameHint: 'Le sessioni aperte in Windows Terminal usano questa finestra con nome, così le nuove sessioni possono apparire come schede.',
       },
       advanced: {
           title: 'Avanzate',
@@ -5993,6 +6320,9 @@ settingsSession: {
             coalesceMaxBatchPromptTitle: "Dimensione massima batch",
             coalesceMaxBatchPromptBody:
               "Imposta un limite massimo di messaggi applicati in un singolo flush.",
+            streamingPartialOutputTitle: "Mostra output parziale in streaming",
+            streamingPartialOutputSubtitle:
+              "Se disattivato, i messaggi dell'assistente compaiono solo al completamento.",
             thinkingPulseStaleTitle: "Finestra di scadenza del pensiero",
             thinkingPulseStaleSubtitle: ({ value }: { value: string }) => `Attuale: ${value}ms`,
             thinkingPulseStalePromptTitle: "Finestra di scadenza del pensiero (ms)",
@@ -6108,6 +6438,15 @@ settingsSession: {
         openSubtitle: "Apri impostazioni sub-agent",
       },
       handoff: settingsSessionHandoffTranslationExtensions.it,
+      sessionCreation: {
+        title: "Scorciatoie nuova sessione",
+        footer: "Scegli come le scorciatoie di progetto precompilano la schermata della nuova sessione.",
+        rememberLastProjectSelectionsTitle: "Ricorda le ultime selezioni di sessione del progetto",
+        rememberLastProjectSelectionsEnabledSubtitle:
+          "Le scorciatoie di progetto riutilizzano macchina, cartella, motore, modello e opzioni della sessione più recente.",
+        rememberLastProjectSelectionsDisabledSubtitle:
+          "Le scorciatoie di progetto preselezionano solo macchina e cartella del progetto.",
+      },
       defaultPermissions: {
         title: "Permessi predefiniti",
         footer:
@@ -6193,7 +6532,7 @@ settingsSession: {
     hiddenSubtitle: "Avvia la sessione in background senza aprire una finestra del terminale.",
     windowsTerminal: "Windows Terminal",
     shortWindowsTerminal: "WT",
-    windowsTerminalSubtitle: "Apri la sessione in una finestra dedicata di Windows Terminal.",
+    windowsTerminalSubtitle: "Apri la sessione come scheda nella finestra condivisa di Windows Terminal.",
     console: "Console",
     shortConsole: "Console",
     consoleSubtitle: "Apri la sessione in una finestra standard della console di Windows.",
@@ -7609,7 +7948,6 @@ settingsSession: {
     sessionRunningLocallyAndRemotely:
       "Questa sessione è collegata localmente in OpenCode ed è ancora controllabile dall’app.",
     switchingToRemote: "Passaggio alla modalità remota…",
-    switchToLocal: "Passa a locale",
     switchToRemote: "Passa a remoto",
     detachLocalTerminal: "Scollega terminale",
     directSessionTakeoverAvailable:
@@ -7812,6 +8150,10 @@ settingsSession: {
     usageOverTime: "Utilizzo nel tempo",
     byModel: "Per modello",
     noData: "Nessun dato di utilizzo disponibile",
+    errors: {
+      notAuthenticated: "Accedi per visualizzare l'utilizzo.",
+      failedToLoad: "Impossibile caricare l'utilizzo.",
+    },
   },
 
   secrets: {

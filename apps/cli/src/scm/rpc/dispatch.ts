@@ -6,10 +6,10 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { resolveFilesystemPolicyDefaultDirectory } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { defaultScmBackendRegistry } from '@/scm/defaultRegistry';
 import type { ScmBackendRegistry } from '@/scm/registry';
-import type { ScmBackendSelection } from '@/scm/registry';
+import type { ScmBackendSelection, ScmProvisioningBackendSelection } from '@/scm/registry';
 import { resolveScmSelection } from '@/scm/resolveScmSelection';
 import { createNonRepositorySnapshot, resolveCwd, resolveTildePath, type ScmFilesystemAccessPolicy } from '@/scm/runtime';
-import type { ScmBackendContext } from '@/scm/types';
+import type { ScmBackendContext, ScmConnectedAccountCredentialResolver } from '@/scm/types';
 
 type ScmRequestBase = {
     cwd?: string;
@@ -64,6 +64,7 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
     request: TRequest;
     workingDirectory: string;
     accessPolicy?: ScmFilesystemAccessPolicy;
+    connectedAccounts?: ScmConnectedAccountCredentialResolver;
     onNonRepository: (args: { cwd: string; workingDirectory: string }) => Promise<TResponse> | TResponse;
     runWithBackend: (args: {
         context: ScmBackendContext;
@@ -87,6 +88,7 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
             cwd: cwdResult.cwd,
             backendPreference: input.request.backendPreference,
             registry: input.registry ?? defaultScmBackendRegistry,
+            connectedAccounts: input.connectedAccounts,
         });
         if (!resolved) {
             return await input.onNonRepository({
@@ -108,6 +110,54 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
             context: resolved.context,
             selection: resolved.selection,
         });
+    } catch (error) {
+        return fallbackError<TResponse>(error);
+    }
+}
+
+export async function runScmProvisioningRoute<TRequest extends ScmRequestBase, TResponse extends ScmErrorResponse>(input: {
+    request: TRequest;
+    workingDirectory: string;
+    accessPolicy?: ScmFilesystemAccessPolicy;
+    connectedAccounts?: ScmConnectedAccountCredentialResolver;
+    runWithBackend: (args: {
+        context: ScmBackendContext;
+        selection: ScmProvisioningBackendSelection;
+    }) => Promise<TResponse>;
+    registry?: ScmBackendRegistry;
+}): Promise<TResponse> {
+    try {
+        const accessPolicy = input.accessPolicy ?? { kind: 'osUser' };
+        const normalizedWorkingDirectory = resolveFilesystemPolicyDefaultDirectory({
+            defaultDirectory: resolveTildePath(input.workingDirectory),
+            accessPolicy,
+        });
+        const cwdResult = resolveCwd(input.request.cwd, normalizedWorkingDirectory, accessPolicy);
+        if (!cwdResult.ok) {
+            return invalidPathResponse<TResponse>(cwdResult.error);
+        }
+
+        const registry = input.registry ?? defaultScmBackendRegistry;
+        const selection = await registry.selectProvisioningBackend({
+            workingDirectory: normalizedWorkingDirectory,
+            cwd: cwdResult.cwd,
+            backendPreference: input.request.backendPreference,
+        });
+        if (!selection) {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+                error: 'No source-control backend is available for repository provisioning.',
+            } as TResponse;
+        }
+
+        const context: ScmBackendContext = {
+            cwd: cwdResult.cwd,
+            projectKey: `${resolve(resolveTildePath(normalizedWorkingDirectory))}:${cwdResult.cwd}`,
+            detection: selection.detection,
+            ...(input.connectedAccounts ? { connectedAccounts: input.connectedAccounts } : {}),
+        };
+        return await input.runWithBackend({ context, selection });
     } catch (error) {
         return fallbackError<TResponse>(error);
     }

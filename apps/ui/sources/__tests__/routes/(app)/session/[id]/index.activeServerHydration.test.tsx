@@ -51,6 +51,15 @@ vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
     parseSessionPaneUrlState: () => null,
 }));
 
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+    useAppPaneScope: () => ({
+        scopeState: {
+            right: { activeTabId: null },
+            details: { tabs: [] },
+        },
+    }),
+}));
+
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string, tag: string) => hydrateSpy(sessionId, tag),
 }));

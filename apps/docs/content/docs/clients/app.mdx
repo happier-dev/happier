@@ -15,6 +15,7 @@ The app can use Happier Cloud, or you can add one or more custom self-hosted Rel
 - Credentials are stored **per Relay**, so a hosted account and a self-hosted account won’t overwrite each other.
 - On different Relays, accounts are independent even if you use the same login provider.
 - On web, you can switch the Relay **for this tab** or **make it the device default**.
+- Web tabs that use the same browser profile and origin share the same browser storage substrate. Happier separates local records by Relay and account inside that storage, but separate browser profiles are the isolation boundary when you need fully separate local storage.
 
 ### Configure-server links (1-click)
 
@@ -50,6 +51,23 @@ Happier supports push notifications for:
 On iOS and Android, permission/action-request notifications can also expose action buttons and route you back into the correct session, including multi-server flows.
 
 See [Notifications](./notifications) for setup/self-hosting notes and [Notification routing](/docs/features/notifications-routing) for the exact in-app behavior.
+
+## Session read and unread state
+
+The app shows unread state for sessions with committed transcript activity after your last viewed position.
+
+You can manually change that state from:
+
+- the session row **...** menu
+- the row long-press/context menu on mobile
+- the session header action menu
+- the Session info quick actions
+
+Use **Mark as unread** to keep a session in your attention list after you have opened it. Use **Mark as read** to clear unread attention for a session.
+
+If you mark the session unread while you are already inside it, Happier keeps it unread for that current view instead of immediately marking it read again. Closing and reopening the session is treated as a new viewing intent, so the session can become read again when it is visible and focused.
+
+Full guide: [Session read and unread state](/docs/features/session-read-state).
 
 ## Embedded terminal
 
@@ -87,6 +105,20 @@ Provider settings can also open machine-local CLI login flows directly inside th
 
 Full guide: [Provider authentication](/docs/features/provider-authentication).
 
+## Engine and model picker
+
+When starting a new session, the app's engine picker lets you choose the backend that should run the session and, when supported, the model that backend should use.
+
+The picker supports:
+
+- built-in providers and configured Custom ACP backends
+- live model lists from providers that can report them
+- static model lists for providers such as Claude
+- custom model ids where the provider supports freeform model selection
+- favorite model shortcuts in the new-session engine picker
+
+Full guide: [Model and engine selection](/docs/features/model-and-engine-selection).
+
 ## Machine installables
 
 Each connected machine has an **Installables** screen in **Machine details**.
@@ -111,20 +143,39 @@ The app includes a repository-aware workspace UI directly inside sessions.
 
 On larger layouts, this is split across:
 
-- a **right sidebar** for **Files** and **Source control**
+- a **right sidebar** for **Files** and **Git**
 - a **details pane** for file previews, editors, review tabs, historical commit diffs, and stash details
 
-On smaller layouts, the same workflows are shown as focused full-screen screens instead of permanent docked panels.
+On phone-sized layouts, the same workflows are shown through the **session cockpit** by default. The bottom session tab bar lets you switch between the agent chat, Files, Git, open details tabs, and Terminal when a terminal tab is available.
 
 ### What this gives you
 
 - browse and search the current workspace
 - open files into preview or edit tabs
 - review uncommitted diffs without leaving the session
+- leave line-specific review comments and send selected comments to the agent
+- open workspace file links from transcript messages
 - inspect commit history
 - switch between review and editing while keeping your place
 
 Full guide: [Git & Files](/docs/features/git).
+Review comments guide: [Review comments](/docs/features/review-comments).
+
+### Mobile session cockpit
+
+The cockpit is the default phone layout for sessions.
+
+The bottom session tab bar can include:
+
+- the current agent tab, named after the backend such as **Claude**, **Codex**, or **OpenCode**
+- **Files**
+- **Git**
+- **Tabs** for file previews, editors, Review, commit/stash details, and other detail surfaces
+- **Terminal** when the embedded terminal is enabled and available for that session
+
+Switching cockpit tabs is treated as changing workspace surfaces, not as drilling deeper into browser/native history. Opening a file, Review, a commit, or a transcript file link opens the **Tabs** surface as a detail, so back can return to the list you came from.
+
+You can switch back to the legacy phone layout from **Settings → Session → Mobile session layout → Classic**.
 
 ### Persistent tab/workspace state
 
@@ -142,8 +193,47 @@ When you need more room for a diff or file editor, the details surface can switc
 This is useful for:
 
 - reviewing large diffs
-- editing while keeping Source control open
+- editing while keeping Git open
 - working on a smaller laptop/browser window
+
+## Session composer
+
+The session composer is where you write the next prompt, add context, and choose how the next turn should be sent.
+
+It supports:
+
+- plain text prompts and longer multi-line instructions
+- message attachments from your device
+- linked project files from the current workspace
+- included review-comment drafts when review comments are available
+- provider, permission, model, profile, machine, path, and resume controls when those options apply to the current session
+
+The composer adapts to the available width. On roomy layouts, common controls can stay visible as chips near the text box. On narrower layouts, chip rows can scroll horizontally or collapse less-used actions into the action menu so the text box remains usable.
+
+### Keyboard behavior
+
+By default, Enter inserts a new line and the send button sends the message.
+
+If you enable **Enter to Send** in [Session settings](/docs/features/session-settings), Enter sends the current message when the composer has sendable content. On web, Shift+Enter inserts a new line. On iOS and iPadOS with a physical keyboard, Shift+Enter also continues to insert a new line while Enter sends.
+
+This lets you choose between a chat-style flow and a writing flow:
+
+- use **Enter to Send** for short back-and-forth prompts
+- leave it off when you often write paragraphs, code blocks, logs, or step-by-step instructions
+
+Messages can be sent with text, attachments, linked files, or included review comments. If the composer is empty or the current send action is disabled, pressing Enter does not send anything.
+
+### Composer actions
+
+Use the composer action chips to add context before sending:
+
+- **Attachments** add files from your device, such as screenshots, logs, PDFs, and exported artifacts
+- **Link file** references files that already exist in the current workspace
+- **Review comments** includes selected review-comment drafts for the current workspace when that feature is available
+
+Attachments and linked files solve different problems. Attachments bring external files into the session environment. Linked files point the agent at project files that are already in the workspace.
+
+Review comments solve a more precise workflow: they attach your own line-specific instructions to file or diff lines, then send the selected comments with snippets and line anchors.
 
 ## Linking project files into a prompt
 
@@ -185,6 +275,7 @@ Current user-facing behavior:
 - sent image attachments render inline in the transcript
 - clicking a sent transcript image opens the same preview modal
 - per-file upload progress is shown while files are uploading
+- if **Enter to Send** is enabled, Enter can send an attachment-only message once the attachments are ready
 
 Full guide: [Attachments & image previews](/docs/features/attachments).
 

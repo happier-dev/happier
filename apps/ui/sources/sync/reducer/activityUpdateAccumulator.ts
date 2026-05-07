@@ -1,7 +1,16 @@
 import type { ApiEphemeralActivityUpdate } from '../api/types/apiTypes';
 
+type ActivityUpdateAccumulatorOptions = Readonly<{
+    shouldContinue?: () => boolean;
+}>;
+
+type PendingActivityUpdate = Readonly<{
+    update: ApiEphemeralActivityUpdate;
+    shouldContinue: () => boolean;
+}>;
+
 export class ActivityUpdateAccumulator {
-    private pendingUpdates = new Map<string, ApiEphemeralActivityUpdate>();
+    private pendingUpdates = new Map<string, PendingActivityUpdate>();
     private lastEmittedStates = new Map<string, { active: boolean; thinking: boolean; activeAt: number }>();
     private timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -10,10 +19,14 @@ export class ActivityUpdateAccumulator {
         private debounceDelay: number = 500
     ) {}
 
-    addUpdate(update: ApiEphemeralActivityUpdate): void {
+    addUpdate(update: ApiEphemeralActivityUpdate, options?: ActivityUpdateAccumulatorOptions): void {
         const sessionId = update.id;
         const lastState = this.lastEmittedStates.get(sessionId);
         const thinking = update.thinking ?? false;
+        const pendingUpdate: PendingActivityUpdate = {
+            update,
+            shouldContinue: options?.shouldContinue ?? (() => true),
+        };
 
         // Check if this is a critical timestamp update (more than half of disconnect timeout old)
         const timeSinceLastUpdate = lastState ? update.activeAt - lastState.activeAt : 0;
@@ -33,13 +46,13 @@ export class ActivityUpdateAccumulator {
             }
 
             // Add the immediate update to pending updates
-            this.pendingUpdates.set(sessionId, update);
+            this.pendingUpdates.set(sessionId, pendingUpdate);
 
             // Flush all pending updates together (batched)
             this.flushPendingUpdates();
         } else {
             // Accumulate for debounced emission (only timestamp updates)
-            this.pendingUpdates.set(sessionId, update);
+            this.pendingUpdates.set(sessionId, pendingUpdate);
 
             // Only start a new timer if one isn't already running
             if (!this.timeoutId) {
@@ -54,11 +67,17 @@ export class ActivityUpdateAccumulator {
 
     private flushPendingUpdates(): void {
         if (this.pendingUpdates.size > 0) {
-            // Create a copy of the pending updates
-            const updatesToFlush = new Map(this.pendingUpdates);
+            const updatesToFlush = new Map<string, ApiEphemeralActivityUpdate>();
+            for (const [sessionId, pending] of this.pendingUpdates) {
+                if (pending.shouldContinue()) {
+                    updatesToFlush.set(sessionId, pending.update);
+                }
+            }
             
             // Emit all updates in a single batch
-            this.flushHandler(updatesToFlush);
+            if (updatesToFlush.size > 0) {
+                this.flushHandler(updatesToFlush);
+            }
             
             // Update last emitted states for all flushed updates
             for (const [sessionId, update] of updatesToFlush) {

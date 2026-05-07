@@ -6,6 +6,7 @@ export type ConnectedServiceDisplayNameKey =
     | 'connectedServices.serviceNames.openai'
     | 'connectedServices.serviceNames.anthropic'
     | 'connectedServices.serviceNames.gemini'
+    | 'connectedServices.serviceNames.github'
     | 'connectedServices.fallbackName';
 
 export function resolveConnectedServiceDisplayNameKey(serviceId: ConnectedServiceId): ConnectedServiceDisplayNameKey {
@@ -20,6 +21,8 @@ export function resolveConnectedServiceDisplayNameKey(serviceId: ConnectedServic
             return 'connectedServices.serviceNames.anthropic';
         case 'gemini':
             return 'connectedServices.serviceNames.gemini';
+        case 'github':
+            return 'connectedServices.serviceNames.github';
         default:
             return 'connectedServices.fallbackName';
     }

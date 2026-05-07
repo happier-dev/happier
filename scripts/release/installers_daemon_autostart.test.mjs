@@ -81,7 +81,7 @@ echo Linux
   // Build two tarballs to simulate a rolling release tag that contains multiple versions.
   // The installer should select a consistent set of assets (tarball + matching checksums/sig),
   // not mix checksums from a newer version with a tarball from an older one.
-  const artifactVersions = ['1.2.3', '1.2.4'];
+  const artifactVersions = ['1.2.3', '1.2.4', '1.2.3-preview.1', '1.2.4-preview.1'];
   const artifacts = [];
   for (const version of artifactVersions) {
     const artifactStem = `happier-v${version}-linux-x64`;
@@ -327,9 +327,11 @@ exit 0
 
   // Stub curl: return release JSON (no -o), or copy fixture files to -o destinations.
   const curlStubPath = join(binDir, 'curl');
-  const [artifactV123, artifactV124] = artifacts;
+  const [artifactV123, artifactV124, artifactPreviewV123, artifactPreviewV124] = artifacts;
   assert.equal(artifactV123.version, '1.2.3');
   assert.equal(artifactV124.version, '1.2.4');
+  assert.equal(artifactPreviewV123.version, '1.2.3-preview.1');
+  assert.equal(artifactPreviewV124.version, '1.2.4-preview.1');
   const releaseJson = `{
   "name": "CLI Preview",
   "assets": [
@@ -356,6 +358,30 @@ exit 0
     {
       "name": "${artifactV124.artifactName}",
       "browser_download_url": "https://example.test/${artifactV124.artifactName}"
+    },
+    {
+      "name": "${artifactPreviewV123.checksumsName}",
+      "browser_download_url": "https://example.test/${artifactPreviewV123.checksumsName}"
+    },
+    {
+      "name": "${artifactPreviewV123.sigName}",
+      "browser_download_url": "https://example.test/${artifactPreviewV123.sigName}"
+    },
+    {
+      "name": "${artifactPreviewV124.checksumsName}",
+      "browser_download_url": "https://example.test/${artifactPreviewV124.checksumsName}"
+    },
+    {
+      "name": "${artifactPreviewV124.sigName}",
+      "browser_download_url": "https://example.test/${artifactPreviewV124.sigName}"
+    },
+    {
+      "name": "${artifactPreviewV123.artifactName}",
+      "browser_download_url": "https://example.test/${artifactPreviewV123.artifactName}"
+    },
+    {
+      "name": "${artifactPreviewV124.artifactName}",
+      "browser_download_url": "https://example.test/${artifactPreviewV124.artifactName}"
     }
   ]
 }`;
@@ -386,10 +412,16 @@ if [[ -n "$out" ]]; then
   case "$url" in
     *${artifactV123.artifactName}) cp ${JSON.stringify(artifactV123.tarPath)} "$out" ;;
     *${artifactV124.artifactName}) cp ${JSON.stringify(artifactV124.tarPath)} "$out" ;;
+    *${artifactPreviewV123.artifactName}) cp ${JSON.stringify(artifactPreviewV123.tarPath)} "$out" ;;
+    *${artifactPreviewV124.artifactName}) cp ${JSON.stringify(artifactPreviewV124.tarPath)} "$out" ;;
     *${artifactV123.checksumsName}) cp ${JSON.stringify(artifactV123.checksumsPath)} "$out" ;;
     *${artifactV124.checksumsName}) cp ${JSON.stringify(artifactV124.checksumsPath)} "$out" ;;
+    *${artifactPreviewV123.checksumsName}) cp ${JSON.stringify(artifactPreviewV123.checksumsPath)} "$out" ;;
+    *${artifactPreviewV124.checksumsName}) cp ${JSON.stringify(artifactPreviewV124.checksumsPath)} "$out" ;;
     *${artifactV123.sigName}) cp ${JSON.stringify(artifactV123.sigPath)} "$out" ;;
     *${artifactV124.sigName}) cp ${JSON.stringify(artifactV124.sigPath)} "$out" ;;
+    *${artifactPreviewV123.sigName}) cp ${JSON.stringify(artifactPreviewV123.sigPath)} "$out" ;;
+    *${artifactPreviewV124.sigName}) cp ${JSON.stringify(artifactPreviewV124.sigPath)} "$out" ;;
     *) : > "$out" ;;
   esac
   exit 0
@@ -437,6 +469,7 @@ printf '%s' '${releaseJson}'
   };
 
   const requestedChannel = String(env.HAPPIER_CHANNEL || 'stable').trim().toLowerCase();
+  const expectedInstalledVersion = requestedChannel === 'preview' ? '1.2.4-preview.1' : '1.2.4';
   const installedManagedRoot =
     requestedChannel === 'preview'
       ? 'cli-preview'
@@ -465,12 +498,15 @@ printf '%s' '${releaseJson}'
   ]);
   const versionRes = spawnSync(installedInvoker, ['--version'], { env, encoding: 'utf8' });
   assert.equal(versionRes.status, 0, `installed binary failed: ${String(versionRes.stderr ?? '')}`);
-  assert.match(String(versionRes.stdout ?? ''), /1\.2\.4/);
+  assert.match(String(versionRes.stdout ?? ''), new RegExp(expectedInstalledVersion.replaceAll('.', '[.]')));
   assert.equal(
     await readFile(join(installDir, installedManagedRoot, 'current', 'package-dist', 'index.mjs'), 'utf8'),
-    'export default "1.2.4";\n',
+    `export default ${JSON.stringify(expectedInstalledVersion)};\n`,
   );
-  assert.match(await readFile(join(installDir, installedManagedRoot, 'current', 'happier'), 'utf8'), /1\.2\.4/);
+  assert.match(
+    await readFile(join(installDir, installedManagedRoot, 'current', 'happier'), 'utf8'),
+    new RegExp(expectedInstalledVersion.replaceAll('.', '[.]')),
+  );
 
   return {
     log,
@@ -841,8 +877,8 @@ test('install.sh falls back to service list JSON when doctor repair --json retur
     }),
   });
   try {
-    assert.doesNotMatch(scenario.log, /doctor repair 1\.2\.4 args=doctor repair --yes/);
-    assert.match(scenario.log, /service install 1\.2\.4 args=service install --yes/);
+    assert.doesNotMatch(scenario.log, /doctor repair 1\.2\.4-preview\.1 args=doctor repair --yes/);
+    assert.match(scenario.log, /service install 1\.2\.4-preview\.1 args=service install --yes/);
   } finally {
     await scenario.cleanup();
   }
@@ -1096,10 +1132,10 @@ test('install.sh preserves existing preview background services during nonintera
     HAPPIER_TEST_SERVICE_STATUS_TEXT: 'current owner: background service',
   });
   try {
-    assert.match(scenario.log, /doctor repair 1\.2\.4 args=doctor repair --yes home=.*\/install/);
-    assert.match(scenario.log, /service install 1\.2\.4 args=service install --yes home=.*\/install/);
+    assert.match(scenario.log, /doctor repair 1\.2\.4-preview\.1 args=doctor repair --yes home=.*\/install/);
+    assert.match(scenario.log, /service install 1\.2\.4-preview\.1 args=service install --yes home=.*\/install/);
     assert.ok(
-      scenario.log.indexOf('doctor repair 1.2.4') < scenario.log.indexOf('service install 1.2.4'),
+      scenario.log.indexOf('doctor repair 1.2.4-preview.1') < scenario.log.indexOf('service install 1.2.4-preview.1'),
       'expected existing preview background services to be reconciled before install',
     );
     assert.doesNotMatch(scenario.stdout, /Keeping existing background services unchanged\./);

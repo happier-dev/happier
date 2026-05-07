@@ -29,8 +29,11 @@ Happier models different credential types as distinct connected services:
 - `claude-subscription`: Claude subscription auth
 - `anthropic`: Anthropic API key auth
 - `gemini`: Gemini OAuth auth
+- `github`: GitHub token auth for source-control workflows
 
 This split is intentional. Subscription auth and API-key auth have different provider behavior, billing paths, and backend materialization requirements, so Happier does not merge them into a single generic "Claude" or "OpenAI" credential type.
+
+GitHub is the first connected service that is not an agent/backend credential. It is used by source-control features such as GitHub repository publishing and GitHub pull request operations.
 
 ## Where you manage them
 
@@ -104,6 +107,28 @@ Supported methods:
 - paste redirect URL
 - in-app browser on native only
 
+### GitHub
+
+Supported methods:
+
+- token / Personal Access Token entry
+- local GitHub CLI auth outside Connected services
+
+A connected GitHub token lets Happier use GitHub REST APIs for:
+
+- publishing a local repository to GitHub
+- listing and opening pull requests for the current branch
+- creating or reusing pull requests
+
+The local `gh` CLI is not stored as a connected service. If `gh` is already installed and authenticated with `gh auth login`, Happier can use it as an optional fallback for GitHub source-control workflows.
+
+Current GitHub OAuth note:
+
+- GitHub OAuth/device flow is not enabled in this build.
+- Use a GitHub token in Connected services, or authenticate the local `gh` CLI.
+
+GitLab is not currently a connected service in Happier. GitLab merge-request workflows use an authenticated local `glab` CLI when available, or a no-auth compare URL fallback.
+
 ### Why web behaves differently
 
 Happier does not use embedded OAuth capture on web. Web falls back to paste-based flows because a browser app cannot reliably auto-capture provider redirects to `localhost`.
@@ -125,6 +150,18 @@ Important limitations:
 - OpenCode does not currently accept `claude-subscription`.
 - Pi accepts `claude-subscription` only when the profile is a setup-token profile, not a Claude OAuth profile.
 - `anthropic` is API-key only in Happier.
+- `github` is not consumed by agent backends. It is consumed by source-control workflows.
+
+## Source-control compatibility
+
+| Source-control workflow | Preferred credential | Fallback |
+| --- | --- | --- |
+| Publish repository to GitHub | Connected `github` token | Authenticated `gh` CLI |
+| GitHub pull requests | Connected `github` token | Authenticated `gh` CLI, then compare URL |
+| GitLab merge requests | Not a connected service today | Authenticated `glab` CLI, then compare URL |
+| Bitbucket pull requests | Not a connected service today | Compare URL only |
+
+This means a user who already has `gh` installed and authenticated can use GitHub PR/publish features without connecting GitHub in Happier first. Connecting GitHub is still the preferred cross-machine path because the credential can be reused by the daemon on the target machine.
 
 ## Using connected services in the new-session flow
 
@@ -202,6 +239,8 @@ Current quota snapshots are available for:
 - `claude-subscription`
 - `gemini`
 
+GitHub connected accounts do not currently expose quota meters in Happier.
+
 They appear in:
 
 - the Connected services list as badges on the effective profile
@@ -227,6 +266,8 @@ Instead:
 5. the client decrypts the bundle locally and stores the resulting credential record
 
 This keeps provider secrets, including server-side OAuth client secrets, out of the UI bundle.
+
+Token-based services, including GitHub token profiles, are stored as connected-service credentials and decrypted only where the client/daemon needs to use them. They do not require Happier to run a GitHub OAuth application in the current build.
 
 When a session starts, the daemon decrypts the selected records locally and materializes only the backend-specific auth it needs for that spawn.
 

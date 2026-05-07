@@ -1,5 +1,5 @@
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './serverUrlCanonical';
-import { getActiveServerUrl } from '../serverProfiles';
+import { getActiveServerUrl, getTabActiveServerId } from '../serverProfiles';
 import { upsertAndActivateServer } from '../serverRuntime';
 
 export type WebServerUrlOverride = Readonly<{ serverUrl: string; cleanedRelativeUrl: string }>;
@@ -13,12 +13,34 @@ function normalizeServerUrl(raw: string): string | null {
     return normalized ? normalized : null;
 }
 
+function normalizePathname(raw: string): string {
+    const pathname = String(raw ?? '').trim() || '/';
+    const withSlash = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    return withSlash.length > 1 ? withSlash.replace(/\/+$/, '') : withSlash;
+}
+
+function isRouteOwnedServerParam(pathname: string): boolean {
+    const normalized = normalizePathname(pathname);
+    return normalized === '/terminal' || normalized === '/terminal/connect';
+}
+
+function replaceCurrentWebLocation(relativeUrl: string): void {
+    if (!isWebRuntime()) return;
+    try {
+        window.history.replaceState(null, '', relativeUrl);
+    } catch {
+        // ignore
+    }
+}
+
 export function readWebServerUrlOverrideFromLocation(): WebServerUrlOverride | null {
     if (!isWebRuntime()) return null;
     if (typeof window.location?.href !== 'string') return null;
 
     try {
         const current = new URL(window.location.href);
+        if (isRouteOwnedServerParam(current.pathname)) return null;
+
         const rawServer = (current.searchParams.get('server') ?? '').trim();
         const rawLegacyUrl = (current.searchParams.get('url') ?? '').trim();
         const rawLegacyAuto = (current.searchParams.get('auto') ?? '').trim().toLowerCase();
@@ -30,6 +52,7 @@ export function readWebServerUrlOverrideFromLocation(): WebServerUrlOverride | n
         current.searchParams.delete('server');
         current.searchParams.delete('url');
         current.searchParams.delete('auto');
+        current.searchParams.delete('serverId');
         const search = current.searchParams.toString();
         const cleanedRelativeUrl = `${current.pathname}${search ? `?${search}` : ''}${current.hash ?? ''}`;
         return { serverUrl, cleanedRelativeUrl };
@@ -50,7 +73,7 @@ export function bootstrapActiveServerFromWebLocation(
     const current = normalizeServerUrl(getActiveServerUrl() ?? '');
     const currentKey = createServerUrlComparableKey(current ?? '');
     const desiredKey = createServerUrlComparableKey(desired);
-    if (!currentKey || !desiredKey || currentKey !== desiredKey) {
+    if (!currentKey || !desiredKey || currentKey !== desiredKey || getTabActiveServerId()) {
         try {
             upsertAndActivateServer({
                 serverUrl: desired,
@@ -62,5 +85,6 @@ export function bootstrapActiveServerFromWebLocation(
         }
     }
 
+    replaceCurrentWebLocation(override.cleanedRelativeUrl);
     return { serverUrl: desired, cleanedRelativeUrl: override.cleanedRelativeUrl };
 }

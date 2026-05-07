@@ -19,6 +19,7 @@ export type FilesystemBrowserWrapContentInput = Readonly<{
 export type FilesystemBrowserListProps = Readonly<{
     nodes: readonly FilesystemBrowserNode[];
     rootLoading: boolean;
+    showInlineLoadingHeader?: boolean;
     rootError: string | null;
     loadingLabel: string;
     inlineRetryLabel: string;

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { resetScopedMachineDataKeyCacheForTests } from './serverScopedRpcPool';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 const machineRpcSpy = vi.hoisted(() => vi.fn());
 const createEphemeralSocketSpy = vi.hoisted(() => vi.fn());
@@ -38,6 +39,10 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: (...args: unknown[]) => getActiveServerSnapshotSpy(...args),
 }));
 
+function findTelemetryEvent(name: string) {
+    return syncPerformanceTelemetry.snapshot().events.find((event) => event.name === name);
+}
+
 describe('machineRpcWithServerScope', () => {
     afterEach(() => {
         machineRpcSpy.mockReset();
@@ -48,6 +53,8 @@ describe('machineRpcWithServerScope', () => {
         getActiveServerSnapshotSpy.mockReset();
         vi.unstubAllGlobals();
         resetScopedMachineDataKeyCacheForTests();
+        syncPerformanceTelemetry.configure({ enabled: false });
+        syncPerformanceTelemetry.reset();
     });
 
     it('delegates to apiSocket.machineRPC when target server is omitted', async () => {
@@ -84,6 +91,13 @@ describe('machineRpcWithServerScope', () => {
     });
 
     it('routes RPC through a scoped socket when target server differs from active server', async () => {
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 1_000_000,
+        });
+        syncPerformanceTelemetry.reset();
+
         getActiveServerSnapshotSpy.mockReturnValue({
             serverId: 'server-a',
             serverUrl: 'https://server-a.example.test',
@@ -137,6 +151,10 @@ describe('machineRpcWithServerScope', () => {
         }));
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ value: 2 });
         expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
+        expect(findTelemetryEvent('sync.encryption.machine.encryptRaw.scopedRpc.other')).toMatchObject({
+            count: 1,
+            fields: { items: 1 },
+        });
         expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CALL, {
             method: 'machine-1:method-test',
             params: 'encrypted-payload',
@@ -204,6 +222,13 @@ describe('machineRpcWithServerScope', () => {
     });
 
     it('falls back to a scoped socket on the active server when the active machine rpc reports method not available', async () => {
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 1_000_000,
+        });
+        syncPerformanceTelemetry.reset();
+
         getActiveServerSnapshotSpy.mockReturnValue({
             serverId: 'server-a',
             serverUrl: 'https://server-a.example.test',
@@ -254,6 +279,10 @@ describe('machineRpcWithServerScope', () => {
         }));
         expect(machineEncryption.encryptRaw).toHaveBeenCalledWith({ directory: '/tmp/repo' });
         expect(machineEncryption.decryptRaw).toHaveBeenCalledWith('encrypted-result');
+        expect(findTelemetryEvent('sync.encryption.machine.encryptRaw.scopedRpc.sessionWrite')).toMatchObject({
+            count: 1,
+            fields: { items: 1 },
+        });
         expect(fakeSocket.disconnect).toHaveBeenCalledTimes(1);
     });
 

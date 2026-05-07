@@ -44,6 +44,12 @@ const modalMockState = vi.hoisted(() => ({
 const settingsState = vi.hoisted(() => ({
     current: { experiments: true, featureToggles: {}, codexBackendMode: 'acp' } as Record<string, unknown>,
 }));
+const sessionMetadataOverrides = vi.hoisted(() => ({
+    current: {} as Record<string, unknown>,
+}));
+const machineEncryptionAvailable = vi.hoisted(() => ({
+    current: false,
+}));
 const resolveSessionComposerSendMock = vi.hoisted(() =>
     vi.fn((...args: any[]) => {
         const first = args[0] as { input?: unknown } | undefined;
@@ -195,6 +201,7 @@ installSessionShellCommonModuleMocks({
                 path: '/tmp/target',
                 homeDir: '/tmp',
                 codexSessionId: 'codex-session-1',
+                ...sessionMetadataOverrides.current,
             },
             agentState: {},
         };
@@ -359,7 +366,7 @@ vi.mock('@/sync/sync', () => ({
         enqueuePendingMessage: (...args: any[]) => enqueuePendingMessageSpy(...args),
         submitMessage: async () => {},
         encryption: {
-            getMachineEncryption: () => null,
+            getMachineEncryption: () => (machineEncryptionAvailable.current ? { keyId: 'machine-key' } : null),
         },
     },
 }));
@@ -438,10 +445,10 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         <AppPaneProvider>{children ?? null}</AppPaneProvider>
     );
 
-    async function renderSessionView() {
+    async function renderSessionView(props: { routeServerId?: string } = {}) {
         const { SessionView } = await import('./SessionView');
         return renderScreen(
-            <SessionView id="s1" />,
+            <SessionView id="s1" routeServerId={props.routeServerId} />,
             {
                 wrapper: AppPaneProviderWrapper,
             },
@@ -460,6 +467,8 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         resumeCapabilityServerIds.length = 0;
         cliDetectionServerIds.length = 0;
         settingsState.current = { experiments: true, featureToggles: {}, codexBackendMode: 'acp' };
+        sessionMetadataOverrides.current = {};
+        machineEncryptionAvailable.current = false;
         canResumeSessionWithOptionsSpy.mockReset();
         canResumeSessionWithOptionsSpy.mockImplementation(
             (_metadata: unknown, options: { machineId?: string | null } | null | undefined) => options?.machineId === 'm-target',
@@ -522,6 +531,41 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         );
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
         expect(findAgentInput(screen).props.value).toBe('');
+        expect(screen.findByTestId('session-pendingQueue-resumeFailed')).toBeTruthy();
+
+        await screen.unmount();
+    });
+
+    it('wakes a server-pending inactive session through the cached owning server when the route server id is stale', async () => {
+        sessionMetadataOverrides.current = { version: '0.1.0' };
+        machineEncryptionAvailable.current = true;
+
+        const screen = await renderSessionView({ routeServerId: 'stale-route-server' });
+
+        pendingFireAndForget.length = 0;
+
+        const agentInput = findAgentInput(screen);
+
+        await act(async () => {
+            agentInput.props.onChangeText('hello');
+        });
+        await act(async () => {
+            agentInput.props.onSend();
+        });
+
+        expect(pendingFireAndForget.length).toBeGreaterThan(0);
+        await act(async () => {
+            await pendingFireAndForget[0];
+        });
+
+        expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1);
+        expect(resumeSessionSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                serverId: 'server-cache',
+                machineId: 'm-target',
+                directory: '/tmp/target',
+            }),
+        );
         expect(screen.findByTestId('session-pendingQueue-resumeFailed')).toBeTruthy();
 
         await screen.unmount();

@@ -483,3 +483,91 @@ export async function gitBranchCheckout(input: {
         stashRef: created.stashRef,
     };
 }
+
+export async function gitBranchCheckoutWithoutStash(input: {
+    context: ScmBackendContext;
+    name: string;
+    startPoint?: string | null;
+}): Promise<ScmBranchCheckoutResponse> {
+    const validation = validateBranchName(input.name);
+    if (!validation.ok) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            error: validation.error,
+        };
+    }
+
+    const startPointValidation = validateStartPoint(input.startPoint ?? undefined);
+    if (!startPointValidation.ok) {
+        return {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            error: startPointValidation.error,
+        };
+    }
+
+    const switched = input.startPoint
+        ? await runGitSwitchCreate({
+            cwd: input.context.cwd,
+            name: input.name,
+            startPoint: input.startPoint,
+        })
+        : await runGitSwitch({
+            cwd: input.context.cwd,
+            name: input.name,
+        });
+
+    if (switched.success) {
+        return {
+            success: true,
+            stdout: switched.stdout,
+            stderr: switched.stderr,
+            didCreateStash: false,
+            didPopStash: false,
+            stashRef: null,
+        };
+    }
+
+    if (input.startPoint && /already exists/i.test(switched.stderr)) {
+        const existing = await runGitSwitch({
+            cwd: input.context.cwd,
+            name: input.name,
+        });
+        if (existing.success) {
+            return {
+                success: true,
+                stdout: `${switched.stdout}\n${existing.stdout}`.trim() || undefined,
+                stderr: `${switched.stderr}\n${existing.stderr}`.trim() || undefined,
+                didCreateStash: false,
+                didPopStash: false,
+                stashRef: null,
+            };
+        }
+        return {
+            success: false,
+            errorCode: isLocalChangesOverwrittenError(existing.stderr)
+                ? SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE
+                : mapGitErrorCode(existing.stderr),
+            error: existing.stderr || 'Branch checkout failed',
+            stdout: `${switched.stdout}\n${existing.stdout}`.trim() || undefined,
+            stderr: `${switched.stderr}\n${existing.stderr}`.trim() || undefined,
+            didCreateStash: false,
+            didPopStash: false,
+            stashRef: null,
+        };
+    }
+
+    return {
+        success: false,
+        errorCode: isLocalChangesOverwrittenError(switched.stderr)
+            ? SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE
+            : mapGitErrorCode(switched.stderr),
+        error: switched.stderr || 'Branch checkout failed',
+        stdout: switched.stdout,
+        stderr: switched.stderr,
+        didCreateStash: false,
+        didPopStash: false,
+        stashRef: null,
+    };
+}

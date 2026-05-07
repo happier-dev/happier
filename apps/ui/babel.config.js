@@ -1,6 +1,21 @@
+function parseBooleanEnv(name, defaultValue) {
+  const value = String(process.env[name] ?? '').trim().toLowerCase();
+  if (!value) return defaultValue;
+  if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
+  if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
+  return defaultValue;
+}
+
 module.exports = function (api) {
   if (api && typeof api.cache === 'function') {
-    api.cache(true);
+    if (typeof api.cache.using === 'function') {
+      api.cache.using(() => [
+        parseBooleanEnv('HAPPIER_UI_WORKLETS_BUNDLE_MODE', false) ? '1' : '0',
+        parseBooleanEnv('HAPPIER_UI_KEEP_CONSOLE_IN_RELEASE', false) ? '1' : '0',
+      ].join('|'));
+    } else {
+      api.cache(true);
+    }
   }
 
   // Determine which worklets plugin to use based on installed versions
@@ -20,11 +35,24 @@ module.exports = function (api) {
     // This won't cause issues since the plugin won't be needed anyway
   }
 
+  const workletsBundleMode = parseBooleanEnv('HAPPIER_UI_WORKLETS_BUNDLE_MODE', false);
+  const keepConsoleInRelease = parseBooleanEnv('HAPPIER_UI_KEEP_CONSOLE_IN_RELEASE', false);
+  const workletsPluginConfig = workletsPlugin === 'react-native-worklets/plugin'
+    ? [
+      workletsPlugin,
+      {
+        bundleMode: workletsBundleMode,
+        ...(workletsBundleMode ? { strictGlobal: true } : {}),
+        workletizableModules: ['remend'],
+      },
+    ]
+    : workletsPlugin;
+
   return {
     presets: ['babel-preset-expo'],
     env: {
       production: {
-        plugins: ["transform-remove-console"],
+        plugins: keepConsoleInRelease ? [] : ["transform-remove-console"],
       },
     },
     plugins: [
@@ -38,7 +66,7 @@ module.exports = function (api) {
         },
       ],
       ['react-native-unistyles/plugin', { root: 'sources' }],
-      workletsPlugin // Must be last - automatically selects correct plugin for version
+      workletsPluginConfig // Must be last - automatically selects correct plugin for version
     ],
   };
 };

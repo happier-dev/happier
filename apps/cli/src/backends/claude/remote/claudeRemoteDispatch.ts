@@ -12,6 +12,8 @@ type ClaudeRemoteDispatchDependencies = Readonly<{
     claudeRemoteAgentSdk: typeof claudeRemoteAgentSdk;
 }>;
 
+type ResumeSessionAtRejectedHandler = (anchor: string) => Promise<void> | void;
+
 export type ClaudeRemoteRunnerKind = 'legacy' | 'agentSdk';
 
 function isClaudeAgentSdkAuthenticationError(error: unknown): boolean {
@@ -51,8 +53,25 @@ function isClaudeAgentSdkExecutableMissingError(error: unknown): boolean {
     return false;
 }
 
+function readClaudeRejectedResumeSessionAtAnchor(error: unknown, expectedAnchor: string | null): string | null {
+    if (!expectedAnchor) return null;
+    if (!error || typeof error !== 'object') return null;
+
+    const message = (error as { message?: unknown }).message;
+    if (typeof message !== 'string') return null;
+
+    const match = message.match(/No message found with message\.uuid of:\s*([^\s,.;]+)/);
+    const rejectedAnchor = typeof match?.[1] === 'string' ? match[1].trim() : '';
+    if (!rejectedAnchor) return null;
+    return rejectedAnchor === expectedAnchor ? rejectedAnchor : null;
+}
+
 export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage }>(
-    opts: T & { onRunnerSelected?: ((runner: ClaudeRemoteRunnerKind) => void) | null },
+    opts: T & {
+        onResumeSessionAtRejected?: ResumeSessionAtRejectedHandler | null;
+        onRunnerSelected?: ((runner: ClaudeRemoteRunnerKind) => void) | null;
+        resumeSessionAt?: string | null;
+    },
     deps?: Partial<ClaudeRemoteDispatchDependencies>,
 ): Promise<void> {
     const first = await opts.nextMessage();
@@ -93,11 +112,19 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
 
     const resolvedLegacy = deps?.claudeRemote ?? claudeRemote;
     const resolvedAgentSdk = deps?.claudeRemoteAgentSdk ?? claudeRemoteAgentSdk;
+    const resumeSessionAt =
+        typeof opts.resumeSessionAt === 'string' && opts.resumeSessionAt.trim().length > 0
+            ? opts.resumeSessionAt.trim()
+            : null;
 
     // Back-compat: older clients/daemons may not include this provider-scoped flag on the queued prompt.
     // Default is enabled (see provider settings defaults + DEFAULT_CLAUDE_REMOTE_META_STATE).
     if (first.mode.claudeRemoteAgentSdkEnabled !== false) {
-        for (let attempt = 0; attempt < 2; attempt += 1) {
+        let didRetryExecutableMissing = false;
+        let didRetryWithoutResumeSessionAt = false;
+        let omitResumeSessionAt = false;
+
+        while (true) {
             try {
                 baseOpts.onRunnerSelected?.('agentSdk');
                 await repairClaudeTranscriptAfterInterrupt({
@@ -106,16 +133,31 @@ export async function claudeRemoteDispatch<T extends { nextMessage: NextMessage 
                     workDir: String((baseOpts as any).path ?? '').trim(),
                     claudeConfigDir: resolveClaudeConfigDirOverride(process.env),
                 }).catch(() => {});
-                await resolvedAgentSdk({ ...baseOpts, nextMessage: createNextMessage() } as any);
+                await resolvedAgentSdk({
+                    ...baseOpts,
+                    resumeSessionAt: omitResumeSessionAt ? null : resumeSessionAt,
+                    nextMessage: createNextMessage(),
+                } as any);
                 return;
             } catch (error) {
                 const canFallback = !consumedBeyondFirst && !didStartSession && !didEmitMessage;
+                const rejectedResumeSessionAt = canFallback && !didRetryWithoutResumeSessionAt
+                    ? readClaudeRejectedResumeSessionAtAnchor(error, resumeSessionAt)
+                    : null;
+                if (rejectedResumeSessionAt) {
+                    didRetryWithoutResumeSessionAt = true;
+                    omitResumeSessionAt = true;
+                    await Promise.resolve(opts.onResumeSessionAtRejected?.(rejectedResumeSessionAt)).catch(() => {});
+                    continue;
+                }
+
                 const shouldRetryAgentSdk =
-                    attempt === 0
+                    !didRetryExecutableMissing
                     && canFallback
                     && isClaudeAgentSdkExecutableMissingError(error);
 
                 if (shouldRetryAgentSdk) {
+                    didRetryExecutableMissing = true;
                     continue;
                 }
 

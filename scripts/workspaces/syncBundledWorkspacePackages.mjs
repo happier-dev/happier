@@ -1,6 +1,8 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
+import { vendorBundledPackageRuntimeDependenciesFallback } from './vendorBundledWorkspaceRuntimeDependenciesFallback.mjs';
+
 function sanitizeBundledPackageJsonFallback(raw) {
   const {
     name,
@@ -84,6 +86,7 @@ function syncBundledWorkspaceReferencedFiles({ srcPackageDir, destPackageDir, pa
 
 let sanitizeBundledPackageJsonImpl = sanitizeBundledPackageJsonFallback;
 let readBundledWorkspacePackageNamesImpl = null;
+let vendorBundledPackageRuntimeDependenciesImpl = null;
 
 try {
   const mod = await import('../../packages/cli-common/dist/workspaces/index.js');
@@ -92,6 +95,9 @@ try {
   }
   if (mod && typeof mod.readBundledWorkspacePackageNames === 'function') {
     readBundledWorkspacePackageNamesImpl = mod.readBundledWorkspacePackageNames;
+  }
+  if (mod && typeof mod.vendorBundledPackageRuntimeDependencies === 'function') {
+    vendorBundledPackageRuntimeDependenciesImpl = mod.vendorBundledPackageRuntimeDependencies;
   }
 } catch {
   // Best-effort: local preflight sandboxes may not have `packages/cli-common/dist/**` available.
@@ -282,6 +288,28 @@ function replaceDirFromSourceSync(targetDir, srcDir, fsOps, options = {}) {
   }
 }
 
+function hasCustomFsOps(opts) {
+  return [
+    'existsSync',
+    'cpSync',
+    'mkdirSync',
+    'renameSync',
+    'rmSync',
+    'readFileSync',
+    'writeFileSync',
+  ].some((key) => typeof opts?.[key] === 'function');
+}
+
+function resolveRuntimeDependencyVendor(opts) {
+  if (typeof opts?.vendorBundledPackageRuntimeDependencies === 'function') {
+    return opts.vendorBundledPackageRuntimeDependencies;
+  }
+  if (hasCustomFsOps(opts)) {
+    return null;
+  }
+  return vendorBundledPackageRuntimeDependenciesImpl ?? vendorBundledPackageRuntimeDependenciesFallback;
+}
+
 export function syncBundledWorkspacePackages(opts = {}) {
   const repoRoot = String(opts.repoRoot ?? '').trim();
   if (!repoRoot) return;
@@ -301,6 +329,7 @@ export function syncBundledWorkspacePackages(opts = {}) {
   const packages = Array.isArray(opts.packages) && opts.packages.length > 0
     ? opts.packages
     : resolveDefaultBundledWorkspacePackageNames(repoRoot, hostApps, readFile);
+  const vendorRuntimeDependencies = resolveRuntimeDependencyVendor(opts);
 
   for (const pkg of packages) {
     const srcDist = resolve(repoRoot, 'packages', pkg, 'dist');
@@ -353,6 +382,14 @@ export function syncBundledWorkspacePackages(opts = {}) {
         });
       } catch {
         // Best-effort: keep local bundled deps usable even if package.json sync fails.
+      }
+
+      if (vendorRuntimeDependencies) {
+        vendorRuntimeDependencies({
+          srcPackageJsonPath,
+          resolveFromPackageJsonPath: srcPackageJsonPath,
+          destPackageDir,
+        });
       }
     }
   }

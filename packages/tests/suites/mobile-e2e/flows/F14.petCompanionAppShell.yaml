@@ -1,0 +1,78 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+
+- runFlow:
+    file: _shared/connectDevClientIfNeeded.yaml
+
+- runFlow:
+    file: _shared/configureServerIfNeeded.yaml
+
+- runFlow:
+    file: _shared/loginCreateAccount.yaml
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/features
+
+- runFlow:
+    file: _shared/acceptIosOpenInPromptMaybe.yaml
+- runFlow:
+    file: _shared/acceptAndroidOpenWithPromptMaybe.yaml
+
+- tapOn:
+    id: settings-feature-experiments-toggle
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+- scrollUntilVisible:
+    element:
+      id: settings-feature-toggle-pets.companion
+    direction: DOWN
+
+- tapOn:
+    id: settings-feature-toggle-pets.companion
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/pets
+
+- runFlow:
+    file: _shared/acceptIosOpenInPromptMaybe.yaml
+- runFlow:
+    file: _shared/acceptAndroidOpenWithPromptMaybe.yaml
+
+- assertVisible:
+    id: settings-pets-enabled
+- assertNotVisible:
+    id: settings-pets-desktop-overlay-enabled
+- assertNotVisible:
+    id: settings-pets-desktop-overlay-device-override
+- assertNotVisible:
+    id: settings-pets-desktop-overlay-reset-position
+
+- tapOn:
+    id: settings-pets-enabled
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+- extendedWaitUntil:
+    visible:
+      id: pet-app-shell-companion-root
+    timeout: 120000
+
+- assertVisible:
+    id: pet-app-shell-companion-hitbox
+- assertVisible:
+    id: pet-app-shell-companion-sprite
+
+- tapOn:
+    id: pet-app-shell-companion-hitbox
+
+- swipe:
+    direction: LEFT
+    element:
+      id: pet-app-shell-companion-hitbox
+
+- assertVisible:
+    id: pet-app-shell-companion-root

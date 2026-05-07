@@ -3,7 +3,6 @@ import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
-import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
 import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
@@ -140,16 +139,27 @@ installSessionFilesViewCommonModuleMocks({
     storage: async (importOriginal) => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            storage: createStorageStoreMock({
-                upsertSessionReviewCommentDraft: () => {},
-                deleteSessionReviewCommentDraft: () => {},
-            }),
+            storage: {
+                getState: () => ({
+                    sessions: sessionMock ? {
+                        [commitSessionId]: {
+                            ...sessionMock,
+                            serverId: 'server-1',
+                        },
+                    } : {},
+                    machines: {},
+                    sessionListViewDataByServerId: {},
+                    getProjectForSession: () => null,
+                    upsertWorkspaceReviewCommentDraft: () => {},
+                    deleteWorkspaceReviewCommentDraft: () => {},
+                }),
+            } as any,
             useSessions: () => sessionsMock,
             useSession: () => sessionMock,
             useProjectForSession: () => null,
             useSessionProjectScmSnapshot: () => stableSnapshot,
             useSessionProjectScmInFlightOperation: () => null,
-            useSessionReviewCommentsDrafts: () => [],
+            useWorkspaceReviewCommentsDrafts: () => [],
             useSetting: (key: string) => {
                 if (key === 'wrapLinesInDiffs') return true;
                 if (key === 'showLineNumbers') return true;

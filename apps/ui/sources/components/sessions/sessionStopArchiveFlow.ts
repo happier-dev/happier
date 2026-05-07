@@ -21,21 +21,21 @@ export type StopSessionAndMaybeArchiveParams = Readonly<{
 
 function readSessionArchiveAfterStopRetryDelayMsFromEnv(): number {
     const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_ARCHIVE_AFTER_STOP_RETRY_MS ?? '').trim();
-    if (!raw) return 150;
+    if (!raw) return 200;
     const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return 150;
+    if (!Number.isFinite(parsed)) return 200;
     return Math.max(0, Math.min(5_000, parsed));
 }
 
-function readSessionArchiveAfterStopMaxRetriesFromEnv(): number {
-    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_ARCHIVE_AFTER_STOP_MAX_RETRIES ?? '').trim();
-    if (!raw) return 3;
+function readSessionArchiveAfterStopTimeoutMsFromEnv(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SESSION_ARCHIVE_AFTER_STOP_TIMEOUT_MS ?? '').trim();
+    if (!raw) return 75_000;
     const parsed = Number.parseInt(raw, 10);
-    if (!Number.isFinite(parsed)) return 3;
-    return Math.max(0, Math.min(20, parsed));
+    if (!Number.isFinite(parsed)) return 75_000;
+    return Math.max(0, Math.min(5 * 60_000, parsed));
 }
 
-function isSessionActiveArchiveResult(result: SessionMutationResult): boolean {
+export function isSessionActiveArchiveResult(result: SessionMutationResult): boolean {
     return result.success === false && result.code === 'session_active';
 }
 
@@ -44,17 +44,19 @@ async function archiveAfterStopWithRetry(params: Readonly<{
     archiveErrorMessage: string;
 }>): Promise<void> {
     let archiveResult = await params.archiveSession();
-    let retryCount = 0;
-    const maxRetries = readSessionArchiveAfterStopMaxRetriesFromEnv();
+    const deadlineMs = Date.now() + readSessionArchiveAfterStopTimeoutMsFromEnv();
+    const retryDelayMs = readSessionArchiveAfterStopRetryDelayMsFromEnv();
 
-    while (isSessionActiveArchiveResult(archiveResult) && retryCount < maxRetries) {
-        retryCount += 1;
-        await delay(readSessionArchiveAfterStopRetryDelayMsFromEnv());
+    while (isSessionActiveArchiveResult(archiveResult) && Date.now() < deadlineMs) {
+        await delay(retryDelayMs);
         archiveResult = await params.archiveSession();
     }
 
     if (!archiveResult.success) {
-        throw new HappyError(archiveResult.message || params.archiveErrorMessage, false);
+        const message = isSessionActiveArchiveResult(archiveResult)
+            ? params.archiveErrorMessage
+            : archiveResult.message || params.archiveErrorMessage;
+        throw new HappyError(message, false);
     }
 }
 

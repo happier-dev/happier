@@ -1,13 +1,12 @@
 import * as React from "react";
 import { View } from "react-native";
 import { Image } from "expo-image";
-import { AvatarSkia } from "./AvatarSkia";
-import { AvatarGradient } from "./AvatarGradient";
-import { AvatarBrutalist } from "./AvatarBrutalist";
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useSetting } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { shadowLevelStyle } from '@/shadowElevation';
+import { getGeneratedAvatarComponentForStyle } from './avatarComponentRegistry';
+import { normalizeAvatarStyleId } from './avatarStyleOptions';
 import {
     DEFAULT_AGENT_ID,
     resolveAgentIdFromFlavor,
@@ -42,7 +41,7 @@ const styles = StyleSheet.create((theme) => ({
     unreadBadge: {
         position: 'absolute',
         top: -2,
-        right: -2,
+        left: -2,
         backgroundColor: theme.colors.textLink,
         borderRadius: 100,
         borderWidth: 1.5,
@@ -103,16 +102,8 @@ export const Avatar = React.memo((props: AvatarProps) => {
         return imageElement;
     }
 
-    // Original generated avatar logic
-    // Determine which avatar variant to render
-    let AvatarComponent: React.ComponentType<any>;
-    if (avatarStyle === 'pixelated') {
-        AvatarComponent = AvatarSkia;
-    } else if (avatarStyle === 'brutalist') {
-        AvatarComponent = AvatarBrutalist;
-    } else {
-        AvatarComponent = AvatarGradient;
-    }
+    const displayAvatarStyle = normalizeAvatarStyleId(avatarStyle);
+    const AvatarComponent = getGeneratedAvatarComponentForStyle(displayAvatarStyle);
 
     const iconAgentId = agentId ?? DEFAULT_AGENT_ID;
     const { circleSize, iconSize } = getAgentAvatarOverlaySizes(iconAgentId, size);
@@ -120,7 +111,7 @@ export const Avatar = React.memo((props: AvatarProps) => {
     if (showFlavorIcons || hasUnreadMessages) {
         return (
             <View style={[styles.container, { width: size, height: size }]}>
-                <AvatarComponent {...avatarProps} size={size} />
+                <AvatarComponent {...avatarProps} size={size} styleId={displayAvatarStyle} />
                 {showFlavorIcons && (
                     <View style={[styles.flavorIcon, {
                         width: circleSize,
@@ -137,5 +128,5 @@ export const Avatar = React.memo((props: AvatarProps) => {
     }
 
     // Return avatar without wrapper when not showing flavor icons
-    return <AvatarComponent {...avatarProps} size={size} />;
+    return <AvatarComponent {...avatarProps} size={size} styleId={displayAvatarStyle} />;
 });

@@ -22,6 +22,9 @@ export const BUG_REPORT_DEFAULT_ACCEPTED_ARTIFACT_KINDS = [
   'server',
   'stack-service',
   'user-note',
+  'session-log',
+  'provider-transcript',
+  'attachment',
 ] as const;
 
 export const BUG_REPORT_DEFAULT_CONTEXT_WINDOW_MS = 30 * 60 * 1000;

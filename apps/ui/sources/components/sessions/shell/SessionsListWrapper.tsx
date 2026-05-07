@@ -1,16 +1,12 @@
 import * as React from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { SessionsList } from '@/components/sessions/shell/SessionsList';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
 import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
-import {
-    countVisibleSessionListSessions,
-    useHasHiddenInactiveSessions,
-    useVisibleSessionListViewData,
-} from '@/hooks/session/useVisibleSessionListViewData';
+import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListViewData';
 import { HiddenInactiveSessionsEmptyState } from '@/components/sessions/guidance/HiddenInactiveSessionsEmptyState';
+import { SessionsListContent } from '@/components/sessions/shell/SessionsList';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -45,9 +41,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const SessionsListWrapper = React.memo(() => {
     const { theme } = useUnistyles();
     const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
-    const sessionListViewData = useVisibleSessionListViewData(storageKind);
-    const hasHiddenInactiveSessions = useHasHiddenInactiveSessions(storageKind);
-    const visibleSessionCount = countVisibleSessionListSessions(sessionListViewData);
+    const { sessionListViewData, visibleSessionCount, hasHiddenInactiveSessions } = useVisibleSessionListPaneState(storageKind);
     const styles = stylesheet;
     const storageChrome = (
         <SessionsListStorageChrome
@@ -90,7 +84,7 @@ export const SessionsListWrapper = React.memo(() => {
     return (
         <View style={styles.container}>
             {storageChrome}
-            <SessionsList storageKind={storageKind} />
+            <SessionsListContent storageKind={storageKind} data={sessionListViewData} />
         </View>
     );
 });

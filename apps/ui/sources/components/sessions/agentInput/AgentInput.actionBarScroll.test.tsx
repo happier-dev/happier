@@ -9,32 +9,35 @@ import { renderScreen } from '@/dev/testkit';
 function flattenStyle(style: any): Record<string, unknown> {
     if (!style) return {};
     if (Array.isArray(style)) {
-        return style.reduce((acc, s) => ({ ...acc, ...flattenStyle(s) }), {});
+        return style.reduce((acc, value) => ({ ...acc, ...flattenStyle(value) }), {});
     }
     if (typeof style === 'object') return style;
     return {};
 }
 
-function getActionBarScrollView(tree: renderer.ReactTestRenderer) {
-    const scrollViews = tree.findAll(
+function getActionBarScrollViews(tree: renderer.ReactTestRenderer) {
+    return tree.findAll(
         (node: any) => node?.type === 'ScrollView' && node?.props?.horizontal === true,
     );
-    expect(scrollViews).toHaveLength(1);
-    return scrollViews[0]!;
 }
 
-function getOrderedActionBarTestIds(
-    tree: renderer.ReactTestRenderer,
+function getActionBarScrollView(tree: renderer.ReactTestRenderer, index = 0) {
+    const scrollViews = getActionBarScrollViews(tree);
+    expect(scrollViews.length).toBeGreaterThan(index);
+    return scrollViews[index]!;
+}
+
+function getOrderedTestIdsWithin(
+    root: renderer.ReactTestInstance,
     testIds: readonly string[],
 ) {
-    const scrollView = getActionBarScrollView(tree);
-    return scrollView.findAll((node: any) => typeof node?.props?.testID === 'string')
+    return root.findAll((node: any) => typeof node?.props?.testID === 'string')
         .map((node: any) => node.props.testID)
         .filter((testID: string) => testIds.includes(testID));
 }
 
-function getActionBarContentView(tree: renderer.ReactTestRenderer) {
-    const scrollView = getActionBarScrollView(tree);
+function getActionBarContentView(tree: renderer.ReactTestRenderer, index = 0) {
+    const scrollView = getActionBarScrollView(tree, index);
     return scrollView.find((node: any) => node?.type === 'View');
 }
 
@@ -154,6 +157,11 @@ function mockCommonDeps() {
         DEFAULT_AGENT_ID: 'codex',
         resolveAgentIdFromFlavor: () => null,
         getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
+    getAgentBehavior: (agentId: string) => ({
+        sessionUsage: {
+            supportsExactContextUsageBadge: agentId !== 'codex' && agentId !== 'gemini',
+        },
+    }),
     }));
 
     vi.doMock('@/sync/domains/models/modelOptions', () => ({
@@ -222,7 +230,7 @@ function mockScrollEdgeFades(params: { canScrollX: boolean; showRight: boolean }
 }
 
 describe('AgentInput (action bar scroll layout)', () => {
-    it('enables horizontal scrolling on web even when fades cannot measure overflow', async () => {
+    it('keeps both chip rows horizontally scrollable on web', async () => {
         vi.resetModules();
         vi.clearAllMocks();
         await mockWebPlatform();
@@ -247,16 +255,19 @@ describe('AgentInput (action bar scroll layout)', () => {
                     autocompleteSuggestions={async () => []}
                 />)).tree;
 
-        const scrollView = getActionBarScrollView(tree!);
-        expect(scrollView.props?.horizontal).toBe(true);
-        expect(scrollView.props?.scrollEnabled).toBe(true);
-        expect(typeof scrollView.props?.onWheel).toBe('function');
-        expect(typeof scrollView.props?.onContentSizeChange).toBe('function');
+        const scrollViews = getActionBarScrollViews(tree!);
+        expect(scrollViews).toHaveLength(2);
+        for (const scrollView of scrollViews) {
+            expect(scrollView.props?.horizontal).toBe(true);
+            expect(scrollView.props?.scrollEnabled).toBe(true);
+            expect(typeof scrollView.props?.onWheel).toBe('function');
+            expect(typeof scrollView.props?.onContentSizeChange).toBe('function');
+        }
 
         act(() => tree!.unmount());
     });
 
-    it('measures scroll content via onContentSizeChange and includes right gutter padding', async () => {
+    it('keeps the primary scroll row content padded with the right gutter for fades', async () => {
         vi.resetModules();
         vi.clearAllMocks();
         await mockWebPlatform();
@@ -281,10 +292,10 @@ describe('AgentInput (action bar scroll layout)', () => {
                     autocompleteSuggestions={async () => []}
                 />)).tree;
 
-        const scrollView = getActionBarScrollView(tree!);
+        const scrollView = getActionBarScrollView(tree!, 0);
         expect(typeof scrollView?.props?.onContentSizeChange).toBe('function');
 
-        const contentContainer = getActionBarContentView(tree!);
+        const contentContainer = getActionBarContentView(tree!, 0);
         expect(typeof contentContainer?.props?.onLayout).toBe('undefined');
 
         const style = flattenStyle(contentContainer.props.style);
@@ -294,7 +305,7 @@ describe('AgentInput (action bar scroll layout)', () => {
         act(() => tree!.unmount());
     });
 
-    it('keeps stop ahead of machine and path when scroll layout merges both chip rows', async () => {
+    it('keeps primary chips in the first scroll row and machine/path/resume in the second', async () => {
         vi.resetModules();
         vi.clearAllMocks();
         await mockWebPlatform();
@@ -317,32 +328,46 @@ describe('AgentInput (action bar scroll layout)', () => {
                     machineName="Builder"
                     onPathClick={() => {}}
                     currentPath="/tmp"
+                    onResumeClick={() => {}}
+                    resumeSessionId="session-1"
                     onAbort={() => {}}
                     showAbortButton
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
                 />)).tree;
 
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
+        const primaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree!, 0), [
             'agent-input-permission-chip',
             'agent-input-agent-chip',
             'agent-input-abort',
             'agent-input-machine-chip',
             'agent-input-path-chip',
+            'agent-input-resume-chip',
+        ]);
+        const secondaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree!, 1), [
+            'agent-input-permission-chip',
+            'agent-input-agent-chip',
+            'agent-input-abort',
+            'agent-input-machine-chip',
+            'agent-input-path-chip',
+            'agent-input-resume-chip',
         ]);
 
-        expect(orderedTestIds).toEqual([
+        expect(primaryRowIds).toEqual([
             'agent-input-agent-chip',
             'agent-input-permission-chip',
             'agent-input-abort',
+        ]);
+        expect(secondaryRowIds).toEqual([
             'agent-input-machine-chip',
             'agent-input-path-chip',
+            'agent-input-resume-chip',
         ]);
 
         act(() => tree!.unmount());
     });
 
-    it('keeps delivery extra chips ahead of machine and path when scroll layout merges both chip rows', async () => {
+    it('keeps extra primary chips in the first scroll row while the secondary row stays dedicated to location controls', async () => {
         vi.resetModules();
         vi.clearAllMocks();
         await mockWebPlatform();
@@ -376,7 +401,7 @@ describe('AgentInput (action bar scroll layout)', () => {
                     autocompleteSuggestions={async () => []}
                 />)).tree;
 
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
+        const primaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree!, 0), [
             'agent-input-agent-chip',
             'agent-input-permission-chip',
             'agent-input-abort',
@@ -384,531 +409,19 @@ describe('AgentInput (action bar scroll layout)', () => {
             'agent-input-machine-chip',
             'agent-input-path-chip',
         ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-abort',
+        const secondaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree!, 1), [
             'agent-input-delivery-chip',
             'agent-input-machine-chip',
             'agent-input-path-chip',
         ]);
 
-        act(() => tree!.unmount());
-    });
-
-    it('keeps attachments ahead of machine and path when scroll layout merges both chip rows', async () => {
-        vi.resetModules();
-        vi.clearAllMocks();
-        await mockWebPlatform();
-        mockCommonDeps();
-        mockSettings();
-        mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onPermissionClick={() => {}}
-                    onAgentClick={() => {}}
-                    agentType="codex"
-                    onMachineClick={() => {}}
-                    machineName="Builder"
-                    onPathClick={() => {}}
-                    currentPath="/tmp"
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                    extraActionChips={[{
-                        key: 'attachments-add',
-                        controlId: 'attachments',
-                        collapsedAction: () => ({
-                            id: 'attachments',
-                            label: 'Attach',
-                            icon: null,
-                            onPress: () => {},
-                        }),
-                        render: () => React.createElement('View', { testID: 'agent-input-attachments-chip' }),
-                    } as any]}
-                />)).tree;
-
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
+        expect(primaryRowIds).toEqual([
             'agent-input-agent-chip',
             'agent-input-permission-chip',
-            'agent-input-attachments-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
+            'agent-input-abort',
+            'agent-input-delivery-chip',
         ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-attachments-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        act(() => tree!.unmount());
-    });
-
-    it('keeps files ahead of machine and path when scroll layout merges both chip rows', async () => {
-        vi.resetModules();
-        vi.clearAllMocks();
-        await mockWebPlatform();
-        mockCommonDeps();
-        mockSettings();
-        mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onPermissionClick={() => {}}
-                    onAgentClick={() => {}}
-                    agentType="codex"
-                    sessionId="session-1"
-                    onFileViewerPress={() => {}}
-                    onMachineClick={() => {}}
-                    machineName="Builder"
-                    onPathClick={() => {}}
-                    currentPath="/tmp"
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                />)).tree;
-
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'session-open-source-control',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'session-open-source-control',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        act(() => tree!.unmount());
-    });
-
-    it('keeps linked files ahead of machine and path when scroll layout merges both chip rows', async () => {
-        vi.resetModules();
-        vi.clearAllMocks();
-        await mockWebPlatform();
-        mockCommonDeps();
-        mockSettings();
-        mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onPermissionClick={() => {}}
-                    onAgentClick={() => {}}
-                    agentType="codex"
-                    onMachineClick={() => {}}
-                    machineName="Builder"
-                    onPathClick={() => {}}
-                    currentPath="/tmp"
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                    extraActionChips={[{
-                        key: 'project-file-link',
-                        controlId: 'linkedFiles',
-                        collapsedAction: () => ({
-                            id: 'linked-files',
-                            label: 'common.linkFile',
-                            icon: null,
-                            onPress: () => {},
-                        }),
-                        render: () => React.createElement('View', { testID: 'agent-input-link-file' }),
-                    } as any]}
-                />)).tree;
-
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-link-file',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-link-file',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        act(() => tree!.unmount());
-    });
-
-    it('keeps review comments ahead of machine and path when scroll layout merges both chip rows', async () => {
-        vi.resetModules();
-        vi.clearAllMocks();
-        await mockWebPlatform();
-        mockCommonDeps();
-        mockSettings();
-        mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onPermissionClick={() => {}}
-                    onAgentClick={() => {}}
-                    agentType="codex"
-                    onMachineClick={() => {}}
-                    machineName="Builder"
-                    onPathClick={() => {}}
-                    currentPath="/tmp"
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                    extraActionChips={[{
-                        key: 'review-comments',
-                        controlId: 'reviewComments',
-                        collapsedAction: () => ({
-                            id: 'review-comments',
-                            label: '1 draft review comment',
-                            icon: null,
-                            onPress: () => {},
-                        }),
-                        render: () => React.createElement('View', { testID: 'agent-input-review-comments-chip' }),
-                    } as any]}
-                />)).tree;
-
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-review-comments-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-review-comments-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        act(() => tree!.unmount());
-    });
-
-    it('keeps connected services ahead of machine and path when scroll layout merges both chip rows', async () => {
-        vi.resetModules();
-        vi.clearAllMocks();
-        await mockWebPlatform();
-        mockCommonDeps();
-        mockSettings();
-        mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onPermissionClick={() => {}}
-                    onAgentClick={() => {}}
-                    agentType="codex"
-                    onMachineClick={() => {}}
-                    machineName="Builder"
-                    onPathClick={() => {}}
-                    currentPath="/tmp"
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                    extraActionChips={[{
-                        key: 'new-session-connected-services-auth',
-                        controlId: 'connectedServices',
-                        collapsedAction: () => ({
-                            id: 'connected-services',
-                            label: 'connectedServices.authChip.label',
-                            icon: null,
-                            onPress: () => {},
-                        }),
-                        render: () => React.createElement('View', { testID: 'agent-input-connected-services-chip' }),
-                    } as any]}
-                />)).tree;
-
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-connected-services-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-connected-services-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        act(() => tree!.unmount());
-    });
-
-    it('keeps storage ahead of machine and path when scroll layout merges both chip rows', async () => {
-        vi.resetModules();
-        vi.clearAllMocks();
-        await mockWebPlatform();
-        mockCommonDeps();
-        mockSettings();
-        mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onPermissionClick={() => {}}
-                    onAgentClick={() => {}}
-                    agentType="codex"
-                    onMachineClick={() => {}}
-                    machineName="Builder"
-                    onPathClick={() => {}}
-                    currentPath="/tmp"
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                    extraActionChips={[{
-                        key: 'new-session-storage',
-                        controlId: 'storage',
-                        collapsedAction: () => ({
-                            id: 'storage',
-                            label: 'sessionsList.storageDirectTab',
-                            icon: null,
-                            onPress: () => {},
-                        }),
-                        render: () => React.createElement('View', { testID: 'agent-input-storage-chip' }),
-                    } as any]}
-                />)).tree;
-
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-storage-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-storage-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        act(() => tree!.unmount());
-    });
-
-    it('keeps shortcut chips ahead of machine and path when scroll layout merges both chip rows', async () => {
-        vi.resetModules();
-        vi.clearAllMocks();
-        await mockWebPlatform();
-        mockCommonDeps();
-        mockSettings();
-        mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onPermissionClick={() => {}}
-                    onAgentClick={() => {}}
-                    agentType="codex"
-                    onMachineClick={() => {}}
-                    machineName="Builder"
-                    onPathClick={() => {}}
-                    currentPath="/tmp"
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                    extraActionChips={[
-                        {
-                            key: 'new-session-action:review.start',
-                            controlId: 'shortcuts',
-                            collapsedAction: () => ({
-                                id: 'new-session-action:review.start',
-                                label: 'Review',
-                                icon: null,
-                                onPress: () => {},
-                            }),
-                            render: () => React.createElement('View', { testID: 'agent-input-shortcut-review-chip' }),
-                        } as any,
-                        {
-                            key: 'new-session-action:subagents.delegate.start',
-                            controlId: 'shortcuts',
-                            collapsedAction: () => ({
-                                id: 'new-session-action:subagents.delegate.start',
-                                label: 'Delegate',
-                                icon: null,
-                                onPress: () => {},
-                            }),
-                            render: () => React.createElement('View', { testID: 'agent-input-shortcut-delegate-chip' }),
-                        } as any,
-                    ]}
-                />)).tree;
-
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-shortcut-review-chip',
-            'agent-input-shortcut-delegate-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-shortcut-review-chip',
-            'agent-input-shortcut-delegate-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        act(() => tree!.unmount());
-    });
-
-    it('keeps mcp ahead of machine and path when scroll layout merges both chip rows', async () => {
-        vi.resetModules();
-        vi.clearAllMocks();
-        await mockWebPlatform();
-        mockCommonDeps();
-        mockSettings();
-        mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onPermissionClick={() => {}}
-                    onAgentClick={() => {}}
-                    agentType="codex"
-                    onMachineClick={() => {}}
-                    machineName="Builder"
-                    onPathClick={() => {}}
-                    currentPath="/tmp"
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                    extraActionChips={[{
-                        key: 'new-session-mcp',
-                        controlId: 'mcp',
-                        collapsedAction: () => ({
-                            id: 'new-session-mcp',
-                            label: 'newSession.mcpChipLabel',
-                            icon: null,
-                            onPress: () => {},
-                        }),
-                        render: () => React.createElement('View', { testID: 'agent-input-mcp-chip' }),
-                    } as any]}
-                />)).tree;
-
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-mcp-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-mcp-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        act(() => tree!.unmount());
-    });
-
-    it('keeps automation ahead of machine and path when scroll layout merges both chip rows', async () => {
-        vi.resetModules();
-        vi.clearAllMocks();
-        await mockWebPlatform();
-        mockCommonDeps();
-        mockSettings();
-        mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-        const { AgentInput } = await import('./AgentInput');
-
-        let tree: renderer.ReactTestRenderer;
-        tree = (await renderScreen(<AgentInput
-                    value=""
-                    placeholder="Type"
-                    onChangeText={() => {}}
-                    onSend={() => {}}
-                    onPermissionClick={() => {}}
-                    onAgentClick={() => {}}
-                    agentType="codex"
-                    onMachineClick={() => {}}
-                    machineName="Builder"
-                    onPathClick={() => {}}
-                    currentPath="/tmp"
-                    autocompletePrefixes={[]}
-                    autocompleteSuggestions={async () => []}
-                    extraActionChips={[{
-                        key: 'new-session-automate',
-                        controlId: 'automation',
-                        collapsedAction: () => ({
-                            id: 'new-session-automate',
-                            label: 'newSession.automationChip.default',
-                            icon: null,
-                            onPress: () => {},
-                        }),
-                        render: () => React.createElement('View', { testID: 'agent-input-automation-chip' }),
-                    } as any]}
-                />)).tree;
-
-        const orderedTestIds = getOrderedActionBarTestIds(tree!, [
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-automation-chip',
-            'agent-input-machine-chip',
-            'agent-input-path-chip',
-        ]);
-
-        expect(orderedTestIds).toEqual([
-            'agent-input-agent-chip',
-            'agent-input-permission-chip',
-            'agent-input-automation-chip',
+        expect(secondaryRowIds).toEqual([
             'agent-input-machine-chip',
             'agent-input-path-chip',
         ]);

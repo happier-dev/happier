@@ -10,7 +10,6 @@ import { logger } from "@/lib";
 import { SDKAssistantMessage, SDKMessage, SDKUserMessage } from "../sdk";
 import { PermissionResult } from "../sdk/types";
 import { Session } from "../session";
-import { getToolName } from "./getToolName";
 import { EnhancedMode, PermissionMode } from "../loop";
 import { getToolDescriptor } from "./getToolDescriptor";
 import { delay } from "@/utils/time";
@@ -21,19 +20,24 @@ import { syncClaudePermissionModeFromMetadata } from '@/backends/claude/utils/sy
 import type { PermissionRpcPayload } from './permissionRpc';
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { configuration } from '@/configuration';
-import { PermissionRequestPushNotifier } from '@/settings/notifications/permissionRequestPushNotifier';
-import { applyAgentStateRequestPushNotifiedAt, clonePlainObjectToNullProto, cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
-import type { AgentState, Metadata } from '@/api/types';
+import { cloneStringKeyedRecordToNullProto } from '@/api/session/agentStateRecords';
+import type { Metadata } from '@/api/types';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
+import { AgentStateRequestStore, type AgentStateOutstandingRequest } from '@/agent/permissions/agentStateRequestStore';
+import {
+    createPermissionRequestCoordinator,
+    type PermissionRequestCoordinator,
+    type PermissionRequestCoordinatorCompletion,
+    type PermissionRequestCoordinatorContext,
+    type PermissionRequestCoordinatorStore,
+} from '@/agent/permissions/permissionRequestCoordinator';
 import { computeNextMetadataStringOverrideV1, SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
 import { isClaudeLocalPermissionBridgeAgentStateRequest } from '@happier-dev/agents';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
 
 type PermissionResponse = PermissionRpcPayload;
-
-type AgentStateRequestEntry = NonNullable<AgentState['requests']>[string];
 
 function isInteractiveTool(toolName: string): boolean {
     return (
@@ -44,19 +48,18 @@ function isInteractiveTool(toolName: string): boolean {
     );
 }
 
-interface PendingRequest {
-    resolve: (value: PermissionResult) => void;
-    reject: (error: Error) => void;
+type PendingPermissionMetadata = {
     toolName: string;
     input: unknown;
     sourceLocalId: string | null;
-}
+};
 
 export class PermissionHandler {
     private toolCalls: { id: string, name: string, input: any, used: boolean }[] = [];
     private responses = new Map<string, PermissionResponse>();
-    private pendingRequests = new Map<string, PendingRequest>();
-    private permissionRequestPushNotifier: PermissionRequestPushNotifier | null = null;
+    private pendingRequestMetadata = new Map<string, PendingPermissionMetadata>();
+    private readonly agentStateRequestStore: AgentStateRequestStore;
+    private readonly permissionCoordinator: PermissionRequestCoordinator<PermissionResult>;
     private session: Session;
     private allowedToolIdentifiers = new Set<string>();
     private permissionMode: PermissionMode = 'default';
@@ -68,6 +71,16 @@ export class PermissionHandler {
 
     constructor(session: Session) {
         this.session = session;
+        this.agentStateRequestStore = new AgentStateRequestStore({
+            session: this.session.client,
+            logPrefix: '[Claude]',
+            pushSender: this.session.pushSender,
+            getAccountSettings: () => this.session.accountSettings ?? null,
+            getAccountSettingsSecretsReadKeys: () => this.session.accountSettingsSecretsReadKeys,
+        });
+        this.permissionCoordinator = createPermissionRequestCoordinator<PermissionResult>({
+            store: this.createCoordinatorStore(),
+        });
         this.session.getOrCreatePermissionRpcRouter().registerConsumer({
             name: 'claude-remote-permission-handler',
             tryHandlePermissionRpc: (payload) => this.tryHandlePermissionRpc(payload),
@@ -135,10 +148,16 @@ export class PermissionHandler {
     }
 
     private tryAutoApprovePendingRequests(): void {
-        if (this.pendingRequests.size === 0) return;
+        if (this.pendingRequestMetadata.size === 0) return;
 
         const idsToApprove: string[] = [];
-        for (const [id, pending] of this.pendingRequests.entries()) {
+        for (const [id, pending] of this.pendingRequestMetadata.entries()) {
+            const context = this.permissionCoordinator.getResponseContext(id);
+            if (!context) {
+                this.pendingRequestMetadata.delete(id);
+                continue;
+            }
+            if (context.status !== 'live') continue;
             if (isInteractiveTool(pending.toolName)) continue;
             if (this.isToolExplicitlyAllowed(pending.toolName, pending.input)) {
                 idsToApprove.push(id);
@@ -146,8 +165,8 @@ export class PermissionHandler {
         }
 
         for (const id of idsToApprove) {
-            // The request may have been resolved while we were iterating.
-            if (!this.pendingRequests.has(id)) continue;
+            const context = this.permissionCoordinator.getResponseContext(id);
+            if (!context || context.status !== 'live') continue;
             this.applyPermissionResponse({ id, approved: true });
         }
     }
@@ -217,28 +236,6 @@ export class PermissionHandler {
             '[Claude]',
             'exit_plan_mode_clear_session_mode_override',
         );
-    }
-
-    private getOrCreatePermissionRequestPushNotifier(): PermissionRequestPushNotifier | null {
-        if (!this.session.pushSender) return null;
-        if (this.permissionRequestPushNotifier) return this.permissionRequestPushNotifier;
-        this.permissionRequestPushNotifier = new PermissionRequestPushNotifier({
-            pushSender: this.session.pushSender,
-            getSettings: () => this.session.accountSettings ?? null,
-            getSettingsSecretsReadKeys: () => this.session.accountSettingsSecretsReadKeys,
-            sessionId: this.session.client.sessionId,
-            logPrefix: '[Claude]',
-            onNotifiedAt: (permissionId, notifiedAtMs) => {
-                updateAgentStateBestEffort(
-                    this.session.client,
-                    (currentState) =>
-                        applyAgentStateRequestPushNotifiedAt({ state: currentState, permissionId, notifiedAtMs }),
-                    '[Claude]',
-                    'permission_request_push_notified_at',
-                );
-            },
-        });
-        return this.permissionRequestPushNotifier;
     }
 
     private isToolTraceEnabled(): boolean {
@@ -315,68 +312,69 @@ export class PermissionHandler {
         if (!id) {
             return false;
         }
-        if (this.pendingRequests.has(id)) {
-            this.applyPermissionResponse(message);
-            return true;
-        }
-
-        // Late/deduped response handling:
-        // Mobile approvals can arrive after the in-memory pending map was cleared (abort/reconnect paths).
-        // We still want to resolve the *UI* state surface (agentState requests -> completedRequests)
-        // so the app doesn't get stuck showing an unresolvable prompt.
-        if (!this.hasOutstandingAgentStateRequest(id)) {
+        const context = this.permissionCoordinator.getResponseContext(id);
+        if (!context) {
             return false;
         }
 
-        this.applyLatePermissionResponse(message);
+        this.applyPermissionResponse(message, context);
         return true;
     }
 
-    private hasOutstandingAgentStateRequest(id: string): boolean {
+    private createCoordinatorStore(): PermissionRequestCoordinatorStore {
+        return {
+            publishRequest: (params) => this.agentStateRequestStore.publishRequest({
+                ...params,
+                updateState: (state) => ({
+                    ...state,
+                    capabilities: {
+                        ...(state.capabilities && typeof state.capabilities === 'object'
+                            ? state.capabilities
+                            : {}),
+                        askUserQuestionAnswersInPermission: true,
+                    },
+                }),
+            }),
+            completeRequest: (params) => this.agentStateRequestStore.completeRequest(params),
+            cancelAllRequests: (params) => this.cancelRemoteOutstandingRequests(params.reason),
+            hasOutstandingRequest: (requestId) => this.readOutstandingRemoteRequest(requestId) !== null,
+            readOutstandingRequest: (requestId) => this.readOutstandingRemoteRequest(requestId),
+        };
+    }
+
+    private readOutstandingRemoteRequest(id: string): AgentStateOutstandingRequest | null {
         try {
+            const outstanding = this.agentStateRequestStore.readOutstandingRequest(id);
+            if (!outstanding) return null;
             const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
-            const requests = snapshot?.requests;
-            if (!requests || typeof requests !== 'object') return false;
-            const request = (requests as Record<string, unknown>)[id];
-            if (!request) return false;
-            return !isClaudeLocalPermissionBridgeAgentStateRequest(request);
+            const rawRequest = snapshot?.requests?.[id] ?? null;
+            if (isClaudeLocalPermissionBridgeAgentStateRequest(rawRequest)) return null;
+            return outstanding;
         } catch {
-            return false;
+            return null;
         }
     }
 
-    private applyLatePermissionResponse(message: PermissionResponse): void {
-        const id = message.id;
-        this.permissionRequestPushNotifier?.markCompleted(id);
-        this.responses.set(id, { ...message, receivedAt: Date.now() });
-        const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
-        const request = snapshot?.requests?.[id] ?? null;
-        const toolName = request && typeof request.tool === 'string' ? request.tool : null;
-
-        this.applyPermissionResponseSideEffects({
-            response: message,
-            toolName,
-            sourceLocalId: null,
-        });
-
+    private cancelRemoteOutstandingRequests(reason: string): void {
         updateAgentStateBestEffort(
             this.session.client,
             (currentState) => {
                 const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
-                const request = requests[id] as unknown;
-                if (!request) return currentState;
-                delete requests[id];
                 const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
-                const completedEntry = clonePlainObjectToNullProto(request) ?? Object.create(null);
-                completedEntry['completedAt'] = Date.now();
-                completedEntry['status'] = message.approved ? 'approved' : 'denied';
-                completedEntry['reason'] = message.reason;
-                completedEntry['mode'] = message.mode;
-                const allowed = message.allowedTools ?? message.allowTools;
-                if (Array.isArray(allowed)) completedEntry['allowedTools'] = allowed;
-                if (message.answers && typeof message.answers === 'object') completedEntry['answers'] = message.answers;
-                if (typeof message.updatedPermissions !== 'undefined') completedEntry['updatedPermissions'] = message.updatedPermissions;
-                completedRequests[id] = completedEntry;
+                const now = Date.now();
+
+                for (const [id, request] of Object.entries(requests)) {
+                    if (isClaudeLocalPermissionBridgeAgentStateRequest(request)) continue;
+                    delete requests[id];
+                    const completedEntry = { ...(request && typeof request === 'object' ? request : {}) } as Record<string, unknown>;
+                    completedEntry.completedAt = now;
+                    completedEntry.status = 'canceled';
+                    completedEntry.reason = reason;
+                    completedEntry.decision = 'abort';
+                    completedRequests[id] = completedEntry as never;
+                    this.agentStateRequestStore.markPermissionRequestCompletedBestEffort(id);
+                }
+
                 return {
                     ...currentState,
                     requests,
@@ -384,7 +382,7 @@ export class PermissionHandler {
                 };
             },
             '[Claude]',
-            'complete_permission_request_late',
+            'cancel_remote_permission_requests',
         );
     }
 
@@ -417,9 +415,14 @@ export class PermissionHandler {
         }
     }
 
-    private applyPermissionResponse(message: PermissionResponse): void {
+    private applyPermissionResponse(message: PermissionResponse, responseContext?: PermissionRequestCoordinatorContext): void {
         const id = message.id;
-        this.permissionRequestPushNotifier?.markCompleted(id);
+        const context = responseContext ?? this.permissionCoordinator.getResponseContext(id);
+        if (!context) {
+            logger.debug('Permission request not found or already resolved');
+            return;
+        }
+
         logger.debug('[Claude] Permission response received', {
             id,
             approved: message.approved,
@@ -451,47 +454,19 @@ export class PermissionHandler {
             });
         }
 
-        const pending = this.pendingRequests.get(id);
-
-        if (!pending) {
-            logger.debug('Permission request not found or already resolved');
-            return;
-        }
-
         // Store the response with timestamp
         this.responses.set(id, { ...message, receivedAt: Date.now() });
-        this.pendingRequests.delete(id);
 
-        // Handle the permission response based on tool type
-        this.handlePermissionResponse(message, pending);
+        const completion = this.buildPermissionCompletion(message, context);
 
-        // Move processed request to completedRequests
-        updateAgentStateBestEffort(
-            this.session.client,
-            (currentState) => {
-                const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
-                const request = requests[id] as unknown;
-                if (!request) return currentState;
-                delete requests[id];
-                const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
-                const completedEntry = clonePlainObjectToNullProto(request) ?? Object.create(null);
-                completedEntry['completedAt'] = Date.now();
-                completedEntry['status'] = message.approved ? 'approved' : 'denied';
-                completedEntry['reason'] = message.reason;
-                completedEntry['mode'] = message.mode;
-                const allowed = message.allowedTools ?? message.allowTools;
-                if (Array.isArray(allowed)) completedEntry['allowedTools'] = allowed;
-                if (typeof message.updatedPermissions !== 'undefined') completedEntry['updatedPermissions'] = message.updatedPermissions;
-                completedRequests[id] = completedEntry;
-                return {
-                    ...currentState,
-                    requests,
-                    completedRequests,
-                };
-            },
-            '[Claude]',
-            'complete_permission_request',
-        );
+        this.pendingRequestMetadata.delete(id);
+        this.applyPermissionResponseSideEffects({
+            response: message,
+            toolName: context.toolName,
+            sourceLocalId: context.sourceLocalId,
+        });
+
+        this.permissionCoordinator.completeResponse({ context, completion });
     }
     
     /**
@@ -508,14 +483,20 @@ export class PermissionHandler {
     }
 
     private tryAutoApprovePendingRequestsForPermissionMode(mode: PermissionMode): void {
-        if (this.pendingRequests.size === 0) return;
+        if (this.pendingRequestMetadata.size === 0) return;
 
         const effectiveMode = resolveClaudeSdkPermissionModeFromEnhancedMode({ permissionMode: mode });
         const isEditAutoApproveMode = effectiveMode === 'acceptEdits' || effectiveMode === 'auto';
         if (effectiveMode !== 'bypassPermissions' && !isEditAutoApproveMode) return;
 
         const idsToApprove: string[] = [];
-        for (const [id, pending] of this.pendingRequests.entries()) {
+        for (const [id, pending] of this.pendingRequestMetadata.entries()) {
+            const context = this.permissionCoordinator.getResponseContext(id);
+            if (!context) {
+                this.pendingRequestMetadata.delete(id);
+                continue;
+            }
+            if (context.status !== 'live') continue;
             if (isInteractiveTool(pending.toolName)) continue;
             if (effectiveMode === 'bypassPermissions') {
                 idsToApprove.push(id);
@@ -527,48 +508,53 @@ export class PermissionHandler {
         }
 
         for (const id of idsToApprove) {
-            if (!this.pendingRequests.has(id)) continue;
+            const context = this.permissionCoordinator.getResponseContext(id);
+            if (!context || context.status !== 'live') continue;
             this.applyPermissionResponse({ id, approved: true, mode });
         }
     }
 
-    /**
-     * Handler response
-     */
-    private handlePermissionResponse(
+    private buildPermissionCompletion(
         response: PermissionResponse,
-        pending: PendingRequest
-    ): void {
+        context: PermissionRequestCoordinatorContext,
+    ): PermissionRequestCoordinatorCompletion<PermissionResult> {
         const updatedPermissions = response.updatedPermissions;
-        this.applyPermissionResponseSideEffects({
-            response,
-            toolName: pending.toolName,
-            sourceLocalId: pending.sourceLocalId,
-        });
+        const allowedTools = response.allowedTools ?? response.allowTools;
+        const completedRequest = {
+            status: response.approved ? 'approved' : 'denied',
+            ...(typeof response.reason === 'string' ? { reason: response.reason } : {}),
+            ...(typeof response.mode === 'string' ? { mode: response.mode } : {}),
+            ...(Array.isArray(allowedTools) ? { allowedTools } : {}),
+            ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
+            ...(response.answers && typeof response.answers === 'object'
+                ? { extraCompletedFields: { answers: response.answers } }
+                : {}),
+        };
 
-        // Handle default case for all tools
-        if (pending.toolName === 'AskUserQuestion' && response.approved && response.answers) {
+        if (context.toolName === 'AskUserQuestion' && response.approved && response.answers) {
             const baseInput =
-                pending.input && typeof pending.input === 'object' && !Array.isArray(pending.input)
-                    ? (pending.input as Record<string, unknown>)
+                context.toolInput && typeof context.toolInput === 'object' && !Array.isArray(context.toolInput)
+                    ? (context.toolInput as Record<string, unknown>)
                     : {};
             logger.debug(
                 `[AskUserQuestion] Resolving canCallTool with ${Object.keys(response.answers).length} answer(s) via updatedInput`,
             );
-            pending.resolve({
-                behavior: 'allow',
-                updatedInput: {
-                    ...baseInput,
-                    answers: response.answers,
+            return {
+                result: {
+                    behavior: 'allow',
+                    updatedInput: {
+                        ...baseInput,
+                        answers: response.answers,
+                    },
                 },
-            });
-            return;
+                completedRequest,
+            };
         }
 
         const result: PermissionResult = response.approved
             ? {
                 behavior: 'allow',
-                updatedInput: (pending.input as Record<string, unknown>) || {},
+                updatedInput: (context.toolInput as Record<string, unknown>) || {},
                 ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
             }
             : {
@@ -578,7 +564,7 @@ export class PermissionHandler {
                     `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`,
             };
 
-        pending.resolve(result);
+        return { result, completedRequest };
     }
 
     /**
@@ -720,89 +706,51 @@ export class PermissionHandler {
         signal: AbortSignal,
         opts?: { suggestions?: unknown; sourceLocalId?: string | null }
     ): Promise<PermissionResult> {
-        return new Promise<PermissionResult>((resolve, reject) => {
-            // Set up abort signal handling
-            const abortHandler = () => {
-                this.pendingRequests.delete(id);
-                reject(new Error('Permission request aborted'));
-            };
-            signal.addEventListener('abort', abortHandler, { once: true });
+        if (signal.aborted) {
+            return this.permissionCoordinator.requestDecision(
+                {
+                    requestId: id,
+                    toolName,
+                    toolInput: input,
+                    kind: resolveAgentRequestKind(toolName),
+                    sourceLocalId: typeof opts?.sourceLocalId === 'string' ? opts.sourceLocalId : null,
+                    permissionSuggestions: Array.isArray(opts?.suggestions) ? opts.suggestions : null,
+                },
+                { signal },
+            );
+        }
 
-            // Store the pending request
-            this.pendingRequests.set(id, {
-                resolve: (result: PermissionResult) => {
-                    signal.removeEventListener('abort', abortHandler);
-                    resolve(result);
-                },
-                reject: (error: Error) => {
-                    signal.removeEventListener('abort', abortHandler);
-                    reject(error);
-                },
+        const hadContext = this.permissionCoordinator.getResponseContext(id) !== null;
+        if (!this.pendingRequestMetadata.has(id)) {
+            this.pendingRequestMetadata.set(id, {
                 toolName,
                 input,
                 sourceLocalId: typeof opts?.sourceLocalId === 'string' ? opts.sourceLocalId : null,
             });
+        }
 
+        const promise = this.permissionCoordinator.requestDecision(
+            {
+                requestId: id,
+                toolName,
+                toolInput: input,
+                kind: resolveAgentRequestKind(toolName),
+                sourceLocalId: typeof opts?.sourceLocalId === 'string' ? opts.sourceLocalId : null,
+                permissionSuggestions: Array.isArray(opts?.suggestions) ? opts.suggestions : null,
+            },
+            { signal },
+        );
+
+        const hasContext = this.permissionCoordinator.getResponseContext(id) !== null;
+        if (!hasContext) {
+            this.pendingRequestMetadata.delete(id);
+            return promise;
+        }
+
+        if (!hadContext) {
             // Trigger callback to send delayed messages immediately
             if (this.onPermissionRequestCallback) {
                 this.onPermissionRequestCallback(id);
-            }
-
-                // Update agent state
-                        updateAgentStateBestEffort(
-                            this.session.client,
-                            (currentState) => {
-                                const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
-                                const entry = Object.create(null) as AgentStateRequestEntry;
-                                entry.tool = toolName;
-                                entry.kind = resolveAgentRequestKind(toolName);
-                                entry.arguments = input;
-                                entry.createdAt = Date.now();
-                                const suggestions = opts?.suggestions;
-                                if (Array.isArray(suggestions) && suggestions.length > 0) {
-                                    entry.permissionSuggestions = suggestions;
-                                }
-                                requests[id] = entry;
-                                return {
-                                    ...currentState,
-                                    capabilities: {
-                                        ...(currentState.capabilities && typeof currentState.capabilities === 'object'
-                                            ? currentState.capabilities
-                                            : {}),
-                                        askUserQuestionAnswersInPermission: true,
-                                    },
-                                    requests,
-                                };
-                            },
-                            '[Claude]',
-                            'publish_permission_request',
-                        );
-
-            // Send push notification (best-effort; bounded retries; gated by per-account preferences).
-            const notifier = this.getOrCreatePermissionRequestPushNotifier();
-            if (notifier) {
-                try {
-                    const snapshot = (this.session.client as any).getAgentStateSnapshot?.() ?? null;
-                    const existing = snapshot?.requests?.[id] ?? null;
-                    const notifiedAt = typeof (existing as any)?.pushNotifiedAt === 'number' ? (existing as any).pushNotifiedAt : null;
-                    if (typeof notifiedAt === 'number' && Number.isFinite(notifiedAt) && notifiedAt > 0) {
-                        notifier.markAlreadyNotified(id);
-                    } else {
-                        notifier.notify({
-                            permissionId: id,
-                            toolName: getToolName(toolName),
-                            toolInput: input,
-                            requestKind: resolveAgentRequestKind(toolName),
-                        });
-                    }
-                } catch {
-                    notifier.notify({
-                        permissionId: id,
-                        toolName: getToolName(toolName),
-                        toolInput: input,
-                        requestKind: resolveAgentRequestKind(toolName),
-                    });
-                }
             }
 
             if (this.isToolTraceEnabled()) {
@@ -822,7 +770,9 @@ export class PermissionHandler {
             }
 
             logger.debug(`Permission request sent for tool call ${id}: ${toolName}`);
-        });
+        }
+
+        return promise;
     }
     /**
      * Resolves tool call ID based on tool name and input
@@ -911,45 +861,33 @@ export class PermissionHandler {
         this.toolCalls = [];
         this.responses.clear();
         this.allowedToolIdentifiers.clear();
-        this.permissionRequestPushNotifier?.dispose();
-        this.permissionRequestPushNotifier = null;
+        this.agentStateRequestStore.dispose();
         this.permissionMode = 'default';
         this.exitedPlanModeLocalIds.clear();
         this.exitedPlanModeFallbackUntilMs = 0;
 
-        // Cancel all pending requests
-        for (const [, pending] of this.pendingRequests.entries()) {
-            pending.reject(new Error('Session reset'));
-        }
-        this.pendingRequests.clear();
-
-        this.clearPendingRequestsToCompleted('Session switched to local mode', 'reset_pending_requests');
+        this.cancelPendingRequests('Session reset', 'reset_pending_requests');
     }
 
-    private clearPendingRequestsToCompleted(reason: string, logReason: string): void {
-        updateAgentStateBestEffort(
-            this.session.client,
-            (currentState) => {
-                const pendingRequests = cloneStringKeyedRecordToNullProto(currentState.requests);
-                const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
+    private cancelPendingRequests(
+        reason: string,
+        _logReason: string,
+        _opts?: {
+            completedReason?: string;
+            decision?: 'abort';
+        },
+    ): void {
+        this.pendingRequestMetadata.clear();
+        this.permissionCoordinator.cancelAll(reason);
+    }
 
-                for (const [id, request] of Object.entries(pendingRequests)) {
-                    const entry = clonePlainObjectToNullProto(request) ?? Object.create(null);
-                    entry['completedAt'] = Date.now();
-                    entry['status'] = 'canceled';
-                    entry['reason'] = reason;
-                    completedRequests[id] = entry;
-                }
-
-                return {
-                    ...currentState,
-                    requests: Object.create(null),
-                    completedRequests,
-                };
-            },
-            '[Claude]',
-            logReason,
-        );
+    async abortPendingRequestsAndFlush(reason: string = 'Aborted by user'): Promise<void> {
+        this.cancelPendingRequests(reason, 'abort_pending_requests', { decision: 'abort' });
+        try {
+            await this.session.client.flush?.();
+        } catch (error) {
+            logger.debug('[Claude] Failed to flush session after aborting pending permissions (non-fatal)', error);
+        }
     }
 
     async resetAndFlush(): Promise<void> {
@@ -964,13 +902,8 @@ export class PermissionHandler {
     dispose(): void {
         this.metadataWatcherAbort?.abort();
         this.metadataWatcherAbort = null;
-        this.permissionRequestPushNotifier?.dispose();
-        this.permissionRequestPushNotifier = null;
-        for (const [, pending] of this.pendingRequests.entries()) {
-            pending.reject(new Error('Session disposed'));
-        }
-        this.pendingRequests.clear();
-        this.clearPendingRequestsToCompleted('Session disposed', 'dispose_pending_requests');
+        this.agentStateRequestStore.dispose();
+        this.cancelPendingRequests('Session disposed', 'dispose_pending_requests');
     }
 
     /**

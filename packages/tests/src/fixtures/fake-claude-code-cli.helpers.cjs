@@ -53,21 +53,35 @@ function findArgValue(argv, name) {
   return null;
 }
 
-function parseHookForwarderCommand(settingsPath) {
-  if (!settingsPath) return null;
+function parseHookCommandString(cmd) {
+  if (typeof cmd !== 'string' || cmd.length === 0) return null;
+  // Expected: node "<forwarderScript>" <port> ["HookEventName"]
+  // or: "<runtimeExecutable>" "<forwarderScript>" <port> ["HookEventName"]
+  const m = cmd.match(/^(?:node|"[^"]+")\s+"([^"]+)"\s+(\d+)(?:\s+"([^"]+)")?\s*$/);
+  if (!m) return { type: 'raw', command: cmd };
+  return {
+    type: 'node',
+    scriptPath: m[1],
+    port: Number(m[2]),
+    ...(typeof m[3] === 'string' && m[3].length > 0 ? { hookEventName: m[3] } : {}),
+  };
+}
+
+function parseHookForwarderCommandFromFile(filePath) {
+  if (!filePath) return null;
   try {
-    const raw = fs.readFileSync(settingsPath, 'utf8');
+    const raw = fs.readFileSync(filePath, 'utf8');
     const json = JSON.parse(raw);
     const cmd = json?.hooks?.SessionStart?.[0]?.hooks?.[0]?.command;
-    if (typeof cmd !== 'string' || cmd.length === 0) return null;
-    // Expected: node "<forwarderScript>" <port>
-    // or: "<runtimeExecutable>" "<forwarderScript>" <port>
-    const m = cmd.match(/^(?:node|"[^"]+")\s+"([^"]+)"\s+(\d+)\s*$/);
-    if (!m) return { type: 'raw', command: cmd };
-    return { type: 'node', scriptPath: m[1], port: Number(m[2]) };
+    return parseHookCommandString(cmd);
   } catch {
     return null;
   }
+}
+
+function parseHookForwarderCommand(settingsPath, pluginDir) {
+  const pluginHooksPath = pluginDir ? path.join(pluginDir, 'hooks', 'hooks.json') : null;
+  return parseHookForwarderCommandFromFile(pluginHooksPath) ?? parseHookForwarderCommandFromFile(settingsPath);
 }
 
 async function runHookForwarder(params) {
@@ -75,7 +89,11 @@ async function runHookForwarder(params) {
   if (!hook) return;
   if (hook.type === 'node' && hook.scriptPath && Number.isFinite(hook.port)) {
     await new Promise((resolve) => {
-      const child = spawnImpl('node', [hook.scriptPath, String(hook.port)], {
+      const args = [hook.scriptPath, String(hook.port)];
+      if (typeof hook.hookEventName === 'string' && hook.hookEventName.length > 0) {
+        args.push(hook.hookEventName);
+      }
+      const child = spawnImpl('node', args, {
         stdio: ['pipe', 'ignore', 'ignore'],
         env: process.env,
       });

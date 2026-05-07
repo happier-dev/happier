@@ -45,31 +45,35 @@ function findElementByTestId(node: React.ReactNode, testID: string): React.React
     return findElementByTestId(props.children, testID);
 }
 
-vi.mock('@happier-dev/protocol', () => ({
-    getActionSpec: () => ({ id: 'session.handoff', title: 'session.handoff.title', description: 'session.handoff.description' }),
-    evaluateSessionHandoffWorkspaceTransferSourcePathSafety: (params: {
-        sourcePath?: string;
-        sourceHomeDir?: string;
-        fallbackSourceHomeDir?: string;
-    }) => {
-        const rawSourcePath = String(params?.sourcePath ?? '').trim();
-        if (!rawSourcePath) {
-            return { allowed: false, reasonCode: 'missing_source_path' };
-        }
-        if (rawSourcePath === '~' || rawSourcePath === '~/') {
-            return { allowed: false, reasonCode: 'path_is_home_directory' };
-        }
-        const isAbsolute = rawSourcePath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(rawSourcePath) || /^(\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/].*)?$/.test(rawSourcePath);
-        if (!isAbsolute) {
-            return { allowed: false, reasonCode: 'path_is_not_absolute' };
-        }
-        const sourceHomeDir = String(params?.sourceHomeDir ?? '').trim() || String(params?.fallbackSourceHomeDir ?? '').trim();
-        const samePath = rawSourcePath === sourceHomeDir;
-        return samePath
-            ? { allowed: false, reasonCode: 'path_is_home_directory' }
-            : { allowed: true, reasonCode: null };
-    },
-}));
+vi.mock('@happier-dev/protocol', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
+    return {
+        ...actual,
+        getActionSpec: () => ({ id: 'session.handoff', title: 'session.handoff.title', description: 'session.handoff.description' }),
+        evaluateSessionHandoffWorkspaceTransferSourcePathSafety: (params: {
+            sourcePath?: string;
+            sourceHomeDir?: string;
+            fallbackSourceHomeDir?: string;
+        }) => {
+            const rawSourcePath = String(params?.sourcePath ?? '').trim();
+            if (!rawSourcePath) {
+                return { allowed: false, reasonCode: 'missing_source_path' };
+            }
+            if (rawSourcePath === '~' || rawSourcePath === '~/') {
+                return { allowed: false, reasonCode: 'path_is_home_directory' };
+            }
+            const isAbsolute = rawSourcePath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(rawSourcePath) || /^(\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/].*)?$/.test(rawSourcePath);
+            if (!isAbsolute) {
+                return { allowed: false, reasonCode: 'path_is_not_absolute' };
+            }
+            const sourceHomeDir = String(params?.sourceHomeDir ?? '').trim() || String(params?.fallbackSourceHomeDir ?? '').trim();
+            const samePath = rawSourcePath === sourceHomeDir;
+            return samePath
+                ? { allowed: false, reasonCode: 'path_is_home_directory' }
+                : { allowed: true, reasonCode: null };
+        },
+    };
+});
 
 installSessionHandoffCommonModuleMocks({
     storage: async () => {

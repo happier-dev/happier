@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildGitSnapshot } from './statusSnapshot';
+import { createPrStatusCache } from '../../hostingProviders/prStatusCache';
 
 type SnapshotEntry = Readonly<{
     path: string;
@@ -51,7 +52,7 @@ describe('git status snapshot parser', () => {
             pendingNumStatOutput,
         });
 
-        expect(snapshot.repo).toEqual({ isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [] });
+        expect(snapshot.repo).toEqual({ isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [], remotes: [] });
         expect(snapshot.branch).toMatchObject({
             head: 'main',
             upstream: 'origin/main',
@@ -197,6 +198,225 @@ describe('git status snapshot parser', () => {
             { path: '/repo/.worktrees/bugfix', branch: 'bugfix', isCurrent: false, isMain: false },
             { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: true, isMain: false },
         ]);
+    });
+
+    it('projects the detected hosting provider from git remotes', () => {
+        const statusOutput =
+            '# branch.oid 1111111111111111111111111111111111111111\0' +
+            '# branch.head feature/pr-support\0';
+
+        const snapshot = buildGitSnapshot({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: 123,
+            rootPath: '/repo',
+            statusOutput,
+            includedNumStatOutput: '',
+            pendingNumStatOutput: '',
+            remotesOutput:
+                'origin\tgit@github.com:happier-dev/happier.git (fetch)\n' +
+                'origin\tgit@github.com:happier-dev/happier.git (push)\n',
+        });
+
+        expect(snapshot.hostingProvider).toEqual({
+            kind: 'github',
+            name: 'GitHub',
+            baseUrl: 'https://github.com',
+            nameWithOwner: 'happier-dev/happier',
+            remoteName: 'origin',
+        });
+    });
+
+    it('projects the detected hosting provider from push URL when fetch URL is a local mirror', () => {
+        const statusOutput =
+            '# branch.oid 1111111111111111111111111111111111111111\0' +
+            '# branch.head feature/pr-support\0';
+
+        const snapshot = buildGitSnapshot({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: 123,
+            rootPath: '/repo',
+            statusOutput,
+            includedNumStatOutput: '',
+            pendingNumStatOutput: '',
+            remotesOutput:
+                'origin\tfile:///tmp/happier-origin.git (fetch)\n' +
+                'origin\tgit@github.com:happier-dev/happier.git (push)\n',
+        });
+
+        expect(snapshot.hostingProvider).toMatchObject({
+            kind: 'github',
+            nameWithOwner: 'happier-dev/happier',
+            remoteName: 'origin',
+        });
+    });
+
+    it('projects cached pull request status without blocking local git status parsing', () => {
+        const statusOutput =
+            '# branch.oid 1111111111111111111111111111111111111111\0' +
+            '# branch.head feature/pr-support\0';
+        const prStatusCache = createPrStatusCache({ now: () => 1_000 });
+        const provider = {
+            kind: 'github' as const,
+            name: 'GitHub',
+            baseUrl: 'https://github.com',
+            nameWithOwner: 'happier-dev/happier',
+            remoteName: 'origin',
+        };
+        prStatusCache.setSuccess({
+            repoRootPath: '/repo',
+            provider,
+            head: 'feature/pr-support',
+            authProfileKey: 'gh-cli',
+        }, [{
+            provider,
+            number: 42,
+            title: 'Ship PR support',
+            url: 'https://github.com/happier-dev/happier/pull/42',
+            baseBranch: 'main',
+            headBranch: 'feature/pr-support',
+            state: 'open',
+        }]);
+
+        const snapshot = buildGitSnapshot({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: 123,
+            rootPath: '/repo',
+            statusOutput,
+            includedNumStatOutput: '',
+            pendingNumStatOutput: '',
+            remotesOutput:
+                'origin\tgit@github.com:happier-dev/happier.git (fetch)\n' +
+                'origin\tgit@github.com:happier-dev/happier.git (push)\n',
+            prStatusCache,
+            pullRequestAuthProfileKey: 'gh-cli',
+        });
+
+        expect(snapshot.pullRequest).toMatchObject({
+            number: 42,
+            title: 'Ship PR support',
+            headBranch: 'feature/pr-support',
+        });
+    });
+
+    it('projects cached pull request status from matching connected-account cache entries', () => {
+        const statusOutput =
+            '# branch.oid 1111111111111111111111111111111111111111\0' +
+            '# branch.head feature/pr-support\0';
+        const prStatusCache = createPrStatusCache({ now: () => 1_000 });
+        const provider = {
+            kind: 'github' as const,
+            name: 'GitHub',
+            baseUrl: 'https://github.com',
+            nameWithOwner: 'happier-dev/happier',
+            remoteName: 'origin',
+        };
+        prStatusCache.setSuccess({
+            repoRootPath: '/repo',
+            provider,
+            head: 'feature/pr-support',
+            authProfileKey: 'connected:token:primary',
+        }, [{
+            provider,
+            number: 52,
+            title: 'Connected account PR',
+            url: 'https://github.com/happier-dev/happier/pull/52',
+            baseBranch: 'main',
+            headBranch: 'feature/pr-support',
+            state: 'open',
+        }]);
+
+        const snapshot = buildGitSnapshot({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: 123,
+            rootPath: '/repo',
+            statusOutput,
+            includedNumStatOutput: '',
+            pendingNumStatOutput: '',
+            remotesOutput:
+                'origin\tgit@github.com:happier-dev/happier.git (fetch)\n' +
+                'origin\tgit@github.com:happier-dev/happier.git (push)\n',
+            prStatusCache,
+            pullRequestAuthProfileKey: 'connected:token:primary',
+        });
+
+        expect(snapshot.pullRequest).toMatchObject({
+            number: 52,
+            title: 'Connected account PR',
+            headBranch: 'feature/pr-support',
+        });
+    });
+
+    it('does not project cached pull request status across auth-profile changes', () => {
+        const statusOutput =
+            '# branch.oid 1111111111111111111111111111111111111111\0' +
+            '# branch.head feature/pr-support\0';
+        const prStatusCache = createPrStatusCache({ now: () => 1_000 });
+        const provider = {
+            kind: 'github' as const,
+            name: 'GitHub',
+            baseUrl: 'https://github.com',
+            nameWithOwner: 'happier-dev/happier',
+            remoteName: 'origin',
+        };
+        prStatusCache.setSuccess({
+            repoRootPath: '/repo',
+            provider,
+            head: 'feature/pr-support',
+            authProfileKey: 'connected:token:primary',
+        }, [{
+            provider,
+            number: 52,
+            title: 'Connected account PR',
+            url: 'https://github.com/happier-dev/happier/pull/52',
+            baseBranch: 'main',
+            headBranch: 'feature/pr-support',
+            state: 'open',
+        }]);
+
+        const snapshot = buildGitSnapshot({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: 123,
+            rootPath: '/repo',
+            statusOutput,
+            includedNumStatOutput: '',
+            pendingNumStatOutput: '',
+            remotesOutput:
+                'origin\tgit@github.com:happier-dev/happier.git (fetch)\n' +
+                'origin\tgit@github.com:happier-dev/happier.git (push)\n',
+            prStatusCache,
+            pullRequestAuthProfileKey: 'gh-cli',
+        });
+
+        expect(snapshot.pullRequest).toBeNull();
+    });
+
+    it('prefers the upstream remote hosting provider in multi-remote repositories', () => {
+        const statusOutput =
+            '# branch.oid 1111111111111111111111111111111111111111\0' +
+            '# branch.head feature/pr-support\0' +
+            '# branch.upstream upstream/feature/pr-support\0';
+
+        const snapshot = buildGitSnapshot({
+            projectKey: 'machine-1:/repo',
+            fetchedAt: 123,
+            rootPath: '/repo',
+            statusOutput,
+            includedNumStatOutput: '',
+            pendingNumStatOutput: '',
+            remotesOutput:
+                'origin\thttps://gitlab.com/happier-dev/happier.git (fetch)\n' +
+                'origin\thttps://gitlab.com/happier-dev/happier.git (push)\n' +
+                'upstream\tgit@github.com:happier-dev/happier.git (fetch)\n' +
+                'upstream\tgit@github.com:happier-dev/happier.git (push)\n',
+        });
+
+        expect(snapshot.hostingProvider).toEqual({
+            kind: 'github',
+            name: 'GitHub',
+            baseUrl: 'https://github.com',
+            nameWithOwner: 'happier-dev/happier',
+            remoteName: 'upstream',
+        });
     });
 
     it('marks the linked worktree as current when the snapshot root stays at the shared git toplevel', () => {

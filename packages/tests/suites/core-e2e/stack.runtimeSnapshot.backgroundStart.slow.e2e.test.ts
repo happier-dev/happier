@@ -51,7 +51,7 @@ describe('core e2e: stack runtime snapshot', () => {
     const cleanups: Array<() => void | Promise<void>> = [];
     const fixture = await createRuntimeSnapshotFixture(
       { after: (callback) => cleanups.push(callback) },
-      { stackName: 'runtime-slow', serverPort: 4345 },
+      { stackName: 'runtime-slow' },
     );
     const env = createStackRuntimeEnv(fixture);
 
@@ -60,7 +60,7 @@ describe('core e2e: stack runtime snapshot', () => {
         [join(repoRoot, 'apps/stack/bin/hstack.mjs'), 'stack', 'start', fixture.stackName, '--background', '--runtime', '--no-browser'],
         { cwd: repoRoot, env },
       );
-      expect(startRes.code).toBe(0);
+      expect(startRes.code, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`).toBe(0);
 
       await assertRuntimeBackedStackServesUi(fixture.baseUrl);
       await waitForDaemonRunning({ repoRoot, stackName: fixture.stackName, env });
@@ -78,13 +78,13 @@ describe('core e2e: stack runtime snapshot', () => {
         [join(repoRoot, 'apps/stack/bin/hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'],
         { cwd: repoRoot, env },
       );
-      expect(stopRes.code).toBe(0);
+      expect(stopRes.code, `stdout:\n${stopRes.stdout}\nstderr:\n${stopRes.stderr}`).toBe(0);
 
       const restartRes = await runNodeCommand(
         [join(repoRoot, 'apps/stack/bin/hstack.mjs'), 'stack', 'start', fixture.stackName, '--background', '--runtime', '--no-browser'],
         { cwd: repoRoot, env },
       );
-      expect(restartRes.code).toBe(0);
+      expect(restartRes.code, `stdout:\n${restartRes.stdout}\nstderr:\n${restartRes.stderr}`).toBe(0);
 
       await assertRuntimeBackedStackServesUi(fixture.baseUrl);
       await waitForDaemonRunning({ repoRoot, stackName: fixture.stackName, env });

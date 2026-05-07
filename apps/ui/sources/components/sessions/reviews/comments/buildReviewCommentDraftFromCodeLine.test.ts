@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildCodeLinesFromFile } from '@/components/ui/code/model/buildCodeLinesFromFile';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
+import { computeLineContentHash } from '@/utils/text/lineContentHash';
 
 import { buildReviewCommentDraftFromCodeLine } from './buildReviewCommentDraftFromCodeLine';
 
@@ -41,13 +42,14 @@ describe('buildReviewCommentDraftFromCodeLine', () => {
                 side: 'after',
                 oldLine: null,
                 newLine: add.newLine,
+                lineHash: computeLineContentHash('+const a = 2;'),
             },
         });
         expect(draft.snapshot.selectedLines).toEqual(['+const a = 2;']);
     });
 
     it('builds a fileLine anchor and snapshot for file lines', () => {
-        const lines = buildCodeLinesFromFile({ text: ['const a = 1;', 'const b = 2;'].join('\n') });
+        const lines = buildCodeLinesFromFile({ text: ['const a = 1;', 'const b = 2;  '].join('\n') });
         const second = lines[1]!;
 
         const draft = buildReviewCommentDraftFromCodeLine({
@@ -61,8 +63,11 @@ describe('buildReviewCommentDraftFromCodeLine', () => {
             id: 'c2',
         });
 
-        expect(draft.anchor).toEqual({ kind: 'fileLine', startLine: 2 });
+        expect(draft.anchor).toEqual({
+            kind: 'fileLine',
+            startLine: 2,
+            lineHash: computeLineContentHash('const b = 2;  '),
+        });
         expect(draft.snapshot.selectedLines).toEqual(['const b = 2;']);
     });
 });
-

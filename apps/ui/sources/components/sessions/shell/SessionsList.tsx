@@ -4,7 +4,7 @@ import Animated, { useSharedValue, useAnimatedStyle, type SharedValue } from 're
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { Text } from '@/components/ui/text/Text';
 import { usePathname, useRouter } from 'expo-router';
-import { SessionListViewItem, useAllMachines, useProfile, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { SessionListViewItem, storage, useAllMachines, useProfile, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { Typography } from '@/constants/Typography';
@@ -17,21 +17,27 @@ import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveSer
 import { SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import { resolveSessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { useSessionInlineDrag } from './useSessionInlineDrag';
-import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { getAllKnownTags, getTagsForSession } from './sessionTagUtils';
 import { t } from '@/text';
 import { SessionItem } from './SessionItem';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { Modal } from '@/modal';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import {
     SESSION_LIST_ROW_HEIGHT_COMPACT,
     SESSION_LIST_ROW_HEIGHT_DEFAULT,
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
 } from './sessionListRowHeights';
-import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { countCollapsedSessionListGroups, filterCollapsedSessionListItems } from './sessionListCollapsedItems';
+import { buildSessionListReachabilityModels } from './sessionListReachabilityModels';
+import { buildSessionListSelectedItems, type SessionListSelectedItem } from './sessionListSelectedItems';
+import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
+import { storeTempData } from '@/utils/sessions/tempDataStore';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -66,6 +72,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.groupped.sectionTitle,
         flexShrink: 1,
         ...Typography.default('semiBold'),
+    },
+    groupHeaderPathTitleWeb: {
+        writingDirection: 'rtl' as const,
+        textAlign: 'left' as const,
+    },
+    groupHeaderPathTitleTextWeb: {
+        writingDirection: 'ltr' as const,
+        unicodeBidi: 'isolate' as const,
     },
     groupHeaderSubtitle: {
         fontSize: 11,
@@ -142,8 +156,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         opacity: 1,
     },
     footerContainer: {
-        paddingHorizontal: 16,
-        paddingTop: 12,
+        marginTop: -4,
     },
     dropIndicator: {
         position: 'absolute' as const,
@@ -161,6 +174,43 @@ type SessionListSessionItem = Extract<SessionListViewItem, { type: 'session' }> 
 const ROW_HEIGHT_DEFAULT = SESSION_LIST_ROW_HEIGHT_DEFAULT;
 const ROW_HEIGHT_COMPACT = SESSION_LIST_ROW_HEIGHT_COMPACT;
 const ROW_HEIGHT_MINIMAL = SESSION_LIST_ROW_HEIGHT_MINIMAL;
+const EMPTY_SESSION_KEYS: ReadonlyArray<string> = Object.freeze([]);
+const EMPTY_COLLAPSED_GROUP_KEYS: Readonly<Record<string, boolean>> = Object.freeze({});
+const EMPTY_SESSION_LIST_GROUP_ORDER: Readonly<Record<string, ReadonlyArray<string> | undefined>> = Object.freeze({});
+
+function getSessionListItemType(item: SessionListViewItem): string {
+    if (item.type === 'session') {
+        return 'session';
+    }
+    const headerKind = typeof item.headerKind === 'string' && item.headerKind.length > 0
+        ? item.headerKind
+        : 'generic';
+    return `header:${headerKind}`;
+}
+
+function countSessionListItems(items: ReadonlyArray<SessionListViewItem> | null | undefined): number {
+    if (!items) return 0;
+    return items.reduce((count, item) => count + (item.type === 'session' ? 1 : 0), 0);
+}
+
+function measureSessionListRenderDerivation<T>(
+    name: string,
+    items: ReadonlyArray<SessionListViewItem> | null | undefined,
+    fields: () => Readonly<Record<string, number>>,
+    compute: () => T,
+): T {
+    if (!syncPerformanceTelemetry.isEnabled()) {
+        return compute();
+    }
+    return syncPerformanceTelemetry.measure(
+        name,
+        {
+            items: items?.length ?? 0,
+            ...fields(),
+        },
+        compute,
+    );
+}
 
 const SessionsListHeader = React.memo(function SessionsListHeader() {
     return (
@@ -344,6 +394,8 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
     const customLabel = workspaceKey ? workspaceLabelsV1[workspaceKey] : undefined;
     const displayTitle = customLabel || item.title;
     const hasCustomLabel = Boolean(customLabel);
+    const shouldUseStartEllipsis = !hasCustomLabel && isWeb;
+    const nativeEllipsizeMode = !isWeb && !hasCustomLabel ? 'head' : 'tail';
     const actionIconColor = theme.colors.textSecondary;
     const canCreateSession = typeof onCreateSession === 'function' && Boolean(item.workspaceScopeHint);
 
@@ -385,7 +437,19 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
             >
                 <View style={styles.groupHeaderContent}>
                     <View style={styles.groupHeaderTitleRow}>
-                        <Text style={styles.groupHeaderTitle} numberOfLines={1}>{displayTitle}</Text>
+                        <Text
+                            style={shouldUseStartEllipsis
+                                ? [styles.groupHeaderTitle, styles.groupHeaderPathTitleWeb]
+                                : styles.groupHeaderTitle}
+                            numberOfLines={1}
+                            ellipsizeMode={shouldUseStartEllipsis ? undefined : nativeEllipsizeMode}
+                        >
+                            {shouldUseStartEllipsis ? (
+                                <Text style={styles.groupHeaderPathTitleTextWeb}>
+                                    {displayTitle}
+                                </Text>
+                            ) : displayTitle}
+                        </Text>
                         <View
                             style={styles.groupHeaderInlineActions}
                             onPointerEnter={isWeb ? () => setIsActionsHovered(true) : undefined}
@@ -504,10 +568,18 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
 });
 
 export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageFilter }>) {
+    const data = useVisibleSessionListViewData(props.storageKind ?? 'all');
+    return <SessionsListContent storageKind={props.storageKind} data={data} />;
+}
+
+export function SessionsListContent(props: Readonly<{
+    storageKind?: SessionListStorageFilter;
+    data: SessionListViewItem[] | null;
+}>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const safeArea = useSafeAreaInsets();
-    const data = useVisibleSessionListViewData(props.storageKind ?? 'all');
+    const data = props.data;
     const pathname = usePathname();
     const router = useRouter();
     const isTablet = useIsTablet();
@@ -516,6 +588,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
     const [sessionTagsV1, setSessionTagsV1] = useSettingMutable('sessionTagsV1');
     const sessionTagsEnabled = useSetting('sessionTagsEnabled');
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
+    const rememberLastProjectSessionSelections = useSetting('rememberLastProjectSessionSelections') !== false;
     const [workspaceLabelsV1, setWorkspaceLabelsV1] = useSettingMutable('workspaceLabelsV1');
     const [collapsedGroupKeysV1, setCollapsedGroupKeysV1] = useSettingMutable('collapsedGroupKeysV1');
     const sessionListDensity = useSetting('sessionListDensity');
@@ -537,106 +610,66 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         if (typeof event?.stopPropagation === 'function') event.stopPropagation();
     }, []);
 
-    const dataWithSelected = React.useMemo(() => {
-        if (!data) return data;
-        if (!selectable) return data;
-        return data.map((item) => ({
-            ...item,
-            selected: pathname.startsWith(`/session/${item.type === 'session' ? item.session.id : ''}`),
-        }));
-    }, [data, pathname, selectable]);
-
     const pinnedKeySet = React.useMemo(() => {
         return new Set(Array.isArray(pinnedSessionKeysV1) ? pinnedSessionKeysV1 : []);
     }, [pinnedSessionKeysV1]);
     const allMachines = useAllMachines();
     const machinesById = React.useMemo(() => {
-        return new Map(allMachines.map((machine) => [machine.id, machine] as const));
+        const next: Record<string, (typeof allMachines)[number]> = {};
+        for (const machine of allMachines) {
+            next[machine.id] = machine;
+        }
+        return next;
     }, [allMachines]);
 
-    const pinnedKeyList = Array.isArray(pinnedSessionKeysV1) ? pinnedSessionKeysV1 : [];
-    const currentGroupOrderMap = sessionListGroupOrderV1 ?? {};
+    const pinnedKeyList = Array.isArray(pinnedSessionKeysV1) ? pinnedSessionKeysV1 : EMPTY_SESSION_KEYS;
+    const currentGroupOrderMap = sessionListGroupOrderV1 ?? EMPTY_SESSION_LIST_GROUP_ORDER;
 
     const allKnownTags = React.useMemo(() => getAllKnownTags(sessionTagsV1), [sessionTagsV1]);
 
-    const reachableSessionDisplayById = React.useMemo(() => {
-        const displayById = new Map<string, { machineId: string | null; machineLabel: string; pathSubtitle: string }>();
-        for (const item of dataWithSelected ?? []) {
-            if (!item || item.type !== 'session') continue;
-            const target = readMachineTargetForSession(item.session.id);
-            const machineId = target?.machineId ?? (String(item.session?.metadata?.machineId ?? '').trim() || null);
-            const machineLabel = machineId
-                ? getMachineDisplayName(machinesById.get(machineId))
-                    ?? String(item.session?.metadata?.host ?? '').trim()
-                : String(item.session?.metadata?.host ?? '').trim();
-            const basePath = target?.basePath ?? item.session?.metadata?.path ?? null;
-            const pathSubtitle = basePath
-                ? formatPathRelativeToHome(basePath, item.session?.metadata?.homeDir ?? undefined)
-                : '';
+    const collapsedListItems = React.useMemo(() => {
+        return measureSessionListRenderDerivation(
+            'ui.sessionsList.render.collapsedFiltering',
+            data,
+            () => ({ collapsedGroups: countCollapsedSessionListGroups(collapsedGroupKeysV1) }),
+            () => data ? filterCollapsedSessionListItems(data, collapsedGroupKeysV1) : data,
+        );
+    }, [data, collapsedGroupKeysV1]);
 
-            displayById.set(item.session.id, {
-                machineId,
-                machineLabel,
-                pathSubtitle,
-            });
-        }
-        return displayById;
-    }, [dataWithSelected, machinesById]);
+    const reachabilityModels = React.useMemo(() => {
+        return measureSessionListRenderDerivation(
+            'ui.sessionsList.render.reachabilityDisplayMap',
+            collapsedListItems,
+            () => ({
+                sessions: countSessionListItems(collapsedListItems),
+                displayRows: countSessionListItems(collapsedListItems),
+                machines: allMachines.length,
+            }),
+            () => buildSessionListReachabilityModels({
+                items: collapsedListItems,
+                machinesById,
+                workspaceLabelsV1,
+            }),
+        );
+    }, [allMachines.length, collapsedListItems, machinesById, workspaceLabelsV1]);
 
-    const hasMultipleMachines = React.useMemo(() => {
-        if (!dataWithSelected) return false;
-        const machineIds = new Set<string>();
-        for (const item of dataWithSelected) {
-            if (!item || item.type !== 'session') continue;
-            const display = reachableSessionDisplayById.get(item.session.id);
-            const key = display?.machineId ?? display?.machineLabel ?? '';
-            if (key) machineIds.add(key);
-            if (machineIds.size > 1) return true;
-        }
-        return false;
-    }, [dataWithSelected, reachableSessionDisplayById]);
-
+    const selectedItemsRef = React.useRef<ReadonlyArray<SessionListSelectedItem> | null>(null);
     const visibleListItems = React.useMemo(() => {
-        const items = dataWithSelected;
-        if (!items || items.length === 0) return items;
-
-        const keys = collapsedGroupKeysV1 ?? {};
-        if (Object.keys(keys).length === 0) return items;
-
-        const sectionKinds = new Set(['active', 'inactive', 'pinned']);
-        const result: typeof items = [];
-        let skipUntilNextSection = false;
-
-        for (const item of items) {
-            if (item.type === 'header') {
-                const kind = item.headerKind ?? '';
-                const isSection = sectionKinds.has(kind);
-
-                if (isSection) {
-                    skipUntilNextSection = false;
-                    result.push(item);
-                    const collapseKey = item.groupKey || `${kind}:${item.serverId ?? 'local'}`;
-                    if (keys[collapseKey]) {
-                        skipUntilNextSection = true;
-                    }
-                    continue;
-                }
-
-                // Group header (project, date, server)
-                if (skipUntilNextSection) continue;
-                result.push(item);
-                continue;
-            }
-
-            // Session item
-            if (skipUntilNextSection) continue;
-            const groupKey = item.groupKey ?? '';
-            if (groupKey && keys[groupKey]) continue;
-            result.push(item);
-        }
-
-        return result;
-    }, [dataWithSelected, collapsedGroupKeysV1]);
+        return measureSessionListRenderDerivation(
+            'ui.sessionsList.render.selectedMapping',
+            collapsedListItems,
+            () => ({ selectable: selectable ? 1 : 0 }),
+            () => buildSessionListSelectedItems({
+                items: collapsedListItems,
+                pathname,
+                selectable,
+                previousItems: selectedItemsRef.current,
+            }),
+        );
+    }, [collapsedListItems, pathname, selectable]);
+    selectedItemsRef.current = visibleListItems ?? null;
+    const reachableSessionDisplayById = reachabilityModels.reachableSessionDisplayById;
+    const hasMultipleMachines = reachabilityModels.hasMultipleMachines;
 
     const rowHeight = compactSessionViewMinimal
         ? ROW_HEIGHT_MINIMAL
@@ -646,8 +679,8 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
 
     // Use refs so handleDragEnd is stable and never causes gesture recreation
     // when the store updates during a drag.
-    const dataRef = React.useRef(dataWithSelected);
-    dataRef.current = dataWithSelected;
+    const dataRef = React.useRef(visibleListItems);
+    dataRef.current = visibleListItems;
     const groupOrderRef = React.useRef(currentGroupOrderMap);
     groupOrderRef.current = currentGroupOrderMap;
 
@@ -656,8 +689,14 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
 
     // Drop indicator shared values — written by the dragging row's onUpdate
     // worklet, read by every row's useAnimatedStyle on the UI thread.
-    const dropIndicatorIdx = useSharedValue(-1);
-    const dropIndicatorEdge = useSharedValue(0);
+    const rawDropIndicatorIdx = useSharedValue(-1);
+    const rawDropIndicatorEdge = useSharedValue(0);
+    const dropIndicatorIdxRef = React.useRef(rawDropIndicatorIdx);
+    const dropIndicatorEdgeRef = React.useRef(rawDropIndicatorEdge);
+    const dropIndicatorIdx = dropIndicatorIdxRef.current;
+    const dropIndicatorEdge = dropIndicatorEdgeRef.current;
+    const setSessionListGroupOrderV1Ref = React.useRef(setSessionListGroupOrderV1);
+    setSessionListGroupOrderV1Ref.current = setSessionListGroupOrderV1;
 
     // Called once when the gesture ends. Commits the reorder AND resets drag
     // state in one shot. No data mutation happens mid-gesture — this is
@@ -685,12 +724,12 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
                     newOrder.splice(idx, 1);
                     newOrder.splice(targetIdx, 0, sessionKey);
                     const capped = newOrder.slice(0, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
-                    setSessionListGroupOrderV1({ ...currentMap, [groupKey]: capped });
+                    setSessionListGroupOrderV1Ref.current({ ...currentMap, [groupKey]: capped });
                 }
             }
         }
         setDraggingSessionKey(null);
-    }, [setSessionListGroupOrderV1]);
+    }, []);
 
     const handleDragStart = React.useCallback((sessionKey: string) => {
         setNativeContextMenuSessionKey(null);
@@ -724,6 +763,27 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         if (!workspaceScopeHint) {
             return;
         }
+        const seedSessionId = typeof item.seedSessionId === 'string' ? item.seedSessionId.trim() : '';
+        const seedSession = seedSessionId
+            ? ((storage.getState() as any)?.sessions?.[seedSessionId] as Session | undefined)
+            : undefined;
+        if (rememberLastProjectSessionSelections && seedSession) {
+            const dataId = storeTempData(buildNewSessionTempDataFromSessionConfiguration({
+                session: seedSession,
+                machineId: workspaceScopeHint.machineId,
+                directoryOverride: workspaceScopeHint.rootPath,
+            }));
+            router.push({
+                pathname: '/new',
+                params: {
+                    dataId,
+                    machineId: workspaceScopeHint.machineId,
+                    directory: workspaceScopeHint.rootPath,
+                    ...(workspaceScopeHint.serverId ? { spawnServerId: workspaceScopeHint.serverId } : {}),
+                },
+            } as any);
+            return;
+        }
         router.push({
             pathname: '/new',
             params: {
@@ -732,7 +792,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
                 ...(workspaceScopeHint.serverId ? { spawnServerId: workspaceScopeHint.serverId } : {}),
             },
         } as any);
-    }, [router]);
+    }, [rememberLastProjectSessionSelections, router]);
 
     const handleToggleCollapse = React.useCallback((collapseKey: string) => {
         const current = collapsedGroupKeysV1 ?? {};
@@ -754,7 +814,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
 
     const listItems = (visibleListItems ?? []) as Array<SessionListViewItem | (SessionListSessionItem & { selected?: boolean })>;
 
-    const listItemKeyExtractor = (item: SessionListViewItem, index: number) => {
+    const listItemKeyExtractor = React.useCallback((item: SessionListViewItem, index: number) => {
         if (item.type === 'header') {
             const gk = String(item.groupKey ?? '').trim();
             const kind = String(item.headerKind ?? '').trim();
@@ -767,9 +827,9 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         const id = String(item.session?.id ?? '').trim();
         if (sid && id) return `session:${sid}:${id}`;
         return `session:${index}`;
-    };
+    }, []);
 
-    const collapsedKeys = collapsedGroupKeysV1 ?? {};
+    const collapsedKeys = collapsedGroupKeysV1 ?? EMPTY_COLLAPSED_GROUP_KEYS;
     const renderHeaderItem = React.useCallback((item: Extract<SessionListViewItem, { type: 'header' }>) => {
         const headerTestId = item.headerKind === 'project'
             ? `session-list-project-header:${item.groupKey ?? item.title}`
@@ -824,13 +884,14 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         const sessionKey = typeof item.serverId === 'string' ? `${item.serverId}:${item.session.id}` : null;
         const pinned = item.pinned === true || (sessionKey ? pinnedKeySet.has(sessionKey) : false);
         const reachableDisplay = reachableSessionDisplayById.get(item.session.id);
-        const pathSubtitle = reachableDisplay?.pathSubtitle ?? '';
+        const workspaceSubtitle = reachableDisplay?.workspaceSubtitle ?? '';
         const machineLabel = reachableDisplay?.machineLabel ?? '';
         const computedSubtitle = hasMultipleMachines
-            ? (machineLabel && pathSubtitle ? `${machineLabel} · ${pathSubtitle}` : machineLabel || pathSubtitle)
-            : pathSubtitle;
+            ? (machineLabel && workspaceSubtitle ? `${machineLabel} · ${workspaceSubtitle}` : machineLabel || workspaceSubtitle)
+            : workspaceSubtitle;
         const isGroupedByPath = item.groupKind === 'project' && item.variant === 'no-path';
         const subtitle = isGroupedByPath ? null : computedSubtitle;
+        const subtitleEllipsizeMode = reachableDisplay?.workspaceSubtitleEllipsizeMode ?? 'head';
 
         const rowTags = sessionKey ? getTagsForSession(sessionTagsV1, sessionKey) : [];
         const supportsPin = Boolean(sessionKey);
@@ -882,6 +943,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
                 dropIndicatorEdge={dropIndicatorEdge}
                 session={item.session}
                 subtitleOverride={subtitle ?? null}
+                subtitleEllipsizeMode={subtitleEllipsizeMode}
                 serverId={item.serverId}
                 serverName={item.serverName}
                 currentUserId={currentUserId}
@@ -935,38 +997,34 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
         showServerBadge,
     ]);
 
-    const renderVirtualizedItem = ({ item, index }: { item: SessionListViewItem; index: number }) => {
-        if (item.type === 'header') return renderHeaderItem(item);
-        return renderSessionItem(item, index);
-    };
+    const renderHeaderItemRef = React.useRef(renderHeaderItem);
+    renderHeaderItemRef.current = renderHeaderItem;
+    const renderSessionItemRef = React.useRef(renderSessionItem);
+    renderSessionItemRef.current = renderSessionItem;
+
+    const renderVirtualizedItem = React.useCallback(({ item, index }: { item: SessionListViewItem; index: number }) => {
+        if (item.type === 'header') return renderHeaderItemRef.current(item);
+        return renderSessionItemRef.current(item, index);
+    }, []);
 
     const renderVirtualizedFooter = React.useCallback(() => {
         return (
-            <View style={styles.footerContainer}>
-                <Pressable
-                    style={{
-                        backgroundColor: theme.colors.surface,
-                        borderRadius: 12,
-                        paddingVertical: 10,
-                        paddingHorizontal: 12,
-                        alignSelf: 'stretch',
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        gap: 8,
-                    }}
+            <ItemGroup style={styles.footerContainer}>
+                <Item
+                    title={hideInactiveSessions
+                        ? t('sessionInfo.inactiveAndArchivedSessions')
+                        : t('sessionInfo.archivedSessions')}
+                    icon={<Ionicons name="archive-outline" size={22} color={theme.colors.textSecondary} />}
                     onPress={() => router.push('/session/archived')}
-                    accessibilityRole="button"
-                >
-                    <Ionicons name="archive-outline" size={18} color={theme.colors.text} />
-                    <Text style={{ fontSize: 13, color: theme.colors.text }}>
-                        {hideInactiveSessions
-                            ? t('sessionInfo.inactiveAndArchivedSessions')
-                            : t('sessionInfo.archivedSessions')}
-                    </Text>
-                </Pressable>
-            </View>
+                />
+            </ItemGroup>
         );
-    }, [hideInactiveSessions, router, styles.footerContainer, theme.colors.surface, theme.colors.text]);
+    }, [hideInactiveSessions, router, styles.footerContainer, theme.colors.textSecondary]);
+
+    const contentContainerStyle = React.useMemo(() => ({
+        paddingBottom: safeArea.bottom + 128,
+        maxWidth: layout.maxWidth,
+    }), [safeArea.bottom]);
 
     const virtualizedListContent = Platform.OS === 'web' ? (
         <FlatList
@@ -976,7 +1034,7 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
             data={listItems as any}
             renderItem={renderVirtualizedItem as any}
             keyExtractor={listItemKeyExtractor as any}
-            contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth }}
+            contentContainerStyle={contentContainerStyle}
             ListHeaderComponent={SessionsListHeader as any}
             ListFooterComponent={renderVirtualizedFooter as any}
         />
@@ -985,7 +1043,8 @@ export function SessionsList(props: Readonly<{ storageKind?: SessionListStorageF
             data={listItems as any}
             renderItem={renderVirtualizedItem as any}
             keyExtractor={listItemKeyExtractor as any}
-            contentContainerStyle={{ paddingBottom: safeArea.bottom + 128, maxWidth: layout.maxWidth } as any}
+            getItemType={getSessionListItemType}
+            contentContainerStyle={contentContainerStyle}
             ListHeaderComponent={SessionsListHeader as any}
             ListFooterComponent={renderVirtualizedFooter as any}
         />

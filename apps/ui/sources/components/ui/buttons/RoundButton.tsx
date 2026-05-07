@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleProp, TextStyle, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleProp, StyleSheet as ReactNativeStyleSheet, TextStyle, View, ViewStyle } from 'react-native';
 import { iOSUIKit } from 'react-native-typography';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
+import { GradientSurface, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
 
 
 export type RoundButtonSize = 'large' | 'normal' | 'small';
@@ -76,9 +77,11 @@ export const RoundButton = React.memo((props: {
         textColor: string,
         backgroundColor: string,
         borderColor: string,
+        gradient?: SurfaceGradient,
     } } = {
         default: {
             backgroundColor: theme.colors.button.primary.background,
+            gradient: theme.colors.button.primary.gradient,
             borderColor: 'transparent',
             textColor: theme.colors.button.primary.tint
         },
@@ -116,6 +119,14 @@ export const RoundButton = React.memo((props: {
                     styles.contentContainer
                 ]}
             >
+                {display.gradient ? (
+                    <GradientSurface
+                        fallbackColor={display.backgroundColor}
+                        gradient={display.gradient}
+                        borderRadius={10}
+                        style={ReactNativeStyleSheet.absoluteFillObject}
+                    />
+                ) : null}
                 {doLoading && (
                     <View style={styles.loadingContainer}>
                         <ActivityIndicator color={display.textColor} size='small' />

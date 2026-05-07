@@ -12,6 +12,16 @@ test('resolveMobileReachableServerUrl rewrites localhost to LAN IP (env override
   assert.equal(out, 'http://192.168.0.50:3005');
 });
 
+test('resolveMobileReachableServerUrl prefers explicit reachable host over LAN IP', () => {
+  const out = resolveMobileReachableServerUrl({
+    env: { HAPPIER_STACK_LAN_IP: '192.168.0.50' },
+    serverUrl: 'http://localhost:3005',
+    serverPort: 3005,
+    preferredHost: '100.64.0.10',
+  });
+  assert.equal(out, 'http://100.64.0.10:3005');
+});
+
 test('resolveMobileReachableServerUrl rewrites *.localhost to LAN IP (env override)', () => {
   const out = resolveMobileReachableServerUrl({
     env: { HAPPIER_STACK_LAN_IP: '10.0.0.12' },

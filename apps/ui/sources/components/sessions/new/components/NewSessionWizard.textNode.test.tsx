@@ -36,7 +36,7 @@ vi.mock('react-native-keyboard-controller', () => ({
         React.createElement('KeyboardAvoidingView', props, props.children),
     useKeyboardHandler: (...args: any[]) => useKeyboardHandlerMock(...args),
     useReanimatedKeyboardAnimation: () => ({
-        height: { value: 240 },
+        height: { value: -240 },
         progress: { value: 1 },
     }),
 }));
@@ -174,6 +174,22 @@ describe('NewSessionWizard', () => {
         if (typeof style === 'number') return {};
         if (typeof style === 'object') return style as Record<string, any>;
         return {};
+    }
+
+    function getTranslateY(style: any): number | null {
+        const transform = flattenStyle(style).transform;
+        if (!Array.isArray(transform)) return null;
+        for (const entry of transform) {
+            if (
+                entry
+                && typeof entry === 'object'
+                && 'translateY' in entry
+                && typeof entry.translateY === 'number'
+            ) {
+                return entry.translateY;
+            }
+        }
+        return null;
     }
 
     it('does not force the wizard shell to full-height on wide web layouts', async () => {
@@ -534,7 +550,11 @@ describe('NewSessionWizard', () => {
         />);
 
         expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
-        expect(screen.findAllByType('AnimatedView').length).toBeGreaterThan(0);
+        const composerHostTranslateY = screen
+            .findAllByType('AnimatedView')
+            .map((node) => getTranslateY(node.props.style))
+            .find((translateY) => translateY !== null);
+        expect(composerHostTranslateY).toBe(-240);
     });
 
     it('renders AI backend providers as a full list', async () => {

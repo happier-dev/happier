@@ -35,6 +35,6 @@ describe('Session settings (Handoff entry)', () => {
 
         screen.pressRowByTitle('settingsSession.handoff.title');
 
-        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/handoff');
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/session/handoff');
     });
 });

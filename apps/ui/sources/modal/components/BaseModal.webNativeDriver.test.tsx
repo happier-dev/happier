@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installModalComponentCommonModuleMocks } from './modalComponentTestHelpers';
 
@@ -25,6 +26,7 @@ installModalComponentCommonModuleMocks({
                     capturedTimingConfigs.push(config);
                     return { start: () => undefined };
                 },
+                View: (props: any) => React.createElement('AnimatedView', props, props.children),
             },
             View: (props: any) => React.createElement('View', props, props.children),
         });
@@ -78,5 +80,28 @@ describe('BaseModal (web native driver)', () => {
     for (const cfg of capturedTimingConfigs) {
       expect(cfg.useNativeDriver).toBe(false);
     }
+  });
+
+  it('uses the shared modal overlay enter and exit durations on web', async () => {
+    const { BaseModal } = await import('./BaseModal');
+    const { motionTokens } = await import('@/components/ui/motion/motionTokens');
+
+    const rendered = await renderScreen(
+      <BaseModal visible={true}>
+        <div />
+      </BaseModal>,
+    );
+
+    expect(capturedTimingConfigs.some((cfg) => cfg.duration === motionTokens.overlay.modal.enterMs)).toBe(true);
+
+    await act(async () => {
+      rendered.tree.update(
+        <BaseModal visible={false}>
+          <div />
+        </BaseModal>,
+      );
+    });
+
+    expect(capturedTimingConfigs.some((cfg) => cfg.duration === motionTokens.overlay.modal.exitMs)).toBe(true);
   });
 });

@@ -58,8 +58,10 @@ vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => {}),
 }));
 
+const activeServerSnapshot = { serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 };
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 }),
+    getActiveServerSnapshot: () => activeServerSnapshot,
+    subscribeActiveServer: () => () => {},
     // Intentionally not sorted by recency.
     listServerProfiles: () => ([
         { id: 'server-a', name: 'A', serverUrl: 'https://a.example.test', lastUsedAt: 1 },

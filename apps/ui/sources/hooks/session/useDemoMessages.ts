@@ -42,6 +42,7 @@ export function useDemoMessages(messages: Message[]) {
                     latestThinkingMessageId,
                     latestThinkingMessageActivityAtMs: null,
                     messagesVersion: 1,
+                    lastAppliedAgentStateVersion: null,
                     isLoaded: true,
                 },
             },

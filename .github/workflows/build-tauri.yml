@@ -471,7 +471,7 @@ jobs:
 
   publish_stable_feed:
     if: ${{ inputs.publish_release == true && inputs.environment == 'production' }}
-    needs: [prepare_assets]
+    needs: [prepare_assets, publish_stable_release]
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
     with:

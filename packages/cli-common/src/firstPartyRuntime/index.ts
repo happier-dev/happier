@@ -28,12 +28,31 @@ export type { FirstPartyRetentionResolution } from './retentionPolicy.js';
 
 export { resolveInstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
 export type { InstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
+export { resolveJunctionFreeCurrentPath } from './resolveJunctionFreeCurrentPath.js';
+export {
+  readInstalledVersionMarkers,
+  readInstalledVersionMarkersSync,
+  writeInstalledVersionMarker,
+} from './versionMarkers.js';
 export {
   readDefaultManagedReleaseChannel,
   readDefaultManagedReleaseChannelSync,
   resolveDefaultManagedReleaseChannelStatePath,
   writeDefaultManagedReleaseChannel,
 } from './defaultReleaseChannelState.js';
+export {
+  DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
+  STANDARD_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
+  resolveManagedCliReleaseChannel,
+  resolveManagedCliReleaseChannelSync,
+  resolveManagedCliToolNameForRing,
+} from './resolveManagedCliReleaseChannel.js';
+export type {
+  ManagedCliReleaseChannelMarkerFallback,
+  ManagedCliReleaseChannelSource,
+  ManagedCliToolName,
+  ResolvedManagedCliReleaseChannel,
+} from './resolveManagedCliReleaseChannel.js';
 export {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
 } from './prepareFirstPartyComponentPayloadFromGitHubRelease.js';

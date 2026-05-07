@@ -13,6 +13,11 @@ vi.mock('@/text', () => createTextModuleMock());
 
 vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: () => ({ displayNameKey: 'agents.codex' }),
+    getAgentBehavior: (agentId: string) => ({
+        sessionUsage: {
+            supportsExactContextUsageBadge: agentId !== 'codex' && agentId !== 'gemini',
+        },
+    }),
 }));
 
 import { useAgentInputSelectionOverlayController } from '../selection/useAgentInputSelectionOverlayController';

@@ -10,7 +10,7 @@
 
 import { logger } from '@/ui/logger';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { AgentState, PermissionMode } from '@/api/types';
+import type { PermissionMode } from '@/api/types';
 import {
   BasePermissionHandler,
   type PermissionRequestPushSender,
@@ -87,48 +87,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       const decision = this.resolveDecisionForToolCall(toolCallId, pending.toolName, pending.input);
       if (!decision) continue;
 
-      // Remove from pending and resolve the in-flight promise.
-      this.pendingRequests.delete(toolCallId);
-      try {
-        pending.resolve(decision);
-      } catch {
-        // Best-effort: promise resolution should not crash the process.
-      }
-
-      // Move the request to completed in agent state and clear it from pending requests.
-      this.updateAgentStateBestEffort((currentState: AgentState) => {
-        const requests = currentState.requests ?? {};
-        const { [toolCallId]: request, ...remainingRequests } = requests;
-
-        type CompletedRequestEntry = NonNullable<AgentState['completedRequests']>[string];
-        const now = Date.now();
-        const status: CompletedRequestEntry['status'] =
-          decision.decision === 'denied' || decision.decision === 'abort' ? 'denied' : 'approved';
-        const completedEntry: CompletedRequestEntry = request
-          ? {
-              ...request,
-              completedAt: now,
-              status,
-              decision: decision.decision,
-            }
-          : {
-              tool: pending.toolName,
-              arguments: pending.input,
-              createdAt: now,
-              completedAt: now,
-              status,
-              decision: decision.decision,
-            };
-
-        return {
-          ...currentState,
-          requests: remainingRequests,
-          completedRequests: {
-            ...(currentState.completedRequests ?? {}),
-            [toolCallId]: completedEntry,
-          },
-        };
-      }, 'resolve pending request');
+      this.resolvePendingPermissionRequest(toolCallId, decision);
     }
   }
 
@@ -236,11 +195,9 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     });
 
     if (resolveAgentRequestKind(toolName) === 'user_action') {
-      return new Promise<PermissionResult>((resolve, reject) => {
-        this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
-        this.addPendingRequestToState(toolCallId, toolName, input);
-        logger.debug(`${this.getLogPrefix()} User action request sent for tool: ${toolName} (${toolCallId})`);
-      });
+      const pending = this.requestPermissionDecision(toolCallId, toolName, input);
+      logger.debug(`${this.getLogPrefix()} User action request sent for tool: ${toolName} (${toolCallId})`);
+      return pending;
     }
 
     const isAlwaysAutoApprove =
@@ -267,10 +224,8 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       return { decision };
     }
 
-    return new Promise<PermissionResult>((resolve, reject) => {
-      this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
-      this.addPendingRequestToState(toolCallId, toolName, input);
-      logger.debug(`${this.getLogPrefix()} Permission request sent for tool: ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`);
-    });
+    const pending = this.requestPermissionDecision(toolCallId, toolName, input);
+    logger.debug(`${this.getLogPrefix()} Permission request sent for tool: ${toolName} (${toolCallId}) in ${this.currentPermissionMode} mode`);
+    return pending;
   }
 }

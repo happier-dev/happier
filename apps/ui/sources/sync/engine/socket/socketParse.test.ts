@@ -86,6 +86,63 @@ describe('socketParse', () => {
         expect((res as any).id).toBe('s1');
     });
 
+    it('parses transcript stream segment ephemerals', () => {
+        const res = parseEphemeralUpdate({
+            type: 'transcript-stream-segment',
+            sessionId: 's1',
+            message: {
+                localId: 'segment-1',
+                content: {
+                    t: 'plain',
+                    v: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp',
+                            provider: 'codex',
+                            data: { type: 'message', message: 'Hello' },
+                        },
+                        meta: {
+                            happierStreamSegmentV1: {
+                                v: 1,
+                                segmentKind: 'assistant',
+                                segmentLocalId: 'segment-1',
+                                segmentState: 'streaming',
+                                startedAtMs: 1_000,
+                                updatedAtMs: 1_010,
+                            },
+                        },
+                    },
+                },
+                createdAt: 1_000,
+                updatedAt: 1_010,
+            },
+        });
+
+        expect(res).not.toBeNull();
+        expect(res?.type).toBe('transcript-stream-segment');
+        expect((res as any)?.message?.localId).toBe('segment-1');
+    });
+
+    it('parses direct-session transcript delta ephemerals', () => {
+        const res = parseEphemeralUpdate({
+            type: 'direct-session-transcript-delta',
+            sessionId: 's1',
+            items: [
+                {
+                    id: 'direct-msg-1',
+                    createdAtMs: 1_000,
+                    raw: { role: 'user', content: { type: 'text', text: 'Hello direct' } },
+                },
+            ],
+            nextCursor: 'tail-cursor-1',
+            truncated: false,
+        });
+
+        expect(res).not.toBeNull();
+        expect(res?.type).toBe('direct-session-transcript-delta');
+        expect((res as any)?.nextCursor).toBe('tail-cursor-1');
+    });
+
     it('returns null for invalid ephemeral payloads', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const res = parseEphemeralUpdate({

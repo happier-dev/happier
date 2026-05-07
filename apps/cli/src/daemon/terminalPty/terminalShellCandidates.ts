@@ -14,6 +14,14 @@ function shouldUseLoginArgs(file: string): boolean {
   return lower.endsWith('/zsh') || lower.endsWith('/bash') || lower === 'zsh' || lower === 'bash';
 }
 
+function shouldDisablePromptSpacing(file: string, env: NodeJS.ProcessEnv): boolean {
+  const lower = file.toLowerCase();
+  const hasVisiblePromptEolMarkOverride =
+    typeof env.HAPPIER_DAEMON_TERMINAL_PROMPT_EOL_MARK === 'string'
+    && env.HAPPIER_DAEMON_TERMINAL_PROMPT_EOL_MARK.length > 0;
+  return (lower.endsWith('/zsh') || lower === 'zsh') && !hasVisiblePromptEolMarkOverride;
+}
+
 export function resolveTerminalShell(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): ResolvedTerminalShell {
   const override = normalizeNonEmptyString(env.HAPPIER_DAEMON_TERMINAL_SHELL);
   if (override) {
@@ -27,7 +35,9 @@ export function resolveTerminalShell(env: NodeJS.ProcessEnv, platform: NodeJS.Pl
   }
 
   const shell = normalizeNonEmptyString(env.SHELL) ?? (platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
-  const args = shouldUseLoginArgs(shell) ? ['-l'] : [];
+  const args = [
+    ...(shouldUseLoginArgs(shell) ? ['-l'] : []),
+    ...(shouldDisablePromptSpacing(shell, env) ? ['+o', 'prompt_sp'] : []),
+  ];
   return { file: shell, args };
 }
-

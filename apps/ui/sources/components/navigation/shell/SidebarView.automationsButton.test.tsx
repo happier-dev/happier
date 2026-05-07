@@ -23,6 +23,15 @@ const inboxState = vi.hoisted(() => ({
     hasContent: false,
 }));
 
+const socketStatusState = vi.hoisted(() => ({
+    status: 'connected' as 'connected' | 'connecting' | 'disconnected' | 'error',
+    lastError: null as string | null,
+}));
+
+const syncErrorState = vi.hoisted(() => ({
+    value: null as null | { message: string; retryable?: boolean; kind?: string; at?: number },
+}));
+
 installNavigationShellCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -56,10 +65,10 @@ installNavigationShellCommonModuleMocks({
     storage: async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {
-            useSocketStatus: () => ({ status: 'connected', lastError: null }),
+            useSocketStatus: () => ({ status: socketStatusState.status, lastError: socketStatusState.lastError }),
             useFriendRequests: () => friendRequestsState.items,
             useSetting: () => false,
-            useSyncError: () => null,
+            useSyncError: () => syncErrorState.value as any,
             useRealtimeStatus: () => 'disconnected',
         });
     },
@@ -244,6 +253,15 @@ function flattenStyle(style: unknown) {
     return style ?? {};
 }
 
+function styleListHasExplicitFallbackDimensions(style: unknown, dimensions: Readonly<{ width: number; height: number }>): boolean {
+    if (!Array.isArray(style)) return false;
+    return style.some((item) => {
+        if (!item || typeof item !== 'object') return false;
+        const record = item as Record<string, unknown>;
+        return record.width === dimensions.width && record.height === dimensions.height;
+    });
+}
+
 function requireTestInstance(node: ReactTestInstance | null, label: string): ReactTestInstance {
     expect(node, `${label} should be present`).toBeTruthy();
     return node!;
@@ -256,6 +274,9 @@ describe('SidebarView header automations button', () => {
         featureEnabledState.voice = false;
         friendRequestsState.items = [];
         inboxState.hasContent = false;
+        socketStatusState.status = 'connected';
+        socketStatusState.lastError = null;
+        syncErrorState.value = null;
     });
 
     it('navigates to home when logo is pressed', async () => {
@@ -268,6 +289,16 @@ describe('SidebarView header automations button', () => {
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/');
+    });
+
+    it('passes explicit dimensions to the sidebar logo image', async () => {
+        const { SidebarView } = await import('./SidebarView');
+
+        const screen = await renderScreen(<SidebarView />);
+        const logoButton = screen.findByProps({ accessibilityLabel: 'common.home' });
+        const logoImage = logoButton.findByType('Image' as never);
+
+        expect(styleListHasExplicitFallbackDimensions(logoImage.props.style, { width: 24, height: 24 })).toBe(true);
     });
 
     it('blocks shell navigation when an unsaved-changes guard is active and the user keeps editing', async () => {
@@ -352,6 +383,26 @@ describe('SidebarView header automations button', () => {
             maxWidth: '100%',
             minWidth: 0,
         });
+    });
+
+    it('does not surface raw socket errors in a sidebar banner above the session list', async () => {
+        socketStatusState.status = 'error';
+        socketStatusState.lastError = 'xhr poll error';
+
+        const { SidebarView } = await import('./SidebarView');
+        const screen = await renderScreen(<SidebarView sidebarWidthPx={600} />);
+
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'xhr poll error')).toBeUndefined();
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'status.error')).toBeUndefined();
+    });
+
+    it('does not render a separate retry banner above the session list when connection errors occur', async () => {
+        syncErrorState.value = { message: 'xhr poll error', retryable: true, kind: 'unknown', at: Date.now() };
+
+        const { SidebarView } = await import('./SidebarView');
+        const screen = await renderScreen(<SidebarView sidebarWidthPx={600} />);
+
+        expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'common.retry')).toBeUndefined();
     });
 
     it('shows the header icons inline when the sidebar is wide enough', async () => {

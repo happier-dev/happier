@@ -1,59 +1,23 @@
-import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
-import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
-import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
-import type { Session } from '@/sync/domains/state/storageTypes';
+import {
+    hasActivityAttention,
+    type ActivityAttentionSession,
+    type ActivityAttentionSessionOptions,
+} from '@/activity/attention/activityAttentionSessions';
 
 export type ActivityBadgeState = Readonly<{
     count: number;
     showNonNumericDot: boolean;
 }>;
 
-type ActivityBadgeSessionOptions = Readonly<{
-    showUnread?: boolean;
-    showPendingPermissionRequests?: boolean;
-    showPendingUserActionRequests?: boolean;
-    showQueuedUserInput?: boolean;
-}>;
-
-function hasSessionBadgeAttention(session: Session, options?: ActivityBadgeSessionOptions): boolean {
-    const isSessionActive = session.active === true;
-
-    if (options?.showUnread !== false) {
-        const hasUnread = computeHasUnreadActivity({
-            sessionSeq: session.seq ?? 0,
-            pendingActivityAt: 0,
-            lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
-            lastViewedPendingActivityAt: session.metadata?.readStateV1?.pendingActivityAt,
-        });
-        if (hasUnread) return true;
-    }
-
-    if (isSessionActive && options?.showPendingPermissionRequests !== false) {
-        const hasPendingPermissionRequests = derivePendingRequestFlagsFromSession(session).hasPendingPermissionRequests;
-        if (hasPendingPermissionRequests) return true;
-    }
-
-    if (isSessionActive && options?.showPendingUserActionRequests !== false) {
-        const hasPendingUserActionRequests = derivePendingRequestFlagsFromSession(session).hasPendingUserActionRequests;
-        if (hasPendingUserActionRequests) return true;
-    }
-
-    if (options?.showQueuedUserInput !== false) {
-        return (session.pendingCount ?? 0) > 0;
-    }
-
-    return false;
-}
-
 export function buildActivityBadgeState(params: Readonly<{
-    sessions: ReadonlyArray<Session>;
+    sessions: ReadonlyArray<ActivityAttentionSession>;
     numericInboxCount: number;
     hasNonNumericInboxAttention: boolean;
-    sessionOptions?: ActivityBadgeSessionOptions;
+    sessionOptions?: ActivityAttentionSessionOptions;
 }>): ActivityBadgeState {
     let sessionAttentionCount = 0;
     for (const session of params.sessions) {
-        if (hasSessionBadgeAttention(session, params.sessionOptions)) {
+        if (hasActivityAttention(session, params.sessionOptions)) {
             sessionAttentionCount += 1;
         }
     }

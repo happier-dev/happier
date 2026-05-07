@@ -58,4 +58,41 @@ describe('fetchAndApplyFeed retry semantics', () => {
 
         expect(runtimeFetchSpy).toHaveBeenCalledTimes(1);
     });
+
+    it('drops fetched feed items when the captured sync scope is stale before apply', async () => {
+        upsertAndActivateServer({ serverUrl: 'https://server.example.test', scope: 'tab' });
+        runtimeFetchSpy.mockImplementation(async () => new Response(JSON.stringify({
+                items: [
+                    {
+                        id: 'feed-a',
+                        body: { kind: 'text', text: 'hello' },
+                        cursor: 'c_1',
+                        createdAt: 1,
+                        repeatKey: null,
+                    },
+                ],
+                hasMore: false,
+            }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+        const { fetchAndApplyFeed } = await import('./syncFeed');
+
+        const credentials: AuthCredentials = {
+            token: buildTokenWithSub('server-test'),
+            secret: encodeBase64(new Uint8Array(32).fill(1), 'base64url'),
+        };
+        const applyFeedItems = vi.fn();
+
+        await fetchAndApplyFeed({
+            credentials,
+            getFeedItems: () => [],
+            getFeedHead: () => null,
+            assumeUsers: async () => {},
+            getUsers: () => ({}),
+            applyFeedItems,
+            shouldContinue: () => false,
+            log: { log: vi.fn() },
+        } as Parameters<typeof fetchAndApplyFeed>[0] & { shouldContinue: () => boolean });
+
+        expect(applyFeedItems).not.toHaveBeenCalled();
+    });
 });

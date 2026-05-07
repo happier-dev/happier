@@ -255,6 +255,61 @@ describe('Session', () => {
     }
   });
 
+  it('clears stored assistant resume anchor when Claude session id changes', () => {
+    const client = createSessionClientStub();
+    const session = createSession(client);
+
+    try {
+      session.onSessionFound('sess_1', hookWithTranscript('/tmp/sess_1.jsonl'));
+
+      expect(client.updateMetadata).toHaveBeenCalled();
+      const updater = vi.mocked(client.updateMetadata).mock.calls[0]?.[0];
+      expect(typeof updater).toBe('function');
+
+      const next = updater?.(createMetadataStub({
+        claudeLastAssistantUuid: 'asst_stale',
+      }));
+
+      expect(next).not.toHaveProperty('claudeLastAssistantUuid');
+      expect(next).toEqual(expect.objectContaining({
+        claudeSessionId: 'sess_1',
+        claudeTranscriptPath: '/tmp/sess_1.jsonl',
+      }));
+    } finally {
+      session.cleanup();
+    }
+  });
+
+  it('clears stored assistant resume anchor when known Claude transcript path changes', () => {
+    const client = createSessionClientStub();
+    const session = createSession(client);
+
+    try {
+      session.onSessionFound('sess_1', hookWithTranscript('/tmp/sess_1.jsonl'));
+      vi.mocked(client.updateMetadata).mockClear();
+
+      session.onSessionFound('sess_1', hookWithTranscript('/tmp/sess_1-fork.jsonl'));
+
+      expect(client.updateMetadata).toHaveBeenCalled();
+      const updater = vi.mocked(client.updateMetadata).mock.calls[0]?.[0];
+      expect(typeof updater).toBe('function');
+
+      const next = updater?.(createMetadataStub({
+        claudeSessionId: 'sess_1',
+        claudeTranscriptPath: '/tmp/sess_1.jsonl',
+        claudeLastAssistantUuid: 'asst_stale',
+      }));
+
+      expect(next).not.toHaveProperty('claudeLastAssistantUuid');
+      expect(next).toEqual(expect.objectContaining({
+        claudeSessionId: 'sess_1',
+        claudeTranscriptPath: '/tmp/sess_1-fork.jsonl',
+      }));
+    } finally {
+      session.cleanup();
+    }
+  });
+
   it('clearSessionId clears transcriptPath as well', () => {
     const client = createSessionClientStub();
 
@@ -269,6 +324,15 @@ describe('Session', () => {
 
       expect(session.sessionId).toBeNull();
       expect(session.transcriptPath).toBeNull();
+
+      expect(client.updateMetadata).toHaveBeenCalled();
+      const updater = vi.mocked(client.updateMetadata).mock.calls.at(-1)?.[0];
+      expect(typeof updater).toBe('function');
+
+      const next = updater?.(createMetadataStub({
+        claudeLastAssistantUuid: 'asst_stale',
+      }));
+      expect(next).not.toHaveProperty('claudeLastAssistantUuid');
     } finally {
       session.cleanup();
     }

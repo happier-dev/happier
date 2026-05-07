@@ -252,6 +252,9 @@ const RawAgentRecordSchema = z
             z.object({ type: z.literal('reasoning'), message: z.string(), sidechainId: z.string().optional() }),
             z.object({ type: z.literal('message'), message: z.string(), sidechainId: z.string().optional() }),
             z.object({ type: z.literal('token_count'), sidechainId: z.string().optional() }).passthrough(),
+            z.object({ type: z.literal('task_started'), id: z.string().optional(), sidechainId: z.string().optional() }).passthrough(),
+            z.object({ type: z.literal('task_complete'), id: z.string().optional(), sidechainId: z.string().optional() }).passthrough(),
+            z.object({ type: z.literal('turn_aborted'), id: z.string().optional(), sidechainId: z.string().optional() }).passthrough(),
             z
               .object({
                 type: z.literal('tool-call'),

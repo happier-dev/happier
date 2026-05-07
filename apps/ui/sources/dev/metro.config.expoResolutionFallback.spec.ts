@@ -67,6 +67,18 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         expect(fs.existsSync(String(result?.filePath))).toBe(true);
     });
 
+    it('rewrites absolute @noble/hashes/crypto.js file requests before Metro package export validation', () => {
+        const config = requireFreshMetroConfig();
+        const cryptoJsPath = path.resolve(__dirname, '../../../../node_modules/@noble/hashes/crypto.js');
+
+        expect(() => config.resolver.resolveRequest({}, cryptoJsPath, 'web')).not.toThrow();
+
+        const result = config.resolver.resolveRequest({}, cryptoJsPath, 'web');
+        expect(result?.type).toBe('sourceFile');
+        expect(typeof result?.filePath).toBe('string');
+        expect(fs.existsSync(String(result?.filePath))).toBe(true);
+    });
+
     it('disables Watchman in stack builds (HAPPIER_STACK_STACK set)', () => {
         process.env.HAPPIER_STACK_STACK = 'qa-test';
         delete process.env.CI;

@@ -74,4 +74,35 @@ describe('Claude PermissionHandler push policy', () => {
       expect.objectContaining({ sessionId: 's1', requestId: 'tool1' }),
     );
   });
+
+  it('sends one permission-request push for duplicate same-id waiters', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => {});
+    const session = createSessionStub(sendToAllDevicesAsync);
+    session.accountSettings = accountSettingsParse({
+      notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
+    });
+    const handler = new PermissionHandler(session);
+
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const input = { path: 'a' };
+
+    const first = handler.handleToolCall('Read', input, { permissionMode: 'default' } as any, {
+      signal: firstController.signal,
+      toolUseId: 'tool1',
+    });
+    const second = handler.handleToolCall('Read', input, { permissionMode: 'default' } as any, {
+      signal: secondController.signal,
+      toolUseId: 'tool1',
+    });
+
+    firstController.abort();
+    secondController.abort();
+    await expect(first).rejects.toBeTruthy();
+    await expect(second).rejects.toBeTruthy();
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+  });
 });

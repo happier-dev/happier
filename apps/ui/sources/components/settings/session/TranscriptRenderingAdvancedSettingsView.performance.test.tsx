@@ -11,6 +11,7 @@ import { installSessionSettingsCommonModuleMocks } from './sessionSettingsViewTe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const setCoalesceEnabled = vi.fn();
+const setPartialOutputEnabled = vi.fn();
 
 installSessionSettingsCommonModuleMocks({
     reactNative: async () => {
@@ -28,6 +29,7 @@ installSessionSettingsCommonModuleMocks({
                     if (key === 'transcriptStreamingCoalesceEnabled') return [true, setCoalesceEnabled];
                     if (key === 'transcriptStreamingCoalesceWindowMs') return [16, vi.fn()];
                     if (key === 'transcriptStreamingCoalesceMaxBatchSize') return [200, vi.fn()];
+                    if (key === 'transcriptStreamingPartialOutputEnabled') return [true, setPartialOutputEnabled];
                     if (key === 'transcriptThinkingPulseStaleMs') return [120_000, vi.fn()];
                     if (key === 'transcriptListImplementation') return ['flash_v2', vi.fn()];
                     if (key === 'transcriptMotionPreset') return ['subtle', vi.fn()];
@@ -70,6 +72,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 afterEach(() => {
     standardCleanup();
     setCoalesceEnabled.mockClear();
+    setPartialOutputEnabled.mockClear();
 });
 
 describe('Transcript advanced settings (performance)', () => {
@@ -84,5 +87,18 @@ describe('Transcript advanced settings (performance)', () => {
         });
 
         expect(setCoalesceEnabled).toHaveBeenCalledWith(false);
+    });
+
+    it('toggles partial streaming output visibility', async () => {
+        const mod = await import('./TranscriptRenderingAdvancedSettingsView');
+        const screen = await renderSettingsView(React.createElement(mod.default));
+
+        expect(screen.findRowByTitle('settingsSession.transcript.advanced.streamingPartialOutputTitle')).toBeTruthy();
+
+        await act(async () => {
+            screen.pressRowByTitle('settingsSession.transcript.advanced.streamingPartialOutputTitle');
+        });
+
+        expect(setPartialOutputEnabled).toHaveBeenCalledWith(false);
     });
 });

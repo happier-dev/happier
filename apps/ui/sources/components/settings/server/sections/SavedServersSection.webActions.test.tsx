@@ -77,4 +77,40 @@ describe('SavedServersSection web actions', () => {
         const row = screen.findByType('Item' as never);
         expect(row?.props?.onPress).toBeUndefined();
     });
+
+    it('exposes stable inline switch action test ids for saved server rows on web', async () => {
+        const { SavedServersSection } = await import('./SavedServersSection');
+
+        const screen = await renderScreen(React.createElement(SavedServersSection, {
+            servers: [
+                {
+                    id: 'server-b',
+                    name: 'Secondary',
+                    serverUrl: 'https://secondary.example',
+                    source: 'manual',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    lastUsedAt: 1,
+                },
+            ],
+            activeServerId: 'server-a',
+            authStatusByServerId: {
+                'server-b': 'signedIn',
+            },
+            onSwitch: vi.fn(),
+            onRename: vi.fn(),
+            onRemove: vi.fn(),
+        }));
+
+        const row = screen.findByType('Item' as never);
+        const rowActions = row?.props?.rightElement;
+        expect(rowActions?.props?.actions).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'switch-device',
+                    inlineTestID: 'saved-server-switch-server-b',
+                }),
+            ]),
+        );
+    });
 });

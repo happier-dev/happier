@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable } from 'react-native';
+import { Platform, View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
@@ -8,25 +8,34 @@ import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { useSocketStatus, useSyncError, useLastSyncAt, useSettingMutable } from '@/sync/domains/state/storage';
 import { getServerUrl } from '@/sync/domains/server/serverConfig';
-import { getActiveServerId, listServerProfiles, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerId, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useRouter } from 'expo-router';
-import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { Typography } from '@/constants/Typography';
 import { listServerSelectionTargets } from '@/sync/domains/server/selection/serverSelectionResolver';
 import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { normalizeStoredServerSelectionGroups } from '@/sync/domains/server/selection/serverSelectionMutations';
+import { writeServerSelectionActiveTargetToServer } from '@/sync/domains/server/selection/serverSelectionActiveTarget';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { useConnectionTargetActions } from '@/components/navigation/connection/useConnectionTargetActions';
-import { ConnectionTargetList } from '@/components/navigation/connection/ConnectionTargetList';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 import { Text } from '@/components/ui/text/Text';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
 import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
+import { setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
+import { isTauriDesktop } from '@/utils/platform/tauri';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 
 type Variant = 'sidebar' | 'header';
+const RELAY_SETTINGS_ROUTE = '/settings/server';
+const RELAY_DROPDOWN_TARGET_THRESHOLD = 2;
+const POPOVER_MAX_WIDTH = 420;
+const POPOVER_MIN_WIDTH = 220;
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -87,6 +96,37 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 1,
         textAlign: 'right',
     },
+    popoverSection: {
+        paddingHorizontal: 16,
+        paddingTop: 8,
+        gap: 0,
+    },
+    popoverSectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+    },
+    popoverSectionTitle: {
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
+        textTransform: 'uppercase',
+    },
+    popoverSectionIconButton: {
+        width: 24,
+        height: 24,
+        borderRadius: 6,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    popoverRelayBlock: {
+        marginBottom: 12,
+    },
+    popoverRelayActionList: {
+        paddingTop: 0,
+        paddingBottom: 0,
+    },
 }));
 
 function formatTime(ts: number | null): string {
@@ -96,6 +136,15 @@ function formatTime(ts: number | null): string {
     } catch {
         return '—';
     }
+}
+
+function markTauriSignedOutServerSwitchForAuth(serverUrl: string): void {
+    if (!isTauriDesktop()) return;
+    setPendingSetupIntent({
+        branch: 'thisComputer',
+        phase: 'awaiting_auth',
+        relayUrl: serverUrl,
+    });
 }
 
 export const ConnectionStatusControl = React.memo(function ConnectionStatusControl(props: {
@@ -118,6 +167,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const [serverSelectionActiveTargetId, setServerSelectionActiveTargetId] = useSettingMutable('serverSelectionActiveTargetId');
 
     const [open, setOpen] = React.useState(false);
+    const [relayDropdownOpen, setRelayDropdownOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const [authStatusByServerId, setAuthStatusByServerId] = React.useState<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>({});
 
@@ -174,10 +224,12 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     }, [servers]);
 
     const switchServer = React.useCallback(async (serverId: string, scope: 'tab' | 'device' = 'device') => {
-        setActiveServerId(serverId, { scope });
+        await setActiveServerAndSwitch({
+            serverId,
+            scope,
+            refreshAuth: auth.refreshFromActiveServer,
+        });
         setOpen(false);
-        await switchConnectionToActiveServer();
-        await auth.refreshFromActiveServer();
     }, [auth]);
 
     const serverTargets = React.useMemo(() => {
@@ -241,10 +293,13 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             if (!server) return;
             const shouldSwitch = await confirmSignedOutSwitch(server.id);
             if (!shouldSwitch) return;
-            setServerSelectionActiveTargetKind('server');
-            setServerSelectionActiveTargetId(target.id);
+            writeServerSelectionActiveTargetToServer({
+                setServerSelectionActiveTargetKind,
+                setServerSelectionActiveTargetId,
+            }, target.serverId);
             await switchServer(target.serverId, 'device');
             if ((authStatusByServerId[target.serverId] ?? 'unknown') === 'signedOut') {
+                markTauriSignedOutServerSwitchForAuth(server.serverUrl);
                 router.replace('/');
             }
             return;
@@ -263,6 +318,8 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             await switchServer(nextServerId, 'device');
         }
         if (nextServerId && (authStatusByServerId[nextServerId] ?? 'unknown') === 'signedOut') {
+            const nextServer = serverById.get(nextServerId);
+            if (nextServer) markTauriSignedOutServerSwitchForAuth(nextServer.serverUrl);
             router.replace('/');
             return;
         }
@@ -285,6 +342,37 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         selectedColor: theme.colors.status.connected,
         iconColor: theme.colors.text,
     });
+
+    const relayDropdownItems = React.useMemo<ReadonlyArray<DropdownMenuItem>>(() => {
+        return targetActions.map((action) => ({
+            id: action.id,
+            title: action.label,
+            subtitle: action.subtitle,
+            icon: action.icon,
+            rightElement: action.right,
+            disabled: action.disabled,
+        }));
+    }, [targetActions]);
+
+    const selectedRelayDropdownId = React.useMemo(() => {
+        return targetActions.find((action) => action.selected)?.id ?? null;
+    }, [targetActions]);
+
+    const targetActionById = React.useMemo(() => {
+        return new Map(targetActions.map((action) => [action.id, action] as const));
+    }, [targetActions]);
+
+    const handleManageRelay = React.useCallback(() => {
+        const result = runGuardedNavigation(() => router.push(RELAY_SETTINGS_ROUTE));
+        if (result !== true) {
+            fireAndForget(result, { tag: 'ConnectionStatusControl.nav.manageRelay' });
+        }
+        setRelayDropdownOpen(false);
+        setOpen(false);
+    }, [router]);
+
+    const shouldUseRelayDropdown = targetActions.length > RELAY_DROPDOWN_TARGET_THRESHOLD;
+    const popoverMinWidth = props.variant === 'sidebar' && Platform.OS === 'web' ? POPOVER_MIN_WIDTH : undefined;
 
     return (
         <>
@@ -330,69 +418,113 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                         matchAnchorWidth: false,
                         anchorAlign: 'center',
                     }}
-                    maxWidthCap={320}
+                    maxWidthCap={POPOVER_MAX_WIDTH}
                     maxHeightCap={520}
-                    onRequestClose={() => setOpen(false)}
+                    onRequestClose={() => {
+                        setRelayDropdownOpen(false);
+                        setOpen(false);
+                    }}
                 >
                     {({ maxHeight }) => (
                         <FloatingOverlay
                             maxHeight={Math.max(220, Math.min(maxHeight, 520))}
                             keyboardShouldPersistTaps="always"
                             edgeFades={{ top: true, bottom: true, size: 18 }}
-                                edgeIndicators={true}
-                            >
-                                <View style={{ paddingTop: 8 }}>
-                                    <Text style={styles.popoverTitle}>{t('connectionStatus.title')}</Text>
+                            edgeIndicators={true}
+                            containerStyle={popoverMinWidth ? { minWidth: popoverMinWidth } : null}
+                        >
+                            <View style={{ paddingTop: 8 }}>
+                                <Text style={styles.popoverTitle}>{t('connectionStatus.title')}</Text>
 
+                                <View style={styles.popoverRow}>
+                                    <Text style={styles.popoverLabel}>{t('profile.status')}</Text>
+                                    <Text style={styles.popoverValue}>{t(connectionHealth.statusLabelKey)}</Text>
+                                </View>
+
+                                <View style={styles.popoverRow}>
+                                    <Text style={styles.popoverLabel}>{t('settings.machines')}</Text>
+                                    <Text style={styles.popoverValue}>{t(connectionHealth.machineLabelKey)}</Text>
+                                </View>
+
+                                <View style={styles.popoverRow}>
+                                    <Text style={styles.popoverLabel}>{t('connectionStatus.labels.server')}</Text>
+                                    <Text style={styles.popoverValue} numberOfLines={2}>{toServerUrlDisplay(getServerUrl())}</Text>
+                                </View>
+
+                                <View style={styles.popoverRow}>
+                                    <Text style={styles.popoverLabel}>{t('connectionStatus.labels.socket')}</Text>
+                                    <Text style={styles.popoverValue}>{socketStatus.status}</Text>
+                                </View>
+
+                                <View style={styles.popoverRow}>
+                                    <Text style={styles.popoverLabel}>{t('connectionStatus.labels.authenticated')}</Text>
+                                    <Text style={styles.popoverValue}>{auth.isAuthenticated ? t('common.yes') : t('common.no')}</Text>
+                                </View>
+
+                                <View style={styles.popoverRow}>
+                                    <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastSync')}</Text>
+                                    <Text style={styles.popoverValue}>{formatTime(lastSyncAt)}</Text>
+                                </View>
+
+                                {activeSyncError?.nextRetryAt ? (
                                     <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('profile.status')}</Text>
-                                        <Text style={styles.popoverValue}>{t(connectionHealth.statusLabelKey)}</Text>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.nextRetry')}</Text>
+                                        <Text style={styles.popoverValue}>{formatTime(activeSyncError.nextRetryAt)}</Text>
                                     </View>
+                                ) : null}
 
+                                {activeSyncError ? (
                                     <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('settings.machines')}</Text>
-                                        <Text style={styles.popoverValue}>{t(connectionHealth.machineLabelKey)}</Text>
+                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastError')}</Text>
+                                        <Text style={styles.popoverValue} numberOfLines={3}>{activeSyncError.message}</Text>
                                     </View>
+                                ) : null}
 
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.server')}</Text>
-                                        <Text style={styles.popoverValue} numberOfLines={2}>{toServerUrlDisplay(getServerUrl())}</Text>
-                                    </View>
-
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.socket')}</Text>
-                                        <Text style={styles.popoverValue}>{socketStatus.status}</Text>
-                                    </View>
-
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.authenticated')}</Text>
-                                        <Text style={styles.popoverValue}>{auth.isAuthenticated ? t('common.yes') : t('common.no')}</Text>
-                                    </View>
-
-                                    <View style={styles.popoverRow}>
-                                        <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastSync')}</Text>
-                                        <Text style={styles.popoverValue}>{formatTime(lastSyncAt)}</Text>
-                                    </View>
-
-                                    {activeSyncError?.nextRetryAt ? (
-                                        <View style={styles.popoverRow}>
-                                            <Text style={styles.popoverLabel}>{t('connectionStatus.labels.nextRetry')}</Text>
-                                            <Text style={styles.popoverValue}>{formatTime(activeSyncError.nextRetryAt)}</Text>
+                                {targetActions.length > 0 ? (
+                                    <View style={styles.popoverRelayBlock}>
+                                        <View style={styles.popoverSection}>
+                                            <View style={styles.popoverSectionHeader}>
+                                                <Text style={styles.popoverSectionTitle}>{t('server.changeServer')}</Text>
+                                                <Pressable
+                                                    testID="connection-popover-relay-settings"
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={t('server.changeServer')}
+                                                    onPress={handleManageRelay}
+                                                    style={styles.popoverSectionIconButton}
+                                                >
+                                                    <Ionicons name="settings-outline" size={18} color={theme.colors.textSecondary} />
+                                                </Pressable>
+                                            </View>
                                         </View>
-                                    ) : null}
 
-                                    {activeSyncError ? (
-                                        <View style={styles.popoverRow}>
-                                            <Text style={styles.popoverLabel}>{t('connectionStatus.labels.lastError')}</Text>
-                                            <Text style={styles.popoverValue} numberOfLines={3}>{activeSyncError.message}</Text>
-                                        </View>
-                                    ) : null}
-
-                                {serverTargets.length > 0 ? (
-                                    <ConnectionTargetList
-                                        title={t('server.switchToServer')}
-                                        actions={targetActions}
-                                    />
+                                        {shouldUseRelayDropdown ? (
+                                            <DropdownMenu
+                                                open={relayDropdownOpen}
+                                                onOpenChange={setRelayDropdownOpen}
+                                                items={relayDropdownItems}
+                                                selectedId={selectedRelayDropdownId}
+                                                onSelect={(itemId) => {
+                                                    targetActionById.get(itemId)?.onPress();
+                                                }}
+                                                variant="default"
+                                                rowKind="item"
+                                                matchTriggerWidth={true}
+                                                connectToTrigger={true}
+                                                itemTrigger={{
+                                                    title: activeServerLabel,
+                                                    subtitle: toServerUrlDisplay(getServerUrl()),
+                                                    showSelectedDetail: false,
+                                                    showSelectedSubtitle: false,
+                                                }}
+                                                maxWidthCap={480}
+                                            />
+                                        ) : (
+                                            <ActionListSection
+                                                actions={targetActions}
+                                                style={styles.popoverRelayActionList}
+                                            />
+                                        )}
+                                    </View>
                                 ) : null}
 
                             </View>

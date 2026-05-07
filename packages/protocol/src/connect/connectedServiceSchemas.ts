@@ -6,6 +6,7 @@ export const ConnectedServiceIdSchema = z.enum([
     'anthropic',
     'claude-subscription',
     'gemini',
+    'github',
 ]);
 
 export type ConnectedServiceId = z.infer<typeof ConnectedServiceIdSchema>;

@@ -33,6 +33,19 @@ class FakeSession {
   }
 }
 
+async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfilled' | 'rejected'> {
+  await Promise.resolve();
+  await Promise.resolve();
+
+  return Promise.race([
+    promise.then(
+      () => 'fulfilled' as const,
+      () => 'rejected' as const,
+    ),
+    new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 0)),
+  ]);
+}
+
 describe('CodexLikePermissionHandler', () => {
   it('hard-denies write-like tools in read-only mode', async () => {
     const session = new FakeSession();
@@ -131,6 +144,58 @@ describe('CodexLikePermissionHandler', () => {
 
     const result = await promise;
     expect(result.decision).toBe('approved');
+  });
+
+  it('resolves every duplicate same-id waiter from one permission response', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+    const input = { command: 'echo hello' };
+
+    const first = handler.handleToolCall('tool-duplicate', 'bash', input);
+    const second = handler.handleToolCall('tool-duplicate', 'bash', input);
+
+    expect(Object.keys(session.agentState.requests)).toEqual(['tool-duplicate']);
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({ id: 'tool-duplicate', approved: true, decision: 'approved' });
+
+    await expect(second).resolves.toEqual({ decision: 'approved' });
+    expect(await settledState(first)).toBe('fulfilled');
+    await expect(first).resolves.toEqual({ decision: 'approved' });
+    expect(session.agentState.requests['tool-duplicate']).toBeUndefined();
+    expect(session.agentState.completedRequests['tool-duplicate']).toEqual(
+      expect.objectContaining({
+        tool: 'bash',
+        status: 'approved',
+        decision: 'approved',
+      }),
+    );
+  });
+
+  it('resolves every duplicate same-id waiter when permission mode clears the prompt', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+    const input = { command: 'echo hello' };
+
+    const first = handler.handleToolCall('tool-mode-clear', 'bash', input);
+    const second = handler.handleToolCall('tool-mode-clear', 'bash', input);
+
+    expect(Object.keys(session.agentState.requests)).toEqual(['tool-mode-clear']);
+
+    handler.setPermissionMode('read-only', 10);
+
+    await expect(second).resolves.toEqual({ decision: 'denied' });
+    expect(await settledState(first)).toBe('fulfilled');
+    await expect(first).resolves.toEqual({ decision: 'denied' });
+    expect(session.agentState.requests['tool-mode-clear']).toBeUndefined();
+    expect(session.agentState.completedRequests['tool-mode-clear']).toEqual(
+      expect.objectContaining({
+        tool: 'bash',
+        status: 'denied',
+        decision: 'denied',
+      }),
+    );
   });
 
   it('auto-approves write-like tools in yolo mode', async () => {

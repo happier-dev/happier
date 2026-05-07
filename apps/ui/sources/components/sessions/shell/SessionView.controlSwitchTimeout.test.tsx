@@ -111,7 +111,6 @@ installSessionShellCommonModuleMocks({
       useLocalSetting: (key: string) => {
         if (key === 'acknowledgedCliVersions') return {};
         if (key === 'uiMultiPanePanelsEnabled') return true;
-        if (key === 'editorFocusModeEnabled') return false;
         if (key === 'detailsPaneTabsBehavior') return 'preview';
         if (key === 'rightPaneWidthPx') return 360;
         if (key === 'rightPaneWidthBasisPx') return 1200;
@@ -363,7 +362,7 @@ describe('SessionView (control switch timeout)', () => {
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.failedToSwitchControl');
   });
 
-  it('surfaces switch-to-local for attachable exclusive local-control sessions', async () => {
+  it('does not surface app-side switch-to-local for attachable exclusive local-control sessions in remote mode', async () => {
     Object.assign(sessionState.session, {
       agentState: {
         controlledByUser: false,
@@ -379,7 +378,12 @@ describe('SessionView (control switch timeout)', () => {
 
     const screen = await renderSessionView();
     const chatList = getChatListProps();
-    expect(typeof chatList.onRequestSwitchToLocal).toBe('function');
+    // Remote -> local takeover must remain terminal-driven. The app can switch local
+    // sessions back to remote, but it must not expose a transcript button/handler that
+    // tries to launch local terminal control from the UI.
+    expect(chatList.onRequestSwitchToLocal).toBeUndefined();
+    expect(chatList.controlSwitchTo).toBeNull();
+    expect(sessionSwitchSpy).not.toHaveBeenCalledWith('s1', 'local');
 
     await screen.unmount();
   });

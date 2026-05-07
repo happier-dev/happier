@@ -30,9 +30,13 @@ export type MachinesDomain = {
     machineDisplayById: Record<string, MachineDisplayRenderable>;
     machineListByServerId: Record<string, Machine[] | null>;
     machineListStatusByServerId: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>;
-    applyMachines: (machines: Machine[], replace?: boolean) => void;
-    replaceMachineDisplays: (machines: MachineDisplayRenderable[]) => void;
+    applyMachines: (machines: Machine[], replace?: boolean, options?: ApplyMachinesOptions) => void;
+    replaceMachineDisplays: (machines: MachineDisplayRenderable[], options?: ApplyMachinesOptions) => void;
 };
+
+export type ApplyMachinesOptions = Readonly<{
+    sourceServerId?: string | null;
+}>;
 
 type MachinesDomainDependencies = Readonly<{
     sessions: Record<string, Session>;
@@ -89,6 +93,10 @@ function mergeMachineListById(
     return Array.from(mergedById.values());
 }
 
+function normalizeMachineServerId(serverId: string | null | undefined): string {
+    return String(serverId ?? '').trim();
+}
+
 export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDependencies>({
     set,
 }: {
@@ -100,8 +108,33 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
         machineDisplayById: {},
         machineListByServerId: {},
         machineListStatusByServerId: {},
-        applyMachines: (machines, replace = false) =>
+        applyMachines: (machines, replace = false, options) =>
             set((state) => {
+                const activeServerId = normalizeMachineServerId(getActiveServerSnapshot().serverId);
+                const sourceServerId = normalizeMachineServerId(options?.sourceServerId) || activeServerId;
+                const shouldUpdateActiveProjection = !sourceServerId || sourceServerId === activeServerId;
+                const machineListByServerId = sourceServerId
+                    ? {
+                        ...state.machineListByServerId,
+                        [sourceServerId]: mergeMachineListById(
+                            state.machineListByServerId[sourceServerId],
+                            machines,
+                            { replace },
+                        ),
+                    }
+                    : state.machineListByServerId;
+                const machineListStatusByServerId = sourceServerId
+                    ? { ...state.machineListStatusByServerId, [sourceServerId]: 'idle' as const }
+                    : state.machineListStatusByServerId;
+
+                if (!shouldUpdateActiveProjection) {
+                    return {
+                        ...state,
+                        machineListByServerId,
+                        machineListStatusByServerId,
+                    };
+                }
+
                 let mergedMachines: Record<string, Machine>;
                 let mergedMachineDisplays: Record<string, MachineDisplayRenderable>;
 
@@ -202,14 +235,6 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     projectManager.updateSessions(Object.values(state.sessions), machineMetadataMap);
                 }
 
-                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-                const nextActiveServerMachines = activeServerId
-                    ? mergeMachineListById(
-                        state.machineListByServerId[activeServerId],
-                        machines,
-                        { replace },
-                    )
-                    : null;
                 const nextState = {
                     ...state,
                     machines: mergedMachines,
@@ -221,18 +246,20 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                             sessionListViewData,
                         )
                         : state.sessionListViewDataByServerId,
-                    machineListByServerId: activeServerId
-                        ? { ...state.machineListByServerId, [activeServerId]: nextActiveServerMachines }
-                        : state.machineListByServerId,
-                    machineListStatusByServerId: activeServerId
-                        ? { ...state.machineListStatusByServerId, [activeServerId]: 'idle' }
-                        : state.machineListStatusByServerId,
+                    machineListByServerId,
+                    machineListStatusByServerId,
                 };
                 saveWarmMachineCacheForState(nextState as MachinesDomain & MachinesDomainDependencies);
                 return nextState;
             }),
-        replaceMachineDisplays: (machines) =>
+        replaceMachineDisplays: (machines, options) =>
             set((state) => {
+                const activeServerId = normalizeMachineServerId(getActiveServerSnapshot().serverId);
+                const sourceServerId = normalizeMachineServerId(options?.sourceServerId) || activeServerId;
+                if (sourceServerId && sourceServerId !== activeServerId) {
+                    return state;
+                }
+
                 const nextMachineDisplays = Object.fromEntries(machines.map((machine) => [machine.id, machine]));
                 const previousEntries = buildMachineDisplayCacheEntriesFromRenderables(state.machineDisplayById ?? {});
                 const sessionListViewData = buildSessionListViewDataWithServerScope({

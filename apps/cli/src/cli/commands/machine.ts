@@ -3,8 +3,7 @@ import chalk from 'chalk';
 import type { CommandContext } from '@/cli/commandRegistry';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { resolvePublicReleaseRingIdFromCliArgs } from '@/cli/runtime/publicReleaseChannel';
-import { getReleaseRingPublicLabel } from '@happier-dev/release-runtime/releaseRings';
+import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { configuration } from '@/configuration';
 import { describeBackgroundServiceTargetMode } from '@/daemon/service/describeBackgroundServiceTargetMode';
@@ -120,11 +119,12 @@ function normalizeRelayRuntimeMode(raw: string | null): 'user' | 'system' {
 }
 
 function normalizeTaskChannel(args: readonly string[]): 'stable' | 'preview' | 'dev' {
-  const ring = resolvePublicReleaseRingIdFromCliArgs({
+  const resolution = resolveManagedCliReleaseChannelSync({
     args,
+    argv: process.argv,
     invokedPath: process.argv[1] ?? '',
   });
-  return getReleaseRingPublicLabel(ring);
+  return resolution.label;
 }
 
 function buildMachineSetupSpec(params: Readonly<{

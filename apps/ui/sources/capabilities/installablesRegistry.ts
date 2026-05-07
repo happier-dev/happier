@@ -12,6 +12,12 @@ import {
     getCodexAcpDetectResult,
     shouldPrefetchCodexAcpLatestVersion,
 } from './codexAcpDep';
+import {
+    buildGithubCliLatestVersionDetectRequest,
+    getGithubCliDepData,
+    getGithubCliDetectResult,
+    shouldPrefetchGithubCliLatestVersion,
+} from './githubCliDep';
 
 export type InstallableDepDataLike = {
     installed: boolean;
@@ -19,7 +25,9 @@ export type InstallableDepDataLike = {
     sourceKind: string;
     lastInstallLogPath: string | null;
     lastBackgroundUpdateCheckAtMs: number | null;
-    latestVersionCheck?: { ok: true; latestVersion: string | null; label: string | null } | { ok: false; errorMessage: string };
+    latestVersionCheck?:
+        | { ok: true; latestVersion: string | null; label: string | null; checkedAt?: number }
+        | { ok: false; errorMessage: string; checkedAt?: number };
 };
 
 export type InstallableRegistryEntry = Readonly<{
@@ -78,6 +86,33 @@ export function getInstallablesRegistryEntries(): readonly InstallableRegistryEn
                     data: data ?? null,
                 }),
             buildLatestVersionDetectRequest: buildCodexAcpLatestVersionDetectRequest,
+        },
+        [INSTALLABLE_KEYS.GH]: {
+            enabledWhen: () => true,
+            title: t('deps.installable.githubCli.title'),
+            iconName: 'git-pull-request-outline',
+            groupTitleKey: 'newSession.githubCliBanner.title',
+            supportsManagedOverrideInstall: false,
+            installLabels: {
+                installKey: 'newSession.githubCliBanner.install',
+                updateKey: 'newSession.githubCliBanner.update',
+                reinstallKey: 'newSession.githubCliBanner.reinstall',
+            },
+            installModal: {
+                installTitleKey: 'newSession.githubCliInstallModal.installTitle',
+                updateTitleKey: 'newSession.githubCliInstallModal.updateTitle',
+                reinstallTitleKey: 'newSession.githubCliInstallModal.reinstallTitle',
+                descriptionKey: 'newSession.githubCliInstallModal.description',
+            },
+            getStatus: (results) => getGithubCliDepData(results),
+            getDetectResult: (results) => getGithubCliDetectResult(results),
+            shouldPrefetchLatestVersion: ({ requireExistingResult, result, data }) =>
+                shouldPrefetchGithubCliLatestVersion({
+                    requireExistingResult,
+                    result,
+                    data: data ?? null,
+                }),
+            buildLatestVersionDetectRequest: buildGithubCliLatestVersionDetectRequest,
         },
     };
 

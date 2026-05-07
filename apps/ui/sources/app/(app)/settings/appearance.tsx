@@ -1,6 +1,7 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform, View } from 'react-native';
+import { Appearance, Platform, View } from 'react-native';
+import { setStatusBarStyle } from 'expo-status-bar';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -10,18 +11,32 @@ import * as Localization from 'expo-localization';
 import { useUnistyles, UnistylesRuntime } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Appearance } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { darkTheme, lightTheme } from '@/theme';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import {
+    AVATAR_STYLE_OPTIONS,
+    isAvatarStyleId,
+    normalizeAvatarStyleId,
+} from '@/components/ui/avatar/avatarStyleOptions';
+import { getGeneratedAvatarComponentForStyle } from '@/components/ui/avatar/avatarComponentRegistry';
+import type { AvatarStyleId } from '@/sync/domains/settings/registry/account/avatarStyleSetting';
+import { resolveStatusBarStyleForThemePreference } from '@/components/ui/layout/statusBarStyle';
 
-// Define known avatar styles for this version of the app
-type KnownAvatarStyle = 'pixelated' | 'gradient' | 'brutalist';
+function AvatarStylePreviewIcon(props: Readonly<{ styleId: AvatarStyleId }>) {
+    const AvatarStyleComponent = getGeneratedAvatarComponentForStyle(props.styleId);
 
-const isKnownAvatarStyle = (style: string): style is KnownAvatarStyle => {
-    return style === 'pixelated' || style === 'gradient' || style === 'brutalist';
-};
+    return (
+        <View style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+            <AvatarStyleComponent
+                id={`settings-avatar-style-preview-${props.styleId}`}
+                styleId={props.styleId}
+                size={28}
+            />
+        </View>
+    );
+}
 
 export default React.memo(function AppearanceSettingsScreen() {
     const { theme } = useUnistyles();
@@ -35,11 +50,11 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [uiItemDensity, setUiItemDensity] = useLocalSettingMutable('uiItemDensity');
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
     const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
-    const [editorFocusModeEnabled, setEditorFocusModeEnabled] = useLocalSettingMutable('editorFocusModeEnabled');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
     const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
     const [openItemDensityMenu, setOpenItemDensityMenu] = React.useState(false);
     const [openDetailsTabsMenu, setOpenDetailsTabsMenu] = React.useState(false);
+    const [openAvatarStyleMenu, setOpenAvatarStyleMenu] = React.useState(false);
 
     const uiFontScalePresets = React.useMemo(() => {
         return {
@@ -70,6 +85,14 @@ export default React.memo(function AppearanceSettingsScreen() {
             { id: 'preview', title: t('settingsAppearance.detailsPaneTabsBehaviorOptions.preview') },
             { id: 'persistent', title: t('settingsAppearance.detailsPaneTabsBehaviorOptions.persistent') },
         ];
+    }, []);
+
+    const avatarStyleMenuItems = React.useMemo(() => {
+        return AVATAR_STYLE_OPTIONS.map((option) => ({
+            id: option.id,
+            title: t(option.labelKey),
+            icon: <AvatarStylePreviewIcon styleId={option.id} />,
+        }));
     }, []);
 
     const itemDensityMenuItems = React.useMemo(() => {
@@ -113,7 +136,7 @@ export default React.memo(function AppearanceSettingsScreen() {
     }, [setUiFontScale, uiFontScalePresets]);
 
     // Ensure we have a valid style for display, defaulting to gradient for unknown values
-    const displayStyle: KnownAvatarStyle = isKnownAvatarStyle(avatarStyle) ? avatarStyle : 'gradient';
+    const displayStyle = normalizeAvatarStyleId(avatarStyle);
     
     // Language display
     const getLanguageDisplayText = () => {
@@ -149,10 +172,10 @@ export default React.memo(function AppearanceSettingsScreen() {
                         setThemePreference(nextTheme);
                         
                         // Apply the theme change immediately
+                        const systemTheme = Appearance.getColorScheme();
                         if (nextTheme === 'adaptive') {
                             // Enable adaptive themes and set to system theme
                             UnistylesRuntime.setAdaptiveThemes(true);
-                            const systemTheme = Appearance.getColorScheme();
                             const color = systemTheme === 'dark' ? darkTheme.colors.groupped.background : lightTheme.colors.groupped.background;
                             UnistylesRuntime.setRootViewBackgroundColor(color);
                             SystemUI.setBackgroundColorAsync(color);
@@ -164,6 +187,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                             UnistylesRuntime.setRootViewBackgroundColor(color);
                             SystemUI.setBackgroundColorAsync(color);
                         }
+                        setStatusBarStyle(resolveStatusBarStyleForThemePreference(nextTheme, systemTheme), true);
                     }}
                 />
             </ItemGroup>
@@ -282,34 +306,31 @@ export default React.memo(function AppearanceSettingsScreen() {
                         setDetailsPaneTabsBehavior(itemId as any);
                     }}
                 />
-                <Item
-                    title={t('settingsAppearance.editorFocusMode')}
-                    subtitle={t('settingsAppearance.editorFocusModeDescription')}
-                    icon={<Ionicons name="expand-outline" size={29} color={theme.colors.accent.blue} />}
-                    rightElement={
-                        <Switch
-                            value={editorFocusModeEnabled}
-                            onValueChange={setEditorFocusModeEnabled}
-                            disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
-                        />
-                    }
-                    disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
-                    showChevron={false}
-                />
             </ItemGroup>
 
             {/* Style */}
             <ItemGroup title={t('settingsAppearance.avatarStyle')}>
-                <Item
-                    title={t('settingsAppearance.avatarStyle')}
-                    subtitle={t('settingsAppearance.avatarStyleDescription')}
-                    icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.indigo} />}
-                    detail={displayStyle === 'pixelated' ? t('settingsAppearance.avatarOptions.pixelated') : displayStyle === 'brutalist' ? t('settingsAppearance.avatarOptions.brutalist') : t('settingsAppearance.avatarOptions.gradient')}
-                    onPress={() => {
-                        const currentIndex = displayStyle === 'pixelated' ? 0 : displayStyle === 'gradient' ? 1 : 2;
-                        const nextIndex = (currentIndex + 1) % 3;
-                        const nextStyle = nextIndex === 0 ? 'pixelated' : nextIndex === 1 ? 'gradient' : 'brutalist';
-                        setAvatarStyle(nextStyle);
+                <DropdownMenu
+                    open={openAvatarStyleMenu}
+                    onOpenChange={setOpenAvatarStyleMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={displayStyle}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    itemTrigger={{
+                        title: t('settingsAppearance.avatarStyle'),
+                        subtitle: t('settingsAppearance.avatarStyleDescription'),
+                        icon: <AvatarStylePreviewIcon styleId={displayStyle} />,
+                        showSelectedSubtitle: false,
+                        itemProps: { testID: 'settings-appearance-avatarStyle-select' },
+                    }}
+                    items={avatarStyleMenuItems}
+                    onSelect={(itemId) => {
+                        if (!isAvatarStyleId(itemId)) return;
+                        setAvatarStyle(itemId);
                     }}
                 />
                 <Item

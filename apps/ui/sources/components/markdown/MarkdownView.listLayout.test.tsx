@@ -1,5 +1,4 @@
 import React from 'react';
-import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { MarkdownView } from './MarkdownView';
@@ -7,86 +6,27 @@ import { renderScreen } from '@/dev/testkit';
 
 
 declare global {
-  // eslint-disable-next-line no-var
-  var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
+    // eslint-disable-next-line no-var
+    var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
 }
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('./MermaidRenderer', () => ({
-  MermaidRenderer: () => null,
+    MermaidRenderer: () => null,
 }));
-
-vi.mock('../ui/text/Text', () => ({
-  Text: (props: any) => React.createElement('Text', props, props.children),
-  TextInput: (props: any) => React.createElement('TextInput', props, props.children),
-  TextSelectabilityScope: (props: any) => props.children,
-}));
-
-vi.mock('./MarkdownSpansView', () => ({
-  MarkdownSpansView: ({ spans }: { spans: Array<{ text: string }> }) =>
-    React.createElement(
-      React.Fragment,
-      null,
-      spans.map((span, index) => React.createElement('Text', { key: index }, span.text)),
-    ),
-}));
-
-function flattenStyle(style: unknown): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const visit = (node: unknown) => {
-    if (!node) return;
-    if (Array.isArray(node)) {
-      for (const child of node) visit(child);
-      return;
-    }
-    if (typeof node === 'object') Object.assign(out, node);
-  };
-  visit(style);
-  return out;
-}
 
 describe('MarkdownView (lists)', () => {
-  it('renders unordered list items with hanging-indent rows and nested padding', async () => {
-    let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
-    try {
-      screen = await renderScreen(<MarkdownView
+    it('routes unordered list prose to the enriched renderer for native range selection', async () => {
+        const screen = await renderScreen(<MarkdownView
             markdown={[
-              '- Parent',
-              '  - Child',
+                '- Parent',
+                '  - Child',
             ].join('\n')}
-          />);
+        />);
 
-      const rows = screen.findAll((node) => node.props?.testID === 'markdown-list-item-row');
-      expect(rows).toHaveLength(2);
-
-      const markers = rows.map((row) =>
-        row.findAll((node) => node.props?.testID === 'markdown-list-item-marker')[0],
-      );
-      expect(markers.map((node) => node.props.children)).toEqual(['•', '•']);
-
-      expect(flattenStyle(rows[0].props.style).paddingLeft).toBe(0);
-      expect(flattenStyle(rows[1].props.style).paddingLeft).toBe(20);
-      expect(rows.every((row) => flattenStyle(row.props.style).width === undefined)).toBe(true);
-
-      const contentColumns = rows.map((row) =>
-        row.findAll((node) => {
-          if (node === row) return false;
-          const flatStyle = flattenStyle(node.props?.style);
-          return flatStyle.minWidth === 0;
-        })[0],
-      );
-      expect(contentColumns).toHaveLength(2);
-      expect(flattenStyle(contentColumns[0]?.props.style)).toMatchObject({
-        flexShrink: 1,
-        minWidth: 0,
-        maxWidth: '100%',
-      });
-      expect(flattenStyle(contentColumns[0]?.props.style).flex).toBeUndefined();
-    } finally {
-      act(() => {
-        screen?.tree.unmount();
-      });
-    }
-  }, 60_000);
+        const enrichedRun = screen.findByType('EnrichedMarkdownText');
+        expect(enrichedRun.props.markdown).toBe('- Parent\n  - Child');
+        expect(screen.findAll((node) => node.props?.testID === 'markdown-list-item-row')).toHaveLength(0);
+    }, 60_000);
 });

@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import {
     findTestInstanceByTypeWithProps,
-    pressTestInstanceAsync,
     renderScreen,
 } from '@/dev/testkit';
+import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 
 
@@ -185,11 +185,37 @@ describe('CodeLineRow', () => {
             rowPressable.props.onHoverIn();
         });
 
-        const buttons = findTestInstanceByTypeWithProps(screen.tree, 'Pressable' as any, { accessibilityRole: 'button' });
+        const lane = screen.findByProps({ testID: 'review-comment-line-affordance-lane' });
+        expect(flattenTestStyle(lane.props.style)).toMatchObject({
+            width: 32,
+            alignItems: 'center',
+        });
+
+        const buttons = findTestInstanceByTypeWithProps(screen.tree, 'Pressable' as any, {
+            accessibilityRole: 'button',
+            testID: 'review-comment-line-affordance',
+        });
         expect(buttons).toBeTruthy();
 
-        await pressTestInstanceAsync(buttons, 'close comment button');
+        const icon = findTestInstanceByTypeWithProps(screen.tree, 'Ionicons' as any, {
+            testID: 'review-comment-line-affordance-icon',
+        });
+        expect(icon?.props.name).toBe('chatbox-ellipses-outline');
 
+        const stopPropagation = vi.fn();
+        const stopImmediatePropagation = vi.fn();
+
+        act(() => {
+            buttons!.props.onPress({
+                stopPropagation,
+                nativeEvent: {
+                    stopImmediatePropagation,
+                },
+            });
+        });
+
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+        expect(stopImmediatePropagation).toHaveBeenCalledTimes(1);
         expect(onPressAddComment).toHaveBeenCalledTimes(1);
         expect(onPressAddComment).toHaveBeenCalledWith(line);
     });

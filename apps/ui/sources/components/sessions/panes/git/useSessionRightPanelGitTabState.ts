@@ -20,18 +20,22 @@ export function useSessionRightPanelGitTabState(pane: PaneLike): Readonly<{
     setActiveGitSubTab: (subTabId: GitSubTabId) => void;
 }> {
     const gitTabState = readGitTabState(pane.scopeState);
+    const gitTabStateRef = React.useRef<Record<string, unknown>>({});
+    gitTabStateRef.current = gitTabState ?? {};
     const activeGitSubTab = (gitTabState?.activeSubTabId as GitSubTabId | null) ?? 'commit';
     const commitDraftMessage = typeof gitTabState?.commitMessageDraft === 'string' ? (gitTabState.commitMessageDraft as string) : '';
 
+    const mergeGitTabState = React.useCallback((patch: Record<string, unknown>) => {
+        pane.setRightTabState('git', { ...gitTabStateRef.current, ...patch });
+    }, [pane]);
+
     const setCommitDraftMessage = React.useCallback((value: string) => {
-        const base = gitTabState ?? {};
-        pane.setRightTabState('git', { ...base, commitMessageDraft: value });
-    }, [gitTabState, pane]);
+        mergeGitTabState({ commitMessageDraft: value });
+    }, [mergeGitTabState]);
 
     const setActiveGitSubTab = React.useCallback((subTabId: GitSubTabId) => {
-        const base = gitTabState ?? {};
-        pane.setRightTabState('git', { ...base, activeSubTabId: subTabId });
-    }, [gitTabState, pane]);
+        mergeGitTabState({ activeSubTabId: subTabId });
+    }, [mergeGitTabState]);
 
     return {
         activeGitSubTab,

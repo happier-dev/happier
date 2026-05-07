@@ -11,9 +11,14 @@ function createHarness() {
   let onAfterStartCalls = 0;
   let onAfterResetCalls = 0;
   let permissionResetCalls = 0;
+  let permissionAbortCalls = 0;
   let queueResetCalls = 0;
   let archiveCalls = 0;
+  let lastReadyNotificationPayload: Record<string, unknown> | null = null;
   let killHandler: (() => void | Promise<void>) | null = null;
+  let permissionAbortError: Error | null = null;
+  const callOrder: string[] = [];
+  const permissionAbortReasons: string[] = [];
 
   const handlers = new Map<string, () => void | Promise<void>>();
 
@@ -111,6 +116,14 @@ function createHarness() {
     }),
     createProviderEnforcedPermissionHandlerFn: () => ({
       setPermissionMode: () => undefined,
+      abortPendingRequestsAndFlush: async (reason: string) => {
+        permissionAbortCalls += 1;
+        permissionAbortReasons.push(reason);
+        callOrder.push(`permission:${reason}`);
+        if (permissionAbortError) {
+          throw permissionAbortError;
+        }
+      },
       reset: () => {
         permissionResetCalls += 1;
       },
@@ -133,8 +146,9 @@ function createHarness() {
       await params.onAfterReset?.();
       params.sendReady();
     },
-    sendReadyWithPushNotificationFn: () => {
+    sendReadyWithPushNotificationFn: (payload: Record<string, unknown>) => {
       defaultReadyCalls += 1;
+      lastReadyNotificationPayload = payload;
     },
     registerKillSessionHandlerFn: (_manager: unknown, handler: () => void | Promise<void>) => {
       killHandler = handler;
@@ -144,6 +158,7 @@ function createHarness() {
     },
     cleanupBackendRunResourcesFn: async ({ keepAliveInterval, unmountUi }: any) => {
       cleanupCalls += 1;
+      callOrder.push('backend-cleanup');
       clearInterval(keepAliveInterval);
       unmountUi?.();
     },
@@ -181,20 +196,53 @@ function createHarness() {
       get permissionResetCalls() {
         return permissionResetCalls;
       },
+      get permissionAbortCalls() {
+        return permissionAbortCalls;
+      },
+      get permissionAbortReasons() {
+        return permissionAbortReasons;
+      },
       get queueResetCalls() {
         return queueResetCalls;
       },
       get archiveCalls() {
         return archiveCalls;
       },
+      get lastReadyNotificationPayload() {
+        return lastReadyNotificationPayload;
+      },
       get killHandler() {
         return killHandler;
+      },
+      get callOrder() {
+        return callOrder;
+      },
+      setPermissionAbortError(error: Error | null) {
+        permissionAbortError = error;
       },
     },
   };
 }
 
 describe('runStandardAcpProvider', () => {
+  it('uses the runtime-owned turn assistant preview for ready pushes', async () => {
+    const harness = createHarness();
+    harness.config.createRuntime = () => ({
+      ...harness.runtime,
+    });
+    const originalCreateRuntime = harness.config.createRuntime;
+    harness.config.createRuntime = (params) => {
+      params.turnAssistantPreviewTracker.replace('Structured final response');
+      return originalCreateRuntime(params);
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(harness.metrics.lastReadyNotificationPayload).toMatchObject({
+      assistantPreviewText: 'Structured final response',
+    });
+  });
+
   it('uses default ready sender and runs lifecycle hooks', async () => {
     const harness = createHarness();
 
@@ -602,6 +650,15 @@ describe('runStandardAcpProvider', () => {
     expect(onDispose).toHaveBeenCalledTimes(1);
   });
 
+  it('cancels pending permissions before backend resource cleanup on natural completion', async () => {
+    const harness = createHarness();
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(harness.metrics.permissionAbortReasons).toEqual(['Session ended']);
+    expect(harness.metrics.callOrder).toEqual(['permission:Session ended', 'backend-cleanup']);
+  });
+
   it('invokes abort handler lifecycle when abort RPC fires', async () => {
     const harness = createHarness();
     harness.deps.runPermissionModePromptLoopFn = async () => {
@@ -613,8 +670,42 @@ describe('runStandardAcpProvider', () => {
     await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
 
     expect(harness.metrics.queueResetCalls).toBe(0);
-    expect(harness.metrics.permissionResetCalls).toBe(1);
+    expect(harness.metrics.permissionAbortReasons).toEqual(['Aborted by user', 'Session ended']);
+    expect(harness.metrics.permissionResetCalls).toBe(0);
     expect(harness.metrics.archiveCalls).toBe(0);
+  });
+
+  it('keeps final cleanup idempotent after abort cancels pending permissions', async () => {
+    const harness = createHarness();
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      const abort = harness.handlers.get('abort');
+      expect(abort).toBeTypeOf('function');
+      await abort?.();
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(harness.metrics.permissionAbortReasons).toEqual(['Aborted by user', 'Session ended']);
+    expect(harness.metrics.cleanupCalls).toBe(1);
+    expect(harness.metrics.callOrder).toEqual([
+      'permission:Aborted by user',
+      'permission:Session ended',
+      'backend-cleanup',
+    ]);
+  });
+
+  it('continues backend resource cleanup when permission cleanup fails', async () => {
+    const harness = createHarness();
+    const onDispose = vi.fn(async () => undefined);
+    harness.config.onDispose = onDispose as any;
+    harness.metrics.setPermissionAbortError(new Error('permission cleanup failed'));
+
+    await expect(runStandardAcpProvider(harness.opts, harness.config, harness.deps)).resolves.toBeUndefined();
+
+    expect(harness.metrics.permissionAbortReasons).toEqual(['Session ended']);
+    expect(harness.metrics.cleanupCalls).toBe(1);
+    expect(onDispose).toHaveBeenCalledTimes(1);
+    expect(harness.metrics.callOrder).toEqual(['permission:Session ended', 'backend-cleanup']);
   });
 
   it('invokes kill handler lifecycle without archiving the session', async () => {

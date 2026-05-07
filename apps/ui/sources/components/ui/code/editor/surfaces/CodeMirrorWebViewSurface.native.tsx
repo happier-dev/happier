@@ -8,6 +8,7 @@ import type { CodeEditorHandle, CodeEditorProps } from '../codeEditorTypes';
 import { encodeChunkedEnvelope, decodeChunkedEnvelope } from '@/components/ui/webview/bridge/chunkedBridge';
 import { buildCodeMirrorWebViewHtml } from '../bridge/codemirrorWebViewHtml';
 import { resolveCodeMirrorWebViewLanguageSpec } from '../bridge/resolveCodeMirrorWebViewLanguageSpec';
+import { resolveCodeEditorTheme } from '../editorTheme';
 
 function createMessageId(): string {
     return Math.random().toString(36).slice(2);
@@ -19,6 +20,24 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
 ) {
     const { theme } = useUnistyles();
     const uiFontScale = useLocalSetting('uiFontScale');
+    const editorTheme = React.useMemo(
+        () => resolveCodeEditorTheme(theme),
+        [
+            theme.dark,
+            theme.colors.accent.blue,
+            theme.colors.divider,
+            theme.colors.surfaceHigh,
+            theme.colors.surfaceHighest,
+            theme.colors.syntaxComment,
+            theme.colors.syntaxDefault,
+            theme.colors.syntaxFunction,
+            theme.colors.syntaxKeyword,
+            theme.colors.syntaxNumber,
+            theme.colors.syntaxString,
+            theme.colors.text,
+            theme.colors.textTertiary,
+        ],
+    );
     const webViewRef = React.useRef<WebView>(null);
     const readyRef = React.useRef(false);
     const pendingInitRef = React.useRef<null | { doc: string }>(null);
@@ -34,12 +53,7 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     const html = React.useMemo(
         () =>
             buildCodeMirrorWebViewHtml({
-                theme: {
-                    backgroundColor: theme.colors.surfaceHighest,
-                    textColor: theme.colors.text,
-                    dividerColor: theme.colors.divider,
-                    isDark: Boolean(theme.dark),
-                },
+                theme: editorTheme,
                 wrapLines,
                 showLineNumbers,
                 changeDebounceMs,
@@ -49,13 +63,10 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
             }),
         [
             changeDebounceMs,
+            editorTheme,
             maxChunkBytes,
             showLineNumbers,
             uiFontScale,
-            theme.colors.divider,
-            theme.colors.surfaceHighest,
-            theme.colors.text,
-            theme.dark,
             wrapLines,
         ],
     );
@@ -133,7 +144,7 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     return (
         <View
             testID={props.testID}
-            style={{ flex: 1, borderWidth: 1, borderColor: theme.colors.divider, borderRadius: 10, overflow: 'hidden' }}
+            style={{ flex: 1, borderWidth: 1, borderColor: editorTheme.dividerColor, borderRadius: 10, overflow: 'hidden', backgroundColor: editorTheme.backgroundColor }}
         >
             <WebView
                 key={props.resetKey}

@@ -13,6 +13,10 @@ export type ScmOperationIntent =
     | 'fetch'
     | 'pull'
     | 'push'
+    | 'branch_merge'
+    | 'branch_rebase'
+    | 'branch_operation_continue'
+    | 'branch_operation_abort'
     | 'commit'
     | 'revert'
     | 'discard'
@@ -30,7 +34,11 @@ export type ScmOperationBlockReason =
     | 'clean_worktree_required'
     | 'upstream_required'
     | 'detached_head'
-    | 'branch_behind_remote';
+    | 'branch_behind_remote'
+    | 'source_ref_required'
+    | 'same_branch'
+    | 'operation_in_progress'
+    | 'operation_not_in_progress';
 
 export type ScmOperationPreflightResult =
     | { allowed: true }
@@ -43,6 +51,8 @@ export function evaluateScmOperationPreflight(input: {
     snapshot: ScmWorkingSnapshot | null | undefined;
     commitStrategy?: ScmCommitStrategy;
     commitSelectionPaths?: string[] | null;
+    sourceRef?: string | null;
+    operation?: 'merge' | 'rebase' | null;
 }): ScmOperationPreflightResult {
     const {
         intent,
@@ -51,6 +61,8 @@ export function evaluateScmOperationPreflight(input: {
         snapshot,
         commitStrategy = 'git_staging',
         commitSelectionPaths,
+        sourceRef,
+        operation,
     } = input;
 
     if (!sessionPath) {
@@ -109,6 +121,40 @@ export function evaluateScmOperationPreflight(input: {
         }
     }
 
+    if (intent === 'branch_merge' || intent === 'branch_rebase') {
+        if (snapshot.operationState) {
+            return blocked('operation_in_progress', 'Finish the current merge or rebase before starting another operation.');
+        }
+        if (snapshot.branch.detached || !snapshot.branch.head) {
+            return blocked('detached_head', 'Operation is unavailable while HEAD is detached.');
+        }
+        if (!isCleanWorktree(snapshot)) {
+            return blocked('clean_worktree_required', 'Operation requires a clean working tree.');
+        }
+        const normalizedSourceRef = sourceRef?.trim() ?? '';
+        if (!normalizedSourceRef) {
+            return blocked('source_ref_required', 'Select a source branch before continuing.');
+        }
+        if (normalizedSourceRef === snapshot.branch.head) {
+            return blocked('same_branch', 'Choose a different branch.');
+        }
+    }
+
+    if (intent === 'branch_operation_continue' || intent === 'branch_operation_abort') {
+        if (!snapshot.operationState) {
+            return blocked('operation_not_in_progress', 'No merge or rebase is currently in progress.');
+        }
+        if (operation && snapshot.operationState.kind !== operation) {
+            return blocked('operation_not_in_progress', 'No matching merge or rebase is currently in progress.');
+        }
+        if (intent === 'branch_operation_continue' && snapshot.operationState.canContinue !== true) {
+            return blocked('operation_not_in_progress', 'This operation cannot continue yet.');
+        }
+        if (intent === 'branch_operation_abort' && snapshot.operationState.canAbort !== true) {
+            return blocked('operation_not_in_progress', 'This operation cannot be aborted.');
+        }
+    }
+
     if (intent === 'push' || intent === 'pull') {
         const inferredTarget = scmUiBackendRegistry.getPluginForSnapshot(snapshot).inferRemoteTarget(snapshot);
         const hasInferredTarget = policy.changeSetModel === 'working-copy' && Boolean(inferredTarget.branch);
@@ -137,7 +183,14 @@ export function evaluateScmOperationPreflight(input: {
 }
 
 function requiresConflictFree(intent: ScmOperationIntent): boolean {
-    return intent === 'commit' || intent === 'pull' || intent === 'push' || intent === 'revert';
+    return (
+        intent === 'commit'
+        || intent === 'pull'
+        || intent === 'push'
+        || intent === 'revert'
+        || intent === 'branch_merge'
+        || intent === 'branch_rebase'
+    );
 }
 
 function isCleanWorktree(snapshot: ScmWorkingSnapshot): boolean {
@@ -192,6 +245,13 @@ function supportsOperation(snapshot: ScmWorkingSnapshot, intent: ScmOperationInt
             return capabilities.writeRemotePull;
         case 'push':
             return capabilities.writeRemotePush;
+        case 'branch_merge':
+            return capabilities.writeBranchMerge === true;
+        case 'branch_rebase':
+            return capabilities.writeBranchRebase === true;
+        case 'branch_operation_continue':
+        case 'branch_operation_abort':
+            return capabilities.writeBranchOperationControl === true;
         case 'commit':
             return capabilities.writeCommit;
         case 'revert':

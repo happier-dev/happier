@@ -56,7 +56,7 @@ function resolveOpenCodeServerHttpTimeoutMs(env: NodeJS.ProcessEnv): number | nu
 
 async function fetchJson<T>(params: {
   url: string;
-  method: 'GET' | 'POST';
+  method: 'GET' | 'PATCH' | 'POST';
   headers: Record<string, string>;
   body?: unknown;
   timeoutMs?: number | null;
@@ -123,6 +123,7 @@ export type OpenCodeServerRuntimeClient = Readonly<{
   sessionList: () => Promise<unknown[]>;
   sessionCreate: (opts?: { permission?: unknown[] }) => Promise<OpenCodeSession>;
   sessionGet: (opts: { sessionId: string }) => Promise<OpenCodeSession>;
+  sessionUpdate: (opts: { sessionId: string; permission?: unknown[]; title?: string; time?: { archived?: number } }) => Promise<OpenCodeSession>;
   sessionMessagesList: (opts: { sessionId: string }) => Promise<unknown[]>;
   sessionDiff: (opts: { sessionId: string; messageId?: string }) => Promise<unknown[]>;
   sessionStatusList: () => Promise<Record<string, { type?: string }>>;
@@ -352,6 +353,26 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{ direc
         headers,
         timeoutMs: httpTimeoutMs,
       });
+    },
+    sessionUpdate: async ({ sessionId, permission, title, time }) => {
+      const body: Record<string, unknown> = {};
+      if (Array.isArray(permission)) {
+        body.permission = permission;
+      }
+      if (typeof title === 'string') {
+        body.title = title;
+      }
+      if (time && typeof time === 'object') {
+        body.time = time;
+      }
+
+      return await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<OpenCodeSession>({
+        url: buildUrl(currentBaseUrl, `/session/${encodeURIComponent(sessionId)}`, { directory: resolveDirectory() }),
+        method: 'PATCH',
+        headers,
+        body,
+        timeoutMs: httpTimeoutMs,
+      }));
     },
     sessionMessagesList: async ({ sessionId }) => {
       const raw = await fetchJsonWithManagedServerRetry((currentBaseUrl) => fetchJson<unknown>({

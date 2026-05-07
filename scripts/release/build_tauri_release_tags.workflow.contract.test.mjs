@@ -68,3 +68,12 @@ test('build-tauri latest.json generator uses ui-desktop-* release tags and publi
   assert.match(raw, /assets_dir:\s*dist\/ui-desktop-assets\/ui-desktop-v/);
   assert.match(raw, /assets_dir:\s*dist\/ui-desktop-assets\/ui-desktop-stable/);
 });
+
+test('build-tauri publishes the stable update feed after stable versioned assets exist', async () => {
+  const raw = await loadWorkflow('build-tauri.yml');
+
+  assert.match(
+    raw,
+    /publish_stable_feed:\n(?:.*\n){0,8}\s+needs:\s*\[\s*prepare_assets\s*,\s*publish_stable_release\s*\]/,
+  );
+});

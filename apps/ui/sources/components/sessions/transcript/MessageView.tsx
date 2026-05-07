@@ -18,16 +18,18 @@ import { Option } from '@/components/markdown/MarkdownView';
 import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommittedMessages";
 import { shouldShowMessageCopyButton } from '@/components/sessions/transcript/messageCopyVisibility';
 import { renderStructuredMessage, StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
+import { prepareMobileSurfaceTransition } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { storage, useSession, useSessionMessagesById, useSessionMessagesReducerState, useSetting } from '@/sync/domains/state/storage';
+import { storage, useProjectForSession, useSession, useSessionMessagesById, useSessionMessagesReducerState, useSetting } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
 import { extractWorkspaceFileMentions } from '@/components/sessions/linkedFiles/extractWorkspaceFileMentions';
 import { LinkedWorkspaceFilesRow } from '@/components/sessions/linkedFiles/LinkedWorkspaceFilesRow';
 import { useTranscriptMotion } from '@/components/sessions/transcript/motion/TranscriptMotionContext';
 import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/ThinkingTimelineRow';
 import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
+import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
 import { AttachmentsMessageMetaV1Schema } from '@/sync/domains/attachments/attachmentsMessageMeta';
 import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
@@ -44,6 +46,55 @@ import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
 import { TranscriptRollbackActionButton } from '@/components/sessions/transcript/TranscriptRollbackActionButton';
 import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { useStreamingTextSmoothing } from '@/components/sessions/transcript/streaming/useStreamingTextSmoothing';
+import { readStreamSegmentMetaV1 } from '@/sync/reducer/helpers/streamSegmentMeta';
+import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
+import { resolveTranscriptMarkdownFileLink } from '@/components/sessions/transcript/resolveTranscriptMarkdownFileLink';
+
+type StreamSegmentStateForRendering = 'streaming' | 'complete' | 'interrupted';
+type SessionFileDeepLinkParams = Parameters<typeof buildSessionFileDeepLink>[0];
+type SessionFileDeepLinkRouter = Pick<ReturnType<typeof useRouter>, 'push'>;
+
+function pushSessionFileDeepLink(
+  router: SessionFileDeepLinkRouter,
+  currentPathname: string | null | undefined,
+  params: SessionFileDeepLinkParams,
+): void {
+  const href = buildSessionFileDeepLink(params);
+  prepareMobileSurfaceTransition({
+    currentPathname,
+    targetHref: href,
+    operation: 'push',
+  });
+  router.push(href as never);
+}
+
+function shouldEnableFallbackTextNativeSelection(platformOS: typeof Platform.OS): boolean {
+  return platformOS !== 'ios';
+}
+
+function normalizeStreamSegmentStateForRendering(value: unknown): StreamSegmentStateForRendering | null {
+  return value === 'streaming' || value === 'complete' || value === 'interrupted' ? value : null;
+}
+
+function readStreamSegmentStateForRendering(params: {
+  messageMeta: unknown;
+  streamSegmentMeta: ReturnType<typeof readStreamSegmentMetaV1>;
+}): StreamSegmentStateForRendering | null {
+  if (params.streamSegmentMeta && 'segmentState' in params.streamSegmentMeta) {
+    return normalizeStreamSegmentStateForRendering(params.streamSegmentMeta.segmentState);
+  }
+
+  if (!params.messageMeta || typeof params.messageMeta !== 'object' || Array.isArray(params.messageMeta)) {
+    return null;
+  }
+  const segment = (params.messageMeta as Record<string, unknown>).happierStreamSegmentV1;
+  if (!segment || typeof segment !== 'object' || Array.isArray(segment)) {
+    return null;
+  }
+  return normalizeStreamSegmentStateForRendering((segment as Record<string, unknown>).segmentState);
+}
 
 function shouldHideVoiceAgentTurnMessage(message: Message): boolean {
     if (message.kind !== 'user-text' && message.kind !== 'agent-text') return false;
@@ -181,6 +232,7 @@ function UserTextBlock(props: {
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
+  const pathname = usePathname();
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
 
   const isVoiceAgentTurn = React.useMemo(() => {
@@ -192,18 +244,21 @@ function UserTextBlock(props: {
     message: props.message,
     sessionId: props.sessionId,
     onJumpToAnchor: (target) => {
-      router.push(buildSessionFileDeepLink({
+      pushSessionFileDeepLink(router, pathname, {
         sessionId: props.sessionId,
         filePath: target.filePath,
         source: target.source,
         anchor: target.anchor,
-      }));
+      });
     },
   });
   const isStructuredOnly = structuredNode != null;
 
   const attachmentsMeta = React.useMemo(() => {
-    const envelope = parseHappierMetaEnvelope(props.message.meta);
+    const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
+    const envelope = primaryEnvelope?.kind === 'attachments.v1'
+      ? primaryEnvelope
+      : parseHappierMetaEnvelope(props.message.meta, 'happierAttachments');
     if (!envelope || envelope.kind !== 'attachments.v1') return null;
     const parsed = AttachmentsMessageMetaV1Schema.safeParse(envelope.payload);
     if (!parsed.success) return null;
@@ -218,6 +273,9 @@ function UserTextBlock(props: {
       return getImageMimeTypeFromPath(a.path) == null;
     });
   }, [attachmentsMeta]);
+  const handleOpenAttachmentPath = React.useCallback((filePath: string) => {
+    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
+  }, [pathname, props.sessionId, router]);
 
   const stripAttachmentsBlock = React.useCallback((text: string): string => {
     const startTag = '[attachments]';
@@ -277,6 +335,23 @@ function UserTextBlock(props: {
   const actionPointerEvents = resolveMessageActionPointerEvents({ isWeb, showCopyButton });
   const sessionReplayEnabled = useSetting('sessionReplayEnabled');
   const session = useSession(props.sessionId);
+  const project = useProjectForSession(props.sessionId);
+  const workspacePath = resolveSessionWorkspacePath({
+    sessionPath: session?.metadata?.path ?? null,
+    projectPath: project?.key?.path ?? null,
+  });
+  const handleMarkdownLinkPress = React.useCallback((url: string) => {
+    const resolved = resolveTranscriptMarkdownFileLink({ url, workspacePath });
+    if (!resolved) return false;
+    pushSessionFileDeepLink(router, pathname, {
+      sessionId: props.sessionId,
+      filePath: resolved.filePath,
+      ...(typeof resolved.line === 'number'
+        ? { source: 'file' as const, anchor: { kind: 'fileLine' as const, startLine: resolved.line } }
+        : {}),
+    });
+    return true;
+  }, [pathname, props.sessionId, router, workspacePath]);
   const seq =
     typeof (props.message as any).seq === 'number' && Number.isFinite((props.message as any).seq)
       ? Math.trunc((props.message as any).seq)
@@ -308,6 +383,19 @@ function UserTextBlock(props: {
         >
           <View style={styles.structuredUserMessageContent}>
             {structuredNode}
+            {attachmentsMeta ? (
+              <AttachmentsInlineImages
+                sessionId={props.sessionId}
+                attachments={attachmentsMeta.attachments}
+                onOpenPath={handleOpenAttachmentPath}
+              />
+            ) : null}
+            {nonImageAttachments.length > 0 ? (
+              <AttachmentsMessageRow
+                attachments={nonImageAttachments}
+                onOpenPath={handleOpenAttachmentPath}
+              />
+            ) : null}
             {isDiscarded ? (
               <Text selectable style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
             ) : null}
@@ -377,30 +465,26 @@ function UserTextBlock(props: {
               message={props.message as any}
               sessionId={props.sessionId}
               onJumpToAnchor={(target) => {
-                router.push(buildSessionFileDeepLink({
+                pushSessionFileDeepLink(router, pathname, {
                   sessionId: props.sessionId,
                   filePath: target.filePath,
                   source: target.source,
                   anchor: target.anchor,
-                }));
+                });
               }}
             />
-            <MarkdownView markdown={renderedMarkdownText} onOptionPress={handleOptionPress} textStyle={styles.transcriptMarkdownText} />
+            <MarkdownView markdown={renderedMarkdownText} onOptionPress={handleOptionPress} onLinkPress={handleMarkdownLinkPress} selectable={true} profile="transcript" textStyle={styles.transcriptMarkdownText} />
             {attachmentsMeta ? (
               <AttachmentsInlineImages
                 sessionId={props.sessionId}
                 attachments={attachmentsMeta.attachments}
-                onOpenPath={(filePath) => {
-                  router.push(buildSessionFileDeepLink({ sessionId: props.sessionId, filePath }) as any);
-                }}
+                onOpenPath={handleOpenAttachmentPath}
               />
             ) : null}
             {nonImageAttachments.length > 0 ? (
               <AttachmentsMessageRow
                 attachments={nonImageAttachments}
-                onOpenPath={(filePath) => {
-                  router.push(buildSessionFileDeepLink({ sessionId: props.sessionId, filePath }) as any);
-                }}
+                onOpenPath={handleOpenAttachmentPath}
               />
             ) : null}
             {linkedWorkspaceFiles.length > 0 ? (
@@ -469,7 +553,9 @@ function AgentTextBlock(props: {
   const [isMessageHovered, setIsMessageHovered] = React.useState(false);
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
+  const fallbackTextSelectable = shouldEnableFallbackTextNativeSelection(Platform.OS);
   const router = useRouter();
+  const pathname = usePathname();
   const isVoiceAgentTurn = React.useMemo(() => {
     const envelope = parseHappierMetaEnvelope(props.message.meta);
     return envelope?.kind === 'voice_agent_turn.v1';
@@ -488,12 +574,12 @@ function AgentTextBlock(props: {
     message: props.message,
     sessionId: props.sessionId,
     onJumpToAnchor: (target) => {
-      router.push(buildSessionFileDeepLink({
+      pushSessionFileDeepLink(router, pathname, {
         sessionId: props.sessionId,
         filePath: target.filePath,
         source: target.source,
         anchor: target.anchor,
-      }));
+      });
     },
   });
   const isStructuredOnly = structuredNode != null;
@@ -522,10 +608,6 @@ function AgentTextBlock(props: {
     return cleaned.slice(0, 117) + '…';
   };
   const copyText = isStructuredOnly ? props.message.text : markdown;
-  const linkedWorkspaceFiles = React.useMemo(
-    () => extractWorkspaceFileMentions(markdown),
-    [markdown],
-  );
 
   const handleOptionPress = React.useCallback((option: Option) => {
     fireAndForget((async () => {
@@ -549,6 +631,23 @@ function AgentTextBlock(props: {
   const actionPointerEvents = resolveMessageActionPointerEvents({ isWeb, showCopyButton });
   const sessionReplayEnabled = useSetting('sessionReplayEnabled');
   const session = useSession(props.sessionId);
+  const project = useProjectForSession(props.sessionId);
+  const workspacePath = resolveSessionWorkspacePath({
+    sessionPath: session?.metadata?.path ?? null,
+    projectPath: project?.key?.path ?? null,
+  });
+  const handleMarkdownLinkPress = React.useCallback((url: string) => {
+    const resolved = resolveTranscriptMarkdownFileLink({ url, workspacePath });
+    if (!resolved) return false;
+    pushSessionFileDeepLink(router, pathname, {
+      sessionId: props.sessionId,
+      filePath: resolved.filePath,
+      ...(typeof resolved.line === 'number'
+        ? { source: 'file' as const, anchor: { kind: 'fileLine' as const, startLine: resolved.line } }
+        : {}),
+    });
+    return true;
+  }, [pathname, props.sessionId, router, workspacePath]);
   const seq =
     typeof (props.message as any).seq === 'number' && Number.isFinite((props.message as any).seq)
       ? Math.trunc((props.message as any).seq)
@@ -567,6 +666,76 @@ function AgentTextBlock(props: {
     const thinkingMarkdownTextStyle =
       normalizedThinkingInlineChrome === 'card' ? styles.thinkingMarkdownTextCard : styles.thinkingMarkdownText;
 
+  const transcriptStreamingSmoothingEnabledRaw = useSetting('transcriptStreamingSmoothingEnabled');
+  const transcriptStreamingSettleDelayMsRaw = useSetting('transcriptStreamingSettleDelayMs');
+  const transcriptStreamingPartialOutputEnabledRaw = useSetting('transcriptStreamingPartialOutputEnabled');
+  const transcriptStreamingMarkdownRenderingEnabledRaw = useSetting('transcriptStreamingMarkdownRenderingEnabled');
+  const transcriptStreamingSmoothingEnabled =
+    typeof transcriptStreamingSmoothingEnabledRaw === 'boolean'
+      ? transcriptStreamingSmoothingEnabledRaw
+      : settingsDefaults.transcriptStreamingSmoothingEnabled;
+  const transcriptStreamingSettleDelayMs =
+    typeof transcriptStreamingSettleDelayMsRaw === 'number' && Number.isFinite(transcriptStreamingSettleDelayMsRaw)
+      ? Math.max(0, Math.trunc(transcriptStreamingSettleDelayMsRaw))
+      : settingsDefaults.transcriptStreamingSettleDelayMs;
+  const transcriptStreamingPartialOutputEnabled =
+    typeof transcriptStreamingPartialOutputEnabledRaw === 'boolean'
+      ? transcriptStreamingPartialOutputEnabledRaw
+      : settingsDefaults.transcriptStreamingPartialOutputEnabled;
+  const transcriptStreamingMarkdownRenderingEnabled =
+    typeof transcriptStreamingMarkdownRenderingEnabledRaw === 'boolean'
+      ? transcriptStreamingMarkdownRenderingEnabledRaw
+      : settingsDefaults.transcriptStreamingMarkdownRenderingEnabled;
+
+  const streamSegmentMeta = readStreamSegmentMetaV1(props.message.meta);
+  const streamSegmentAssistantState =
+    streamSegmentMeta?.segmentKind === 'assistant'
+      ? readStreamSegmentStateForRendering({ messageMeta: props.message.meta, streamSegmentMeta })
+      : null;
+  const streamSegmentAssistantStreaming =
+    streamSegmentMeta?.segmentKind === 'assistant'
+      ? streamSegmentAssistantState === 'streaming' || streamSegmentAssistantState === null
+      : false;
+  const streamingPlainEligible =
+    props.historical !== true &&
+    props.message.isThinking !== true &&
+    isStructuredOnly !== true;
+  const shouldRenderActiveStreamSegmentPlain =
+    streamingPlainEligible && streamSegmentAssistantStreaming === true;
+  const shouldHidePartialStreamingOutput =
+    transcriptStreamingPartialOutputEnabled !== true &&
+    shouldRenderActiveStreamSegmentPlain;
+  const renderedAgentText = shouldHidePartialStreamingOutput ? '...' : markdown;
+  const streamingSmoothingEligible =
+    transcriptStreamingSmoothingEnabled === true &&
+    streamingPlainEligible &&
+    (streamSegmentMeta ? streamSegmentAssistantStreaming === true : true);
+  const streaming = useStreamingTextSmoothing({
+    enabled: streamingSmoothingEligible,
+    targetText: renderedAgentText,
+    settleDelayMs: transcriptStreamingSettleDelayMs,
+  });
+  const shouldRenderStreamingPlain = shouldRenderActiveStreamSegmentPlain || streaming.isStreaming;
+  const shouldRenderStreamingMarkdown =
+    shouldRenderStreamingPlain && transcriptStreamingMarkdownRenderingEnabled === true;
+  const streamingRevealAnimationEnabled =
+    motion?.config.preset !== 'off' &&
+    motion?.config.animateNewItemsEnabled === true;
+  const streamingRevealPreset = motion?.config.preset === 'full' ? 'full' : 'subtle';
+  const streamingLiveRegionProps = isWeb && shouldRenderStreamingPlain
+    ? {
+        role: 'log' as const,
+        accessibilityLiveRegion: 'polite' as const,
+        'aria-live': 'polite' as const,
+        'aria-busy': true,
+        'aria-atomic': false,
+      }
+    : null;
+  const linkedWorkspaceFiles = React.useMemo(() => {
+    if (shouldRenderStreamingPlain) return [];
+    return extractWorkspaceFileMentions(markdown);
+  }, [markdown, shouldRenderStreamingPlain]);
+
   return (
     <Pressable
       {...(isWeb
@@ -577,6 +746,7 @@ function AgentTextBlock(props: {
         : null)}
     >
       <View
+        {...streamingLiveRegionProps}
         style={[
           styles.agentMessageContainer,
           props.message.isThinking === true ? styles.agentMessageContainerThinking : null,
@@ -619,17 +789,43 @@ function AgentTextBlock(props: {
                     testID="transcript-thinking-body-markdown"
                     markdown={markdown}
                     onOptionPress={handleOptionPress}
+                    onLinkPress={handleMarkdownLinkPress}
+                    selectable={true}
+                    profile="thinking"
                     textStyle={thinkingMarkdownTextStyle}
-                    variant="thinking"
                   />
                 </ThinkingTimelineRow>
             ) : (
-              <MarkdownView
-                markdown={markdown}
-                onOptionPress={handleOptionPress}
-                textStyle={props.message.isThinking ? styles.thinkingMarkdownText : styles.transcriptMarkdownText}
-                variant={props.message.isThinking ? 'thinking' : undefined}
-              />
+              shouldRenderStreamingMarkdown ? (
+                <MarkdownView
+                  markdown={streaming.displayText}
+                  onOptionPress={handleOptionPress}
+                  onLinkPress={handleMarkdownLinkPress}
+                  selectable={true}
+                  profile="transcript"
+                  textStyle={styles.transcriptMarkdownText}
+                  streamingMode="streaming"
+                  streamingAnimated={streamingRevealAnimationEnabled}
+                  streamingRevealPreset={streamingRevealPreset}
+                />
+              ) : shouldRenderStreamingPlain ? (
+                <Text
+                  testID={`transcript-streaming-plain:${props.message.id}`}
+                  selectable={fallbackTextSelectable}
+                  style={[styles.transcriptMarkdownText, styles.streamingPlainText]}
+                >
+                  {streaming.displayText}
+                </Text>
+              ) : (
+                <MarkdownView
+                  markdown={markdown}
+                  onOptionPress={handleOptionPress}
+                  onLinkPress={handleMarkdownLinkPress}
+                  selectable={true}
+                  profile={props.message.isThinking ? 'thinking' : 'transcript'}
+                  textStyle={props.message.isThinking ? styles.thinkingMarkdownText : styles.transcriptMarkdownText}
+                />
+              )
             )
           )
         )}
@@ -865,16 +1061,17 @@ function ToolCallBlock(props: {
   forcePermissionPromptsInTranscript?: boolean;
   activeThinkingMessageId: string | null;
   getMessageById?: (id: string) => Message | null;
-	  interaction?: {
-	    canSendMessages: boolean;
-	    canApprovePermissions: boolean;
-	    permissionDisabledReason?: 'public' | 'readOnly' | 'inactive' | 'notGranted';
-	    disableToolNavigation?: boolean;
-	  };
-	  rollbackAction?: TranscriptRollbackAction | null;
-	  historical?: boolean;
-	}) {
+  interaction?: {
+    canSendMessages: boolean;
+    canApprovePermissions: boolean;
+    permissionDisabledReason?: 'public' | 'readOnly' | 'inactive' | 'notGranted';
+    disableToolNavigation?: boolean;
+  };
+  rollbackAction?: TranscriptRollbackAction | null;
+  historical?: boolean;
+}) {
   const router = useRouter();
+  const pathname = usePathname();
   const toolViewTimelineChromeMode = useSetting('toolViewTimelineChromeMode');
   const messagesById = useSessionMessagesById(props.sessionId);
   const reducerState = useSessionMessagesReducerState(props.sessionId);
@@ -885,12 +1082,12 @@ function ToolCallBlock(props: {
     message: props.message,
     sessionId: props.sessionId,
     onJumpToAnchor: (target) => {
-      router.push(buildSessionFileDeepLink({
+      pushSessionFileDeepLink(router, pathname, {
         sessionId: props.sessionId,
         filePath: target.filePath,
         source: target.source,
         anchor: target.anchor,
-      }));
+      });
     },
   });
   const toolForSession = resolveInactiveSessionToolCallFailure({
@@ -1074,10 +1271,10 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 12,
   },
   transcriptMarkdownText: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 0,
-    marginBottom: 0,
+    ...transcriptMarkdownTextStyle,
+  },
+  streamingPlainText: {
+    color: theme.colors.text,
   },
     thinkingLabel: {
       marginBottom: 6,

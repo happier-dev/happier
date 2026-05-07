@@ -31,12 +31,29 @@ describe('settings registry completeness', () => {
         expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('featureToggles', {});
     });
 
+    it('owns mobileWorkspaceExperienceV1 as an account-synced setting, not a local-only setting', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
+        const { LOCAL_SETTING_ARTIFACTS } = await import('./registry/local/localSettingDefinitions');
+
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions.mobileWorkspaceExperienceV1.storageScope).toBe('account');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('mobileWorkspaceExperienceV1', 'cockpit');
+        expect(LOCAL_SETTING_ARTIFACTS.definitions).not.toHaveProperty('mobileWorkspaceExperienceV1');
+        expect(LOCAL_SETTING_ARTIFACTS.defaults).not.toHaveProperty('mobileWorkspaceExperienceV1');
+    });
+
     it('owns lastUsedAgent in canonical account settings instead of the legacy compatibility bucket', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
         const { ACCOUNT_LEGACY_SETTING_ARTIFACTS } = await import('./registry/account/accountLegacySettingDefinitions');
 
         expect(ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty('lastUsedAgent');
         expect(ACCOUNT_LEGACY_SETTING_ARTIFACTS.definitions).not.toHaveProperty('lastUsedAgent');
+    });
+
+    it('enables remembered project session selections as an account session-creation default', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
+
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions.rememberLastProjectSessionSelections.storageScope).toBe('account');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('rememberLastProjectSessionSelections', true);
     });
 
     it('builds local settings schema and defaults entirely from canonical local setting artifacts', async () => {

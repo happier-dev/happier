@@ -26,6 +26,13 @@ const sessionState = vi.hoisted(() => ({
         agentState: {},
     } as any,
 }));
+const featureEnabledState = vi.hoisted(() => ({
+    reviewComments: false,
+}));
+const reviewCommentDraftsState = vi.hoisted(() => ({
+    current: [] as any[],
+}));
+const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
 
 const pendingFireAndForget: Promise<unknown>[] = [];
 
@@ -99,7 +106,9 @@ vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'attachments.uploads',
+    useFeatureEnabled: (featureId: string) =>
+        featureId === 'attachments.uploads'
+        || (featureId === 'files.reviewComments' && featureEnabledState.reviewComments),
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -266,7 +275,15 @@ installSessionShellCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListViewDataByServerId: {} }) },
+            storage: {
+                getState: () => ({
+                    sessions: { s1: sessionState.session },
+                    machines: { m1: { id: 'm1', active: true, metadata: { host: 'happy-host' } } },
+                    settings: {},
+                    sessionListViewDataByServerId: {},
+                    deleteWorkspaceReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
+                }),
+            },
             useSession: () => sessionState.session,
             useIsDataReady: () => true,
             useRealtimeStatus: () => ({ status: 'connected' }),
@@ -274,6 +291,7 @@ installSessionShellCommonModuleMocks({
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
             useSessionPendingMessages: () => ({ messages: [] }),
             useSessionReviewCommentsDrafts: () => [],
+            useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
             useSessionUsage: () => null,
             useSetting: () => null,
             useSettings: () => ({ experiments: true, featureToggles: {} }),
@@ -282,7 +300,6 @@ installSessionShellCommonModuleMocks({
             useLocalSetting: (key: string) => {
                 if (key === 'acknowledgedCliVersions') return {};
                 if (key === 'uiMultiPanePanelsEnabled') return false;
-                if (key === 'editorFocusModeEnabled') return false;
                 if (key === 'detailsPaneTabsBehavior') return 'preview';
                 if (key === 'rightPaneWidthPx') return 360;
                 if (key === 'rightPaneWidthBasisPx') return 1200;
@@ -487,11 +504,14 @@ describe('SessionView (attachments.uploads resumable send)', () => {
     it('resumes and sends attachments even when chooseSubmitMode selects server_pending', async () => {
         expect(getInactiveSessionUiState({ isSessionActive: true, isResumable: true, isMachineOnline: true })).toMatchObject({ shouldShowInput: true });
 
+        featureEnabledState.reviewComments = false;
         sendMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
         uploadSpy.mockClear();
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
+        reviewCommentDraftsState.current = [];
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
         pendingFireAndForget.length = 0;
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -550,6 +570,98 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 },
             });
         } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('sends review comments and attachments with both structured metadata envelopes', async () => {
+        featureEnabledState.reviewComments = true;
+        reviewCommentDraftsState.current = [{
+            id: 'draft-1',
+            filePath: 'src/a.ts',
+            source: 'diff',
+            anchor: {
+                kind: 'diffLine',
+                startLine: 1,
+                side: 'after',
+                oldLine: 1,
+                newLine: 1,
+            },
+            snapshot: {
+                selectedLines: ['+export const a = 2;'],
+                beforeContext: ['-export const a = 1;'],
+                afterContext: [],
+            },
+            body: 'Please verify this project change.',
+            createdAt: 1,
+        }];
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        pendingFireAndForget.length = 0;
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            const agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget.length).toBe(1);
+            await pendingFireAndForget[0];
+
+            expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+            const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = sendMessageSpy.mock.calls[0] ?? [];
+            expect(sentSessionId).toBe('s1');
+            expect(String(sentText)).toContain('Review comments:');
+            expect(String(sentText)).toContain('[attachments]');
+            expect(sentDisplayText).toContain('Review comments (1)');
+            expect(sentDisplayText).toContain('[attachments]');
+            expect(sentMetaOverrides).toMatchObject({
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        comments: [expect.objectContaining({ id: 'draft-1' })],
+                    },
+                },
+                happierAttachments: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            expect.objectContaining({
+                                name: 'a.txt',
+                                path: 'p1',
+                            }),
+                        ],
+                    },
+                },
+            });
+            expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith('server-1:m1:/tmp', 'draft-1');
+        } finally {
+            featureEnabledState.reviewComments = false;
+            reviewCommentDraftsState.current = [];
             act(() => {
                 tree?.unmount();
             });

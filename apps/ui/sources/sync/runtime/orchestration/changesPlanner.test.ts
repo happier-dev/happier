@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { planSyncActionsFromChanges } from './changesPlanner';
+import { ChangeKindSchema } from '@happier-dev/protocol/changes';
+import { CHANGE_CHECKPOINT_COVERAGE, classifyChangeForCheckpoint, planSyncActionsFromChanges } from './changesPlanner';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 
 function buildChange(params: {
@@ -41,6 +42,7 @@ describe('planSyncActionsFromChanges', () => {
             friends: true,
             feed: true,
             automations: false,
+            pets: false,
         });
         expect(planned.kv).toEqual({ type: 'none' });
     });
@@ -65,18 +67,46 @@ describe('planSyncActionsFromChanges', () => {
         expect(plannedInvalid.kv).toEqual({ type: 'refresh-feature', feature: 'todos' });
     });
 
-    it('deduplicates session catch-up ids and handles unknown kinds as safe session invalidations', () => {
+    it('deduplicates session catch-up ids', () => {
         const planned = planSyncActionsFromChanges([
             buildChange({ cursor: 1, kind: 'session', entityId: 's1' }),
             buildChange({ cursor: 2, kind: 'share', entityId: 's1' }),
             buildChange({ cursor: 3, kind: 'session', entityId: '' }),
-            buildChange({ cursor: 4, kind: 'unknown-change-kind' as ApiChangeEntry['kind'] }),
         ]);
 
         expect(planned.sessionIdsToCatchUp).toEqual(['s1']);
         expect(planned.invalidate.sessions).toBe(true);
         expect(planned.invalidate.automations).toBe(false);
         expect(planned.kv).toEqual({ type: 'none' });
+    });
+
+    it('records unknown kinds as unsupported without treating them as safe invalidations', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({ cursor: 4, kind: 'unknown-change-kind' as ApiChangeEntry['kind'] }),
+        ]);
+
+        expect(planned.unsupportedChanges).toEqual([
+            { cursor: '4', kind: 'unknown-change-kind', entityId: 'self' },
+        ]);
+        expect(planned.invalidate.sessions).toBe(false);
+    });
+
+    it('maps every protocol change kind in the checkpoint coverage matrix', () => {
+        expect(Object.keys(CHANGE_CHECKPOINT_COVERAGE).sort()).toEqual([...ChangeKindSchema.options].sort());
+    });
+
+    it('classifies loaded session rows as critical and unloaded session rows as explicit skips', () => {
+        const loaded = classifyChangeForCheckpoint(
+            buildChange({ cursor: 1, kind: 'session', entityId: 'loaded' }),
+            { isSessionMessagesLoaded: (sessionId) => sessionId === 'loaded' },
+        );
+        const unloaded = classifyChangeForCheckpoint(
+            buildChange({ cursor: 2, kind: 'session', entityId: 'unloaded' }),
+            { isSessionMessagesLoaded: () => false },
+        );
+
+        expect(loaded.decision).toBe('critical');
+        expect(unloaded.decision).toBe('intentionally-skipped-by-explicit-policy');
     });
 
     it('plans automation invalidation when automation change kind is present', () => {
@@ -86,6 +116,26 @@ describe('planSyncActionsFromChanges', () => {
 
         expect(planned.invalidate.automations).toBe(true);
         expect(planned.invalidate.sessions).toBe(false);
+    });
+
+    it('plans pet library invalidation when pet change kind is present', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({ cursor: 1, kind: 'pet', entityId: 'pet-1' }),
+        ]);
+
+        expect(planned.invalidate.pets).toBe(true);
+        expect(planned.invalidate.sessions).toBe(false);
+
+        const classification = classifyChangeForCheckpoint(
+            buildChange({ cursor: 1, kind: 'pet', entityId: 'pet-1' }),
+            { isSessionMessagesLoaded: () => false },
+        );
+        expect(classification).toMatchObject({
+            decision: 'critical',
+            plannerOwner: 'pets',
+            snapshotDomain: 'account-pets',
+            materializationProof: 'account-pets',
+        });
     });
 
     it('plans deduplicated KV keys and upgrades to full refresh when any KV change requires it', () => {

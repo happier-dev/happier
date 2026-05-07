@@ -9,6 +9,7 @@ async function countVisible(page: InitialAppUiPage): Promise<number> {
     + (await page.getByTestId('welcome-signup-provider').count())
     + (await page.getByTestId('welcome-restore').count())
     + (await page.getByTestId('welcome-mtls-login').count())
+    + (await page.getByTestId('setup.continueToAuth').count())
     + (await page.getByRole('button', { name: 'Create account' }).count())
     + (await page.getByTestId('sidebar-expand-button').count())
     + (await page.getByTestId('session-composer-input').count())

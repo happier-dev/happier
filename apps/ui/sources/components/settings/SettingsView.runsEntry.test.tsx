@@ -252,7 +252,7 @@ describe('SettingsView (runs entry)', () => {
 
         await screen.pressRowByTitle('settings.transcript');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/transcript');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/session/transcript');
     });
 
     it('keeps the automations entry discoverable when only local feature flags are off and routes to Features', async () => {
@@ -267,7 +267,7 @@ describe('SettingsView (runs entry)', () => {
 
         await screen.pressRowByTitle('settings.automations');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/features');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/features');
     });
 
     it('includes a Permissions entry that routes to /settings/session/permissions', async () => {
@@ -276,7 +276,7 @@ describe('SettingsView (runs entry)', () => {
 
         await screen.pressRowByTitle('settings.permissions');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/session/permissions');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/session/permissions');
     });
 
     it('includes a Subagents entry that routes to /settings/sub-agent', async () => {
@@ -285,7 +285,7 @@ describe('SettingsView (runs entry)', () => {
 
         await screen.pressRowByTitle('subAgentGuidance.settings.groupTitle');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/sub-agent');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/sub-agent');
     });
 
     it('includes an Actions entry that routes to /settings/actions', async () => {
@@ -294,7 +294,7 @@ describe('SettingsView (runs entry)', () => {
 
         await screen.pressRowByTitle('common.actions');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/actions');
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/actions');
     });
 
     it("omits the What's New entry when changelog UI is disabled by build policy", async () => {

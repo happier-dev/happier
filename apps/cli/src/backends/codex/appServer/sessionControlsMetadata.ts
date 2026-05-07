@@ -363,7 +363,7 @@ function isSpeedEligible(params: Readonly<{
     authMethod?: string | null;
     currentModelId: string | null;
 }>): boolean {
-    if (params.currentModelId !== 'gpt-5.4') return false;
+    if (params.currentModelId !== 'gpt-5.4' && params.currentModelId !== 'gpt-5.5') return false;
     return params.authMethod === 'oauth_cli' || params.authMethod === 'credentials_file';
 }
 

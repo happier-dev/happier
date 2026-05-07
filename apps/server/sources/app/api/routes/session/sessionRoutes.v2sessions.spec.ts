@@ -117,4 +117,30 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             hasNext: true,
         });
     });
+
+    it("filters archived sessions out of the regular paged listing", async () => {
+        sessionFindMany.mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        await route.invoke({
+            query: { limit: 10 },
+        });
+
+        expect(sessionFindMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                archivedAt: null,
+            }),
+        }));
+    });
+
+    it("does not expose diagnostic route timing headers on successful paged listing responses", async () => {
+        sessionFindMany.mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
+        const { reply } = await route.invoke({
+            query: { limit: 10 },
+        });
+
+        expect(reply.headers.get("server-timing")).toBeUndefined();
+    });
 });

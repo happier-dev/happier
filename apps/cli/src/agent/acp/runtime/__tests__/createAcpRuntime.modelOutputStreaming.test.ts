@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
+import { createTurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 
 import { createAcpRuntime } from '../createAcpRuntime';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
@@ -10,6 +11,34 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (transcript streaming vNext)', () => {
+  it('tracks the current turn assistant preview from structured model output and resets between turns', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const tracker = createTurnAssistantPreviewTracker();
+    const runtime = createAcpRuntime({
+      provider: 'claude',
+      directory: '/tmp',
+      session: createBasicSessionClientWithOverrides(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      turnAssistantPreviewTracker: tracker,
+    });
+
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+
+    backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
+    backend.emit({ type: 'model-output', textDelta: ' world' } satisfies AgentMessage);
+
+    expect(tracker.getPreview()).toBe('Hello world');
+
+    runtime.beginTurn();
+
+    expect(tracker.getPreview()).toBeNull();
+  });
+
   it('writes durable streaming checkpoints with a stable segment localId reused by the final commit', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const durableCalls: Array<{ localId: string; body: ACPMessageData; meta?: Record<string, unknown> }> = [];

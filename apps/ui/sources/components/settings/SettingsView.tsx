@@ -62,6 +62,8 @@ export const SettingsView = React.memo(function SettingsView() {
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
     const promptsLibraryEnabled = useFeatureEnabled('prompts.library');
     const mcpServersEnabled = useFeatureEnabled('mcp.servers');
+    const petsCompanionEnabled = useFeatureEnabled('pets.companion');
+    const petsSyncEnabled = useFeatureEnabled('pets.sync');
     const showChangelog = getFeatureBuildPolicyDecision('app.ui.changelog' as const satisfies FeatureId) !== 'deny';
     const [showRateUs, setShowRateUs] = React.useState(false);
     const useProfiles = useSetting('useProfiles');
@@ -136,7 +138,7 @@ export const SettingsView = React.memo(function SettingsView() {
                 return;
             }
         }
-        pushRoute('/(app)/settings/report-issue');
+        pushRoute('/settings/report-issue');
     };
 
     const handleSubscribe = async () => {
@@ -334,14 +336,14 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.account')}
                     subtitle={t('settings.accountSubtitle')}
                     icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/(app)/settings/account')}
+                    onPress={() => router.push('/settings/account')}
                 />
                 {useProfiles && (
                     <Item
                         title={t('settings.secrets')}
                         subtitle={t('settings.secretsSubtitle')}
                         icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.purple} />}
-                        onPress={() => router.push('/(app)/settings/secrets')}
+                        onPress={() => router.push('/settings/secrets')}
                     />
                 )}
                 {usageReportingEnabled && (
@@ -349,13 +351,13 @@ export const SettingsView = React.memo(function SettingsView() {
                         title={t('settings.usage')}
                         subtitle={t('settings.usageSubtitle')}
                         icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push('/(app)/settings/usage')}
+                        onPress={() => router.push('/settings/usage')}
                     />
                 )}
                 <Item
                     title={t('settings.machines')}
                     icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => pushRoute('/(app)/settings/machines')}
+                    onPress={() => pushRoute('/settings/machines')}
                 />
             </ItemGroup>
 
@@ -365,14 +367,23 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.appearance')}
                     subtitle={t('settings.appearanceSubtitle')}
                     icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => pushRoute('/(app)/settings/appearance')}
+                    onPress={() => pushRoute('/settings/appearance')}
                 />
                 <Item
                     title={t('settings.featuresTitle')}
                     subtitle={t('settings.featuresSubtitle')}
                     icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => pushRoute('/(app)/settings/features')}
+                    onPress={() => pushRoute('/settings/features')}
                 />
+                {petsCompanionEnabled || petsSyncEnabled ? (
+                    <Item
+                        testID="settings-pets-row"
+                        title={t('settings.pets')}
+                        subtitle={t('settings.petsSubtitle')}
+                        icon={<Ionicons name="paw-outline" size={29} color={theme.colors.accent.green} />}
+                        onPress={() => pushRoute('/settings/pets')}
+                    />
+                ) : null}
             </ItemGroup>
 
             {/* AI & Agents */}
@@ -381,7 +392,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settingsProviders.title')}
                     subtitle={t('settingsProviders.entrySubtitle')}
                     icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => router.push('/(app)/settings/providers')}
+                    onPress={() => router.push('/settings/providers')}
                 />
                 <Item
                     title={t('subAgentGuidance.settings.groupTitle')}
@@ -391,14 +402,14 @@ export const SettingsView = React.memo(function SettingsView() {
                             <DependabotIcon size={22} color={theme.colors.accent.orange} />
                         </View>
                     )}
-                    onPress={() => router.push('/(app)/settings/sub-agent')}
+                    onPress={() => router.push('/settings/sub-agent')}
                 />
                 {useProfiles && (
                     <Item
                         title={t('settings.profiles')}
                         subtitle={t('settings.profilesSubtitle')}
                         icon={<Ionicons name="person-outline" size={29} color={theme.colors.accent.purple} />}
-                        onPress={() => router.push('/(app)/settings/profiles')}
+                        onPress={() => router.push('/settings/profiles')}
                     />
                 )}
                 {connectedServicesEnabled ? (
@@ -406,7 +417,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         title={t('settings.connectedServices')}
                         subtitle={t('settings.connectedServicesSubtitle')}
                         icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push('/(app)/settings/connected-services')}
+                        onPress={() => router.push('/settings/connected-services')}
                     />
                 ) : null}
                 {mcpServersEnabled && (
@@ -424,7 +435,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         title={t('settings.prompts')}
                         subtitle={t('settings.promptsSubtitle')}
                         icon={<Ionicons name="library-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push('/(app)/settings/prompts')}
+                        onPress={() => router.push('/settings/prompts')}
                     />
                 ) : null}
                 {voiceEnabled ? (
@@ -432,7 +443,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         title={t('settings.voiceAssistant')}
                         subtitle={t('settings.voiceAssistantSubtitle')}
                         icon={<Ionicons name="mic-outline" size={29} color={theme.colors.success} />}
-                        onPress={() => router.push('/(app)/settings/voice')}
+                        onPress={() => router.push('/settings/voice')}
                     />
                 ) : null}
                 {memorySearchEnabled ? (
@@ -440,7 +451,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         title={t('settings.memorySearch')}
                         subtitle={t('settings.memorySearchSubtitle')}
                         icon={<Ionicons name="search-outline" size={29} color={theme.colors.success} />}
-                        onPress={() => router.push('/(app)/settings/memory')}
+                        onPress={() => router.push('/settings/memory')}
                     />
                 ) : null}
             </ItemGroup>
@@ -451,25 +462,25 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.sessions')}
                     subtitle={terminalUseTmux ? t('settings.sessionSubtitleTmuxEnabled') : t('settings.sessionSubtitleMessageSendingAndTmux')}
                     icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/session')}
+                    onPress={() => router.push('/settings/session')}
                 />
                 <Item
                     title={t('common.actions')}
                     subtitle={t('settings.actionsSubtitle')}
                     icon={<Ionicons name="flash-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => router.push('/(app)/settings/actions')}
+                    onPress={() => router.push('/settings/actions')}
                 />
                 <Item
                     title={t('settings.transcript')}
                     subtitle={t('settings.transcriptSubtitle')}
                     icon={<Ionicons name="chatbubbles-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/session/transcript')}
+                    onPress={() => router.push('/settings/session/transcript')}
                 />
                 <Item
                     title={t('settings.permissions')}
                     subtitle={t('settings.permissionsSubtitle')}
                     icon={<Ionicons name="shield-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/session/permissions')}
+                    onPress={() => router.push('/settings/session/permissions')}
                 />
                 {showAutomations ? (
                     <Item
@@ -478,7 +489,7 @@ export const SettingsView = React.memo(function SettingsView() {
                             ? t('settingsFeatures.expAutomationsSubtitle')
                             : t('settings.automationsSubtitle')}
                         icon={<Ionicons name="timer-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push(automationsNeedLocalEnablement ? '/(app)/settings/features' : '/automations')}
+                        onPress={() => router.push(automationsNeedLocalEnablement ? '/settings/features' : '/automations')}
                     />
                 ) : null}
                 {executionRunsEnabled ? (
@@ -498,7 +509,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         title={t('settings.filesSourceControl')}
                         subtitle={t('settings.filesSourceControlSubtitle')}
                         icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.success} />}
-                        onPress={() => router.push('/(app)/settings/source-control')}
+                        onPress={() => router.push('/settings/source-control')}
                     />
                 ) : null}
                 {attachmentsUploadsEnabled ? (
@@ -506,7 +517,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         title={t('settings.attachments')}
                         subtitle={t('settings.attachmentsSubtitle')}
                         icon={<Ionicons name="attach-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push('/(app)/settings/attachments')}
+                        onPress={() => router.push('/settings/attachments')}
                     />
                 ) : null}
             </ItemGroup>
@@ -517,20 +528,20 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.servers')}
                     subtitle={t('settings.serversSubtitle')}
                     icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/server')}
+                    onPress={() => router.push('/settings/server')}
                 />
                 <Item
                     testID="settings-system-status-item"
                     title={t('settings.systemStatus')}
                     subtitle={t('settings.systemStatusSubtitle')}
                     icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/system-status')}
+                    onPress={() => router.push('/settings/system-status')}
                 />
                 <Item
                     title={t('settings.notifications')}
                     subtitle={t('settings.notificationsSubtitle')}
                     icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/(app)/settings/notifications')}
+                    onPress={() => router.push('/settings/notifications')}
                 />
             </ItemGroup>
 

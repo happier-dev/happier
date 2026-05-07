@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
 import {
+  ScmBranchIntegrationOperationSchema,
+  ScmBranchSourceRefSchema,
   ScmOperationErrorCodeSchema,
+  ScmOperationStateSchema,
   ScmRemoteResponseSchema,
   ScmRequestBaseSchema,
 } from './scm.js';
@@ -76,3 +79,22 @@ export type ScmRemotePublishRequest = z.infer<typeof ScmRemotePublishRequestSche
 export const ScmRemotePublishResponseSchema = ScmRemoteResponseSchema;
 export type ScmRemotePublishResponse = z.infer<typeof ScmRemotePublishResponseSchema>;
 
+export const ScmBranchIntegrationRequestSchema = ScmRequestBaseSchema.extend({
+  sourceRef: ScmBranchSourceRefSchema,
+});
+export type ScmBranchIntegrationRequest = z.infer<typeof ScmBranchIntegrationRequestSchema>;
+
+export const ScmBranchOperationControlRequestSchema = ScmRequestBaseSchema.extend({
+  operation: ScmBranchIntegrationOperationSchema,
+});
+export type ScmBranchOperationControlRequest = z.infer<typeof ScmBranchOperationControlRequestSchema>;
+
+export const ScmBranchIntegrationResponseSchema = z.object({
+  success: z.boolean(),
+  operationState: ScmOperationStateSchema.nullable().optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
+  error: z.string().optional(),
+  errorCode: ScmOperationErrorCodeSchema.optional(),
+});
+export type ScmBranchIntegrationResponse = z.infer<typeof ScmBranchIntegrationResponseSchema>;

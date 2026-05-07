@@ -8,6 +8,7 @@ import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNew
 import { NewSessionScreenPortalScope } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { parseNewSessionCheckoutDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 
 function hasSeededCheckoutIntent(value: unknown): boolean {
@@ -44,23 +45,30 @@ function NewSessionScreen() {
         machineId?: string;
         directory?: string;
     }>();
+    const draftScope = useActiveServerAccountScope();
+
+    const tempData = React.useMemo(() => {
+        return typeof dataId === 'string' ? peekTempData<NewSessionData>(dataId) : null;
+    }, [dataId]);
 
     const hasSeededDraftIntent = React.useMemo(() => {
-        const persistedDraft = loadNewSessionDraft();
-        const tempData = typeof dataId === 'string' ? peekTempData<NewSessionData>(dataId) : null;
+        const persistedDraft = tempData?.replacePersistedDraftSelections === true ? null : loadNewSessionDraft(draftScope);
 
         return hasSeededCheckoutIntent({
             ...persistedDraft,
             checkoutCreationDraft: tempData?.checkoutCreationDraft ?? persistedDraft?.checkoutCreationDraft,
         });
-    }, [dataId]);
+    }, [draftScope, tempData]);
 
     const hasSeededRouteIntent = React.useMemo(() => {
         return (
             (typeof machineId === 'string' && machineId.trim().length > 0)
             || (typeof directory === 'string' && directory.trim().length > 0)
+            || (typeof tempData?.machineId === 'string' && tempData.machineId.trim().length > 0)
+            || (typeof tempData?.directory === 'string' && tempData.directory.trim().length > 0)
+            || (typeof tempData?.path === 'string' && tempData.path.trim().length > 0)
         );
-    }, [machineId, directory]);
+    }, [machineId, directory, tempData]);
 
     if (baseModel.kind === 'connect_machine' && !hasSeededDraftIntent && !hasSeededRouteIntent) {
         return (

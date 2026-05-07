@@ -4,6 +4,7 @@ import type { NormalizedMessage } from '@/sync/typesRaw';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { getActiveViewingSessionId } from '@/sync/domains/session/activeViewingSession';
 import type { MachineActivityUpdate } from '@/sync/reducer/machineActivityAccumulator';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
@@ -15,14 +16,24 @@ import { reportNewAgentRequestsFromSessionTransition } from '@/voice/context/rep
 import { deriveNewAgentRequests } from '@/sync/domains/permissions/deriveNewAgentRequests';
 import { notifyActivityAgentRequest } from '@/activity/notifications/runtime/activityLocalNotificationBus';
 import { didControlReturnToMobile } from '@/sync/domains/session/control/controlledByUserTransitions';
+import {
+    createSessionApplyCoalescer,
+    type SessionApplyCoalescerSession,
+} from '@/sync/engine/sessions/sessionApplyCoalescer';
 import { createSessionMessageApplyCoalescer } from '@/sync/engine/sessions/sessionMessageApplyCoalescer';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import {
     buildUpdatedSessionFromSocketUpdate,
     handleDeleteSessionSocketUpdate,
     handleMessageUpdatedSocketUpdate,
     handleNewMessageSocketUpdate,
 } from '@/sync/engine/sessions/syncSessions';
+import {
+    handleTranscriptStreamSegmentEphemeralUpdate,
+    type TranscriptStreamSegmentSessionMessageEncryption,
+} from '@/sync/engine/sessions/handleTranscriptStreamSegmentEphemeralUpdate';
 import {
     buildMachineFromMachineActivityEphemeralUpdate,
     buildUpdatedMachineFromSocketUpdate,
@@ -41,6 +52,7 @@ import {
 import { applyAutomationSocketUpdate } from '@/sync/engine/automations/automationSocketApply';
 import { normalizeRelationshipUpdatedUpdateBody } from '@/sync/engine/social/relationshipUpdate';
 import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
+import type { DirectSessionTranscriptUpdatedEphemeralUpdate } from './socketParse';
 import { FeedBodySchema } from '@/sync/domains/social/feedTypes';
 export { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 
@@ -58,6 +70,58 @@ type SocketMessageApplyHandlers = Readonly<{
 }>;
 
 let socketMessageApplyHandlers: SocketMessageApplyHandlers | null = null;
+let socketSessionApplyHandlers: { applySessions: ApplySessions } | null = null;
+const socketSessionApplyTuning = loadSyncTuning();
+
+const socketSessionApplyCoalescer = createSessionApplyCoalescer({
+    getConfig: () => ({
+        enabled: socketSessionApplyTuning.sessionSocketApplyCoalescingEnabled,
+        windowMs: socketSessionApplyTuning.sessionSocketApplyCoalescingWindowMs,
+        maxBatchSize: socketSessionApplyTuning.sessionSocketApplyCoalescingMaxBatchSize,
+    }),
+    applyBatch: (sessions) => {
+        socketSessionApplyHandlers?.applySessions(sessions);
+    },
+});
+
+function setSocketSessionApplyHandler(applySessions: ApplySessions): void {
+    if (socketSessionApplyHandlers && socketSessionApplyHandlers.applySessions !== applySessions) {
+        socketSessionApplyCoalescer.flushAll();
+    }
+    socketSessionApplyHandlers = { applySessions };
+}
+
+function normalizeSocketSession(session: SessionApplyCoalescerSession): Session {
+    return {
+        ...session,
+        presence: session.presence ?? 'online',
+    };
+}
+
+function getSocketSessionApplyBase(sessionId: string): Session | undefined {
+    const queued = socketSessionApplyCoalescer.getQueuedSession(sessionId);
+    if (queued) return normalizeSocketSession(queued);
+    return storage.getState().sessions[sessionId];
+}
+
+function enqueueSocketSessionApplyGuarded(
+    applySessions: ApplySessions,
+    sessions: SessionApplyCoalescerSession[],
+    shouldContinue: () => boolean,
+): void {
+    setSocketSessionApplyHandler(applySessions);
+    socketSessionApplyCoalescer.enqueue(sessions, { shouldContinue });
+}
+
+function flushQueuedSocketSessionApplies(applySessions: ApplySessions, sessionIds: readonly string[]): void {
+    setSocketSessionApplyHandler(applySessions);
+    socketSessionApplyCoalescer.flushSessionIds(sessionIds);
+}
+
+function applySessionsAfterFlushingQueued(applySessions: ApplySessions, sessions: SessionApplyCoalescerSession[]): void {
+    flushQueuedSocketSessionApplies(applySessions, sessions.map((session) => session.id));
+    applySessions(sessions);
+}
 
 const socketMessageApplyCoalescer = createSessionMessageApplyCoalescer({
     getConfig: () => {
@@ -100,6 +164,9 @@ const socketMessageApplyCoalescer = createSessionMessageApplyCoalescer({
 export async function handleSocketUpdate(params: {
     update: unknown;
     encryption: Encryption;
+    settingsScope?: AccountSettingsScope | null;
+    sourceServerId?: string | null;
+    shouldContinue?: () => boolean;
     artifactDataKeys: Map<string, Uint8Array>;
     applySessions: ApplySessions;
     fetchSessions: () => void;
@@ -126,6 +193,9 @@ export async function handleSocketUpdate(params: {
     const {
         update,
         encryption,
+        settingsScope,
+        sourceServerId,
+        shouldContinue = () => true,
         artifactDataKeys,
         applySessions,
         fetchSessions,
@@ -152,10 +222,14 @@ export async function handleSocketUpdate(params: {
 
     const updateData = parseUpdateContainer(update);
     if (!updateData) return;
+    if (!shouldContinue()) return;
 
     await handleUpdateContainer({
         updateData,
         encryption,
+        settingsScope,
+        sourceServerId,
+        shouldContinue,
         artifactDataKeys,
         applySessions,
         fetchSessions,
@@ -184,6 +258,9 @@ export async function handleSocketUpdate(params: {
 export async function handleUpdateContainer(params: {
     updateData: ApiUpdateContainer;
     encryption: Encryption;
+    settingsScope?: AccountSettingsScope | null;
+    sourceServerId?: string | null;
+    shouldContinue?: () => boolean;
     artifactDataKeys: Map<string, Uint8Array>;
     applySessions: ApplySessions;
     fetchSessions: () => void;
@@ -210,6 +287,9 @@ export async function handleUpdateContainer(params: {
     const {
         updateData,
         encryption,
+        settingsScope,
+        sourceServerId,
+        shouldContinue = () => true,
         artifactDataKeys,
         applySessions,
         fetchSessions,
@@ -234,6 +314,8 @@ export async function handleUpdateContainer(params: {
         log,
     } = params;
 
+    if (!shouldContinue()) return;
+
     if (updateData.body.t === 'new-message') {
         const getSessionMaterializedMaxSeqForGapDetection = (sessionId: string) =>
             Math.max(
@@ -249,18 +331,35 @@ export async function handleUpdateContainer(params: {
         await handleNewMessageSocketUpdate({
             updateData,
             getSessionEncryption: (sessionId) => encryption.getSessionEncryption(sessionId),
-            getSession: (sessionId) => storage.getState().sessions[sessionId],
-            applySessions: (sessions) => applySessions(sessions),
-            fetchSessions,
-            applyMessages,
-            enqueueMessages: (sessionId, messages) => socketMessageApplyCoalescer.enqueue(sessionId, messages),
+            getSession: getSocketSessionApplyBase,
+            applySessions: (sessions) => {
+                if (!shouldContinue()) return;
+                applySessionsAfterFlushingQueued(applySessions, sessions);
+            },
+            fetchSessions: () => {
+                if (!shouldContinue()) return;
+                fetchSessions();
+            },
+            applyMessages: (sessionId, messages) => {
+                if (!shouldContinue()) return;
+                applyMessages(sessionId, messages);
+            },
+            enqueueMessages: (sessionId, messages) => socketMessageApplyCoalescer.enqueue(sessionId, messages, {
+                deferLeadingBatch: getActiveViewingSessionId() !== sessionId,
+                shouldContinue,
+            }),
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
             invalidateScmStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
             isSessionMessagesLoaded,
             getSessionMaterializedMaxSeq: getSessionMaterializedMaxSeqForGapDetection,
             markSessionMaterializedMaxSeq,
             onMessageGapDetected,
-            onTaskLifecycleEvent,
+            onTaskLifecycleEvent: onTaskLifecycleEvent
+                ? (sessionId, event) => {
+                    if (!shouldContinue()) return;
+                    onTaskLifecycleEvent(sessionId, event);
+                }
+                : undefined,
         });
     } else if (updateData.body.t === 'message-updated') {
         const getSessionMaterializedMaxSeqForGapDetection = (sessionId: string) =>
@@ -274,10 +373,19 @@ export async function handleUpdateContainer(params: {
         await handleMessageUpdatedSocketUpdate({
             updateData,
             getSessionEncryption: (sessionId) => encryption.getSessionEncryption(sessionId),
-            getSession: (sessionId) => storage.getState().sessions[sessionId],
-            applySessions: (sessions) => applySessions(sessions),
-            fetchSessions,
-            applyMessages,
+            getSession: getSocketSessionApplyBase,
+            applySessions: (sessions) => {
+                if (!shouldContinue()) return;
+                applySessionsAfterFlushingQueued(applySessions, sessions);
+            },
+            fetchSessions: () => {
+                if (!shouldContinue()) return;
+                fetchSessions();
+            },
+            applyMessages: (sessionId, messages) => {
+                if (!shouldContinue()) return;
+                applyMessages(sessionId, messages);
+            },
             onNormalizedMessagesApplied: ingestWorkspaceMutationMessages,
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
             invalidateScmStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
@@ -285,13 +393,22 @@ export async function handleUpdateContainer(params: {
             getSessionMaterializedMaxSeq: getSessionMaterializedMaxSeqForGapDetection,
             markSessionMaterializedMaxSeq,
             onMessageGapDetected,
-            onTaskLifecycleEvent,
+            onTaskLifecycleEvent: onTaskLifecycleEvent
+                ? (sessionId, event) => {
+                    if (!shouldContinue()) return;
+                    onTaskLifecycleEvent(sessionId, event);
+                }
+                : undefined,
         });
     } else if (updateData.body.t === 'new-session') {
         log.log('🆕 New session update received');
+        if (!shouldContinue()) return;
         invalidateSessions();
     } else if (updateData.body.t === 'delete-session') {
         log.log('🗑️ Delete session update received');
+        if (!shouldContinue()) return;
+        socketSessionApplyCoalescer.dropSessionIds([updateData.body.sid]);
+        socketMessageApplyCoalescer.dropSessionIds([updateData.body.sid]);
         handleDeleteSessionSocketUpdate({
             sessionId: updateData.body.sid,
             deleteSession: (sessionId) => storage.getState().deleteSession(sessionId),
@@ -303,7 +420,7 @@ export async function handleUpdateContainer(params: {
     } else if (updateData.body.t === 'pending-changed') {
         const sessionId = updateData.body.sid;
         const state = storage.getState();
-        const session = state.sessions[sessionId];
+        const session = getSocketSessionApplyBase(sessionId);
         if (!session) {
             const cachedRenderable = state.sessionListRenderables[sessionId];
             if (cachedRenderable) {
@@ -323,14 +440,31 @@ export async function handleUpdateContainer(params: {
             return;
         }
 
-        applySessions([{
+        enqueueSocketSessionApplyGuarded(applySessions, [{
             ...session,
             pendingCount: updateData.body.pendingCount,
             pendingVersion: updateData.body.pendingVersion,
-        }]);
+        }], shouldContinue);
     } else if (updateData.body.t === 'update-session') {
-        const session = storage.getState().sessions[updateData.body.id];
+        const session = getSocketSessionApplyBase(updateData.body.id);
         if (!session) {
+            const canPatchRenderableWithoutHydration =
+                !updateData.body.metadata
+                && !updateData.body.agentState
+                && (typeof updateData.body.archivedAt === 'number' || updateData.body.archivedAt === null);
+            if (canPatchRenderableWithoutHydration) {
+                if (!shouldContinue()) return;
+                storage.getState().applySessionListRenderablePatches([
+                    {
+                        sessionId: updateData.body.id,
+                        patch: {
+                            archivedAt: updateData.body.archivedAt,
+                            updatedAt: updateData.createdAt,
+                        },
+                    },
+                ]);
+                return;
+            }
             invalidateSessions();
             return;
         }
@@ -352,7 +486,8 @@ export async function handleUpdateContainer(params: {
             sessionEncryption,
         });
 
-        applySessions([nextSession]);
+        if (!shouldContinue()) return;
+        enqueueSocketSessionApplyGuarded(applySessions, [nextSession], shouldContinue);
 
         // Agent state updates can be very frequent and are not a reliable proxy for SCM changes.
         // SCM refresh cadence is handled by screen-scoped intervals (session/files views) and
@@ -392,8 +527,17 @@ export async function handleUpdateContainer(params: {
             updateCreatedAt: updateData.createdAt,
             currentProfile,
             encryption,
-            applyProfile: (profile) => storage.getState().applyProfile(profile),
-            applySettings: (settings, version) => storage.getState().applySettings(settings, version),
+            settingsScope,
+            applyProfile: (profile) => {
+                if (!shouldContinue()) return;
+                storage.getState().applyProfile(profile);
+            },
+            applySettings: (settings, version) => {
+                if (!shouldContinue()) return;
+                storage.getState().applySettings(settings, version);
+            },
+            applySettingsForScope: (scope, settings, version) =>
+                shouldContinue() ? storage.getState().applySettingsForScope(scope, settings, version) : undefined,
             getLocalSettings: () => storage.getState().settings,
             log,
         });
@@ -412,7 +556,9 @@ export async function handleUpdateContainer(params: {
             typeof (machineUpdate as any).dataEncryptionKey === 'string' && (machineUpdate as any).dataEncryptionKey.length > 0
                 ? await encryption.decryptEncryptionKey((machineUpdate as any).dataEncryptionKey)
                 : null;
+        if (!shouldContinue()) return;
         await encryption.initializeMachines(new Map([[machineId, decryptedDataKey]]));
+        if (!shouldContinue()) return;
 
         // Apply a placeholder immediately so UI state (e.g. onboarding) can react
         // even if machine-activity ephemerals arrive before a full machines refresh.
@@ -428,7 +574,7 @@ export async function handleUpdateContainer(params: {
             metadataVersion: machineUpdate.metadataVersion,
             daemonState: null,
             daemonStateVersion: machineUpdate.daemonStateVersion,
-        }]);
+        }], false, { sourceServerId });
 
         // Hydrate machine details + encryption keys via the existing machines sync pipeline.
         invalidateMachines();
@@ -453,9 +599,10 @@ export async function handleUpdateContainer(params: {
             getMachineEncryption: (id) => encryption.getMachineEncryption(id),
         });
         if (!updatedMachine) return;
+        if (!shouldContinue()) return;
 
         // Update storage using applyMachines which rebuilds sessionListViewData
-        storage.getState().applyMachines([updatedMachine]);
+        storage.getState().applyMachines([updatedMachine], false, { sourceServerId });
     } else if (updateData.body.t === 'relationship-updated') {
         log.log('👥 Received relationship-updated update');
         const normalized = normalizeRelationshipUpdatedUpdateBody(updateData.body, {
@@ -470,7 +617,10 @@ export async function handleUpdateContainer(params: {
 
         handleRelationshipUpdatedSocketUpdate({
             relationshipUpdate: normalized,
-            applyRelationshipUpdate: (update) => storage.getState().applyRelationshipUpdate(update),
+            applyRelationshipUpdate: (update) => {
+                if (!shouldContinue()) return;
+                storage.getState().applyRelationshipUpdate(update);
+            },
             invalidateFriends,
             invalidateFriendRequests,
             invalidateFeed,
@@ -492,7 +642,10 @@ export async function handleUpdateContainer(params: {
             updatedAt: artifactUpdate.updatedAt,
             encryption,
             artifactDataKeys,
-            addArtifact: (artifact) => storage.getState().addArtifact(artifact),
+            addArtifact: (artifact) => {
+                if (!shouldContinue()) return;
+                storage.getState().addArtifact(artifact);
+            },
             log,
         });
     } else if (updateData.body.t === 'update-artifact') {
@@ -507,7 +660,10 @@ export async function handleUpdateContainer(params: {
             body: artifactUpdate.body,
             artifactDataKeys,
             getExistingArtifact: (id) => storage.getState().artifacts[id],
-            updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
+            updateArtifact: (artifact) => {
+                if (!shouldContinue()) return;
+                storage.getState().updateArtifact(artifact);
+            },
             invalidateArtifactsSync: invalidateArtifacts,
             log,
         });
@@ -518,7 +674,10 @@ export async function handleUpdateContainer(params: {
 
         handleDeleteArtifactSocketUpdate({
             artifactId,
-            deleteArtifact: (id) => storage.getState().deleteArtifact(id),
+            deleteArtifact: (id) => {
+                if (!shouldContinue()) return;
+                storage.getState().deleteArtifact(id);
+            },
             artifactDataKeys,
         });
     } else if (updateData.body.t === 'new-feed-post') {
@@ -538,7 +697,11 @@ export async function handleUpdateContainer(params: {
             },
             assumeUsers,
             getUsers: () => storage.getState().users,
-            applyFeedItems: (items) => storage.getState().applyFeedItems(items),
+            shouldContinue,
+            applyFeedItems: (items) => {
+                if (!shouldContinue()) return;
+                storage.getState().applyFeedItems(items);
+            },
             log,
         });
     } else if (updateData.body.t === 'kv-batch-update') {
@@ -547,7 +710,10 @@ export async function handleUpdateContainer(params: {
 
         await handleTodoKvBatchUpdate({
             kvUpdate,
-            applyTodoSocketUpdates,
+            applyTodoSocketUpdates: async (changes) => {
+                if (!shouldContinue()) return;
+                await applyTodoSocketUpdates(changes);
+            },
             invalidateTodosSync: invalidateTodos,
             log,
         });
@@ -572,10 +738,26 @@ export async function handleUpdateContainer(params: {
     }
 }
 
-export function flushActivityUpdates(params: { updates: Map<string, ApiEphemeralActivityUpdate>; applySessions: ApplySessions }): void {
-    const { updates, applySessions } = params;
+export function flushActivityUpdates(params: {
+    updates: Map<string, ApiEphemeralActivityUpdate>;
+    applySessions: ApplySessions;
+    shouldContinue?: () => boolean;
+}): void {
+    const { updates, applySessions, shouldContinue = () => true } = params;
+    if (!shouldContinue()) return;
 
     const sessions: Session[] = [];
+    const renderablePatches: Array<{
+        sessionId: string;
+        patch: {
+            active: boolean;
+            activeAt: number;
+            thinking: boolean;
+            thinkingAt: number;
+            presence: 'online' | number;
+            updatedAt: number;
+        };
+    }> = [];
 
     for (const [sessionId, update] of updates) {
         const session = storage.getState().sessions[sessionId];
@@ -612,19 +794,50 @@ export function flushActivityUpdates(params: { updates: Map<string, ApiEphemeral
                 thinking: nextThinking,
                 thinkingAt: update.activeAt, // Always use activeAt for consistency
             });
+            continue;
+        }
+
+        const renderable = storage.getState().sessionListRenderables[sessionId];
+        if (renderable) {
+            const nextThinking = update.thinking ?? false;
+            const isTurningOff = update.active === false && nextThinking === false;
+            if (isTurningOff) {
+                if (update.activeAt < renderable.activeAt) continue;
+            } else if (update.activeAt < renderable.updatedAt) {
+                continue;
+            }
+            renderablePatches.push({
+                sessionId,
+                patch: {
+                    active: update.active,
+                    activeAt: update.activeAt,
+                    thinking: nextThinking,
+                    thinkingAt: update.activeAt,
+                    presence: update.active ? 'online' : update.activeAt,
+                    updatedAt: update.activeAt,
+                },
+            });
         }
     }
 
     if (sessions.length > 0) {
-        applySessions(sessions);
+        if (!shouldContinue()) return;
+        applySessionsAfterFlushingQueued(applySessions, sessions);
+    }
+    if (renderablePatches.length > 0) {
+        if (!shouldContinue()) return;
+        storage.getState().applySessionListRenderablePatches(renderablePatches);
     }
 }
 
 export function flushMachineActivityUpdates(params: {
     updates: Map<string, MachineActivityUpdate>;
-    applyMachines: (machines: Machine[]) => void;
+    applyMachines: (machines: Machine[], options?: { sourceServerId?: string | null }) => void;
+    sourceServerId?: string | null;
+    shouldContinue?: () => boolean;
 }): void {
-    const { updates, applyMachines } = params;
+    const { updates, applyMachines, sourceServerId, shouldContinue = () => true } = params;
+    if (!shouldContinue()) return;
     const machines: Machine[] = [];
 
     for (const [, updateData] of updates) {
@@ -646,29 +859,72 @@ export function flushMachineActivityUpdates(params: {
     }
 
     if (machines.length > 0) {
-        applyMachines(machines);
+        if (!shouldContinue()) return;
+        applyMachines(machines, { sourceServerId });
     }
 }
 
 export function handleEphemeralSocketUpdate(params: {
     update: unknown;
+    shouldContinue?: () => boolean;
     addActivityUpdate: (update: ApiEphemeralActivityUpdate) => void;
     addMachineActivityUpdate: (update: MachineActivityUpdate) => void;
-}): void {
-    const { update, addActivityUpdate, addMachineActivityUpdate } = params;
+    getSessionEncryption: (sessionId: string) => TranscriptStreamSegmentSessionMessageEncryption | null;
+    getSession: (sessionId: string) => Session | undefined;
+    applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    updateDirectSessionTranscript?: (update: DirectSessionTranscriptUpdatedEphemeralUpdate) => Promise<void> | void;
+}): Promise<void> {
+    const {
+        update,
+        shouldContinue = () => true,
+        addActivityUpdate,
+        addMachineActivityUpdate,
+        getSessionEncryption,
+        getSession,
+        applyMessages,
+        updateDirectSessionTranscript,
+    } = params;
 
     const updateData = parseEphemeralUpdate(update);
-    if (!updateData) return;
+    if (!updateData) return Promise.resolve();
+    if (!shouldContinue()) return Promise.resolve();
 
     // Process activity updates through smart debounce accumulator
     if (updateData.type === 'activity') {
+        if (!shouldContinue()) return Promise.resolve();
         addActivityUpdate(updateData);
     } else if (updateData.type === 'machine-activity') {
         // Handle machine activity updates through batching accumulator
+        if (!shouldContinue()) return Promise.resolve();
         addMachineActivityUpdate({ id: updateData.id, active: updateData.active, activeAt: updateData.activeAt });
     } else if (updateData.type === 'execution-run-updated') {
+        if (!shouldContinue()) return Promise.resolve();
         notifyExecutionRunActivity(updateData.sessionId);
+    } else if (updateData.type === 'direct-session-transcript-delta') {
+        if (!shouldContinue()) return Promise.resolve();
+        return Promise.resolve(updateDirectSessionTranscript?.(updateData));
+    } else if (updateData.type === 'transcript-stream-segment') {
+        const currentApplyHandlers = socketMessageApplyHandlers;
+        socketMessageApplyHandlers = {
+            applyMessages,
+            ...(currentApplyHandlers?.onNormalizedMessagesApplied
+                ? { onNormalizedMessagesApplied: currentApplyHandlers.onNormalizedMessagesApplied }
+                : {}),
+            ...(currentApplyHandlers?.markSessionMaterializedMaxSeq
+                ? { markSessionMaterializedMaxSeq: currentApplyHandlers.markSessionMaterializedMaxSeq }
+                : {}),
+        };
+        return handleTranscriptStreamSegmentEphemeralUpdate({
+            update: updateData,
+            getSessionEncryption,
+            getSession,
+            applyMessages: (sessionId, messages) => socketMessageApplyCoalescer.enqueue(sessionId, messages, {
+                deferLeadingBatch: getActiveViewingSessionId() !== sessionId,
+                shouldContinue,
+            }),
+        });
     }
 
     // daemon-status ephemeral updates are deprecated, machine status is handled via machine-activity
+    return Promise.resolve();
 }

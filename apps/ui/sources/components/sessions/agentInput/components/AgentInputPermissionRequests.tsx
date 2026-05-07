@@ -48,7 +48,6 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
     canApprovePermissions: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     maxHeightPx: number;
-    clampedHeightPx: number;
     onContentSizeChange: (width: number, height: number) => void;
     onLayout: (event: LayoutChangeEvent) => void;
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -58,6 +57,7 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
     const { theme } = useUnistyles();
 
     const permissionRequests = props.disabledReason === 'inactive' ? [] : props.permissionRequests;
+    const scrollStyle = React.useMemo(() => ({ maxHeight: props.maxHeightPx }), [props.maxHeightPx]);
 
     if (permissionRequests.length === 0) {
         return null;
@@ -69,7 +69,7 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                 <View style={{ position: 'relative' }}>
                     <ScrollView
                         testID="agentInput.permissionRequests.scroll"
-                        style={{ maxHeight: props.maxHeightPx, height: props.clampedHeightPx }}
+                        style={scrollStyle}
                         contentContainerStyle={{ paddingBottom: 2 }}
                         nestedScrollEnabled={true}
                         scrollEventThrottle={16}

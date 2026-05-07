@@ -14,6 +14,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
 
         expect(behavior?.permissions?.footer?.stopHandling).toBe('denyOnly');
         expect(behavior?.permissions?.footer?.supportsExecPolicyAmendment).toBe(true);
+        expect(behavior?.sessionUsage?.supportsExactContextUsageBadge).toBe(false);
     });
 
     it('uses the generic codex-decision footer behavior for opencode-family flavors', () => {
@@ -21,5 +22,6 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
 
         expect(behavior?.permissions?.footer?.stopHandling).toBe('denyAndAbortRun');
         expect(behavior?.permissions?.footer?.supportsExecPolicyAmendment).toBe(false);
+        expect(behavior?.sessionUsage?.supportsExactContextUsageBadge).toBe(true);
     });
 });

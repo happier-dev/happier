@@ -25,15 +25,6 @@ export function resolveAgentInputControlLines(params: Readonly<{
         };
     }
 
-    if (params.layout === 'scroll') {
-        return {
-            layout: params.layout,
-            primary: orderedControlIds,
-            secondary: [],
-            collapsed: [],
-        };
-    }
-
     const primary: AgentInputControlId[] = [];
     const secondary: AgentInputControlId[] = [];
     for (const controlId of orderedControlIds) {

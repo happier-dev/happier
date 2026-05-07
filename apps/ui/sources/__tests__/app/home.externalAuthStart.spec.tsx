@@ -265,7 +265,7 @@ describe('Home external auth start', () => {
             await handler?.();
         });
 
-        expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/server');
+        expect(expoRouterMock.spies.push).toHaveBeenCalledWith('/settings/server');
     });
 
     it('uses /setup as the auth returnTo when a setup continuation is pending', async () => {

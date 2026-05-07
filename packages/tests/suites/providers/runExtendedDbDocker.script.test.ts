@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import * as runExtendedDbDockerScript from '../../scripts/run-extended-db-docker.mjs';
 import { parseArgs, resolveExtendedDbCommandTimeoutMs, resolveExtendedDbStepTimeoutMs } from '../../scripts/run-extended-db-docker.mjs';
+
+type YarnInvocationResolver = (
+  args: readonly string[],
+  options?: Readonly<{ platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }>,
+) => Readonly<{ command: string; args: string[]; windowsVerbatimArguments?: boolean }>;
 
 describe('extended-db docker script args', () => {
   it('parses valid args', () => {
@@ -28,6 +34,26 @@ describe('extended-db docker script args', () => {
     expect(() => parseArgs(['node', 'run-extended-db-docker.mjs', '--db', 'postgres', '--invalid'])).toThrow(
       /Unknown arg/,
     );
+  });
+
+  it('wraps the Windows Yarn shim through cmd.exe', () => {
+    const resolveExtendedDbYarnInvocation = (runExtendedDbDockerScript as {
+      resolveExtendedDbYarnInvocation?: YarnInvocationResolver;
+    }).resolveExtendedDbYarnInvocation;
+
+    expect(resolveExtendedDbYarnInvocation).toBeTypeOf('function');
+    if (!resolveExtendedDbYarnInvocation) throw new Error('missing extended DB Yarn invocation resolver');
+
+    const invocation = resolveExtendedDbYarnInvocation(['-s', 'test:e2e:core:fast'], {
+      platform: 'win32',
+      npmExecPath: 'C:\\npm\\node_modules\\npm\\bin\\npm-cli.js',
+      comspec: 'C:\\Windows\\System32\\cmd.exe',
+    });
+
+    expect(invocation.command).toBe('C:\\Windows\\System32\\cmd.exe');
+    expect(invocation.windowsVerbatimArguments).toBe(true);
+    expect(invocation.args.join(' ')).toContain('yarn.cmd');
+    expect(invocation.args.join(' ')).not.toContain('npm-cli.js');
   });
 });
 

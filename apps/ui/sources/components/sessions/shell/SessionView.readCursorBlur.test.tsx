@@ -3,6 +3,14 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen } from '@/dev/testkit';
+import { getActiveViewingSessionActivationId } from '@/sync/domains/session/activeViewingSession';
+import {
+    beginSessionViewingActivation,
+    holdManualUnreadForActivation,
+    resetSessionManualUnreadHoldsForTests,
+    shouldSuppressAutomaticMarkViewed,
+} from '@/sync/domains/session/readState/sessionManualUnreadHold';
+import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 
@@ -188,11 +196,26 @@ installSessionShellCommonModuleMocks({
     },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
+        const readLocalSetting = <K extends keyof LocalSettings>(key: K): LocalSettings[K] => {
+            const overrides: Partial<LocalSettings> = {
+                acknowledgedCliVersions: {},
+                detailsPaneTabsBehavior: 'preview',
+                rightPaneWidthPx: 360,
+                rightPaneWidthBasisPx: 1200,
+                detailsPaneWidthPx: 520,
+                detailsPaneWidthBasisPx: 1200,
+                sessionsRightPaneDefaultOpen: false,
+                uiMultiPanePanelsEnabled: true,
+            };
+            return (overrides[key] ?? localSettingsDefaults[key]) as LocalSettings[K];
+        };
         return createStorageModuleStub({
             storage: {
                 getState: () => ({
                     sessions: { s1: sessionState.current },
                     settings: {},
+                    localSettings: localSettingsDefaults,
                     sessionListViewDataByServerId: {},
                 }),
             },
@@ -207,19 +230,12 @@ installSessionShellCommonModuleMocks({
             useSessionUsage: () => null,
             useSetting: () => null,
             useSettings: () => ({ experiments: true, featureToggles: {} }),
-            useLocalSetting: (key: string) => {
-                if (key === 'acknowledgedCliVersions') return {};
-                if (key === 'detailsPaneTabsBehavior') return 'preview';
-                if (key === 'rightPaneWidthPx') return 360;
-                if (key === 'rightPaneWidthBasisPx') return 1200;
-                if (key === 'detailsPaneWidthPx') return 520;
-                if (key === 'detailsPaneWidthBasisPx') return 1200;
-                if (key === 'sessionsRightPaneDefaultOpen') return false;
-                if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
-                if (key === 'uiMultiPanePanelsEnabled') return true;
-                if (key === 'editorFocusModeEnabled') return false;
-                return null;
-            },
+            useLocalSettings: () => localSettingsDefaults,
+            useLocalSetting: readLocalSetting,
+            useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [
+                readLocalSetting(key),
+                vi.fn<(value: LocalSettings[K]) => void>(),
+            ],
         });
     },
 });
@@ -242,6 +258,7 @@ vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
 vi.mock('@/sync/domains/input/reviewComments/reviewCommentPrompt', () => ({
     buildReviewCommentsDisplayText: () => '',
     buildReviewCommentsPromptText: () => '',
+    filterReviewCommentDraftsIncludedInPrompt: (drafts: readonly unknown[]) => drafts,
 }));
 vi.mock('@/sync/domains/input/reviewComments/reviewCommentMeta', () => ({
     buildReviewCommentsV1MetaPayload: () => ({}),
@@ -372,6 +389,7 @@ describe('SessionView read cursor on blur', () => {
         markSessionViewedSpy.mockClear();
         scheduledInteractionCallbacks.length = 0;
         focusCleanupState.current = null;
+        resetSessionManualUnreadHoldsForTests();
     });
 
     it('bounds the blur read mark to the seq visible when leaving the session', async () => {
@@ -404,6 +422,117 @@ describe('SessionView read cursor on blur', () => {
 
         expect(markSessionViewedSpy).toHaveBeenCalledTimes(1);
         expect(markSessionViewedSpy).toHaveBeenCalledWith('s1', { sessionSeq: 2 });
+
+        act(() => {
+            tree?.unmount();
+        });
+    });
+
+    it('does not mark viewed on blur when manual unread is held for the current activation', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        tree = (await renderScreen(<AppPaneProvider>
+                    <SessionView id="s1" />
+                </AppPaneProvider>)).tree;
+
+        scheduledInteractionCallbacks.length = 0;
+        markSessionViewedSpy.mockClear();
+
+        holdManualUnreadForActivation({
+            sessionId: 's1',
+            sessionSeq: 2,
+            activationId: getActiveViewingSessionActivationId(),
+        });
+
+        act(() => {
+            focusCleanupState.current?.();
+        });
+
+        expect(scheduledInteractionCallbacks).toHaveLength(0);
+        expect(markSessionViewedSpy).not.toHaveBeenCalled();
+
+        act(() => {
+            tree?.unmount();
+        });
+    });
+
+    it('does not mark viewed on focused seq changes when manual unread is held for the current activation', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        tree = (await renderScreen(<AppPaneProvider>
+                    <SessionView id="s1" />
+                </AppPaneProvider>)).tree;
+
+        scheduledInteractionCallbacks.length = 0;
+        markSessionViewedSpy.mockClear();
+
+        holdManualUnreadForActivation({
+            sessionId: 's1',
+            sessionSeq: 2,
+            activationId: getActiveViewingSessionActivationId(),
+        });
+
+        vi.useFakeTimers();
+        try {
+            act(() => {
+                sessionState.current.seq = 4;
+                tree?.update(<AppPaneProvider>
+                    <SessionView id="s1" />
+                </AppPaneProvider>);
+            });
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(300);
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+
+        expect(markSessionViewedSpy).not.toHaveBeenCalled();
+
+        act(() => {
+            tree?.unmount();
+        });
+    });
+
+    it('preserves another activation unread hold when the current activation auto-marks read on blur', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        tree = (await renderScreen(<AppPaneProvider>
+                    <SessionView id="s1" />
+                </AppPaneProvider>)).tree;
+
+        scheduledInteractionCallbacks.length = 0;
+        markSessionViewedSpy.mockClear();
+
+        const currentActivationId = getActiveViewingSessionActivationId();
+        expect(currentActivationId).not.toBeNull();
+        const otherActivationId = beginSessionViewingActivation('s1');
+        expect(otherActivationId).not.toBe(currentActivationId);
+        holdManualUnreadForActivation({
+            sessionId: 's1',
+            sessionSeq: 2,
+            activationId: otherActivationId,
+        });
+        expect(shouldSuppressAutomaticMarkViewed({ sessionId: 's1', sessionSeq: 2, activationId: otherActivationId })).toBe(true);
+
+        act(() => {
+            focusCleanupState.current?.();
+        });
+
+        expect(scheduledInteractionCallbacks).toHaveLength(1);
+        expect(shouldSuppressAutomaticMarkViewed({ sessionId: 's1', sessionSeq: 2, activationId: otherActivationId })).toBe(true);
+
+        await act(async () => {
+            const callback = scheduledInteractionCallbacks.shift();
+            callback?.();
+        });
+
+        expect(markSessionViewedSpy).toHaveBeenCalledTimes(1);
+        expect(shouldSuppressAutomaticMarkViewed({ sessionId: 's1', sessionSeq: 2, activationId: otherActivationId })).toBe(true);
 
         act(() => {
             tree?.unmount();

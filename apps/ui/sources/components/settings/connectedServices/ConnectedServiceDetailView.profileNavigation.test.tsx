@@ -91,7 +91,7 @@ describe('ConnectedServiceDetailView profile navigation', () => {
 
     expect(connectedServicesModuleState.routerPushSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        pathname: '/(app)/settings/connected-services/profile',
+        pathname: '/settings/connected-services/profile',
         params: expect.objectContaining({ serviceId: 'openai-codex', profileId: 'work' }),
       }),
     );

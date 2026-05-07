@@ -3,7 +3,7 @@ import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 export type ConnectAuthIntent =
   | Readonly<{ kind: 'oauth'; serviceId: ConnectedServiceId }>
-  | Readonly<{ kind: 'token'; serviceId: ConnectedServiceId; tokenKind: 'setup-token' | 'api-key' }>;
+  | Readonly<{ kind: 'token'; serviceId: ConnectedServiceId; tokenKind: 'setup-token' | 'api-key' | 'access-token' }>;
 
 export function resolveConnectAuthIntent(params: Readonly<{
   targetId: string;
@@ -11,6 +11,17 @@ export function resolveConnectAuthIntent(params: Readonly<{
 }>): ConnectAuthIntent {
   if (params.options.device && params.targetId !== 'codex') {
     throw new Error('--device is only supported for Codex');
+  }
+
+  if (params.targetId === 'github') {
+    if (params.options.oauth || params.options.apiKey || params.options.setupToken) {
+      throw new Error('GitHub supports token credentials in this build. Use --token.');
+    }
+    return { kind: 'token', serviceId: 'github', tokenKind: 'access-token' };
+  }
+
+  if (params.options.token) {
+    throw new Error('--token is only supported for GitHub in this build.');
   }
 
   if (params.targetId === 'codex') {

@@ -4,8 +4,11 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import { runScmCommand } from '../../runtime';
 import { normalizeRepoRootRelativePath } from '../../runtime';
-import { buildGitSnapshot } from './statusSnapshot';
+import { buildGitSnapshot, resolveGitHostingProviderFromOutputs } from './statusSnapshot';
 import { inspectGitCheckoutIdentity } from './checkoutIdentity';
+import { readGitBranchOperationState } from './operations/branchOperationState';
+import { defaultPrStatusCache } from '../../hostingProviders/prStatusCache';
+import { resolveHostingAuthProfileKey } from './operations/pullRequestOperationHelpers';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -138,25 +141,48 @@ export async function getGitSnapshot(input: {
         args: ['worktree', 'list', '--porcelain'],
         timeoutMs: 10_000,
     });
+    const remotesResult = await runScmCommand({
+        bin: 'git',
+        cwd: repoRoot,
+        args: ['remote', '-v'],
+        timeoutMs: 10_000,
+    });
     const checkoutIdentity = await inspectGitCheckoutIdentity({ cwd: context.cwd });
+    const operationState = await readGitBranchOperationState(context);
 
     const statusRaw = statusResult.stdout ?? '';
     const hasUntrackedHint = /(?:^|\0)\?\s/.test(statusRaw);
     const untrackedStatsByPath = repoRoot && hasUntrackedHint ? await computeUntrackedStatsByPath(repoRoot) : {};
+    const remotesOutput = remotesResult.success ? (remotesResult.stdout ?? '') : '';
+    const hostingProvider = resolveGitHostingProviderFromOutputs({
+        statusOutput: statusRaw,
+        remotesOutput,
+    });
+    const pullRequestAuthProfileKey = await resolveHostingAuthProfileKey({
+        context,
+        provider: hostingProvider,
+    });
+
+    const snapshot = buildGitSnapshot({
+        projectKey: context.projectKey,
+        fetchedAt: Date.now(),
+        rootPath: context.detection.rootPath,
+        currentWorktreePath: context.cwd,
+        mainWorktreePath: resolveMainWorktreePathFromCheckoutIdentity(checkoutIdentity),
+        statusOutput: statusResult.stdout ?? '',
+        includedNumStatOutput: includedResult.success ? (includedResult.stdout ?? '') : '',
+        pendingNumStatOutput: pendingResult.success ? (pendingResult.stdout ?? '') : '',
+        untrackedStatsByPath,
+        worktreesOutput: worktreesResult.success ? (worktreesResult.stdout ?? '') : '',
+        remotesOutput,
+        operationState,
+        hostingProvider,
+        prStatusCache: defaultPrStatusCache,
+        pullRequestAuthProfileKey,
+    });
 
     return {
         success: true,
-        snapshot: buildGitSnapshot({
-            projectKey: context.projectKey,
-            fetchedAt: Date.now(),
-            rootPath: context.detection.rootPath,
-            currentWorktreePath: context.cwd,
-            mainWorktreePath: resolveMainWorktreePathFromCheckoutIdentity(checkoutIdentity),
-            statusOutput: statusResult.stdout ?? '',
-            includedNumStatOutput: includedResult.success ? (includedResult.stdout ?? '') : '',
-            pendingNumStatOutput: pendingResult.success ? (pendingResult.stdout ?? '') : '',
-            untrackedStatsByPath,
-            worktreesOutput: worktreesResult.success ? (worktreesResult.stdout ?? '') : '',
-        }),
+        snapshot,
     };
 }

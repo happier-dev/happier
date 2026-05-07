@@ -21,6 +21,18 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  'pets.companion': {
+    description: 'Happier pet companion surfaces and local package selection.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
+  'pets.sync': {
+    description: 'Synced account pet library and cross-device pet package references.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   voice: {
     description: 'Happier voice assistant feature availability.',
     defaultFailMode: 'fail_closed',

@@ -58,6 +58,8 @@ model Account {
     UsageReport            UsageReport[]
     Machine                Machine[]
     UploadedFile           UploadedFile[]
+    AccountPetPackage      AccountPetPackage[]
+    AccountPetAsset        AccountPetAsset[]
     ServiceAccountToken    ServiceAccountToken[]
     ServiceAccountQuotaSnapshot ServiceAccountQuotaSnapshot[]
     RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
@@ -183,10 +185,12 @@ model AccountChange {
     sessionId  String?
     machineId  String?
     artifactId String?
+    accountPetPackageId String?
 
     session  Session?  @relation("AccountChangeSession", fields: [sessionId], references: [id], onDelete: SetNull)
     machine  Machine?  @relation("AccountChangeMachine", fields: [machineId], references: [id], onDelete: SetNull)
     artifact Artifact? @relation("AccountChangeArtifact", fields: [artifactId], references: [id], onDelete: SetNull)
+    accountPetPackage AccountPetPackage? @relation("AccountChangeAccountPetPackage", fields: [accountPetPackageId], references: [id], onDelete: SetNull)
 
     account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -548,6 +552,50 @@ model UploadedFile {
 
     @@unique([accountId, path])
     @@index([accountId])
+}
+
+model AccountPetPackage {
+    id            String   @id
+    accountId     String
+    account       Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    packageFormat String
+    contentMode   String   @default("plain")
+    manifest      Json
+    digest        String
+    sizeBytes     Int
+    origin        Json
+    version       Int      @default(1)
+    deletedAt     DateTime?
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @updatedAt
+
+    assets         AccountPetAsset[]
+    accountChanges AccountChange[] @relation("AccountChangeAccountPetPackage")
+
+    @@unique([accountId, id])
+    @@index([accountId, deletedAt, updatedAt(sort: Desc)])
+    @@index([accountId, digest])
+}
+
+model AccountPetAsset {
+    id            String            @id
+    accountId     String
+    account       Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    petPackageId String
+    petPackage   AccountPetPackage @relation(fields: [accountId, petPackageId], references: [accountId, id], onDelete: Cascade)
+    contentMode   String            @default("plain")
+    storageKind   String
+    objectKey     String
+    byteLength    Int
+    mediaType     String
+    digest        String
+    createdAt     DateTime          @default(now())
+    updatedAt     DateTime          @updatedAt
+
+    @@unique([accountId, objectKey])
+    @@index([accountId])
+    @@index([accountId, petPackageId])
+    @@index([petPackageId])
 }
 
 model ServiceAccountToken {

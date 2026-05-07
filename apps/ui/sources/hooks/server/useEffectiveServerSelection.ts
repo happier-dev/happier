@@ -1,7 +1,7 @@
 import * as React from 'react';
 
+import { useActiveServerSnapshot } from './useActiveServerSnapshot';
 import { useSetting } from '@/sync/domains/state/storage';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import {
     getEffectiveServerSelectionFromRawSettings,
@@ -12,21 +12,11 @@ import type {
     ResolvedActiveServerSelection,
 } from '@/sync/domains/server/selection/serverSelectionTypes';
 
-function useActiveServerSnapshotForSelection(): { serverId: string; generation: number } {
-    const [snapshot, setSnapshot] = React.useState(() => getActiveServerSnapshot());
-
-    React.useEffect(() => {
-        return subscribeActiveServer(setSnapshot);
-    }, []);
-
-    return snapshot;
-}
-
 export function useResolvedActiveServerSelection(): ResolvedActiveServerSelection {
     const groups = useSetting('serverSelectionGroups');
     const activeKind = useSetting('serverSelectionActiveTargetKind');
     const activeId = useSetting('serverSelectionActiveTargetId');
-    const activeServer = useActiveServerSnapshotForSelection();
+    const activeServer = useActiveServerSnapshot();
 
     const availableServerIds = React.useMemo(
         () => listServerProfiles().map((profile) => profile.id),
@@ -53,7 +43,7 @@ export function useEffectiveServerSelection(): EffectiveServerSelection {
     const groups = useSetting('serverSelectionGroups');
     const activeKind = useSetting('serverSelectionActiveTargetKind');
     const activeId = useSetting('serverSelectionActiveTargetId');
-    const activeServer = useActiveServerSnapshotForSelection();
+    const activeServer = useActiveServerSnapshot();
 
     const availableServerIds = React.useMemo(
         () => listServerProfiles().map((profile) => profile.id),
@@ -74,4 +64,3 @@ export function useEffectiveServerSelection(): EffectiveServerSelection {
         [activeId, activeKind, activeServer.serverId, availableServerIds, groups],
     );
 }
-

@@ -119,15 +119,21 @@ export interface SpawnSessionOptions {
      */
     terminal?: TerminalSpawnOptions;
     /**
-     * Windows-only: whether a daemon-spawned *remote* session should start in a visible console window.
+     * Windows-only: how a daemon-spawned *remote* session should be hosted locally on the Windows machine.
      *
-     * - `hidden` (default): no visible console window (best for background/remote usage; avoids flicker).
-     * - `visible`: open a new console window so the user can later interact locally on the machine.
+     * - `hidden` (default): no visible terminal window.
+     * - `windows_terminal`: open a tab in the configured shared Windows Terminal window.
+     * - `console`: open a standard Windows console window.
      *
      * Note: this is intentionally scoped to daemon-spawned remote sessions and does not affect tool subprocesses.
      */
     windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console';
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
+    /**
+     * Windows Terminal named window target for `windows_terminal` mode. The daemon
+     * normalizes empty/reserved names and lets local env override this value.
+     */
+    windowsTerminalWindowName?: string;
     /**
      * Session-scoped profile identity for display/debugging across devices.
      * This is NOT the profile content; actual runtime behavior is still driven

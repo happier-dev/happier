@@ -162,7 +162,7 @@ const styles = StyleSheet.create((theme) => ({
     directoryToggle: {
         position: 'absolute',
         // Keep the disclosure affordance on the left of the folder icon (not as a right-side row chevron).
-        left: -2,
+        left: -20,
         top: 2,
         width: 16,
         height: 16,
@@ -394,6 +394,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         return {
             width,
             maxWidth,
+            height: maxHeight,
             maxHeight,
         } as const;
     }, [props.maxHeight, variant, windowHeight, windowWidth]);
@@ -1157,7 +1158,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                             openContextMenu(node.path, contextMenuRowAnchorRef.current);
                         };
                         const rightElement = selected
-                            ? <Ionicons name="checkmark-circle" size={18} color={theme.colors.button.primary.background} />
+                            ? <Ionicons name="checkmark-circle" size={18} color={theme.colors.text} />
                             : undefined;
 
                         const icon = node.type === 'directory'

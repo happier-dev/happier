@@ -31,8 +31,14 @@ import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
-import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
+import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
+import { createTurnAssistantPreviewTracker, type TurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
+import {
+    resolveRemoteModeControlSurface,
+    startRemoteModeStaticControl,
+    type RemoteModeStaticControl,
+} from '@/ui/remoteControl/remoteModeControl';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { configuration } from '@/configuration';
@@ -41,8 +47,6 @@ import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOv
 import { tryReadTextFileTail } from '@/agent/runtime/readTextFileTail';
 import { readClaudeSessionJsonlMessages } from './utils/readClaudeSessionJsonlMessages';
 import { normalizeClaudeToolUseNamesInRawJsonLines } from './utils/normalizeClaudeToolUseNames';
-import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import type { AccountSettings } from '@happier-dev/protocol';
 import { buildTurnChangeSetDiffInput } from '@/agent/tools/diff/buildTurnChangeSetDiffInput';
 import { ClaudeTurnChangeTracker } from './utils/ClaudeTurnChangeTracker';
@@ -51,7 +55,11 @@ import {
     buildClaudeSessionModelsMetadataFromSupportedModels,
     buildClaudeSessionModelsMetadataWithCurrentModelId,
 } from './remote/buildClaudeSessionModelsMetadataFromSupportedModels';
-import { createStreamedTranscriptWriter, type StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import {
+    createStreamedTranscriptWriter,
+    type StreamedTranscriptWriter,
+} from '@/api/session/streamedTranscriptWriter';
+import { createClaudeRemoteStreamedTranscriptSession } from './remote/createClaudeRemoteStreamedTranscriptSession';
 
 interface PermissionsField {
     date: number;
@@ -102,6 +110,20 @@ function isAbortError(e: unknown): boolean {
     if (typeof err.code === 'string' && err.code === 'ABORT_ERR') return true;
 
     return false;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
+function readRemoteControlTerminalMode(session: Session): string | null {
+    if (session.terminalRuntime?.mode) return session.terminalRuntime.mode;
+
+    const metadata = readRecord(session.client.getMetadataSnapshot?.());
+    const terminal = readRecord(metadata?.terminal);
+    const mode = terminal?.mode;
+    return typeof mode === 'string' && mode.trim().length > 0 ? mode.trim() : null;
 }
 
 type ClaudeCodeArtifacts = Readonly<{
@@ -184,7 +206,7 @@ export function createClaudeRemoteReadyHandler(params: Readonly<{
     pushSender: ClaudeRemotePushSender | null;
     waitingForCommandLabel: string;
     logPrefix: string;
-    messageBuffer?: Pick<MessageBuffer, 'getMessages'>;
+    assistantPreviewTracker?: Pick<TurnAssistantPreviewTracker, 'getPreview'>;
     getPending: () => unknown;
     getQueueSize: () => number;
     includeAssistantPreviewText?: boolean;
@@ -209,7 +231,7 @@ export function createClaudeRemoteReadyHandler(params: Readonly<{
                     ? () => params.session.getMetadataSnapshot?.()
                     : null,
             ),
-            assistantPreviewText: params.messageBuffer ? getLatestAssistantMessagePreview(params.messageBuffer) : null,
+            assistantPreviewText: params.assistantPreviewTracker?.getPreview() ?? null,
             accountSettings: params.accountSettings ?? null,
             settingsSecretsReadKeys: params.settingsSecretsReadKeys,
             includeAssistantPreviewText: params.includeAssistantPreviewText,
@@ -220,19 +242,40 @@ export function createClaudeRemoteReadyHandler(params: Readonly<{
 
 export async function claudeRemoteLauncher(session: Session): Promise<'switch' | 'exit'> {
     logger.debug('[claudeRemoteLauncher] Starting remote launcher');
+    const turnAssistantPreviewTracker = createTurnAssistantPreviewTracker();
 
     // Check if we have a TTY for UI rendering
-    const hasTTY = resolveHasTTY({
+    const terminalInkAvailable = resolveHasTTY({
         stdoutIsTTY: process.stdout.isTTY,
         stdinIsTTY: process.stdin.isTTY,
         startedBy: session.startedBy,
     });
-    const shouldRenderInkUi = hasTTY && session.startedBy !== 'daemon';
-    logger.debug(`[claudeRemoteLauncher] TTY available: ${hasTTY}`);
+    const controlSurface = session.startedBy === 'daemon'
+        ? resolveRemoteModeControlSurface({
+            stdoutIsTTY: process.stdout.isTTY,
+            stdinIsTTY: process.stdin.isTTY,
+            startedBy: session.startedBy,
+            terminalMode: readRemoteControlTerminalMode(session),
+        })
+        : terminalInkAvailable
+            ? 'ink'
+            : 'none';
+    const shouldRenderInkUi = controlSurface === 'ink';
+    logger.debug(`[claudeRemoteLauncher] remote control surface: ${controlSurface}`);
 
     // Configure terminal
     let messageBuffer = new MessageBuffer();
     let inkInstance: any = null;
+    let staticControl: RemoteModeStaticControl | null = null;
+    // Handle abort
+    let exitReason: 'switch' | 'exit' | null = null;
+    let abortController: AbortController | null = null;
+    let abortFuture: Future<void> | null = null;
+    let turnInterrupt: (() => Promise<void>) | null = null;
+    let permissionHandler: PermissionHandler | null = null;
+    let didUserAbortThisLaunch = false;
+    const turnChangeTracker = new ClaudeTurnChangeTracker();
+    const suppressedExplicitDiffCallIds = new Set<string>();
 
     if (shouldRenderInkUi) {
         console.clear();
@@ -259,9 +302,28 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             patchConsole: false,
             stdout: inkStdout,
         });
+    } else if (controlSurface === 'static') {
+        staticControl = startRemoteModeStaticControl({
+            providerName: 'Claude',
+            stdin: process.stdin,
+            stdout: process.stdout,
+            allowSwitchToLocal: true,
+            onExit: async () => {
+                logger.debug('[remote]: Exiting client via Ctrl-C');
+                session.noteUserAbortRequested();
+                if (!exitReason) {
+                    exitReason = 'exit';
+                }
+                await interruptThenTeardown('exit');
+            },
+            onSwitchToLocal: () => {
+                logger.debug('[remote]: Switching to local mode via static control');
+                doSwitch();
+            },
+        });
     }
 
-    if (hasTTY) {
+    if (shouldRenderInkUi) {
         // Ensure we can capture keypresses for the remote-mode UI.
         // Avoid forcing stdin encoding here; Ink (and Node) should handle key decoding safely.
         process.stdin.resume();
@@ -269,16 +331,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             process.stdin.setRawMode(true);
         }
     }
-
-	    // Handle abort
-	    let exitReason: 'switch' | 'exit' | null = null;
-	    let abortController: AbortController | null = null;
-	    let abortFuture: Future<void> | null = null;
-	    let turnInterrupt: (() => Promise<void>) | null = null;
-        let didUserAbortThisLaunch = false;
-	    let didSendChangeTitleInstructionForSession = false;
-	    const turnChangeTracker = new ClaudeTurnChangeTracker();
-	    const suppressedExplicitDiffCallIds = new Set<string>();
 
     async function abort() {
         if (abortController && !abortController.signal.aborted) {
@@ -291,6 +343,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 	        logger.debug('[remote]: doAbort');
             session.noteUserAbortRequested();
             didUserAbortThisLaunch = true;
+            await permissionHandler?.abortPendingRequestsAndFlush('Aborted by user');
 	        if (turnInterrupt) {
 	            try {
 	                await turnInterrupt();
@@ -366,7 +419,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     // Removed catch-all stdin handler - now handled by RemoteModeDisplay keyboard handlers
 
     // Create permission handler
-    const permissionHandler = new PermissionHandler(session);
+    permissionHandler = new PermissionHandler(session);
 
     // Create outgoing message queue
     const messageQueue = new OutgoingMessageQueue(
@@ -375,11 +428,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
     const streamedTranscriptWriter: StreamedTranscriptWriter = createStreamedTranscriptWriter({
         provider: 'claude' as any,
-        session: {
-            sendAgentMessage: (provider, body, opts) => session.client.sendAgentMessage(provider, body, opts),
-            sendAgentMessageCommitted: (provider, body, opts) =>
-                session.client.sendAgentMessageCommitted(provider, body, opts),
-        },
+        session: createClaudeRemoteStreamedTranscriptSession(session.client),
     });
 
     const taskOutputCollector = new ClaudeRemoteTaskOutputCollector();
@@ -458,8 +507,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             logger.debug('[remote]: failed seeding team inbox from transcript path (non-fatal)', { error });
         }
     };
-
-    let lastAssistantUuidSeen: string | null = null;
 
     function onMessage(message: SDKMessage) {
         if (message.type === 'system') {
@@ -585,20 +632,18 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         if (message && message.type === 'assistant') {
             const parentToolUseId =
                 typeof (message as any).parent_tool_use_id === 'string' ? (message as any).parent_tool_use_id.trim() : '';
-            const maybeUuid = typeof (message as any).uuid === 'string' ? (message as any).uuid.trim() : '';
-            // Only persist mainline assistant UUIDs. Sidechain/sub-agent assistant messages can also have UUIDs,
-            // but resuming at those anchors can produce surprising results.
-            if (!parentToolUseId && maybeUuid.length > 0 && maybeUuid !== lastAssistantUuidSeen) {
-                lastAssistantUuidSeen = maybeUuid;
-                updateMetadataBestEffort(
-                    session.client,
-                    (metadata) => ({
-                        ...metadata,
-                        claudeLastAssistantUuid: maybeUuid,
-                    }),
-                    '[remote]',
-                    'last_assistant_uuid',
-                );
+            if (!parentToolUseId) {
+                const content = Array.isArray((message as SDKAssistantMessage).message?.content)
+                    ? (message as SDKAssistantMessage).message.content
+                    : [];
+                const textParts = content
+                    .map((block) => (block && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string'
+                        ? block.text
+                        : ''))
+                    .filter((part) => part.length > 0);
+                if (textParts.length > 0) {
+                    turnAssistantPreviewTracker.replace(textParts.join('\n\n'));
+                }
             }
         }
 
@@ -606,12 +651,13 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         formatClaudeMessageForInk(message, messageBuffer);
 
         // Write to permission handler for tool id resolving
-        permissionHandler.onMessage(message);
+        permissionHandler!.onMessage(message);
 
         const taskOutputIngest = taskOutputCollector.observe(message);
         subagentFileCollector.observe(message);
 
         if (message.type === 'user') {
+            turnAssistantPreviewTracker.reset();
             let umessage = message as SDKUserMessage;
             if (umessage.message.content && Array.isArray(umessage.message.content)) {
                 for (let c of umessage.message.content) {
@@ -691,7 +737,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 for (let i = 0; i < content.length; i++) {
                     const c = content[i];
                     if (c.type === 'tool_result' && c.tool_use_id) {
-                        const responses = permissionHandler.getResponses();
+                        const responses = permissionHandler!.getResponses();
                         const response = responses.get(c.tool_use_id);
 
                         if (response) {
@@ -813,7 +859,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 subagentFileCollector.cleanup(); // Stop any watchers from prior sessions (subagent JSONL lives under session id).
                 turnChangeTracker.resetTurn();
                 suppressedExplicitDiffCallIds.clear();
-                didSendChangeTitleInstructionForSession = false;
                 logger.debug(`[remote]: New session detected (previous: ${previousSessionId}, current: ${session.sessionId})`);
                 forceNewSession = false;
             } else {
@@ -876,7 +921,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     pushSender: session.pushSender,
                     waitingForCommandLabel: 'Claude',
                     logPrefix: '[remote]',
-                    messageBuffer,
+                    assistantPreviewTracker: turnAssistantPreviewTracker,
                     getPending: () => pending,
                     getQueueSize: () => session.queue.size(),
                     accountSettings: session.accountSettings ?? null,
@@ -887,11 +932,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                 });
 
                     const { mcpServers: baseMcpServers, mcpConfigJson: baseMcpConfigJson } = await session.getOrCreateHappierMcpBridge();
-                    const resumeSessionAt = (() => {
-                        const snapshot = session.client.getMetadataSnapshot?.() as any;
-                        const value = typeof snapshot?.claudeLastAssistantUuid === 'string' ? snapshot.claudeLastAssistantUuid.trim() : '';
-                        return value.length > 0 ? value : null;
-                    })();
 
                     // If this is a restarted daemon process resuming an existing agent-team session,
                     // we may not replay transcript history through `onMessage`. Seed team inbox mapping
@@ -904,7 +944,6 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         path: session.path,
                         hookSettingsPath: session.hookSettingsPath,
                         jsRuntime: session.jsRuntime,
-                        resumeSessionAt,
                         happierMcpServers: baseMcpServers,
                         happierMcpConfigJson: baseMcpConfigJson,
                         streamedTranscriptWriter,
@@ -947,29 +986,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                             });
                             didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
 
-                            const effectiveMessage = (() => {
-                                const raw = typeof replaySeedResolution.message === 'string' ? replaySeedResolution.message : '';
-                                if (!raw.trim()) return raw;
-                                if (didSendChangeTitleInstructionForSession) return raw;
-
-                                const lower = raw.toLowerCase();
-                                const appendLower =
-                                    typeof msg.mode.appendSystemPrompt === 'string' ? msg.mode.appendSystemPrompt.toLowerCase() : '';
-                                const customLower =
-                                    typeof msg.mode.customSystemPrompt === 'string' ? msg.mode.customSystemPrompt.toLowerCase() : '';
-
-                                const alreadyMentionsChangeTitle =
-                                    CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => lower.includes(alias)) ||
-                                    CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => appendLower.includes(alias)) ||
-                                    CHANGE_TITLE_TOOL_NAME_ALIASES.some((alias) => customLower.includes(alias));
-
-                                didSendChangeTitleInstructionForSession = true;
-                                if (alreadyMentionsChangeTitle) return raw;
-                                return `${raw}\n\n${CHANGE_TITLE_INSTRUCTION}`;
-                            })();
-
                             return {
-                                message: effectiveMessage,
+                                message: typeof replaySeedResolution.message === 'string' ? replaySeedResolution.message : '',
                                 mode: msg.mode,
                             }
                     },
@@ -1026,6 +1044,9 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                     onReady: async () => {
                         await messageQueue.flush();
                         readyHandler();
+                    },
+                    onSubagentFlush: async () => {
+                        await messageQueue.flush();
                     },
                     signal: abortController.signal,
                 });
@@ -1143,6 +1164,10 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
         if (inkInstance) {
             inkInstance.unmount();
+        }
+        if (staticControl) {
+            await staticControl.stop();
+            staticControl = null;
         }
 
         // Give Ink a brief moment to release stdin/tty state, then drain any buffered input

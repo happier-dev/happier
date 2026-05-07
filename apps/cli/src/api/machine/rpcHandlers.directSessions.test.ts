@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -861,6 +861,359 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     expect(res.ok).toBe(false);
     expect(res.errorCode).toBe('invalid_request');
     expect(String(res.error)).toContain('source');
+  });
+
+  it('emits direct-session transcript deltas for an attached view and stops after detach', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-follow-'));
+    const configDir = join(root, '.claude');
+    const sessionDir = join(configDir, 'projects', 'proj-follow');
+    const sessionFile = join(sessionDir, 'sess-follow.jsonl');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'a1', message: { model: 'm', content: [] } }),
+      'utf8',
+    );
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+    vi.stubEnv('HAPPIER_DIRECT_SESSIONS_FOLLOW_POLL_MS', '10');
+
+    const emitDirectSessionTranscriptUpdate = vi.fn();
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({
+      rpcHandlerManager,
+      emitDirectSessionTranscriptUpdate,
+    });
+
+    const attachHandler = registered.get((RPC_METHODS as any).DAEMON_DIRECT_SESSION_ATTACH);
+    const detachHandler = registered.get((RPC_METHODS as any).DAEMON_DIRECT_SESSION_DETACH);
+    expect(attachHandler).toBeDefined();
+    expect(detachHandler).toBeDefined();
+
+    const attached = await attachHandler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_follow',
+      providerId: 'claude',
+      remoteSessionId: 'sess-follow',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-follow' },
+      ttlMs: 30_000,
+    });
+
+    expect(attached.ok).toBe(true);
+    const leaseId = attached.leaseId;
+    expect(typeof leaseId).toBe('string');
+
+    await appendFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'a2', message: { model: 'm', content: [{ type: 'text', text: 'hello from push' }] } }),
+      'utf8',
+    );
+
+    await vi.waitFor(() => {
+      expect(emitDirectSessionTranscriptUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'direct-session-transcript-delta',
+        sessionId: 'sess_happy_follow',
+        truncated: false,
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            raw: expect.objectContaining({
+              content: expect.objectContaining({
+                data: expect.objectContaining({ uuid: 'a2' }),
+              }),
+            }),
+          }),
+        ]),
+      }));
+    }, { timeout: 1000 });
+
+    const beforeDetachCalls = emitDirectSessionTranscriptUpdate.mock.calls.length;
+    const detached = await detachHandler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_follow',
+      leaseId,
+    });
+
+    expect(detached).toEqual({ ok: true, detached: true });
+
+    await appendFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'a3', message: { model: 'm', content: [{ type: 'text', text: 'after detach' }] } }),
+      'utf8',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(emitDirectSessionTranscriptUpdate).toHaveBeenCalledTimes(beforeDetachCalls);
+  });
+
+  it('emits direct-session transcript deltas while background follow policy is enabled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-background-follow-'));
+    const configDir = join(root, '.claude');
+    const sessionDir = join(configDir, 'projects', 'proj-background-follow');
+    const sessionFile = join(sessionDir, 'sess-background-follow.jsonl');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'b1', message: { model: 'm', content: [] } }),
+      'utf8',
+    );
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+    vi.stubEnv('HAPPIER_DIRECT_SESSIONS_FOLLOW_POLL_MS', '10');
+
+    const metadata = {
+      directSessionV1: {
+        v: 1,
+        providerId: 'claude',
+        machineId: 'm1',
+        remoteSessionId: 'sess-background-follow',
+        source: { kind: 'claudeConfig', configDir, projectId: 'proj-background-follow' },
+        linkedAtMs: 1,
+      },
+    };
+    readCredentialsMock.mockResolvedValue({
+      token: 'token-direct',
+      encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
+    });
+    fetchSessionByIdMock.mockResolvedValue({
+      id: 'sess_happy_background_follow',
+      metadataVersion: 1,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify(metadata),
+    });
+    updateSessionMetadataWithRetryMock.mockImplementation(async ({ updater }: {
+      updater: (current: Record<string, unknown>) => Record<string, unknown>;
+    }) => ({
+      version: 2,
+      metadata: updater(metadata),
+    }));
+
+    const emitDirectSessionTranscriptUpdate = vi.fn();
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({
+      rpcHandlerManager,
+      emitDirectSessionTranscriptUpdate,
+    });
+
+    const policyHandler = registered.get((RPC_METHODS as any).DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET);
+    expect(policyHandler).toBeDefined();
+
+    const enabled = await policyHandler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_background_follow',
+      providerId: 'claude',
+      remoteSessionId: 'sess-background-follow',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-background-follow' },
+      enabled: true,
+    });
+
+    expect(enabled).toEqual(expect.objectContaining({
+      ok: true,
+      enabled: true,
+      leaseActive: true,
+    }));
+
+    await appendFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'b2', message: { model: 'm', content: [{ type: 'text', text: 'background push' }] } }),
+      'utf8',
+    );
+
+    await vi.waitFor(() => {
+      expect(emitDirectSessionTranscriptUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'direct-session-transcript-delta',
+        sessionId: 'sess_happy_background_follow',
+        truncated: false,
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            raw: expect.objectContaining({
+              content: expect.objectContaining({
+                data: expect.objectContaining({ uuid: 'b2' }),
+              }),
+            }),
+          }),
+        ]),
+      }));
+    }, { timeout: 1000 });
+
+    const callsBeforeDisable = emitDirectSessionTranscriptUpdate.mock.calls.length;
+    const disabled = await policyHandler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_background_follow',
+      providerId: 'claude',
+      remoteSessionId: 'sess-background-follow',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-background-follow' },
+      enabled: false,
+    });
+
+    expect(disabled).toEqual(expect.objectContaining({
+      ok: true,
+      enabled: false,
+      leaseActive: false,
+    }));
+
+    await appendFile(
+      sessionFile,
+      jsonlLine({ type: 'assistant', uuid: 'b3', message: { model: 'm', content: [{ type: 'text', text: 'after disable' }] } }),
+      'utf8',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(emitDirectSessionTranscriptUpdate).toHaveBeenCalledTimes(callsBeforeDisable);
+  });
+
+  it('persists background-follow policy metadata when enabling follow policy', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-follow-policy-enable-'));
+    const configDir = join(root, '.claude');
+    const sessionDir = join(configDir, 'projects', 'proj-follow-policy-enable');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, 'sess-follow-policy-enable.jsonl'),
+      jsonlLine({ type: 'assistant', uuid: 'p1', message: { model: 'm', content: [] } }),
+      'utf8',
+    );
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
+
+    const metadata = {
+      directSessionV1: {
+        v: 1,
+        providerId: 'claude',
+        machineId: 'm1',
+        remoteSessionId: 'sess-follow-policy-enable',
+        source: { kind: 'claudeConfig', configDir, projectId: 'proj-follow-policy-enable' },
+        linkedAtMs: 1,
+      },
+    };
+    readCredentialsMock.mockResolvedValue({
+      token: 'token-direct',
+      encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
+    });
+    fetchSessionByIdMock.mockResolvedValue({
+      id: 'sess_happy_follow_policy_enable',
+      metadataVersion: 1,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify(metadata),
+    });
+    updateSessionMetadataWithRetryMock.mockImplementation(async ({ updater }: {
+      updater: (current: Record<string, unknown>) => Record<string, unknown>;
+    }) => ({
+      version: 2,
+      metadata: updater(metadata),
+    }));
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+
+    const policyHandler = registered.get((RPC_METHODS as any).DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET);
+    expect(policyHandler).toBeDefined();
+
+    const enabled = await policyHandler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_follow_policy_enable',
+      providerId: 'claude',
+      remoteSessionId: 'sess-follow-policy-enable',
+      source: { kind: 'claudeConfig', configDir, projectId: 'proj-follow-policy-enable' },
+      enabled: true,
+    });
+
+    expect(enabled).toEqual(expect.objectContaining({
+      ok: true,
+      enabled: true,
+      leaseActive: true,
+    }));
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updateArgs = updateSessionMetadataWithRetryMock.mock.calls[0]?.[0];
+    const nextMetadata = updateArgs.updater(metadata);
+    expect(nextMetadata.directSessionV1.followPolicyV1).toEqual({
+      v: 1,
+      policy: 'background_follow',
+      updatedAtMs: expect.any(Number),
+    });
+  });
+
+  it('persists attached-only policy metadata before disabling follow policy', async () => {
+    vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', '/tmp');
+    const metadata = {
+      directSessionV1: {
+        v: 1,
+        providerId: 'claude',
+        machineId: 'm1',
+        remoteSessionId: 'sess-follow-policy-disable',
+        source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-follow-policy-disable' },
+        linkedAtMs: 1,
+        followPolicyV1: {
+          v: 1,
+          policy: 'background_follow',
+          updatedAtMs: 10,
+        },
+      },
+    };
+    readCredentialsMock.mockResolvedValue({
+      token: 'token-direct',
+      encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) },
+    });
+    fetchSessionByIdMock.mockResolvedValue({
+      id: 'sess_happy_follow_policy_disable',
+      metadataVersion: 1,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify(metadata),
+    });
+    updateSessionMetadataWithRetryMock.mockImplementation(async ({ updater }: {
+      updater: (current: Record<string, unknown>) => Record<string, unknown>;
+    }) => ({
+      version: 2,
+      metadata: updater(metadata),
+    }));
+
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager });
+
+    const policyHandler = registered.get((RPC_METHODS as any).DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET);
+    expect(policyHandler).toBeDefined();
+
+    const disabled = await policyHandler!({
+      machineId: 'm1',
+      sessionId: 'sess_happy_follow_policy_disable',
+      providerId: 'claude',
+      remoteSessionId: 'sess-follow-policy-disable',
+      source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-follow-policy-disable' },
+      enabled: false,
+    });
+
+    expect(disabled).toEqual(expect.objectContaining({
+      ok: true,
+      enabled: false,
+      leaseActive: false,
+    }));
+    expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
+    const updateArgs = updateSessionMetadataWithRetryMock.mock.calls[0]?.[0];
+    const nextMetadata = updateArgs.updater(metadata);
+    expect(nextMetadata.directSessionV1.followPolicyV1).toEqual({
+      v: 1,
+      policy: 'attached_only',
+      updatedAtMs: expect.any(Number),
+    });
   });
 
   it('sets runnerActive=true and activity=running when a happy session runner is active', async () => {

@@ -35,7 +35,7 @@ describe('SourceControlRemoteActionsRail', () => {
                     theme={theme}
                     actions={[
                         { key: 'fetch', iconName: 'sync', label: 'Fetch', disabled: false, onPress: onFetch },
-                        { key: 'pull', iconName: 'arrow-down', label: 'Pull', disabled: false, onPress: onPull },
+                        { key: 'pull', iconName: 'arrow-down', label: 'Pull', disabled: false, onPress: onPull, testID: 'scm-update-remote-action-pull' },
                     ]}
                 />);
 
@@ -47,6 +47,7 @@ describe('SourceControlRemoteActionsRail', () => {
 
         await pressTestInstanceAsync(fetchButton, 'Fetch action');
         expect(onFetch).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('scm-update-remote-action-pull')).not.toBeNull();
     });
 
     it('accepts the publish upload icon without casts', async () => {

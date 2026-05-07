@@ -270,7 +270,7 @@ describe('PromptLibraryEntryListScreen', () => {
         });
 
         expect(duplicatePromptDocMock).toHaveBeenCalledWith('doc-1');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/docs/doc-1-copy');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/docs/doc-1-copy');
     });
 
     it('keeps local references unchanged when deleting a prompt artifact fails', async () => {

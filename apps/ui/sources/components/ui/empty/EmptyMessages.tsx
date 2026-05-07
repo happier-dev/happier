@@ -93,7 +93,7 @@ export function EmptyMessages({ session }: EmptyMessagesProps) {
     const startedTime = formatRelativeTime(session.createdAt);
     
     return (
-        <View style={styles.container}>
+        <View testID="session-empty-messages" style={styles.container}>
             <Ionicons 
                 name={osIcon}
                 size={72} 

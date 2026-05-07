@@ -6,7 +6,8 @@
  * - Records invocations (argv + parsed --mcp-config) to a JSONL log for assertions.
  * - In SDK mode (`--output-format stream-json --input-format stream-json`), reads user messages from stdin until EOF,
  *   and for each user turn emits a small stream-json transcript (system:init once → assistant → result).
- * - In local/interactive mode, stays alive until SIGTERM (mode-switch abort).
+ * - In local/interactive mode, can optionally append a deterministic user → assistant/end_turn
+ *   transcript when temp signal files are toggled, then stays alive until SIGTERM (mode-switch abort).
  *
  * This file is used via `HAPPIER_CLAUDE_PATH` so the real user-installed Claude Code is not required.
  */
@@ -48,6 +49,15 @@ const isSdkStreamJson = isStreamJson && inputFormat === 'stream-json';
 const hasPrint = argv.includes('--print');
 const mode = isSdkStreamJson ? 'sdk' : 'local';
 const scenario = process.env.HAPPIER_E2E_FAKE_CLAUDE_SCENARIO || process.env.HAPPY_E2E_FAKE_CLAUDE_SCENARIO || '';
+const localActiveTurnEnabled = ['1', 'true', 'yes'].includes(
+  String(process.env.HAPPIER_E2E_FAKE_CLAUDE_LOCAL_ACTIVE_TURN || '').trim().toLowerCase(),
+);
+const localActiveTurnStartSignalPath = String(
+  process.env.HAPPIER_E2E_FAKE_CLAUDE_LOCAL_START_SIGNAL || '',
+).trim();
+const localActiveTurnCompleteSignalPath = String(
+  process.env.HAPPIER_E2E_FAKE_CLAUDE_LOCAL_COMPLETE_SIGNAL || '',
+).trim();
 
 function resolveClaudeConfigDir() {
   const explicit = String(process.env.CLAUDE_CONFIG_DIR || '').trim();
@@ -70,6 +80,42 @@ function safeAppendTranscriptJsonl(obj) {
   } catch {
     // Best-effort: a missing transcript will surface as a provider bundle export failure in tests/QA.
   }
+}
+
+function appendLocalUserTurn() {
+  safeAppendTranscriptJsonl({
+    type: 'user',
+    uuid: randomUUID(),
+    session_id: sessionId,
+    timestamp: new Date().toISOString(),
+    message: {
+      role: 'user',
+      content: [{ type: 'text', text: 'FAKE_CLAUDE_LOCAL_ACTIVE_TURN' }],
+    },
+  });
+  safeAppendJsonl(logPath, { type: 'local_turn_started', invocationId, ts: Date.now() });
+}
+
+function appendLocalAssistantTurnComplete() {
+  safeAppendTranscriptJsonl({
+    type: 'assistant',
+    uuid: randomUUID(),
+    parent_tool_use_id: null,
+    session_id: sessionId,
+    isSidechain: false,
+    timestamp: new Date().toISOString(),
+    message: {
+      id: `fake-local-assistant-${randomUUID()}`,
+      type: 'message',
+      role: 'assistant',
+      model: 'fake-claude',
+      content: [{ type: 'text', text: 'FAKE_CLAUDE_LOCAL_DONE' }],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    },
+  });
+  safeAppendJsonl(logPath, { type: 'local_turn_completed', invocationId, ts: Date.now() });
 }
 
 function extractUserTextFromSdkMessage(msg) {
@@ -129,7 +175,8 @@ safeAppendTranscriptJsonl({
 });
 
 const settingsPath = findArgValue(argv, '--settings');
-const hook = parseHookForwarderCommand(settingsPath);
+const hookPluginDir = findArgValue(argv, '--plugin-dir');
+const hook = parseHookForwarderCommand(settingsPath, hookPluginDir);
 void runHookForwarder({
   hook,
   payload: {
@@ -851,8 +898,33 @@ if (isSdkStreamJson) {
 } else {
   // Local/interactive: keep the process alive until the parent aborts us (SIGTERM on mode switch).
   // Avoid printing anything on stdout, as local mode uses `inherit`.
+  let localTurnStarted = false;
+  let localTurnCompleted = false;
+
+  const maybeStartLocalTurn = () => {
+    if (!localActiveTurnEnabled || localTurnStarted) return;
+    if (localActiveTurnStartSignalPath && !fs.existsSync(localActiveTurnStartSignalPath)) return;
+    localTurnStarted = true;
+    appendLocalUserTurn();
+  };
+
+  const maybeCompleteLocalTurn = () => {
+    if (!localActiveTurnEnabled || !localTurnStarted || localTurnCompleted) return;
+    if (!localActiveTurnCompleteSignalPath || !fs.existsSync(localActiveTurnCompleteSignalPath)) return;
+    localTurnCompleted = true;
+    appendLocalAssistantTurnComplete();
+  };
+
+  maybeStartLocalTurn();
+  const localTurnInterval = localActiveTurnEnabled
+    ? setInterval(() => {
+        maybeStartLocalTurn();
+        maybeCompleteLocalTurn();
+      }, 100)
+    : null;
   const interval = setInterval(() => {}, 1000);
   const stop = () => {
+    if (localTurnInterval) clearInterval(localTurnInterval);
     clearInterval(interval);
     safeAppendJsonl(logPath, { type: 'local_exited', invocationId, ts: Date.now() });
     process.exit(0);

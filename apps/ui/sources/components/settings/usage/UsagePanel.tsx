@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { View, ActivityIndicator, ScrollView, Pressable } from 'react-native';
+import * as Localization from 'expo-localization';
 import { Text } from '@/components/ui/text/Text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useAuth } from '@/auth/context/AuthContext';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useSetting } from '@/sync/store/hooks';
 import { UsageChart } from './UsageChart';
 import { UsageBar } from './UsageBar';
 import { getUsageForPeriod, calculateTotals, UsageDataPoint } from '@/sync/api/account/apiUsage';
@@ -32,7 +34,7 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
     },
     periodButtonActive: {
-        backgroundColor: '#007AFF',
+        backgroundColor: theme.colors.accent.blue,
     },
     periodText: {
         fontSize: 14,
@@ -40,7 +42,7 @@ const styles = StyleSheet.create((theme) => ({
         fontWeight: '500',
     },
     periodTextActive: {
-        color: '#FFFFFF',
+        color: theme.colors.button.primary.tint,
     },
     statsContainer: {
         padding: 16,
@@ -101,7 +103,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.divider,
     },
     metricButtonActive: {
-        backgroundColor: '#007AFF',
+        backgroundColor: theme.colors.accent.blue,
     },
     metricText: {
         fontSize: 14,
@@ -109,13 +111,14 @@ const styles = StyleSheet.create((theme) => ({
         fontWeight: '500',
     },
     metricTextActive: {
-        color: '#FFFFFF',
+        color: theme.colors.button.primary.tint,
     }
 }));
 
 export const UsagePanel: React.FC<{ sessionId?: string }> = ({ sessionId }) => {
     const { theme } = useUnistyles();
     const auth = useAuth();
+    const preferredLanguage = useSetting('preferredLanguage');
     const [period, setPeriod] = useState<TimePeriod>('7days');
     const [chartMetric, setChartMetric] = useState<'tokens' | 'cost'>('tokens');
     const [loading, setLoading] = useState(false);
@@ -127,6 +130,10 @@ export const UsagePanel: React.FC<{ sessionId?: string }> = ({ sessionId }) => {
         tokensByModel: {} as Record<string, number>,
         costByModel: {} as Record<string, number>
     });
+    const usageLocale =
+        preferredLanguage ||
+        Localization.getLocales()?.[0]?.languageTag ||
+        Intl.DateTimeFormat().resolvedOptions().locale;
     
     useEffect(() => {
         loadUsageData();
@@ -134,7 +141,7 @@ export const UsagePanel: React.FC<{ sessionId?: string }> = ({ sessionId }) => {
     
     const loadUsageData = async () => {
         if (!auth.credentials) {
-            setError('Not authenticated');
+            setError(t('usage.errors.notAuthenticated'));
             return;
         }
         
@@ -146,11 +153,10 @@ export const UsagePanel: React.FC<{ sessionId?: string }> = ({ sessionId }) => {
             setUsageData(response.usage || []);
             setTotals(calculateTotals(response.usage || []));
         } catch (err) {
-            console.error('Failed to load usage data:', err);
             if (err instanceof HappyError) {
                 setError(err.message);
             } else {
-                setError('Failed to load usage data');
+                setError(t('usage.errors.failedToLoad'));
             }
         } finally {
             setLoading(false);
@@ -258,6 +264,7 @@ export const UsagePanel: React.FC<{ sessionId?: string }> = ({ sessionId }) => {
                         data={usageData}
                         metric={chartMetric}
                         height={180}
+                        locale={usageLocale}
                     />
                 </View>
             )}

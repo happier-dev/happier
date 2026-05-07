@@ -67,21 +67,6 @@ export function SelectableMenuResults(props: {
     const mouseDownActivatedItemIdRef = React.useRef<string | null>(null);
 
     const allItems = React.useMemo(() => props.categories.flatMap((c) => c.items), [props.categories]);
-
-    if (props.categories.length === 0 || allItems.length === 0) {
-        if (!props.emptyLabel) return null;
-        return (
-            <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>
-                    {props.emptyLabel}
-                </Text>
-            </View>
-        );
-    }
-
-    let currentIndex = 0;
-    const showCategoryTitles = props.showCategoryTitles !== false;
-    const rowKind = props.rowKind ?? 'selectableRow';
     const handleMouseDownActivatedPress = React.useCallback((item: SelectableMenuItem) => {
         mouseDownActivatedItemIdRef.current = String(item.id);
         props.onPressItem(item);
@@ -98,6 +83,21 @@ export function SelectableMenuResults(props: {
         const button = event.nativeEvent?.button ?? event.button;
         return typeof button !== 'number' || button === 0;
     }, []);
+
+    if (props.categories.length === 0 || allItems.length === 0) {
+        if (!props.emptyLabel) return null;
+        return (
+            <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>
+                    {props.emptyLabel}
+                </Text>
+            </View>
+        );
+    }
+
+    let currentIndex = 0;
+    const showCategoryTitles = props.showCategoryTitles !== false;
+    const rowKind = props.rowKind ?? 'selectableRow';
 
     const content = (
         <View style={styles.container}>

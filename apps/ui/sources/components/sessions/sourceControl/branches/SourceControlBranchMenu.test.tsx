@@ -197,7 +197,7 @@ describe('SourceControlBranchMenu', () => {
         });
     });
 
-    it('publishes branch when selecting publish', async () => {
+    it('does not expose publish from the branch menu', async () => {
         sourceControlBranchMenuModuleState.useSettingMock.mockImplementation(() => 'always_bring');
         sourceControlBranchMenuModuleState.fetchBranchesForSessionMock.mockResolvedValue([]);
         sourceControlBranchMenuModuleState.sessionScmBranchCreateMock.mockResolvedValue({ success: true });
@@ -223,10 +223,52 @@ describe('SourceControlBranchMenu', () => {
                 />);
 
         const menu = screen.findByType('DropdownMenu' as any);
+
+        expect(menu.props.items.some((item: any) => item.id === 'publish')).toBe(false);
+    });
+
+    it('offers confirmed stale index-lock recovery and retries branch checkout once', async () => {
+        sourceControlBranchMenuModuleState.useSettingMock.mockImplementation(() => 'always_bring');
+        sourceControlBranchMenuModuleState.fetchBranchesForSessionMock.mockResolvedValue([]);
+        sourceControlBranchMenuModuleState.modalConfirmSpy.mockResolvedValue(true);
+        sourceControlBranchMenuModuleState.sessionScmRepositoryRemoveIndexLockMock.mockResolvedValue({
+            success: true,
+            removed: true,
+            lockPath: '/repo/.git/index.lock',
+        });
+        sourceControlBranchMenuModuleState.sessionScmBranchCheckoutMock
+            .mockResolvedValueOnce({
+                success: false,
+                error: 'fatal: Unable to create /repo/.git/index.lock: File exists.',
+            })
+            .mockResolvedValueOnce({ success: true });
+
+        const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
+
+        const screen = await renderScreen(<SourceControlBranchMenu
+                    sessionId="s1"
+                    currentBranch="main"
+                    snapshot={{
+                        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git' },
+                        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                        capabilities: { readBranches: true, writeBranchCheckout: true, writeRemotePublish: true },
+                        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+                        fetchedAt: Date.now(),
+                        projectKey: 'p1',
+                        hasConflicts: false,
+                        entries: [],
+                        stashCount: 0,
+                    } as any}
+                    disabled={false}
+                />);
+
+        const menu = screen.findByType('DropdownMenu' as any);
         await act(async () => {
-            await menu.props.onSelect('publish');
+            await menu.props.onSelect('branch:feature/test');
         });
 
-        expect(sourceControlBranchMenuModuleState.publishBranchMock).toHaveBeenCalledTimes(1);
+        expect(sourceControlBranchMenuModuleState.modalConfirmSpy).toHaveBeenCalled();
+        expect(sourceControlBranchMenuModuleState.sessionScmRepositoryRemoveIndexLockMock).toHaveBeenCalledWith('s1', {});
+        expect(sourceControlBranchMenuModuleState.sessionScmBranchCheckoutMock).toHaveBeenCalledTimes(2);
     });
 });

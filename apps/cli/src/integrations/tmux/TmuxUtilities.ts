@@ -485,7 +485,7 @@ export class TmuxUtilities {
 
       // Create new window in session with command and environment variables
       // IMPORTANT: Don't manually add -t here - executeTmuxCommand handles it via parameters
-      const createWindowArgs = ['new-window', '-P', '-F', '#{pane_pid}', '-n', windowName];
+      const createWindowArgs = ['new-window', '-d', '-P', '-F', '#{pane_pid}', '-n', windowName];
 
       // Add working directory if specified
       if (options.cwd) {

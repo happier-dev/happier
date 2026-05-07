@@ -143,7 +143,7 @@ describe('agents/registryCore', () => {
         expect(getAgentCore('claude').uiConnectedService).toEqual({
             serviceId: 'anthropic',
             label: 'Claude Code',
-            connectRoute: '/(app)/settings/connect/claude',
+            connectRoute: '/settings/connect/claude',
         });
         expect(getAgentCore('opencode').uiConnectedService).toEqual({
             serviceId: null,

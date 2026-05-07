@@ -41,6 +41,7 @@ export function createSessionMessagesFixture(overrides: Partial<SessionMessages>
         latestThinkingMessageId: null,
         latestThinkingMessageActivityAtMs: null,
         messagesVersion: 0,
+        lastAppliedAgentStateVersion: null,
         isLoaded: false,
         ...overrides,
     };

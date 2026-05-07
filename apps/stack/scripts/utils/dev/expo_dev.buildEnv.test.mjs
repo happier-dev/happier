@@ -53,6 +53,27 @@ test('buildExpoDevEnv forces stack context in stack mode even when base env sets
   assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT, 'stack');
 });
 
+test('buildExpoDevEnv uses the Tailscale IP for dev-client local API URLs when provided', () => {
+  const baseEnv = {
+    ...process.env,
+    HAPPIER_STACK_LAN_IP: '192.168.0.50',
+  };
+
+  const env = buildExpoDevEnv({
+    baseEnv,
+    apiServerUrl: 'http://localhost:3013',
+    wantDevClient: true,
+    wantWeb: false,
+    stackMode: true,
+    stackName: 'qa-agent-2',
+    expoTailscaleIp: '100.64.0.10',
+  });
+
+  assert.equal(env.EXPO_PUBLIC_HAPPIER_SERVER_URL, 'http://100.64.0.10:3013');
+  assert.equal(env.EXPO_PUBLIC_HAPPY_SERVER_URL, 'http://100.64.0.10:3013');
+  assert.equal(env.EXPO_PUBLIC_SERVER_URL, 'http://100.64.0.10:3013');
+});
+
 test('buildExpoDevEnv does not set EXPO_APP_SLUG in dev-client mode (slug must match EAS project)', () => {
   const baseEnv = {
     ...process.env,

@@ -2,6 +2,7 @@ import { compareVersions, normalizeSemverBase } from '@happier-dev/cli-common/up
 
 import { resolveBackgroundServiceRepairPlanForCurrentRuntime } from '@/diagnostics/backgroundServiceRepair/resolveBackgroundServiceRepairPlanForCurrentRuntime';
 import type { DaemonServiceMode } from '@/daemon/service/plan';
+import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 
 import { handleServiceRepairCliCommand } from '../serviceRepair/handleServiceRepairCliCommand';
 import { resolveBackgroundServiceRepairSystemUser } from '../serviceRepair/repairSystemUser';
@@ -61,9 +62,18 @@ function buildAutomaticMigrationArgv(params: Readonly<{
   baseArgv: readonly string[];
   preferredMode: DaemonServiceMode;
   systemUser?: string;
+  interactive: boolean;
 }>): string[] {
   const argv = [...params.baseArgv];
-  if (!argv.includes('--yes')) {
+  if (!argv.includes('--migrate')) {
+    argv.push('--migrate');
+  }
+  // In a TTY, drop --yes so the user walks the guided flow with migration-scope
+  // auto-apply on safe findings (dedupe / stale / legacy-channel-scoped) while
+  // still getting prompted for material choices (legacy-pinned → default,
+  // channel switches). Without a TTY (install-payload promotion,
+  // non-interactive self-update) keep --yes so headless convergence succeeds.
+  if (!params.interactive && !argv.includes('--yes')) {
     argv.push('--yes');
   }
   const modeFlagIndex = argv.findIndex((arg) => arg === '--mode' || arg.startsWith('--mode='));
@@ -98,6 +108,12 @@ export async function maybeRunVersionGatedRuntimeMigration(params: Readonly<{
   hadLegacyCurrentInstallWithoutVersionMarkers?: boolean;
   argv: readonly string[];
   commandPath: string;
+  /**
+   * `true` when the caller is an unattended process (install-payload promotion
+   * spawned by installer scripts) and the migration must run headlessly.
+   * Defaults to auto-detection via `isInteractiveTerminal()`.
+   */
+  forceNonInteractive?: boolean;
 }>): Promise<boolean> {
   if (!hasCrossedBackgroundServiceMigrationBoundary(params)) {
     return false;
@@ -145,18 +161,30 @@ export async function maybeRunVersionGatedRuntimeMigration(params: Readonly<{
     return false;
   }
 
+  const interactive = params.forceNonInteractive === true
+    ? false
+    : isInteractiveTerminal();
+
   // HAPPIER_INSTALLER_MIGRATION tells the repair handler it was invoked from
   // the 0.2.3 migration hook; the handler broadens `autoApplyWithoutPrompt` so
   // lane-switches and legacy-pinned-converge-to-default-following run without
-  // prompting during the migration.
+  // prompting during the migration. In interactive mode we pass the explicit
+  // `--migrate` flag instead so the banner is printed and the guided flow
+  // still prompts for material choices (the flag takes precedence over the env
+  // var, and the env var is only needed for older CLI binaries that don't yet
+  // parse the flag — we keep setting it in non-interactive mode for that
+  // backwards-compat case).
   const previousMigrationEnv = process.env.HAPPIER_INSTALLER_MIGRATION;
-  process.env.HAPPIER_INSTALLER_MIGRATION = '1';
+  if (!interactive) {
+    process.env.HAPPIER_INSTALLER_MIGRATION = '1';
+  }
   try {
     await handleServiceRepairCliCommand({
       argv: buildAutomaticMigrationArgv({
         baseArgv: params.argv,
         preferredMode,
         systemUser,
+        interactive,
       }),
       commandPath: params.commandPath,
     });

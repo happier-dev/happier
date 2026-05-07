@@ -10,11 +10,18 @@ import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockStat
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+let platformOs: 'ios' | 'android' | 'web' = 'ios';
+
 installTranscriptCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
-            Platform: { OS: 'ios', select: (values: any) => values?.ios ?? values?.default ?? null },
+            Platform: {
+                get OS() {
+                    return platformOs;
+                },
+                select: (values: any) => values?.[platformOs] ?? values?.default ?? null,
+            },
             View: 'View',
             Text: 'Text',
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
@@ -65,9 +72,25 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { headerMaxWidth: 1024 },
 }));
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({
+            ...acc,
+            ...flattenStyle(entry),
+        }), {});
+    }
+    if (!style || typeof style !== 'object') {
+        return {};
+    }
+    return style as Record<string, unknown>;
+}
+
 describe('ChatHeaderView', () => {
-    afterEach(standardCleanup);
-    afterEach(resetTranscriptCommonModuleMockState);
+    afterEach(() => {
+        platformOs = 'ios';
+        standardCleanup();
+        resetTranscriptCommonModuleMockState();
+    });
 
     it('uses elevation to keep the header above scroll content on Android', async () => {
         const { ChatHeaderView } = await import('./ChatHeaderView');
@@ -162,5 +185,64 @@ describe('ChatHeaderView', () => {
         expect(screen.findAllByTestId('session-header-back')).toHaveLength(0);
         expect(screen.findAllByTestId('session-header-badge:0')).toHaveLength(0);
         expect(screen.findAllByTestId('session-header-avatar')).toHaveLength(0);
+    });
+
+    it('uses start-side overflow ellipsis for head-mode subtitles on web without reordering path text', async () => {
+        platformOs = 'web';
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+        const subtitle = '~/Documents/Development/happier-demo-projects/lantern';
+
+        const screen = await renderScreen(
+            <ChatHeaderView
+                title="Title"
+                subtitle={subtitle}
+                subtitleEllipsizeMode="head"
+            />,
+        );
+
+        const outerSubtitle = screen.root.findAll((node) => {
+            const style = flattenStyle(node.props?.style);
+            return String(node.type) === 'Text'
+                && node.props.numberOfLines === 1
+                && style.writingDirection === 'rtl';
+        })[0];
+        const innerSubtitle = screen.root.findAll((node) =>
+            String(node.type) === 'Text'
+            && node.props.children === subtitle,
+        )[0];
+
+        expect(screen.getTextContent()).toContain(subtitle);
+        expect(outerSubtitle).toBeTruthy();
+        expect(innerSubtitle).toBeTruthy();
+        expect(flattenStyle(outerSubtitle?.props.style)).toMatchObject({
+            writingDirection: 'rtl',
+            textAlign: 'left',
+        });
+        expect(flattenStyle(innerSubtitle?.props.style)).toMatchObject({
+            writingDirection: 'ltr',
+            unicodeBidi: 'isolate',
+        });
+    });
+
+    it('uses native head ellipsis for head-mode subtitles outside web', async () => {
+        platformOs = 'ios';
+        const { ChatHeaderView } = await import('./ChatHeaderView');
+        const subtitle = '~/Documents/Development/happier-demo-projects/lantern';
+
+        const screen = await renderScreen(
+            <ChatHeaderView
+                title="Title"
+                subtitle={subtitle}
+                subtitleEllipsizeMode="head"
+            />,
+        );
+
+        const subtitleNode = screen.root.findAll((node) =>
+            String(node.type) === 'Text'
+            && node.props.children === subtitle
+            && node.props.numberOfLines === 1,
+        )[0];
+
+        expect(subtitleNode?.props.ellipsizeMode).toBe('head');
     });
 });

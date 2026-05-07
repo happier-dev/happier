@@ -143,6 +143,46 @@ vi.mock('@/components/sessions/new/modules/sessionMcpSelectionState', () => ({
 }));
 
 describe('NewSessionMcpSelectionContent', () => {
+    it('uses an explicit height for the bounded MCP list so scroll content can measure on native', async () => {
+        const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
+
+        const screen = await renderScreen(<NewSessionMcpSelectionContent
+                    machineId="machine-1"
+                    machineName="Builder"
+                    directory="/repo"
+                    agentType="claude"
+                    hasContext={true}
+                    preview={{
+                        ok: true,
+                        builtIn: [],
+                        managed: [],
+                        detected: [],
+                    }}
+                    selection={{
+                        v: 1,
+                        managedServersEnabled: true,
+                        forceIncludeServerIds: [],
+                        forceExcludeServerIds: [],
+                    }}
+                    loading={false}
+                    error={null}
+                    onSelectionChange={() => {}}
+                    onRefresh={() => {}}
+                    onOpenSettings={() => {}}
+                    maxHeight={520}
+                />);
+
+        const container = screen.findAllByType('View' as never)[0];
+        expect(container?.props.style).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    height: 520,
+                    maxHeight: 520,
+                }),
+            ]),
+        );
+    });
+
     it('shows a loading indicator in the refresh action while preview data is being refreshed', async () => {
         capturedItems.length = 0;
         capturedItemGroups.length = 0;

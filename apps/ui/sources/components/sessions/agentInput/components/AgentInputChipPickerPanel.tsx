@@ -54,6 +54,15 @@ export function AgentInputChipPickerPanel(
 
     setFocusedOptionId((current) => {
       if (selectedOptionChanged) {
+        const currentOption = current
+          ? props.options.find((option) => option.id === current) ?? null
+          : null;
+        if (
+          currentOption?.preserveFocusOnExternalSelectionChange === true
+          && props.options.some((option) => option.id === current)
+        ) {
+          return current;
+        }
         return nextSelectedOptionId;
       }
 

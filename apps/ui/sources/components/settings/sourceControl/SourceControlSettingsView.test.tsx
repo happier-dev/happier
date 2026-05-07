@@ -101,9 +101,22 @@ describe('SourceControlSettingsView', () => {
         expect(screen.findRowByTitle('settingsSourceControl.commitStrategy.options.gitStaging.title')).toBeTruthy();
         expect(screen.findRowByTitle('settingsSourceControl.commitStrategy.options.atomic.title')).toBeTruthy();
         expect(screen.findRowByTitle('settingsSourceControl.gitRoutingPreference.options.git.title')).toBeTruthy();
-        expect(screen.findRowByTitle('settingsSourceControl.remoteConfirmation.options.always.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.remoteConfirmation.pull.title')).toBeTruthy();
+        expect(screen.findRowByTitle('settingsSourceControl.remoteConfirmation.push.title')).toBeTruthy();
         screen.pressRowByTitle('settingsSourceControl.commitStrategy.options.gitStaging.title');
         expect(setScmCommitStrategy).toHaveBeenCalledWith('git_staging');
+    });
+
+    it('maps pull and push confirmation toggles onto the shared remote confirmation policy', async () => {
+        setScmRemoteConfirmPolicy.mockClear();
+        const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
+        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
+
+        screen.pressRowByTitle('settingsSourceControl.remoteConfirmation.push.title');
+        expect(setScmRemoteConfirmPolicy).toHaveBeenCalledWith('pull_only');
+
+        screen.pressRowByTitle('settingsSourceControl.remoteConfirmation.pull.title');
+        expect(setScmRemoteConfirmPolicy).toHaveBeenCalledWith('push_only');
     });
 
     it('defaults diff presentation style to unified when the setting is missing', async () => {

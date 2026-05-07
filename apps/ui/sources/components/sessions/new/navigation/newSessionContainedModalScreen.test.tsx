@@ -7,6 +7,10 @@ const modalMock = vi.hoisted(() => ({
     module: null as null | ReturnType<typeof import('@/dev/testkit/mocks/modal').createModalModuleMock>['module'],
 }));
 
+const navigationMock = vi.hoisted(() => ({
+    isFocused: true,
+}));
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -16,6 +20,10 @@ vi.mock('react-native', async () => {
         },
     });
 });
+
+vi.mock('@react-navigation/native', () => ({
+    useIsFocused: () => navigationMock.isFocused,
+}));
 
 vi.mock('@/components/ui/popover', () => ({
     PopoverScope: ({ children }: React.PropsWithChildren<Record<string, never>>) =>
@@ -33,6 +41,10 @@ afterEach(() => {
 });
 
 describe('newSessionContainedModalScreen helpers', () => {
+    afterEach(() => {
+        navigationMock.isFocused = true;
+    });
+
     it('creates containedModal screen options on iOS', async () => {
         const { createNewSessionContainedModalScreenOptions } = await import('./newSessionContainedModalScreen');
 
@@ -58,5 +70,20 @@ describe('newSessionContainedModalScreen helpers', () => {
 
         expect(screen.findAllByType('PopoverScope' as any)).toHaveLength(1);
         expect(screen.findAllByType('ModalProvider' as any)).toHaveLength(1);
+        expect(screen.findByType('ModalProvider' as any).props.active).toBe(true);
+    });
+
+    it('deactivates the contained modal provider while the route is not focused', async () => {
+        navigationMock.isFocused = false;
+
+        const { NewSessionScreenPortalScope } = await import('./newSessionContainedModalScreen');
+
+        const screen = await renderScreen(
+            <NewSessionScreenPortalScope>
+                {React.createElement('Child')}
+            </NewSessionScreenPortalScope>,
+        );
+
+        expect(screen.findByType('ModalProvider' as any).props.active).toBe(false);
     });
 });

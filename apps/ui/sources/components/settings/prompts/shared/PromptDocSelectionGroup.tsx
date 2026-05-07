@@ -62,7 +62,7 @@ export const PromptDocSelectionGroup = React.memo(function PromptDocSelectionGro
                 disabled={!props.selectedArtifactId}
                 onPress={() => {
                     if (!props.selectedArtifactId) return;
-                    router.push(`/(app)/settings/prompts/docs/${props.selectedArtifactId}`);
+                    router.push(`/settings/prompts/docs/${props.selectedArtifactId}`);
                 }}
             />
             <Item
@@ -70,7 +70,7 @@ export const PromptDocSelectionGroup = React.memo(function PromptDocSelectionGro
                 title={t('promptLibrary.addPrompt')}
                 subtitle={t('promptLibrary.addPromptSubtitle')}
                 icon={<Ionicons name="add-circle-outline" size={22} color={theme.colors.accent.blue} />}
-                onPress={() => router.push('/(app)/settings/prompts/docs/new')}
+                onPress={() => router.push('/settings/prompts/docs/new')}
             />
         </ItemGroup>
     );

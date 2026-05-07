@@ -1,0 +1,23 @@
+{
+    "name": "happier-crypto-worker",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Local Expo module for Happier native crypto batch work.",
+    "files": [
+        "android",
+        "ios",
+        "expo-module.config.json",
+        "package.json"
+    ],
+    "devDependencies": {
+        "expo-modules-core": "3.0.29"
+    },
+    "peerDependencies": {
+        "expo": "*"
+    },
+    "peerDependenciesMeta": {
+        "expo": {
+            "optional": true
+        }
+    }
+}

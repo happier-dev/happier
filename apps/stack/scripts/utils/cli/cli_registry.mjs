@@ -220,8 +220,8 @@ export function gethstackRegistry() {
       aliases: ['dev-client', 'devclient'],
       kind: 'node',
       scriptRelPath: 'scripts/mobile_dev_client.mjs',
-      rootUsage: 'hstack mobile-dev-client --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]',
-      description: 'Install the shared hstack dev-client app (iOS)',
+      rootUsage: 'hstack mobile-dev-client --install [--profile=internaldev|publicdev] [--platform=ios|android] [--device=...] [--clean] [--configuration=Debug|Release] [--json]',
+      description: 'Install the shared hstack dev-client app',
     },
     {
       name: 'eas',

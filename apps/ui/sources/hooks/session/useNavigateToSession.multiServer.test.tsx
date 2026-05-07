@@ -67,6 +67,45 @@ describe('useNavigateToSession (multi-server)', () => {
         expect(routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular?.()).toBe('session');
     });
 
+    it('navigates before active server switching settles', async () => {
+        routerNavigateSpy.mockClear();
+        setActiveServerAndSwitchSpy.mockClear();
+        let resolveSwitch: () => void = () => {};
+        const switchPromise = new Promise<boolean>((resolve) => {
+            resolveSwitch = () => resolve(true);
+        });
+        setActiveServerAndSwitchSpy.mockReturnValueOnce(switchPromise);
+
+        const { useNavigateToSession } = await import('./useNavigateToSession');
+
+        let navigateToSession: ReturnType<typeof useNavigateToSession> | null = null;
+        function Probe() {
+            navigateToSession = useNavigateToSession();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        let navigationPromise: Promise<void> | null = null;
+        act(() => {
+            navigationPromise = navigateToSession!('sess_pending', { serverId: 'server-pending' });
+        });
+
+        try {
+            expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
+                serverId: 'server-pending',
+                scope: 'device',
+                refreshAuth: expect.any(Function),
+            });
+            expect(routerNavigateSpy).toHaveBeenCalledWith('/session/sess_pending?serverId=server-pending', expect.any(Object));
+        } finally {
+            resolveSwitch();
+            await act(async () => {
+                await navigationPromise;
+            });
+        }
+    });
+
     it('requests switch orchestration when serverId is provided', async () => {
         routerNavigateSpy.mockClear();
         setActiveServerAndSwitchSpy.mockClear();

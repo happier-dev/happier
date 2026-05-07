@@ -15,11 +15,16 @@ import {
     resolveFilesystemAccessPolicy,
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import type { ScmConnectedAccountCredentialResolver } from '@/scm/types';
 import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
+import type {
+    DirectSessionTranscriptDeltaEphemeral,
+    MachineTransferReceiveEnvelope,
+    MachineTransferSendEnvelope,
+} from '@happier-dev/protocol';
 import { fetchChanges, fetchChangesAccountId } from './changes';
 import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
 import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
@@ -40,6 +45,10 @@ import {
 import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
 import { createMachineSocketTransport } from '@/api/machine/connection/createMachineSocketTransport';
 import { readMachineOwnerConflictFromSocketError, type MachineOwnerConflictDetails } from '@/api/machine/machineOwnerConflict';
+
+export type ApiMachineClientDeps = Readonly<{
+    connectedAccounts?: ScmConnectedAccountCredentialResolver;
+}>;
 
 export class ApiMachineClient {
     private socket: Socket<ServerToDaemonEvents, DaemonToServerEvents> | null = null;
@@ -115,6 +124,7 @@ export class ApiMachineClient {
             serviceManaged?: boolean;
             serviceLabel?: string;
         }>,
+        deps?: ApiMachineClientDeps,
     ) {
         this.ownershipMetadata = ownershipMetadata ?? {};
         // Initialize RPC handler manager
@@ -153,6 +163,7 @@ export class ApiMachineClient {
         // even when no session is currently active.
         registerScmHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory, {
             accessPolicy: filesystemAccessPolicy,
+            connectedAccounts: deps?.connectedAccounts,
         });
     }
 
@@ -182,6 +193,9 @@ export class ApiMachineClient {
                 ...deps,
                 machineRpcWorkingDirectory: this.machineRpcWorkingDirectory,
                 filesystemAccessPolicy: this.filesystemAccessPolicy,
+                emitDirectSessionTranscriptUpdate:
+                    deps?.emitDirectSessionTranscriptUpdate
+                    ?? ((payload) => this.emitDirectSessionTranscriptUpdate(payload)),
             },
         });
     }
@@ -211,6 +225,11 @@ export class ApiMachineClient {
     sendMachineTransferEnvelope(payload: MachineTransferSendEnvelope): void {
         if (!this.socket) return;
         this.socket.emit(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, payload);
+    }
+
+    emitDirectSessionTranscriptUpdate(payload: DirectSessionTranscriptDeltaEphemeral): void {
+        if (!this.socket) return;
+        this.socket.emit('direct-session-transcript-delta', payload);
     }
 
     private dispatchUpdate(update: Update): boolean {

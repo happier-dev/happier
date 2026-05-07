@@ -14,6 +14,18 @@ describe('resolveExpoDevClientDeepLink', () => {
     );
   });
 
+  it('can use a caller-provided scheme to avoid iOS dev-client scheme collisions', () => {
+    expect(
+      resolveExpoDevClientDeepLink({
+        env: { EXPO_APP_SCHEME: 'happier-dev' },
+        metroUrl: 'http://127.0.0.1:62830/',
+        scheme: 'dev.happier.app.publicdev.devclient',
+      }),
+    ).toBe(
+      `dev.happier.app.publicdev.devclient://expo-development-client/?url=${encodeURIComponent('http://127.0.0.1:62830')}&disableOnboarding=1`,
+    );
+  });
+
   it('falls back to the app default scheme when no explicit scheme is configured', () => {
     expect(
       resolveExpoDevClientDeepLink({

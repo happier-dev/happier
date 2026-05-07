@@ -53,7 +53,7 @@ export default function CommitScreen() {
             title: sha.slice(0, 7),
             resource: { kind: 'commit', commitHash: sha },
         }, { intent: 'preview' });
-        router.replace({ pathname: '/session/[id]', params: routeScope.withParams({ id: sessionId }) } as any);
+        router.replace(routeScope.buildHref(sessionId) as any);
     }, [pane, routeScope, router, sessionId, sha, shouldRedirect]);
 
     React.useEffect(() => {
@@ -72,13 +72,10 @@ export default function CommitScreen() {
             },
             { intent: 'preview' },
         );
-        router.replace({
-            pathname: '/session/[id]/details',
-            params: routeScope.withParams({
-                id: sessionId,
-                ...serializeSessionPaneUrlState({ details: { kind: 'commit', sha } }),
-            }),
-        } as any);
+        router.replace(routeScope.buildHref(sessionId, {
+            suffix: '/details',
+            query: serializeSessionPaneUrlState({ details: { kind: 'commit', sha } }),
+        }) as any);
     }, [pane, routeScope, router, sessionId, sha, shouldRedirect, shouldUseDetailsScreen]);
 
     if (!sessionId || !sha) {

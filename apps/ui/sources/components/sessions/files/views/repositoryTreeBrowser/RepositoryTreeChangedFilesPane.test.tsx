@@ -60,7 +60,7 @@ vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
 }));
 
 describe('RepositoryTreeChangedFilesPane', () => {
-    it('surfaces turn/session toggles in the repository browser changed-files pane and can switch to review mode', async () => {
+    it('surfaces scoped view selection in the repository browser changed-files pane and can switch to review mode', async () => {
         changedFilesDataSpy.mockReturnValue({
             attributionReliability: 'high',
             showTurnViewToggle: true,
@@ -94,8 +94,9 @@ describe('RepositoryTreeChangedFilesPane', () => {
                     onOpenFile={vi.fn()}
                 />);
 
-        expect(screen.getTextContent()).toContain('files.toolbar.turnView');
-        expect(screen.getTextContent()).toContain('files.toolbar.sessionView');
+        expect(screen.getTextContent()).toContain('files.toolbar.view');
+        expect(screen.getTextContent()).not.toContain('files.toolbar.turnView');
+        expect(screen.getTextContent()).not.toContain('files.toolbar.sessionView');
         expect(screen.findAllByType('ChangedFilesList' as any)).toHaveLength(1);
         expect(screen.findAllByType('ChangedFilesReview' as any)).toHaveLength(0);
 

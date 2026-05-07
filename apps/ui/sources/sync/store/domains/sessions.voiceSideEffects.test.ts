@@ -28,6 +28,7 @@ function mockSessionsDomainBoundaries(): void {
         loadSessionPermissionModes: () => ({}),
         loadSessionActionDrafts: () => ({}),
         loadSessionReviewCommentsDrafts: () => ({}),
+        loadWorkspaceReviewCommentsDrafts: () => ({}),
         saveSessionDrafts: vi.fn(),
         saveSessionLastViewed: vi.fn(),
         saveSessionModelModeUpdatedAts: vi.fn(),
@@ -36,6 +37,7 @@ function mockSessionsDomainBoundaries(): void {
         saveSessionPermissionModes: vi.fn(),
         saveSessionActionDrafts: vi.fn(),
         saveSessionReviewCommentsDrafts: vi.fn(),
+        saveWorkspaceReviewCommentsDrafts: vi.fn(),
         saveSettings: vi.fn(),
         saveLocalSettings: vi.fn(),
         savePendingSettings: vi.fn(),
@@ -46,9 +48,13 @@ function mockSessionsDomainBoundaries(): void {
         resolveWarmCacheAccountScope: vi.fn(() => null),
         saveSessionListWarmCacheEntries: vi.fn(),
     }));
-    vi.doMock('../../domains/state/warmCacheAdapters', () => ({
-        buildSessionListCacheEntriesFromRenderables: vi.fn(() => []),
-    }));
+    vi.doMock('../../domains/state/warmCacheAdapters', async () => {
+        const actual = await vi.importActual<typeof import('../../domains/state/warmCacheAdapters')>('../../domains/state/warmCacheAdapters');
+        return {
+            ...actual,
+            buildSessionListCacheEntriesFromRenderables: vi.fn(() => []),
+        };
+    });
     vi.doMock('../buildSessionListViewDataWithServerScope', () => ({
         applyReachableTargetsToSessionListRenderables: vi.fn(({ sessions }) => sessions),
         buildSessionListViewDataWithServerScope: vi.fn(() => []),

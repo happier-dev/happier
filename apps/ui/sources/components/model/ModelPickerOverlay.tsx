@@ -49,6 +49,7 @@ export function ModelPickerOverlay(props: {
 }) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const selectedIndicatorColor = theme.dark ? theme.colors.text : theme.colors.button.primary.background;
     const [query, setQuery] = React.useState('');
     const lastCommittedCustomModelRef = React.useRef<string | null>(null);
     const optionValues = React.useMemo(() => {
@@ -210,10 +211,11 @@ export function ModelPickerOverlay(props: {
                                 hitSlop={6}
                             >
                                 {probe.phase === 'idle' ? (
-                                    <Ionicons name="refresh-outline" size={18} style={styles.refreshIcon as any} />
+                                    <Ionicons name="refresh-outline" size={18} color={theme.colors.textSecondary} />
                                 ) : (
                                     <ActivityIndicator
                                         size="small"
+                                        color={theme.colors.textSecondary}
                                         accessibilityLabel={probe.phase === 'loading'
                                             ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
                                             : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
@@ -224,6 +226,7 @@ export function ModelPickerOverlay(props: {
                             <View style={styles.refreshIconButton}>
                                 <ActivityIndicator
                                     size="small"
+                                    color={theme.colors.textSecondary}
                                     accessibilityLabel={probe.phase === 'loading'
                                         ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
                                         : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
@@ -283,7 +286,7 @@ export function ModelPickerOverlay(props: {
                                                     <Ionicons
                                                         name="checkmark-circle"
                                                         size={18}
-                                                        color={theme.colors.button.primary.background}
+                                                        color={selectedIndicatorColor}
                                                     />
                                                 ) : null}
                                             </View>
@@ -334,7 +337,7 @@ export function ModelPickerOverlay(props: {
                                         <Ionicons
                                             name="checkmark-circle"
                                             size={18}
-                                            color={theme.colors.button.primary.background}
+                                            color={selectedIndicatorColor}
                                         />
                                     ) : null}
                                 </View>
@@ -387,9 +390,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 0,
         paddingBottom: 0,
         gap: 0,
-    },
-    refreshIcon: {
-        color: theme.colors.textSecondary,
     },
     refreshIconButton: {
         minWidth: 28,

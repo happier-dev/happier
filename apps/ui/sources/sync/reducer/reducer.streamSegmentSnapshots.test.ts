@@ -16,6 +16,41 @@ function buildStreamSegmentMeta(opts: { segmentKind: 'assistant' | 'thinking'; u
 }
 
 describe('reducer (stream segment snapshots)', () => {
+  it('reads stream segment state for active and terminal snapshots', async () => {
+    vi.resetModules();
+    const { readStreamSegmentMetaV1 } = await import('./helpers/streamSegmentMeta');
+
+    expect(readStreamSegmentMetaV1(buildStreamSegmentMeta({
+      segmentKind: 'assistant',
+      updatedAtMs: 1_000,
+    }))).toMatchObject({
+      segmentKind: 'assistant',
+      segmentLocalId: 'assistant-segment-1',
+      segmentState: 'streaming',
+      updatedAtMs: 1_000,
+    });
+
+    expect(readStreamSegmentMetaV1({
+      happierStreamSegmentV1: {
+        v: 1,
+        segmentKind: 'assistant',
+        segmentLocalId: 'assistant-segment-1',
+        segmentState: 'complete',
+        updatedAtMs: 1_010,
+      },
+    })).toMatchObject({ segmentState: 'complete' });
+
+    expect(readStreamSegmentMetaV1({
+      happierStreamSegmentV1: {
+        v: 1,
+        segmentKind: 'assistant',
+        segmentLocalId: 'assistant-segment-1',
+        segmentState: 'unknown',
+        updatedAtMs: 1_020,
+      },
+    })).toMatchObject({ segmentState: null });
+  });
+
   it('upserts assistant stream segments by localId and replaces snapshot text', async () => {
     vi.resetModules();
     vi.unmock('./helpers/streamSegmentMeta');

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { createTwoFilesPatch } from 'diff';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,6 +21,25 @@ import { resolvePierreLanguageOverride } from './resolvePierreLanguageOverride.w
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { HAPPIER_UI_FONT_SCALE_CSS_VAR } from '@/components/ui/text/webUnistylesFontOverrides';
+import {
+    REVIEW_COMMENT_LINE_AFFORDANCE_ICON_NAME,
+    REVIEW_COMMENT_LINE_AFFORDANCE_ICON_TEST_ID,
+    REVIEW_COMMENT_LINE_AFFORDANCE_TEST_ID,
+} from '@/components/ui/code/diff/reviewComments/ReviewCommentLineAffordance';
+
+const PIERRE_REVIEW_COMMENT_HOVER_SLOT_UNSAFE_CSS = `
+[data-column-number] {
+  --happier-review-comment-affordance-width: 28px;
+  padding-left: calc(var(--happier-review-comment-affordance-width) + 2ch);
+}
+
+[data-hover-slot] {
+  left: 0;
+  right: auto;
+  width: var(--happier-review-comment-affordance-width);
+  justify-content: flex-start;
+}
+`;
 
 class PierreDiffErrorBoundary extends React.Component<
     Readonly<{ children: React.ReactNode; fallback: React.ReactNode }>,
@@ -42,6 +60,73 @@ class PierreDiffErrorBoundary extends React.Component<
         if (this.state.hasError) return this.props.fallback;
         return this.props.children;
     }
+}
+
+function PierreReviewCommentHoverAffordance(props: {
+    active: boolean;
+    color: string;
+    onPress: (event: MouseEvent | React.MouseEvent<HTMLButtonElement>) => void;
+    target?: (Pick<OnDiffLineClickProps, 'annotationSide' | 'lineNumber'> & Partial<Pick<OnDiffLineClickProps, 'lineType'>>) | null;
+}) {
+    const buttonRef = React.useRef<HTMLButtonElement | null>(null);
+    const onPressRef = React.useRef(props.onPress);
+
+    React.useEffect(() => {
+        onPressRef.current = props.onPress;
+    }, [props.onPress]);
+
+    const handleClick = React.useCallback((event: MouseEvent | React.MouseEvent<HTMLButtonElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if ('nativeEvent' in event) {
+            event.nativeEvent.stopImmediatePropagation?.();
+        } else {
+            event.stopImmediatePropagation?.();
+        }
+        onPressRef.current(event);
+    }, []);
+
+    React.useEffect(() => {
+        const button = buttonRef.current;
+        if (!button) return undefined;
+        button.addEventListener('click', handleClick);
+        return () => button.removeEventListener('click', handleClick);
+    }, [handleClick]);
+
+    return (
+        <button
+            ref={buttonRef}
+            aria-label={props.active ? t('files.reviewComments.closeCommentA11y') : t('files.reviewComments.addCommentA11y')}
+            data-column-number={props.target ? String(props.target.lineNumber) : undefined}
+            data-column-side={props.target?.annotationSide}
+            data-line={props.target ? String(props.target.lineNumber) : undefined}
+            data-line-type={props.target?.lineType}
+            data-active={props.active ? 'true' : undefined}
+            data-testid={REVIEW_COMMENT_LINE_AFFORDANCE_TEST_ID}
+            onClick={handleClick}
+            style={{
+                width: 28,
+                height: 24,
+                borderRadius: 12,
+                border: 0,
+                padding: 0,
+                background: 'transparent',
+                color: props.color,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+            }}
+            type="button"
+        >
+            <Ionicons
+                color={props.color}
+                name={props.active ? 'close-circle-outline' : REVIEW_COMMENT_LINE_AFFORDANCE_ICON_NAME}
+                size={15}
+                testID={REVIEW_COMMENT_LINE_AFFORDANCE_ICON_TEST_ID}
+            />
+        </button>
+    );
 }
 
 function resolveClickedSideFromNumberElement(numberElement: unknown): 'additions' | 'deletions' | null {
@@ -96,6 +181,65 @@ function resolveClickedSideFromNumberElement(numberElement: unknown): 'additions
     }
 
     return null;
+}
+
+function resolvePierreDiffLineFromPressEvent(event: unknown): (Pick<OnDiffLineClickProps, 'annotationSide' | 'lineNumber'> & Partial<Pick<OnDiffLineClickProps, 'lineType' | 'numberElement'>>) | null {
+    const nativeEvent = ((event as { nativeEvent?: unknown } | null | undefined)?.nativeEvent ?? event) as any;
+    const path = typeof nativeEvent?.composedPath === 'function'
+        ? nativeEvent.composedPath()
+        : [];
+    if (!Array.isArray(path) || path.length === 0) return null;
+
+    let lineNumber: number | null = null;
+    let lineType: OnDiffLineClickProps['lineType'] | undefined;
+    let numberElement: OnDiffLineClickProps['numberElement'] | undefined;
+
+    for (const candidate of path) {
+        const el = candidate as any;
+        if (!el || typeof el.getAttribute !== 'function') continue;
+
+        const columnNumber = el.getAttribute('data-column-number') as string | null;
+        if (columnNumber && lineNumber == null) {
+            const parsed = Number.parseInt(columnNumber, 10);
+            if (Number.isFinite(parsed) && parsed > 0) {
+                lineNumber = parsed;
+                numberElement = el as OnDiffLineClickProps['numberElement'];
+            }
+        }
+
+        const lineNumberAttr = el.getAttribute('data-line') as string | null;
+        if (lineNumberAttr && lineNumber == null) {
+            const parsed = Number.parseInt(lineNumberAttr, 10);
+            if (Number.isFinite(parsed) && parsed > 0) {
+                lineNumber = parsed;
+            }
+        }
+
+        const candidateLineType = el.getAttribute('data-line-type') as string | null;
+        if (
+            candidateLineType === 'change-deletion'
+            || candidateLineType === 'change-addition'
+            || candidateLineType === 'context'
+            || candidateLineType === 'context-expanded'
+        ) {
+            lineType = candidateLineType;
+        }
+    }
+
+    if (lineNumber == null) return null;
+
+    const annotationSide = lineType === 'change-deletion'
+        ? 'deletions'
+        : lineType === 'change-addition'
+            ? 'additions'
+            : (resolveClickedSideFromNumberElement(numberElement) ?? 'additions');
+
+    return {
+        annotationSide,
+        lineNumber,
+        lineType,
+        numberElement,
+    };
 }
 
 function buildPatchFromOldNew(params: Readonly<{ fileName: string; oldText: string; newText: string; contextLines: number }>): string {
@@ -350,6 +494,14 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         return codeLinesByAdditionLine?.get(lineNumber) ?? null;
     }, [codeLinesByAdditionLine, codeLinesByDeletionLine]);
 
+    const pressAddCommentForPierreLine = React.useCallback((event: Pick<OnDiffLineClickProps, 'annotationSide' | 'lineNumber'> & Partial<Pick<OnDiffLineClickProps, 'lineType' | 'numberElement'>>): CodeLine | null => {
+        const mapped = mapPierreDiffLineToCodeLine(event);
+        if (!mapped) return null;
+        if (mapped.renderIsHeaderLine) return null;
+        props.onPressAddComment?.(mapped);
+        return mapped;
+    }, [mapPierreDiffLineToCodeLine, props.onPressAddComment]);
+
     const lineAnnotations: DiffLineAnnotation<React.ReactNode>[] | undefined = React.useMemo(() => {
         if (!codeLines) return undefined;
         if (!props.renderAfterLine) return undefined;
@@ -460,9 +612,13 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         return `${lineSelector} {\n  box-shadow: inset 0 0 0 1px var(--diffs-selection-base);\n}\n${numberSelector} {\n  box-shadow: inset 0 0 0 1px var(--diffs-selection-base);\n}\n`;
     }, [codeLines, props.highlightLineId]);
 
+    const reviewCommentHoverSlotUnsafeCSS = props.onPressAddComment
+        ? PIERRE_REVIEW_COMMENT_HOVER_SLOT_UNSAFE_CSS
+        : '';
+
     const composedUnsafeCSS = React.useMemo(() => {
-        return [selectedLineUnsafeCSS, highlightLineUnsafeCSS].filter(Boolean).join('\n');
-    }, [highlightLineUnsafeCSS, selectedLineUnsafeCSS]);
+        return [reviewCommentHoverSlotUnsafeCSS, selectedLineUnsafeCSS, highlightLineUnsafeCSS].filter(Boolean).join('\n');
+    }, [highlightLineUnsafeCSS, reviewCommentHoverSlotUnsafeCSS, selectedLineUnsafeCSS]);
 
     const lastInjectedUnsafeCSSRef = React.useRef<string>('');
 
@@ -504,44 +660,55 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
                 : undefined,
             onLineNumberClick: props.onPressAddComment
                 ? (ev: any) => {
-                    const mapped = mapPierreDiffLineToCodeLine(ev);
-                    if (!mapped) return;
-                    props.onPressAddComment?.(mapped);
+                    pressAddCommentForPierreLine(ev);
                 }
                 : undefined,
         };
 
         return withClicks;
-    }, [mapPierreDiffLineToCodeLine, needsCodeLines, options, props.onPressAddComment, props.onPressLine]);
+    }, [mapPierreDiffLineToCodeLine, needsCodeLines, options, pressAddCommentForPierreLine, props.onPressAddComment, props.onPressLine]);
 
     const renderHoverUtility = React.useCallback((getHoveredLine: () => { lineNumber: number; side: 'additions' | 'deletions' } | undefined) => {
         if (!props.onPressAddComment) return null;
         const hovered = getHoveredLine?.() ?? undefined;
-        if (!hovered) return null;
-        const mapped = mapPierreDiffLineToCodeLine({ annotationSide: hovered.side, lineNumber: hovered.lineNumber });
-        if (!mapped) return null;
-        if (mapped.renderIsHeaderLine) return null;
+        const mapped = hovered
+            ? mapPierreDiffLineToCodeLine({ annotationSide: hovered.side, lineNumber: hovered.lineNumber })
+            : null;
+        const target = hovered && mapped
+            ? {
+                annotationSide: hovered.side,
+                lineNumber: hovered.lineNumber,
+                lineType: mapped.kind === 'remove'
+                    ? 'change-deletion' as const
+                    : mapped.kind === 'add'
+                        ? 'change-addition' as const
+                        : 'context' as const,
+            }
+            : null;
 
-        const active = props.isCommentActive ? props.isCommentActive(mapped) : false;
+        const active = mapped && !mapped.renderIsHeaderLine && props.isCommentActive
+            ? props.isCommentActive(mapped)
+            : false;
 
         return (
-            <Pressable
-                accessibilityRole="button"
-                onPress={() => props.onPressAddComment?.(mapped)}
-                style={{
-                    paddingLeft: 8,
-                    paddingTop: 2,
-                    cursor: 'pointer' as any,
+            <PierreReviewCommentHoverAffordance
+                active={active}
+                color={theme.colors.textSecondary}
+                target={target}
+                onPress={(event) => {
+                    const eventTarget = resolvePierreDiffLineFromPressEvent(event);
+                    const currentHovered = getHoveredLine?.();
+                    const hoverTarget = currentHovered ? {
+                        annotationSide: currentHovered.side,
+                        lineNumber: currentHovered.lineNumber,
+                    } : resolvePierreDiffLineFromPressEvent(event);
+                    const resolvedTarget = eventTarget ?? hoverTarget;
+                    if (!resolvedTarget) return;
+                    pressAddCommentForPierreLine(resolvedTarget);
                 }}
-            >
-                <Ionicons
-                    name={active ? 'close-circle-outline' : 'add-circle-outline'}
-                    size={16}
-                    color={(theme as any)?.colors?.textSecondary ?? '#999'}
-                />
-            </Pressable>
+            />
         );
-    }, [mapPierreDiffLineToCodeLine, props, theme]);
+    }, [mapPierreDiffLineToCodeLine, pressAddCommentForPierreLine, props, theme]);
 
     React.useEffect(() => {
         const scrollId = props.scrollToLineId ?? null;

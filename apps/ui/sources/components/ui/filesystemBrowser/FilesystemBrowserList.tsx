@@ -10,6 +10,7 @@ import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 
 export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const showRootLoadingHeader = props.rootLoading && props.showInlineLoadingHeader !== false;
 
     return (
         <FlatList
@@ -19,7 +20,7 @@ export function FilesystemBrowserList(props: FilesystemBrowserListProps): React.
             style={props.style}
             contentContainerStyle={props.contentContainerStyle}
             ListHeaderComponent={
-                props.rootLoading ? (
+                showRootLoadingHeader ? (
                     <View
                         style={{
                             paddingHorizontal: 12,

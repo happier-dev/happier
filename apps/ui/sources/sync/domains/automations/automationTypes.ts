@@ -84,6 +84,7 @@ export type AutomationTemplate = Readonly<{
     terminal?: unknown;
     windowsRemoteSessionLaunchMode?: WindowsRemoteSessionLaunchMode;
     windowsRemoteSessionConsole?: 'hidden' | 'visible';
+    windowsTerminalWindowName?: string;
     experimentalCodexAcp?: boolean;
     codexBackendMode?: CodexBackendMode;
     agentModeId?: string;

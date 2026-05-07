@@ -49,6 +49,16 @@ function mockMachineDomainBoundaries(): void {
     }));
 }
 
+function mockMachineDomainBoundariesForActiveServer(serverId: string): void {
+    vi.doMock('../../domains/server/serverRuntime', () => ({
+        getActiveServerSnapshot: () => ({ serverId, serverUrl: `http://${serverId}.local`, generation: 0 }),
+    }));
+    vi.doMock('../../domains/state/warmCachePersistence', () => ({
+        resolveWarmCacheAccountScope: vi.fn((fallback: string | null | undefined) => fallback ?? null),
+        saveMachineDisplayWarmCacheEntries: vi.fn(),
+    }));
+}
+
 describe('machines domain: sessionListViewData rebuild gating', () => {
     it('keeps sessionListViewData reference stable for machine activity-only updates', async () => {
         mockMachineDomainBoundaries();
@@ -147,6 +157,78 @@ describe('machines domain: sessionListViewData rebuild gating', () => {
         ]);
 
         expect(get().sessionListViewData).toBe(initialList);
+    });
+
+    it('stores source-scoped machine snapshots without replacing the active server projection', async () => {
+        mockMachineDomainBoundariesForActiveServer('server_b');
+
+        const { createMachinesDomain } = await import('./machines');
+
+        const activeMachine = {
+            id: 'm-b',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            revokedAt: null,
+            metadata: { displayName: 'Server B Machine' },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const staleMachine = {
+            id: 'm-a',
+            seq: 2,
+            createdAt: 2,
+            updatedAt: 2,
+            active: true,
+            activeAt: 2,
+            revokedAt: null,
+            metadata: { displayName: 'Server A Machine' },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+        const initialState = {
+            sessions: {},
+            settings: {
+                groupInactiveSessionsByProject: false,
+                sessionListActiveGroupingV1: 'date',
+                sessionListInactiveGroupingV1: 'date',
+            },
+            sessionListRenderables: {},
+            sessionListViewData: [],
+            sessionListViewDataByServerId: {},
+            machines: { 'm-b': activeMachine },
+            machineDisplayById: {
+                'm-b': {
+                    id: 'm-b',
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    revokedAt: null,
+                    metadataVersion: 1,
+                    metadata: { displayName: 'Server B Machine' },
+                },
+            },
+            machineListByServerId: {
+                server_b: [activeMachine],
+            },
+            machineListStatusByServerId: {
+                server_b: 'idle',
+            },
+            profile: { id: 'account_b' },
+        };
+
+        const { get, domain } = createHarness(createMachinesDomain, initialState);
+
+        domain.applyMachines([staleMachine] as any, true, { sourceServerId: 'server_a' });
+
+        expect(Object.keys(get().machines)).toEqual(['m-b']);
+        expect(get().machineListByServerId.server_b?.map((machine: any) => machine.id)).toEqual(['m-b']);
+        expect(get().machineListByServerId.server_a?.map((machine: any) => machine.id)).toEqual(['m-a']);
+        expect(get().machineListStatusByServerId.server_a).toBe('idle');
     });
 
     it('rebuilds sessionListViewData when project header machine display changes', async () => {

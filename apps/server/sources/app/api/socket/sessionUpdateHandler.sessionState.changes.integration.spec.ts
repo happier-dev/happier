@@ -360,6 +360,186 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         expect(callback).toHaveBeenCalledWith({ result: "success", lastViewedSessionSeq: 7 });
     });
 
+    it("marks a session unread through the read-cursor operation payload", async () => {
+        sessionFindUnique.mockImplementation(async (args: any) => {
+            if (args?.select?.accountId === true) {
+                return { accountId: "owner", shares: [{ sharedWithUserId: "u2" }] };
+            }
+            if (args?.select?.seq === true) {
+                return {
+                    seq: 7,
+                    lastViewedSessionSeq: 7,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                };
+            }
+            return null;
+        });
+
+        randomKeyNaked.mockReset().mockReturnValueOnce("upd-g").mockReturnValueOnce("upd-h");
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        sessionUpdateHandler(
+            "owner",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "update-read-cursor");
+
+        const callback = vi.fn();
+        await handler({ sid: "s1", operation: "mark-unread" }, callback);
+
+        expect(sessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "s1", lastViewedSessionSeq: { gt: 6 } },
+            data: { lastViewedSessionSeq: 6 },
+        }));
+        expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(1, "s1", 201, "upd-g", undefined, undefined, {
+            lastViewedSessionSeq: 6,
+        });
+        expect(buildUpdateSessionUpdate).toHaveBeenNthCalledWith(2, "s1", 202, "upd-h", undefined, undefined, {
+            lastViewedSessionSeq: 6,
+        });
+        expect(callback).toHaveBeenCalledWith({
+            result: "success",
+            lastViewedSessionSeq: 6,
+            didChange: true,
+            readState: "unread",
+        });
+    });
+
+    it("marks a session read through the read-cursor operation payload", async () => {
+        sessionFindUnique.mockImplementation(async (args: any) => {
+            if (args?.select?.accountId === true) {
+                return { accountId: "owner", shares: [{ sharedWithUserId: "u2" }] };
+            }
+            if (args?.select?.seq === true) {
+                return {
+                    seq: 7,
+                    lastViewedSessionSeq: 2,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                };
+            }
+            return null;
+        });
+        randomKeyNaked.mockReset().mockReturnValueOnce("upd-g").mockReturnValueOnce("upd-h");
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        sessionUpdateHandler(
+            "owner",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "update-read-cursor");
+
+        const callback = vi.fn();
+        await handler({ sid: "s1", operation: "mark-read" }, callback);
+
+        expect(sessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "s1", OR: [{ lastViewedSessionSeq: { lt: 7 } }, { lastViewedSessionSeq: null }] },
+            data: { lastViewedSessionSeq: 7 },
+        }));
+        expect(callback).toHaveBeenCalledWith({
+            result: "success",
+            lastViewedSessionSeq: 7,
+            didChange: true,
+            readState: "read",
+        });
+    });
+
+    it("uses operation precedence when a read-cursor payload also includes a cursor", async () => {
+        sessionFindUnique.mockImplementation(async (args: any) => {
+            if (args?.select?.accountId === true) {
+                return { accountId: "owner", shares: [{ sharedWithUserId: "u2" }] };
+            }
+            if (args?.select?.seq === true) {
+                return {
+                    seq: 7,
+                    lastViewedSessionSeq: 7,
+                    pendingCount: 0,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    active: true,
+                    archivedAt: null,
+                };
+            }
+            return null;
+        });
+        randomKeyNaked.mockReset().mockReturnValueOnce("upd-g").mockReturnValueOnce("upd-h");
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        sessionUpdateHandler(
+            "owner",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "update-read-cursor");
+
+        const callback = vi.fn();
+        await handler({ sid: "s1", operation: "mark-unread", lastViewedSessionSeq: 99 }, callback);
+
+        expect(sessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "s1", lastViewedSessionSeq: { gt: 6 } },
+            data: { lastViewedSessionSeq: 6 },
+        }));
+        expect(callback).toHaveBeenCalledWith({
+            result: "success",
+            lastViewedSessionSeq: 6,
+            didChange: true,
+            readState: "unread",
+        });
+    });
+
+    it("rejects a read-cursor payload with neither operation nor cursor", async () => {
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        sessionUpdateHandler(
+            "owner",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "update-read-cursor");
+
+        const callback = vi.fn();
+        await handler({ sid: "s1" }, callback);
+
+        expect(sessionUpdateMany).not.toHaveBeenCalled();
+        expect(callback).toHaveBeenCalledWith({ result: "error" });
+    });
+
+    it("rejects an unknown read-cursor operation without falling back to cursor advance", async () => {
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        sessionUpdateHandler(
+            "owner",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "update-read-cursor");
+
+        const callback = vi.fn();
+        await handler({ sid: "s1", operation: "mark-archived", lastViewedSessionSeq: 9 }, callback);
+
+        expect(sessionUpdateMany).not.toHaveBeenCalled();
+        expect(callback).toHaveBeenCalledWith({ result: "error" });
+    });
+
     it("marks cached presence inactive before persisting session-end", async () => {
         directSessionFindUnique.mockResolvedValue({
             id: "s1",

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import * as runProvidersScript from '../../scripts/run-providers.mjs';
 import { parseArgs, resolveProvidersRunTimeoutFallbackMs, resolveProvidersRunTimeoutMs } from '../../scripts/run-providers.mjs';
+
+type YarnInvocationResolver = (
+  args: readonly string[],
+  options?: Readonly<{ platform?: NodeJS.Platform; npmExecPath?: string; comspec?: string }>,
+) => Readonly<{ command: string; args: string[]; windowsVerbatimArguments?: boolean }>;
 
 describe('providers run script args', () => {
   it('defaults flake retry to enabled', () => {
@@ -51,6 +57,26 @@ describe('providers run script args', () => {
     expect(() => parseArgs(['node', 'run-providers.mjs', 'opencode', 'smoke', 'extra'])).toThrow(
       /Unexpected positional argument/,
     );
+  });
+
+  it('wraps the Windows Yarn shim through cmd.exe', () => {
+    const resolveProviderRunYarnInvocation = (runProvidersScript as {
+      resolveProviderRunYarnInvocation?: YarnInvocationResolver;
+    }).resolveProviderRunYarnInvocation;
+
+    expect(resolveProviderRunYarnInvocation).toBeTypeOf('function');
+    if (!resolveProviderRunYarnInvocation) throw new Error('missing provider run Yarn invocation resolver');
+
+    const invocation = resolveProviderRunYarnInvocation(['-s', 'test:providers'], {
+      platform: 'win32',
+      npmExecPath: 'C:\\npm\\node_modules\\npm\\bin\\npm-cli.js',
+      comspec: 'C:\\Windows\\System32\\cmd.exe',
+    });
+
+    expect(invocation.command).toBe('C:\\Windows\\System32\\cmd.exe');
+    expect(invocation.windowsVerbatimArguments).toBe(true);
+    expect(invocation.args.join(' ')).toContain('yarn.cmd');
+    expect(invocation.args.join(' ')).not.toContain('npm-cli.js');
   });
 });
 

@@ -1,13 +1,14 @@
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import { resolveProviderRunPreset } from '../src/testkit/providers/presets/presets.mjs';
 import { terminateProcessTreeByPid } from './processTree.mjs';
 
 const KNOWN_FLAGS = new Set(['--update-baselines', '--strict-keys', '--flake-retry', '--no-flake-retry']);
 
-function yarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
+export function resolveProviderRunYarnInvocation(args, options = {}) {
+  return resolveYarnCommandInvocation(args, options);
 }
 
 export function resolveProvidersRunTimeoutFallbackMs({ presetId, tier }) {
@@ -150,10 +151,14 @@ export async function main(argv = process.argv) {
     });
   }
 
-  const child = spawn(yarnCommand(), ['-s', 'test:providers'], {
+  const invocation = resolveProviderRunYarnInvocation(['-s', 'test:providers']);
+  const child = spawn(invocation.command, invocation.args, {
     stdio: 'inherit',
     env,
     detached: process.platform !== 'win32',
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
   });
   activeChildren.add(child);
   child.once('exit', () => {

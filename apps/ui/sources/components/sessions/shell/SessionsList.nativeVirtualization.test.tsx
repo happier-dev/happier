@@ -3,11 +3,15 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import type { SessionListViewItem } from '@/sync/domains/state/storage';
+import { clearTempData, peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let platformOs: 'ios' | 'android' | 'web' = 'ios';
+let mockPathname = '';
+let isTabletDevice = false;
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
@@ -19,6 +23,7 @@ let workspaceLabelsV1: Record<string, string> = {};
 const setWorkspaceLabelsV1 = vi.fn();
 let collapsedGroupKeysV1: Record<string, boolean> = {};
 const setCollapsedGroupKeysV1 = vi.fn();
+let rememberLastProjectSessionSelections: boolean | null = null;
 let allMachines = [
     {
         id: 'machine-target',
@@ -145,6 +150,17 @@ const sessionB = {
     },
 } as any;
 
+const sessionC = {
+    ...sessionA,
+    id: 'sess_c',
+    metadata: {
+        machineId: 'machine-target',
+        path: '/Users/test/third-repo',
+        homeDir: '/Users/test',
+        host: 'target.local',
+    },
+} as any;
+
 vi.mock('react-native-gesture-handler', () => ({
     GestureDetector: (props: any) => React.createElement('GestureDetector', props, props.children),
     Swipeable: 'Swipeable',
@@ -245,7 +261,7 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
-    useIsTablet: () => false,
+    useIsTablet: () => isTabletDevice,
     getDeviceType: () => 'phone',
 }));
 
@@ -281,7 +297,7 @@ installSessionShellCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
-            pathname: '',
+            pathname: () => mockPathname,
             router: {
                 push: routerPushSpy,
             },
@@ -304,6 +320,7 @@ installSessionShellCommonModuleMocks({
                     if (key === 'compactSessionView') return false;
                     if (key === 'compactSessionViewMinimal') return false;
                     if (key === 'sessionTagsEnabled') return true;
+                    if (key === 'rememberLastProjectSessionSelections') return rememberLastProjectSessionSelections;
                     return null;
                 },
                 useHasUnreadMessages: () => false,
@@ -488,10 +505,13 @@ function findPressableByAccessibilityLabel(
 describe('SessionsList (native virtualization)', () => {
     beforeEach(() => {
         platformOs = 'ios';
+        mockPathname = '';
+        isTabletDevice = false;
         pinnedSessionKeysV1 = [];
         sessionTagsV1 = {};
         workspaceLabelsV1 = {};
         collapsedGroupKeysV1 = {};
+        rememberLastProjectSessionSelections = null;
         setPinnedSessionKeysV1.mockClear();
         setSessionTagsV1.mockClear();
         setWorkspaceLabelsV1.mockClear();
@@ -501,10 +521,13 @@ describe('SessionsList (native virtualization)', () => {
         mockAllowedServerIds = ['server_a'];
         readMachineTargetForSessionMock.mockReset();
         readMachineTargetForSessionMock.mockImplementation(() => null);
+        delete storageState.sessions.seed_sess;
+        clearTempData();
         resetVisibleSessionListViewData();
     });
 
     afterEach(() => {
+        clearTempData();
         standardCleanup();
     });
 
@@ -518,6 +541,142 @@ describe('SessionsList (native virtualization)', () => {
         expect(first.props.isLast).toBe(false);
         expect(second.props.isFirst).toBe(false);
         expect(second.props.isLast).toBe(true);
+    });
+
+    it('passes stable recycling hints to native FlashList without deprecated size estimates', async () => {
+        platformOs = 'android';
+
+        const screen = await renderSessionsList();
+        const list = expectPresent(
+            screen.root.findAll((node) => String(node.type) === 'FlashListCompat')[0],
+            'expected native FlashListCompat',
+        );
+
+        expect(list.props.estimatedItemSize).toBeUndefined();
+        expect(list.props.getItemType?.(mockVisibleSessionListViewData[0])).toBe('header:date');
+        expect(list.props.getItemType?.(mockVisibleSessionListViewData[1])).toBe('session');
+    });
+
+    it('keeps native list render props stable across unrelated rerenders', async () => {
+        platformOs = 'android';
+
+        const screen = await renderSessionsList();
+        const initialList = expectPresent(
+            screen.root.findAll((node) => String(node.type) === 'FlashListCompat')[0],
+            'expected native FlashListCompat',
+        );
+        const initialKeyExtractor = initialList.props.keyExtractor;
+        const initialRenderItem = initialList.props.renderItem;
+        const initialContentContainerStyle = initialList.props.contentContainerStyle;
+        const { SessionsList } = await import('./SessionsList');
+
+        await screen.update(<SessionsList />);
+
+        const updatedList = expectPresent(
+            screen.root.findAll((node) => String(node.type) === 'FlashListCompat')[0],
+            'expected updated native FlashListCompat',
+        );
+        expect(updatedList.props.keyExtractor).toBe(initialKeyExtractor);
+        expect(updatedList.props.renderItem).toBe(initialRenderItem);
+        expect(updatedList.props.contentContainerStyle).toBe(initialContentContainerStyle);
+    });
+
+    it('reuses row item references that are not affected by route selection changes', async () => {
+        platformOs = 'android';
+        isTabletDevice = true;
+        mockPathname = '/session/sess_a';
+        mockVisibleSessionListViewData = [
+            {
+                type: 'header',
+                title: 'Today',
+                headerKind: 'date',
+                groupKey,
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'session',
+                session: sessionA,
+                groupKey,
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'session',
+                session: sessionB,
+                groupKey,
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'session',
+                session: sessionC,
+                groupKey,
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+        ];
+
+        const screen = await renderSessionsList();
+        const initialList = expectPresent(
+            screen.root.findAll((node) => String(node.type) === 'FlashListCompat')[0],
+            'expected native FlashListCompat',
+        );
+        const initialData = initialList.props.data as Array<SessionListViewItem & { selected?: boolean }>;
+        const initialRenderItem = initialList.props.renderItem;
+        expect(initialData[1]?.selected).toBe(true);
+        expect(initialData[2]?.selected).toBe(false);
+        expect(initialData[3]?.selected).toBe(false);
+
+        mockPathname = '/session/sess_b';
+        const { SessionsList } = await import('./SessionsList');
+        await screen.update(<SessionsList />);
+
+        const updatedList = expectPresent(
+            screen.root.findAll((node) => String(node.type) === 'FlashListCompat')[0],
+            'expected updated native FlashListCompat',
+        );
+        const updatedData = updatedList.props.data as Array<SessionListViewItem & { selected?: boolean }>;
+        expect(updatedList.props.renderItem).toBe(initialRenderItem);
+        expect(updatedData[0]).toBe(initialData[0]);
+        expect(updatedData[1]).not.toBe(initialData[1]);
+        expect(updatedData[2]).not.toBe(initialData[2]);
+        expect(updatedData[3]).toBe(initialData[3]);
+        expect(updatedData[1]?.selected).toBe(false);
+        expect(updatedData[2]?.selected).toBe(true);
+        expect(updatedData[3]?.selected).toBe(false);
+    });
+
+    it('records numeric aggregate telemetry for session-list render derivation chunks', async () => {
+        platformOs = 'android';
+        const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+
+        try {
+            const screen = await renderSessionsList();
+
+            expect(findSessionItem(screen, 'sess_a')).toBeTruthy();
+            const events = syncPerformanceTelemetry.snapshot().events;
+            expect(events.find((event) => event.name === 'ui.sessionsList.render.selectedMapping')?.fields)
+                .toMatchObject({ items: 3, selectable: 0 });
+            expect(events.find((event) => event.name === 'ui.sessionsList.render.reachabilityDisplayMap')?.fields)
+                .toMatchObject({ items: 3, sessions: 2 });
+            expect(events.find((event) => event.name === 'ui.sessionsList.render.collapsedFiltering')?.fields)
+                .toMatchObject({ items: 3, collapsedGroups: 0 });
+
+            await screen.unmount();
+        } finally {
+            syncPerformanceTelemetry.configure({ enabled: false });
+            syncPerformanceTelemetry.reset();
+        }
     });
 
     it('passes drag gestures into iOS rows without wrapping the full row in a GestureDetector', async () => {
@@ -648,6 +807,150 @@ describe('SessionsList (native virtualization)', () => {
                 spawnServerId: 'server_a',
             },
         });
+    });
+
+    it('uses the latest project session configuration when the remember setting is enabled', async () => {
+        rememberLastProjectSessionSelections = true;
+        storageState.sessions.seed_sess = {
+            id: 'seed_sess',
+            active: true,
+            createdAt: 20,
+            updatedAt: 30,
+            seq: 3,
+            encryptionMode: 'plain',
+            metadata: {
+                machineId: 'machine-source',
+                path: '/repo/source',
+                homeDir: '/repo',
+                host: 'source.local',
+                flavor: 'codex',
+                profileId: 'profile-1',
+                transcriptStorage: 'direct',
+                codexBackendMode: 'appServer',
+                sessionModeOverrideV1: {
+                    v: 1,
+                    updatedAt: 100,
+                    modeId: 'plan',
+                },
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 101,
+                    overrides: {
+                        effort: { updatedAt: 101, value: 'high' },
+                    },
+                },
+            },
+            permissionMode: 'safe-yolo',
+            permissionModeUpdatedAt: 102,
+            modelMode: 'gpt-5',
+            modelModeUpdatedAt: 103,
+        };
+        mockVisibleSessionListViewData = [
+            {
+                type: 'header',
+                title: '/repo',
+                headerKind: 'project',
+                groupKey: 'server:server_a:active:project:abc',
+                workspaceKey: 'wl_abc',
+                seedSessionId: 'seed_sess',
+                workspaceScopeHint: {
+                    serverId: 'server_a',
+                    machineId: 'machine-target',
+                    rootPath: '/repo',
+                },
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+        ];
+
+        const screen = await renderSessionsList();
+        const addButton = expectPresent(
+            findPressableByAccessibilityLabel(screen, 'machine.launchNewSessionInDirectory'),
+            'expected project add action',
+        );
+
+        await act(async () => {
+            addButton.props.onPress();
+        });
+
+        const pushArg = routerPushSpy.mock.calls[0]?.[0] as any;
+        expect(pushArg).toEqual({
+            pathname: '/new',
+            params: {
+                dataId: expect.any(String),
+                machineId: 'machine-target',
+                directory: '/repo',
+                spawnServerId: 'server_a',
+            },
+        });
+        const tempData = peekTempData<NewSessionData>(pushArg.params.dataId);
+        expect(tempData).toEqual(expect.objectContaining({
+            prompt: '',
+            replacePersistedDraftSelections: true,
+            machineId: 'machine-target',
+            directory: '/repo',
+            agentType: 'codex',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            selectedProfileId: 'profile-1',
+            transcriptStorage: 'direct',
+            permissionMode: 'safe-yolo',
+            modelMode: 'gpt-5',
+            codexBackendMode: 'appServer',
+            acpSessionModeId: 'plan',
+            sessionConfigOptionOverrides: {
+                v: 1,
+                updatedAt: 101,
+                overrides: {
+                    effort: { updatedAt: 101, value: 'high' },
+                },
+            },
+        }));
+    });
+
+    it('does not derive reachability details for rows hidden by a collapsed group', async () => {
+        collapsedGroupKeysV1 = { [groupKey]: true };
+        readMachineTargetForSessionMock.mockClear();
+        mockVisibleSessionListViewData = [
+            {
+                type: 'header',
+                title: 'Today',
+                headerKind: 'date',
+                groupKey,
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'session',
+                session: sessionA,
+                groupKey,
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'header',
+                title: 'Tomorrow',
+                headerKind: 'date',
+                groupKey: 'server:server_a:day:2026-02-18',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+            {
+                type: 'session',
+                session: sessionB,
+                groupKey: 'server:server_a:day:2026-02-18',
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            },
+        ];
+
+        const screen = await renderSessionsList();
+
+        expect(screen.findAllByTestId('session-list-session:sess_a')).toHaveLength(0);
+        expect(screen.findAllByTestId('session-list-session:sess_b')).toHaveLength(1);
+        expect(readMachineTargetForSessionMock).toHaveBeenCalledTimes(1);
+        expect(readMachineTargetForSessionMock).toHaveBeenCalledWith('sess_b');
     });
 
     it('shows project chevrons only on hover unless the group is collapsed, while keeping the add action visible', async () => {
@@ -890,5 +1193,101 @@ describe('SessionsList (native virtualization)', () => {
             'expected first session item',
         );
         expect(item.props.subtitleOverride).toBe('Rebound workstation · /Volumes/target/repo');
+    });
+
+    it('uses start-side overflow ellipsis for workspace path headers on web without reordering the path', async () => {
+        platformOs = 'web';
+        const { ProjectGroupHeader } = await import('./SessionsList');
+        const workspacePath = '~/Documents/Development/happier/remote-dev';
+        const projectHeaderItem = {
+            type: 'header',
+            title: workspacePath,
+            headerKind: 'project',
+            groupKey: 'server:server_a:active:project:abc',
+            workspaceKey: 'wl_abc',
+            workspaceScopeHint: {
+                serverId: 'server_a',
+                machineId: 'machine-target',
+                rootPath: '/Users/test/Documents/Development/happier/remote-dev',
+            },
+            serverId: 'server_a',
+            serverName: 'Server A',
+        } satisfies Extract<SessionListViewItem, { type: 'header' }>;
+
+        const screen = await renderScreen(
+            <ProjectGroupHeader
+                item={projectHeaderItem}
+                hasMultipleMachines={false}
+                workspaceLabelsV1={{}}
+                onRenameWorkspace={vi.fn()}
+                onResetWorkspaceName={vi.fn()}
+                onCreateSession={vi.fn()}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+                headerTestId="project-header"
+            />,
+        );
+
+        const outerTitle = screen.root.findAll((node) =>
+            String(node.type) === 'Text'
+            && node.props.numberOfLines === 1,
+        )[0];
+        const innerTitle = screen.root.findAll((node) =>
+            String(node.type) === 'Text'
+            && node.props.children === workspacePath,
+        )[0];
+
+        expect(outerTitle).toBeTruthy();
+        expect(innerTitle).toBeTruthy();
+        expect(flattenStyle(outerTitle?.props.style)).toMatchObject({
+            writingDirection: 'rtl',
+            textAlign: 'left',
+        });
+        expect(flattenStyle(innerTitle?.props.style)).toMatchObject({
+            writingDirection: 'ltr',
+            unicodeBidi: 'isolate',
+        });
+    });
+
+    it('uses native head ellipsis for workspace path headers outside web', async () => {
+        platformOs = 'ios';
+        const { ProjectGroupHeader } = await import('./SessionsList');
+        const workspacePath = '~/Documents/Development/happier/remote-dev';
+        const projectHeaderItem = {
+            type: 'header',
+            title: workspacePath,
+            headerKind: 'project',
+            groupKey: 'server:server_a:active:project:abc',
+            workspaceKey: 'wl_abc',
+            workspaceScopeHint: {
+                serverId: 'server_a',
+                machineId: 'machine-target',
+                rootPath: '/Users/test/Documents/Development/happier/remote-dev',
+            },
+            serverId: 'server_a',
+            serverName: 'Server A',
+        } satisfies Extract<SessionListViewItem, { type: 'header' }>;
+
+        const screen = await renderScreen(
+            <ProjectGroupHeader
+                item={projectHeaderItem}
+                hasMultipleMachines={false}
+                workspaceLabelsV1={{}}
+                onRenameWorkspace={vi.fn()}
+                onResetWorkspaceName={vi.fn()}
+                onCreateSession={vi.fn()}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+                headerTestId="project-header"
+            />,
+        );
+
+        const title = screen.root.findAll((node) =>
+            String(node.type) === 'Text'
+            && node.props.children === workspacePath
+            && node.props.numberOfLines === 1,
+        )[0];
+
+        expect(title?.props.ellipsizeMode).toBe('head');
     });
 });

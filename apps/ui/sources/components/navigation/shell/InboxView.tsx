@@ -2,7 +2,8 @@ import * as React from 'react';
 import { View, ScrollView, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
-    useAllSessions,
+    useAllSessionListRenderablesForAttention,
+    useAllSessionsForAttention,
     useArtifacts,
     useFeedItems,
     useFeedLoaded,
@@ -10,7 +11,6 @@ import {
     useFriendsLoaded,
     useRequestedFriends,
 } from '@/sync/domains/state/storage';
-import { storage as syncStorage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -30,7 +30,8 @@ import { UserCard } from '@/components/ui/cards/UserCard';
 import { trackFriendsProfileView } from '@/track';
 import { ApprovalInboxCard } from '@/components/inbox/cards/ApprovalInboxCard';
 import { InboxSessionAttentionGroupCard } from '@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard';
-import { listPendingPermissionRequests, listPendingUserActionRequests } from '@/utils/sessions/sessionUtils';
+import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
+import { buildInboxSessionState } from '@/hooks/inbox/buildInboxSessionState';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -92,27 +93,16 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
     const friendsEnabled = useFriendsEnabled();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
-    const myId = syncStorage((state) => state.profile.id);
-    const sessions = useAllSessions();
+    const sessions = useAllSessionsForAttention();
+    const sessionRows = useAllSessionListRenderablesForAttention();
+    const { unreadSessions, sessionsNeedingAttention } = React.useMemo(
+        () => buildInboxSessionState({ sessions, sessionRows }),
+        [sessionRows, sessions],
+    );
 
     const openApprovals = React.useMemo(() => {
         return artifacts.filter((a) => a.header?.kind === 'approval_request.v1' && a.header?.approvalStatus === 'open');
     }, [artifacts]);
-
-    const sessionsNeedingAttention = React.useMemo(() => {
-        return sessions.flatMap((s) => {
-            if (s.presence !== 'online') return [];
-            const pendingPermissions = listPendingPermissionRequests(s);
-            const pendingUserActions = listPendingUserActionRequests(s);
-            if (pendingPermissions.length === 0 && pendingUserActions.length === 0) return [];
-            return [{ session: s, pendingPermissions, pendingUserActions }];
-        });
-    }, [sessions]);
-
-    const sharedSessions = React.useMemo(() => {
-        if (!myId) return [];
-        return sessions.filter((s) => s.owner && s.owner !== myId);
-    }, [sessions, myId]);
 
     const showFriendsActivity = friendsEnabled && friendsIdentityReady;
 
@@ -120,7 +110,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
     const isEmpty = !isLoading &&
         openApprovals.length === 0 &&
         sessionsNeedingAttention.length === 0 &&
-        sharedSessions.length === 0 &&
+        unreadSessions.length === 0 &&
         (!showFriendsActivity || (
             friendRequests.length === 0 &&
             requestedFriends.length === 0 &&
@@ -228,6 +218,19 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                     </ItemGroup>
                 )}
 
+                {unreadSessions.length > 0 && (
+                    <ItemGroup title={t('inbox.unreadSessions')}>
+                        {unreadSessions.map((session) => (
+                            <Item
+                                key={session.id}
+                                title={getSessionName(session)}
+                                subtitle={getSessionSubtitle(session)}
+                                onPress={() => router.push(`/session/${session.id}`)}
+                            />
+                        ))}
+                    </ItemGroup>
+                )}
+
                 {showFriendsActivity && friendRequests.length > 0 && (
                     <ItemGroup title={t('friends.pendingRequests')}>
                         {friendRequests.map((friend) => (
@@ -255,23 +258,6 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                                 }}
                             />
                         ))}
-                    </ItemGroup>
-                )}
-
-                {sharedSessions.length > 0 && (
-                    <ItemGroup title={t('friends.sharedSessions')}>
-                        {sharedSessions.map((session) => {
-                            const title = session.metadata?.name || session.metadata?.path || session.id;
-                            const subtitle = session.ownerProfile?.username ? `@${session.ownerProfile.username}` : undefined;
-                            return (
-                                <Item
-                                    key={session.id}
-                                    title={title}
-                                    subtitle={subtitle}
-                                    onPress={() => router.push(`/session/${session.id}`)}
-                                />
-                            );
-                        })}
                     </ItemGroup>
                 )}
 

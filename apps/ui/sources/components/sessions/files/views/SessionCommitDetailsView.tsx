@@ -10,7 +10,7 @@ import {
     useSessions,
     useSessionProjectScmInFlightOperation,
     useSessionProjectScmSnapshot,
-    useSessionReviewCommentsDrafts,
+    useWorkspaceReviewCommentsDrafts,
     useSetting,
 } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
@@ -29,7 +29,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { buildDiffBlocks, buildDiffFileEntries } from '@/components/ui/code/model/diff/diffViewModel';
 import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
-import { useSessionReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useSessionReviewCommentDraftHandlers';
+import { useWorkspaceReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useWorkspaceReviewCommentDraftHandlers';
 import { useInlineUnifiedDiffReviewCommentsRenderer } from '@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewCommentsRenderer';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
@@ -38,6 +38,7 @@ import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabil
 import { useViewableItemIndices } from '@/components/ui/scroll/useViewableItemIndices';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { useScmDiffExpandedKeys } from '@/components/sessions/files/content/review/useScmDiffExpandedKeys';
+import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 
 export type SessionCommitDetailsViewProps = Readonly<{
     sessionId: string;
@@ -57,7 +58,8 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
     const constrainWidth = presentation === 'screen';
 
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
-    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true;
+    const reviewScope = useWorkspaceScopeForSession(sessionId);
+    const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true && Boolean(reviewScope);
     const scmSnapshot = useSessionProjectScmSnapshot(sessionId);
     const inFlightScmOperation = useSessionProjectScmInFlightOperation(sessionId);
     const canRevert = canRevertFromSnapshot(scmSnapshot);
@@ -114,8 +116,8 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
         projectPath: project?.key?.path ?? null,
     });
 
-    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId);
-    const reviewDraftHandlers = useSessionReviewCommentDraftHandlers(sessionId);
+    const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
+    const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
 
     const renderInlineUnifiedDiff = useInlineUnifiedDiffReviewCommentsRenderer({
         enabled: reviewCommentsEnabled,

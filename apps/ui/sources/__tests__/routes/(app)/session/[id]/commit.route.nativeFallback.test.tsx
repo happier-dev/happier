@@ -125,10 +125,7 @@ describe('CommitScreen native route fallback', () => {
         try {
             expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
             expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
-            expect(routerReplaceSpy).toHaveBeenLastCalledWith({
-                pathname: '/session/[id]/details',
-                params: { id: 'session-1', details: 'commit', sha: 'abc123', serverId: 'server-b' },
-            });
+            expect(routerReplaceSpy).toHaveBeenLastCalledWith('/session/session-1/details?serverId=server-b&details=commit&sha=abc123');
 
             mockShaParam = 'def456';
             routerMock.state.params = { id: 'session-1', sha: mockShaParam, serverId: mockServerIdParam };
@@ -140,14 +137,8 @@ describe('CommitScreen native route fallback', () => {
 
             expect(openDetailsTabSpy).toHaveBeenCalledTimes(2);
             expect(routerReplaceSpy).toHaveBeenCalledTimes(2);
-            expect(routerReplaceSpy).toHaveBeenNthCalledWith(1, {
-                pathname: '/session/[id]/details',
-                params: { id: 'session-1', details: 'commit', sha: 'abc123', serverId: 'server-b' },
-            });
-            expect(routerReplaceSpy).toHaveBeenNthCalledWith(2, {
-                pathname: '/session/[id]/details',
-                params: { id: 'session-1', details: 'commit', sha: 'def456', serverId: 'server-b' },
-            });
+            expect(routerReplaceSpy).toHaveBeenNthCalledWith(1, '/session/session-1/details?serverId=server-b&details=commit&sha=abc123');
+            expect(routerReplaceSpy).toHaveBeenNthCalledWith(2, '/session/session-1/details?serverId=server-b&details=commit&sha=def456');
         } finally {
             act(() => {
                 screen.tree.unmount();

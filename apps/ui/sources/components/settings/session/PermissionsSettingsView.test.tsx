@@ -11,6 +11,7 @@ const setPermissionModeApplyTiming = vi.fn();
 const setPermissionPromptSurface = vi.fn();
 const setDefaultPersistenceMode = vi.fn();
 const setDefaultPersistenceModeByTargetKey = vi.fn();
+const setRememberLastProjectSessionSelections = vi.fn();
 
 installSessionSettingsCommonModuleMocks({
     unistyles: async () => {
@@ -35,6 +36,7 @@ installSessionSettingsCommonModuleMocks({
                     if (name === 'permissionPromptSurface') return ['composer', setPermissionPromptSurface];
                     if (name === 'newSessionDefaultPersistenceModeV1') return ['persisted', setDefaultPersistenceMode];
                     if (name === 'newSessionDefaultPersistenceModeByTargetKeyV1') return [{}, setDefaultPersistenceModeByTargetKey];
+                    if (name === 'rememberLastProjectSessionSelections') return [true, setRememberLastProjectSessionSelections];
                     return [null, vi.fn()];
                 },
                 useSettings: () => ({ schemaVersion: 1, opencodeBackendMode: 'server' } as any),
@@ -106,6 +108,16 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 }));
 
 describe('PermissionsSettingsView', () => {
+    it('renders the remembered project session selection toggle', async () => {
+        const { PermissionsSettingsView } = await import('./PermissionsSettingsView');
+        const screen = await renderSettingsView(React.createElement(PermissionsSettingsView));
+
+        const row = screen.findRowByTitle('settingsSession.sessionCreation.rememberLastProjectSelectionsTitle');
+        expect(row).toBeTruthy();
+        screen.pressRowByTitle('settingsSession.sessionCreation.rememberLastProjectSelectionsTitle');
+        expect(setRememberLastProjectSessionSelections).toHaveBeenCalledWith(false);
+    });
+
     it('renders session storage defaults and updates both global and per-agent settings', async () => {
         const { PermissionsSettingsView } = await import('./PermissionsSettingsView');
         const screen = await renderSettingsView(React.createElement(PermissionsSettingsView));

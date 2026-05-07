@@ -20,6 +20,10 @@ export function projectCodexRolloutActions(
     const projected: CodexProjectedRolloutEvent[] = [];
 
     for (const action of actions) {
+        if (action.type === 'turn-lifecycle') {
+            continue;
+        }
+
         if (action.type === 'codex-session-id') {
             if (params.sidechainId === null) {
                 projected.push(action);

@@ -8,6 +8,12 @@ export type ScmBackendSelection = {
     mode: ScmRepoMode;
 };
 
+export type ScmProvisioningBackendSelection = {
+    backend: ScmBackend;
+    detection: ScmRepoDetection;
+    mode: ScmRepoMode | null;
+};
+
 export type ScmBackendSelectionInput = {
     cwd: string;
     workingDirectory: string;
@@ -86,9 +92,68 @@ export function createScmBackendRegistry(backends: readonly ScmBackend[]) {
         };
     }
 
+    async function selectProvisioningBackend(input: ScmBackendSelectionInput): Promise<ScmProvisioningBackendSelection | null> {
+        const detections = await detectAll({ cwd: input.cwd });
+        if (detections.length > 0) {
+            const preference = input.backendPreference;
+            if (preference?.kind === 'prefer') {
+                const preferredBackend = findBackendById(backends, preference.backendId);
+                const preferredDetection = detections.find((entry) => entry.backend.id === preferredBackend?.id);
+                if (
+                    preferredDetection
+                    && preferredDetection.detection.mode
+                    && isPreferenceAllowedForMode({
+                        backend: preferredDetection.backend,
+                        mode: preferredDetection.detection.mode,
+                    })
+                ) {
+                    return {
+                        backend: preferredDetection.backend,
+                        detection: preferredDetection.detection,
+                        mode: preferredDetection.detection.mode,
+                    };
+                }
+            }
+
+            const best = detections
+                .slice()
+                .sort((a, b) => {
+                    const modeScoreA = resolveModeSelectionScore({ backend: a.backend, mode: a.detection.mode! });
+                    const modeScoreB = resolveModeSelectionScore({ backend: b.backend, mode: b.detection.mode! });
+                    if (modeScoreA !== modeScoreB) {
+                        return modeScoreB - modeScoreA;
+                    }
+                    return modeRank(b.detection.mode!) - modeRank(a.detection.mode!);
+                })[0];
+            if (!best || !best.detection.mode) return null;
+
+            return {
+                backend: best.backend,
+                detection: best.detection,
+                mode: best.detection.mode,
+            };
+        }
+
+        const preferredBackend = input.backendPreference?.kind === 'prefer'
+            ? findBackendById(backends, input.backendPreference.backendId)
+            : null;
+        const backend = preferredBackend
+            ?? findBackendById(backends, 'git')
+            ?? backends.find((candidate) => candidate.repository)
+            ?? null;
+        if (!backend) return null;
+        const detection = await backend.detectRepo({ cwd: input.cwd });
+        return {
+            backend,
+            detection,
+            mode: detection.mode,
+        };
+    }
+
     return {
         listBackends: () => backends,
         selectBackend,
+        selectProvisioningBackend,
     };
 }
 

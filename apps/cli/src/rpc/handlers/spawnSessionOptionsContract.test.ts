@@ -10,10 +10,12 @@ describe('SpawnDaemonSessionRequestSchema', () => {
         mode: 'windows_terminal',
       },
       windowsRemoteSessionLaunchMode: 'windows_terminal',
+      windowsTerminalWindowName: 'happier-qa',
     });
 
     expect(parsed.terminal?.mode).toBe('windows_terminal');
     expect(parsed.windowsRemoteSessionLaunchMode).toBe('windows_terminal');
+    expect(parsed.windowsTerminalWindowName).toBe('happier-qa');
   });
 
   it('maps legacy experimentalCodexAcp requests onto canonical codexBackendMode', () => {

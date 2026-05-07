@@ -1,7 +1,16 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
+
+type MultiTextInputSelection = { start: number; end: number };
+type MultiTextInputState = { text: string; selection: MultiTextInputSelection };
+
+const multiTextInputHandleMocks = vi.hoisted(() => ({
+    blur: vi.fn(),
+    focus: vi.fn(),
+    setTextAndSelection: vi.fn(),
+}));
 
 installAgentInputCommonModuleMocks({
     reactNative: async () => {
@@ -84,6 +93,11 @@ vi.mock('@/agents/catalog/catalog', () => ({
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
     getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
+    getAgentBehavior: (agentId: string) => ({
+        sessionUsage: {
+            supportsExactContextUsageBadge: agentId !== 'codex' && agentId !== 'gemini',
+        },
+    }),
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
@@ -107,7 +121,23 @@ vi.mock('@/sync/domains/permissions/describeEffectivePermissionMode', () => ({
 }));
 
 vi.mock('@/components/ui/forms/MultiTextInput', () => ({
-    MultiTextInput: (props: Record<string, unknown>) => React.createElement('MultiTextInput', props, null),
+    MultiTextInput: React.forwardRef((props: Record<string, unknown>, ref) => {
+        React.useImperativeHandle(ref, () => ({
+            setTextAndSelection: (
+                text: string,
+                selection: MultiTextInputSelection,
+            ) => {
+                multiTextInputHandleMocks.setTextAndSelection(text, selection);
+                const onChangeText = props.onChangeText as ((value: string) => void) | undefined;
+                const onStateChange = props.onStateChange as ((state: MultiTextInputState) => void) | undefined;
+                onChangeText?.(text);
+                onStateChange?.({ text, selection });
+            },
+            focus: multiTextInputHandleMocks.focus,
+            blur: multiTextInputHandleMocks.blur,
+        }));
+        return React.createElement('MultiTextInput', props, null);
+    }),
 }));
 
 vi.mock('@/components/ui/forms/Switch', () => ({
@@ -190,6 +220,11 @@ vi.mock('@/sync/acp/configOptionsControl', () => ({
 }));
 
 describe('AgentInput (send button accessibility)', () => {
+    afterEach(() => {
+        featureEnabledState.voice = true;
+        vi.clearAllMocks();
+    });
+
     it('hides the voice icon when voice is disabled (no text)', async () => {
         featureEnabledState.voice = false;
         const { AgentInput } = await import('./AgentInput');
@@ -459,6 +494,26 @@ describe('AgentInput (send button accessibility)', () => {
 
         expect(onSend).toHaveBeenCalledTimes(1);
         expect(onChangeText).toHaveBeenCalledWith('');
+
+        await screen.unmount();
+    });
+
+    it('blurs the session composer when sending with text', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value="Hello world"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            autocompletePrefixes={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        screen.pressByTestId('session-composer-send');
+
+        expect(multiTextInputHandleMocks.blur).toHaveBeenCalledTimes(1);
 
         await screen.unmount();
     });

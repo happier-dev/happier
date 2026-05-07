@@ -34,6 +34,4 @@ export type BackgroundServiceRepairApplyRuntime = Readonly<{
   uid: number | null;
   userHomeDir: string;
   happierHomeDir: string;
-  nodePath: string;
-  entryPath: string;
 }>;

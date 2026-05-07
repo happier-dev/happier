@@ -1,13 +1,10 @@
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import {
   createPlaywrightSpawnOptions,
   parseHeartbeatArgs,
   runHeartbeatWrappedCommand,
   resolveSignalExitCode,
 } from './runPlaywrightWithHeartbeat.shared.mjs';
-
-function yarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-}
 
 const { config, passThrough } = parseHeartbeatArgs(process.argv);
 if (!config) {
@@ -17,13 +14,19 @@ if (!config) {
 }
 
 const childArgs = ['-s', 'playwright', 'test', '-c', config, ...passThrough];
+const invocation = resolveYarnCommandInvocation(childArgs);
 
 await runHeartbeatWrappedCommand({
   toolName: 'playwright',
   config,
-  command: yarnCommand(),
-  args: childArgs,
-  spawnOptions: createPlaywrightSpawnOptions(process.env),
+  command: invocation.command,
+  args: invocation.args,
+  spawnOptions: {
+    ...createPlaywrightSpawnOptions(process.env),
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
+  },
   resolveExitCode(result) {
     return typeof result.code === 'number' ? result.code : resolveSignalExitCode(result.signal);
   },

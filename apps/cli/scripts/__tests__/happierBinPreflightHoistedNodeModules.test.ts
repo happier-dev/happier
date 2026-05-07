@@ -143,6 +143,11 @@ describe('apps/cli bin/happier.mjs preflight', () => {
         readFileSync(join(process.cwd(), '..', '..', 'scripts', 'workspaces', 'syncBundledWorkspacePackages.mjs'), 'utf8'),
         'utf8',
       );
+      writeFileSync(
+        join(scriptsDir, 'vendorBundledWorkspaceRuntimeDependenciesFallback.mjs'),
+        readFileSync(join(process.cwd(), '..', '..', 'scripts', 'workspaces', 'vendorBundledWorkspaceRuntimeDependenciesFallback.mjs'), 'utf8'),
+        'utf8',
+      );
 
       writeFileSync(join(tmp, 'package.json'), JSON.stringify({ name: 'repo', private: true }), 'utf8');
       writeFileSync(join(tmp, 'yarn.lock'), '# lock\n', 'utf8');

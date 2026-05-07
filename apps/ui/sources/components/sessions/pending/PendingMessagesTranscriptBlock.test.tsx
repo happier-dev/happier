@@ -249,6 +249,21 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(flattenStyle(affordance!.props.style).position).toBe('absolute');
     });
 
+    it('uses the transcript markdown typography for pending message markdown rows', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        const markdownView = screen.findByType('MarkdownView' as any);
+        expect(markdownView.props.textStyle).toMatchObject({
+            fontSize: 16,
+            lineHeight: 24,
+        });
+    });
+
     it('renders a block header label that reads as a section header', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {

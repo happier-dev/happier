@@ -80,6 +80,7 @@ export async function handleAuthRequest(args: string[]): Promise<void> {
       publicKey: publicKeyB64,
       publicKeyB64Url,
       claimSecret: claimSecretB64Url,
+      serverId: configuration.activeServerId,
       serverUrl: configuration.serverUrl,
       publicServerUrl: configuration.publicServerUrl,
       webappUrl: configuration.webappUrl,

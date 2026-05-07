@@ -23,6 +23,10 @@ type LinkedProvider = {
 
 vi.mock('react-native-reanimated', () => ({}));
 
+vi.mock('@/components/navigation/mobile/chrome/MobileBottomChromeHost', () => ({
+    MobileBottomChromeHost: () => React.createElement('MobileBottomChromeHost'),
+}));
+
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: false }),
 }));
@@ -135,12 +139,14 @@ describe('RootLayout', () => {
             expect(screenNames).toContain('session/[id]/message/[messageId]');
             expect(screenNames).toContain('session/[id]/runs/new');
             expect(screenNames).toContain('session/[id]/runs/[runId]');
+            expect(screenNames).toContain('session/[id]/git');
+            expect(tree.findAllByType('MobileBottomChromeHost' as never)).toHaveLength(1);
         } finally {
             await tree?.unmount();
         }
     });
 
-    it('registers the dedicated this-computer setup route under machines settings', async () => {
+    it('delegates settings child routes to the nested settings layout', async () => {
         vi.resetModules();
         stubRootLayoutFeaturesFetch();
 
@@ -148,7 +154,8 @@ describe('RootLayout', () => {
         try {
             const screenNames = getScreenNames(tree);
 
-            expect(screenNames).toContain('settings/machines/this-computer');
+            expect(screenNames).toContain('settings');
+            expect(screenNames).not.toContain('settings/machines/this-computer');
         } finally {
             await tree?.unmount();
         }

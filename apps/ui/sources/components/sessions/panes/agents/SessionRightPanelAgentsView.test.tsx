@@ -6,11 +6,10 @@ import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
 
-
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const openDetailsTabSpy = vi.fn();
-const routerPushSpy = vi.fn();
+const routerPushSpy = vi.hoisted(() => vi.fn());
 let SessionRightPanelAgentsView: typeof import('./SessionRightPanelAgentsView').SessionRightPanelAgentsView;
 const sessionState = vi.hoisted(() => ({
     session: { id: 's1', metadata: { flavor: 'claude' } } as any,
@@ -36,6 +35,13 @@ const directSessionRuntimeState = vi.hoisted(() => ({
 }));
 
 installSessionDetailsPanelCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            router: { push: routerPushSpy },
+        });
+        return routerMock.module;
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -197,14 +203,6 @@ vi.mock('@/utils/platform/responsive', () => ({
     useDeviceType: () => 'tablet',
 }));
 
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
-    });
-    return routerMock.module;
-});
-
 describe('SessionRightPanelAgentsView', () => {
     beforeAll(async () => {
         ({ SessionRightPanelAgentsView } = await import('./SessionRightPanelAgentsView'));
@@ -247,14 +245,10 @@ describe('SessionRightPanelAgentsView', () => {
             }),
             { intent: 'preview' },
         );
-        await act(async () => {
-            screen.pressByTestId('session-subagent-open-full:execution_run:run_1');
-        });
+        await screen.pressByTestIdAsync('session-subagent-open-full:execution_run:run_1');
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/message/tool-msg-2');
 
-        await act(async () => {
-            screen.pressByTestId('session-subagent-open-advanced:execution_run:run_1');
-        });
+        await screen.pressByTestIdAsync('session-subagent-open-advanced:execution_run:run_1');
         expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/runs/run_1');
     });
 

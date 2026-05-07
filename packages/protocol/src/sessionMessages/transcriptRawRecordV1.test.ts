@@ -70,6 +70,20 @@ describe('TranscriptRawRecordV1Schema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('parses codex turn_aborted lifecycle records', () => {
+    const parsed = TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: {
+        type: 'codex',
+        data: {
+          type: 'turn_aborted',
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it('parses assistant content blocks with unknown types (forward compatibility)', () => {
     const parsed = TranscriptRawRecordV1Schema.safeParse({
       role: 'agent',

@@ -17,6 +17,7 @@ function createTestSessionMessages(messages: ReadonlyArray<Message>): SessionMes
         latestThinkingMessageId: null,
         latestThinkingMessageActivityAtMs: null,
         messagesVersion: 0,
+        lastAppliedAgentStateVersion: null,
         isLoaded: true,
     };
 }

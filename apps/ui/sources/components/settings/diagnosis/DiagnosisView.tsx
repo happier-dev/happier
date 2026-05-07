@@ -306,7 +306,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         subtitle={<Text style={{ color: theme.colors.textSecondary }}>{activeServerUrl || t('status.unknown')}</Text>}
                         detail={activeServerSnapshot.serverId}
                         icon={<Ionicons name="server-outline" size={24} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push('/server')}
+                        onPress={() => router.push('/settings/server')}
                     />
                     <Item
                         title={t('diagnosis.overview.account')}

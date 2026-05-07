@@ -141,7 +141,7 @@ function coerceProfile(value: any): ServerProfile | null {
   };
 }
 
-function findProfileIdByIdOrName(servers: Record<string, any>, identifierRaw: string): string | null {
+function findProfileIdByIdentifier(servers: Record<string, any>, identifierRaw: string): string | null {
   const identifier = String(identifierRaw ?? '').trim();
   if (!identifier) return null;
   if (identifier in servers) return identifier;
@@ -153,7 +153,7 @@ function findProfileIdByIdOrName(servers: Record<string, any>, identifierRaw: st
     if (profile.id.toLowerCase() === lowered) return id;
     if (profile.name.toLowerCase() === lowered) return id;
   }
-  return null;
+  return findProfileIdByComparableUrl(servers, identifier);
 }
 
 function findProfileIdByComparableUrl(servers: Record<string, any>, serverUrlRaw: string): string | null {
@@ -235,7 +235,7 @@ export async function getServerProfile(identifierRaw: string): Promise<ServerPro
   const identifier = asStringId(identifierRaw);
   const settings: any = await readSettings();
   const servers = settings?.servers && typeof settings.servers === 'object' ? settings.servers : {};
-  const resolvedId = findProfileIdByIdOrName(servers as any, identifier);
+  const resolvedId = findProfileIdByIdentifier(servers as any, identifier);
   if (!resolvedId) {
     throw new Error(`Server profile not found: ${identifier}`);
   }
@@ -262,7 +262,7 @@ export async function useServerProfile(idRaw: string): Promise<ServerProfile> {
   const now = Date.now();
   await updateSettings((current: any) => {
     const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
-    const resolvedId = findProfileIdByIdOrName(servers as any, identifier);
+    const resolvedId = findProfileIdByIdentifier(servers as any, identifier);
     if (!resolvedId) {
       throw new Error(`Server profile not found: ${identifier}`);
     }
@@ -434,7 +434,7 @@ export async function removeServerProfile(
   const before = await readSettings();
   const activeServerId = sanitizeServerIdForFilesystem((before as any)?.activeServerId ?? 'cloud', 'cloud');
   const servers = (before as any)?.servers && typeof (before as any).servers === 'object' ? (before as any).servers : {};
-  const resolvedId = findProfileIdByIdOrName(servers, identifier);
+  const resolvedId = findProfileIdByIdentifier(servers, identifier);
   if (!resolvedId) {
     throw new Error(`Server profile not found: ${identifier}`);
   }

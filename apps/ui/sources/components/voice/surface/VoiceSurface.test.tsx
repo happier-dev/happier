@@ -221,6 +221,25 @@ describe('VoiceSurface', () => {
     expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.tapToEnd' }).props.disabled).toBe(false);
   });
 
+  it('does not animate voice bars for stale speaking mode after disconnect', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'realtime_elevenlabs',
+      sessionId: null,
+      status: 'disconnected',
+      mode: 'speaking',
+      canStop: false,
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    expect(screen.findAllByType('VoiceBars' as any)).toHaveLength(0);
+  });
+
   it('opens the hidden voice conversation session from the header icon when a binding exists', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;

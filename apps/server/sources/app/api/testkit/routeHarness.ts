@@ -120,15 +120,21 @@ export function getRouteEntry(
 }
 
 export function createReplyStub() {
+    const headers = new Map<string, string>();
     const reply: any = {
         sent: false,
         statusCode: 200,
+        headers,
         send: vi.fn((payload: any) => {
             reply.sent = true;
             return payload;
         }),
         code: vi.fn((statusCode: number) => {
             reply.statusCode = statusCode;
+            return reply;
+        }),
+        header: vi.fn((name: string, value: string) => {
+            headers.set(name.toLowerCase(), value);
             return reply;
         }),
     };

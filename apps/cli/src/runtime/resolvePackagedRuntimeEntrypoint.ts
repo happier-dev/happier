@@ -9,13 +9,16 @@ import {
 import { projectPath } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/runtime/js/isEmbeddedBunBundlePath';
 
-const MANAGED_CLI_SHIM_INSTALL_ROOTS = new Map(
+const MANAGED_CLI_SHIM_INSTALLS = new Map(
   (['stable', 'preview', 'publicdev'] as const).flatMap((channel) => {
     const variant = resolveFirstPartyComponentPublicReleaseVariant({
       componentId: 'happier-cli',
       channel,
     });
-    return variant.installShims.map((shimName) => [normalizeExecutableBase(shimName), variant.installRootName] as const);
+    return variant.installShims.map((shimName) => [
+      normalizeExecutableBase(shimName),
+      { channel, installRootName: variant.installRootName },
+    ] as const);
   }),
 );
 
@@ -40,14 +43,38 @@ function resolveRuntimeRootFromBinaryPath(pathLike: string): string | null {
   return dirname(normalized);
 }
 
+function resolveManagedInstalledCliProjectRootForChannel(
+  channel: 'stable' | 'preview' | 'publicdev',
+): string | null {
+  try {
+    const paths = resolveInstalledFirstPartyComponentPaths({
+      componentId: 'happier-cli',
+      channel,
+    });
+    // Probe — and return — the JUNCTION-FREE versioned path. On Windows the
+    // `<installRoot>/current` junction is unreliable to traverse for fs APIs
+    // (see `resolveJunctionFreeCurrentPath` for the kernel-level reason), so
+    // checking `existsSync(paths.nodeEntrypointPath)` returns `false` even
+    // when the entrypoint is present at the junction's target. That used to
+    // make this resolver fall through to wrong-channel fallbacks when running
+    // from a bundled JS runtime.
+    if (paths.resolvedNodeEntrypointPath && existsSync(paths.resolvedNodeEntrypointPath)) {
+      return paths.resolvedCurrentPath;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function resolveRuntimeRootFromInstalledShimPath(pathLike: string): string | null {
   const normalized = normalizePathLike(pathLike);
   if (!normalized || isEmbeddedBunBundlePath(normalized) || isJavaScriptRuntimeExecutable(normalized)) {
     return null;
   }
 
-  const installRootName = MANAGED_CLI_SHIM_INSTALL_ROOTS.get(normalizeExecutableBase(normalized));
-  if (!installRootName) {
+  const shimInstall = MANAGED_CLI_SHIM_INSTALLS.get(normalizeExecutableBase(normalized));
+  if (!shimInstall) {
     return null;
   }
 
@@ -56,7 +83,8 @@ function resolveRuntimeRootFromInstalledShimPath(pathLike: string): string | nul
     return null;
   }
 
-  return join(dirname(binaryDir), installRootName, 'current');
+  return resolveManagedInstalledCliProjectRootForChannel(shimInstall.channel)
+    ?? join(dirname(binaryDir), shimInstall.installRootName, 'current');
 }
 
 function resolveRuntimeRootFromScriptPath(pathLike: string): string | null {
@@ -84,27 +112,20 @@ function resolveRuntimeRootFromScriptPath(pathLike: string): string | null {
 function resolveManagedInstalledCliProjectRoot(): string | null {
   try {
     const channel = readDefaultManagedReleaseChannelSync();
-    const paths = resolveInstalledFirstPartyComponentPaths({
-      componentId: 'happier-cli',
-      channel,
-    });
-    if (paths.nodeEntrypointPath && existsSync(paths.nodeEntrypointPath)) {
-      return paths.currentPath;
-    }
+    return resolveManagedInstalledCliProjectRootForChannel(channel);
   } catch {
     return null;
   }
-  return null;
 }
 
 export function resolvePackagedRuntimeProjectRoots(): string[] {
   const roots: string[] = [];
   const candidateRoots = [
-    resolveManagedInstalledCliProjectRoot(),
     resolveRuntimeRootFromInstalledShimPath(process.execPath),
+    resolveRuntimeRootFromInstalledShimPath(process.argv[0]),
+    resolveManagedInstalledCliProjectRoot(),
     resolveRuntimeRootFromBinaryPath(process.execPath),
     resolveRuntimeRootFromScriptPath(process.argv[1]),
-    resolveRuntimeRootFromInstalledShimPath(process.argv[0]),
     resolveRuntimeRootFromBinaryPath(process.argv[0]),
     (() => {
       const resolvedProjectPath = projectPath();
@@ -120,7 +141,10 @@ export function resolvePackagedRuntimeProjectRoots(): string[] {
   return [...new Set(roots)];
 }
 
-export function resolvePackagedRuntimeEntrypoint(relativePath: string): string {
+export function resolvePackagedRuntimeEntrypoint(
+  relativePath: string,
+  options: Readonly<{ packageDistOnly?: boolean }> = {},
+): string {
   const normalizedRelativePath = String(relativePath ?? '').trim();
   if (!normalizedRelativePath) {
     throw new Error('relativePath is required');
@@ -129,6 +153,13 @@ export function resolvePackagedRuntimeEntrypoint(relativePath: string): string {
   const projectRoots = resolvePackagedRuntimeProjectRoots();
 
   for (const root of projectRoots) {
+    if (options.packageDistOnly) {
+      const candidate = join(root, 'package-dist', normalizedRelativePath);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+      continue;
+    }
     const candidates = [
       join(root, 'package-dist', normalizedRelativePath),
       join(root, 'dist', normalizedRelativePath),

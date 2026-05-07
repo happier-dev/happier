@@ -92,6 +92,7 @@ vi.mock('./api/session/apiChanges', () => ({
             nextCursor: '0',
         };
     }),
+    fetchCurrentChangesCursor: vi.fn(async () => ({ status: 'ok' as const, cursor: '0' })),
 }));
 
 describe('sync resumeSync background interruption', () => {
@@ -135,9 +136,11 @@ describe('sync resumeSync background interruption', () => {
 
         storage.setState((state) => ({ ...state, profile: { ...(state.profile ?? {}), id: 'test-account' } as any }), true);
         (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0In0.sig', secret: 'secret' };
+        (sync as any).serverID = 'test-account';
         (sync as any).encryption = {
             decryptEncryptionKey: async () => null,
             initializeSessions: async () => {},
+            initializeMachines: async () => {},
             getSessionEncryption: () => null,
         };
         (sync as any).isForeground = true;
@@ -165,5 +168,48 @@ describe('sync resumeSync background interruption', () => {
         expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual(
             expect.arrayContaining([expect.stringContaining('/v2/sessions')]),
         );
+    }, 60_000);
+
+    it('does not checkpoint an in-flight changes cursor after the server scope is reset', async () => {
+        const { fetchChanges } = await import('./api/session/apiChanges');
+        vi.mocked(fetchChanges).mockImplementationOnce(async () => {
+            await fetchChangesBarrier.promise;
+            return {
+                status: 'ok' as const,
+                changes: [],
+                nextCursor: 'stale-server-tail',
+            };
+        });
+
+        const { loadChangesCursor } = await import('./domains/state/persistence');
+        const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { storage } = await import('./domains/state/storage');
+        const { sync } = await import('./sync');
+
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53288', scope: 'tab' });
+
+        storage.setState((state) => ({ ...state, profile: { ...(state.profile ?? {}), id: 'test-account' } as any }), true);
+        (sync as any).serverID = 'test-account';
+        (sync as any).credentials = { token: 'hdr.eyJzdWIiOiJ0ZXN0LWFjY291bnQifQ.sig', secret: 'secret' };
+        (sync as any).encryption = {
+            decryptEncryptionKey: async () => null,
+            initializeMachines: async () => {},
+            initializeSessions: async () => {},
+            getSessionEncryption: () => null,
+        };
+        (sync as any).isForeground = true;
+        (sync as any).lastSocketDisconnectedAtMs = Date.now() - 1000;
+
+        const promise = (sync as any).resumeSync('socket-reconnect') as Promise<void>;
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+        (sync as unknown as { disconnectServer: () => void }).disconnectServer();
+        upsertAndActivateServer({ serverUrl: 'http://localhost:53289', scope: 'tab' });
+        const switchedServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+
+        fetchChangesBarrier.resolve();
+        await promise;
+
+        expect(loadChangesCursor({ serverScope: switchedServerId, accountId: 'test-account' })).toBeNull();
     }, 60_000);
 });

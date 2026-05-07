@@ -170,7 +170,12 @@ describe('happier server add guided flow', () => {
       delete process.env.HAPPIER_WEBAPP_URL;
       reloadConfiguration();
 
-      await handleServerCommand(['add']);
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        await handleServerCommand(['add']);
+      } finally {
+        output.restore();
+      }
 
       const settings = await readSettings();
       expect(settings.activeServerId).toBe('Company');
@@ -214,7 +219,12 @@ describe('happier server add guided flow', () => {
       delete process.env.HAPPIER_WEBAPP_URL;
       reloadConfiguration();
 
-      await handleServerCommand(['add']);
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        await handleServerCommand(['add']);
+      } finally {
+        output.restore();
+      }
 
       const settings = await readSettings();
       expect(settings.activeServerId).toBe('Local');

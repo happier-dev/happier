@@ -8,6 +8,8 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
+/ios/
+/android/
 apps/ui/ios/
 apps/ui/android/
 packages/*/dist/
@@ -53,6 +55,7 @@ apps/server/output/
 
 # typescript
 *.tsbuildinfo
+packages/*/.tsconfig.build.*.json
 packages/protocol/src/features/embeddedFeaturePolicies.generated.ts
 
 .claude/settings.local.json
@@ -104,10 +107,18 @@ _.env.pipeline.production.local
 
 # Local probe/debug scratch files
 /apps/cli/tmp-*
+/.fallow/
+/.reviews/
 
 # Local QA screenshots
 /authoring-qa-*.png
+/lane-*-console-warnings.txt
+/markdown-reveal-qa-*.png
+/permission-refinement-*.png
+/pets-stack-welcome.png
+/transcript-anchor-qa-*
 /.codex-tmp
 /apps/stack/output
 
 /cli/.dist*
+/.playwright-mcp

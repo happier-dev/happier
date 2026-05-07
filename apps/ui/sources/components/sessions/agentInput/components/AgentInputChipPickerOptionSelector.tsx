@@ -33,6 +33,7 @@ export function AgentInputChipPickerOptionSelector(
 ) {
   const { theme } = useUnistyles();
   const styles = stylesheet;
+  const selectedIndicatorColor = theme.dark ? theme.colors.text : theme.colors.button.primary.background;
 
   if (props.variant === "stacked") {
     return (
@@ -66,7 +67,7 @@ export function AgentInputChipPickerOptionSelector(
                 onPress={() => {
                   props.onFocusOption(option.id);
                 }}
-                checkColor={theme.colors.button.primary.background}
+                checkColor={selectedIndicatorColor}
               />
             ))}
           </View>
@@ -187,15 +188,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface,
     ...shadowLevelStyle(theme.colors.shadowLevels[1]),
   },
-	  optionRowHovered: {
-	    backgroundColor: (() => {
-	      try {
-	        return Color(theme.colors.surface).alpha(0.8).rgb().string();
-	      } catch {
-	        return theme.colors.surfacePressed;
-	      }
-	    })(),
-	  },
+  optionRowHovered: {
+    backgroundColor: (() => {
+      try {
+        return Color(theme.colors.surface).alpha(0.8).rgb().string();
+      } catch {
+        return theme.colors.surfacePressed;
+      }
+    })(),
+  },
   optionRowPressed: {
     opacity: 0.82,
   },

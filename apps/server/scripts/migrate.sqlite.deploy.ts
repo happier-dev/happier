@@ -1,24 +1,9 @@
-import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { applyLightDefaultEnv, resolveLightSqliteDatabaseUrl } from "../sources/flavors/light/env";
 import { resolveSqliteDatabaseFilePath } from "../sources/flavors/light/sqliteMigrations";
 import { requireLightDataDir } from "./migrate.light.deployPlan";
-
-function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            env: env as Record<string, string>,
-            stdio: "inherit",
-            shell: false,
-        });
-        child.on("error", reject);
-        child.on("exit", (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`${cmd} exited with code ${code}`));
-        });
-    });
-}
+import { runCommand } from "./runCommand";
 
 function ensureSqliteDatabaseUrl(env: NodeJS.ProcessEnv): void {
     const raw = env.DATABASE_URL?.trim();
@@ -42,14 +27,14 @@ async function main() {
     const dataDir = requireLightDataDir(env);
     await mkdir(dataDir, { recursive: true });
 
-    await run("yarn", ["-s", "schema:sync", "--quiet"], env);
+    await runCommand("yarn", ["-s", "schema:sync", "--quiet"], env);
 
     ensureSqliteDatabaseUrl(env);
     await ensureSqliteDbDir(env);
     // Work around a Prisma CLI behavior where SQLite migrate errors can surface as a blank
     // "Schema engine error:" on some Node/engine combinations. Enabling Rust logging restores
     // normal output and behavior.
-    await run("yarn", ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"], {
+    await runCommand("yarn", ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"], {
         ...env,
         RUST_LOG: "info",
     });

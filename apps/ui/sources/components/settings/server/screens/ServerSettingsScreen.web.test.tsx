@@ -115,7 +115,7 @@ function setController(overrides: Partial<any>) {
 }
 
 describe('ServerSettingsScreen web gating', () => {
-    it('keeps the web relay settings screen free of desktop-only local control surfaces', async () => {
+    it('omits desktop-only local control surfaces from the web Relay settings screen', async () => {
         setController({ relayDriftBanner: null });
         const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
         const screen = await renderScreen(React.createElement(ServerSettingsScreen));
@@ -123,8 +123,6 @@ describe('ServerSettingsScreen web gating', () => {
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as any)).toHaveLength(0);
         expect(screen.findAllByType('LocalTailscaleSecureAccessSection' as any)).toHaveLength(0);
         const notice = screen.findByTestId('settings.server.localControl.desktopOnlyNotice');
-        expect(notice).toBeTruthy();
-        expect(notice?.props.title).toBe('setupOnboarding.webDesktopOnlyTitle');
-        expect(notice?.props.subtitle).toBe('setupOnboarding.webDesktopOnlyBody');
+        expect(notice).toBeNull();
     });
 });

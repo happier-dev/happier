@@ -1,6 +1,6 @@
 import { resolve, dirname } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
 
 import { runManagedChildCommand, resolveSignalExitCode } from './managedChildLifecycle.mjs';
 
@@ -10,24 +10,19 @@ function resolveRepoRoot() {
   return resolve(here, '..', '..', '..');
 }
 
-function resolveTsxBin(repoRoot) {
-  const candidates = [
-    resolve(repoRoot, 'node_modules', '.bin', 'tsx'),
-    resolve(repoRoot, 'node_modules', '.bin', 'tsx.cmd'),
-    resolve(repoRoot, 'packages', 'tests', 'node_modules', '.bin', 'tsx'),
-    resolve(repoRoot, 'packages', 'tests', 'node_modules', '.bin', 'tsx.cmd'),
-  ];
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
+function resolveTsxImportEntrypoint() {
+  try {
+    const req = createRequire(import.meta.url);
+    req.resolve('tsx/package.json');
+    return req.resolve('tsx');
+  } catch {
+    return null;
   }
-
-  return null;
 }
 
 const repoRoot = resolveRepoRoot();
-const tsxBin = resolveTsxBin(repoRoot);
-if (!tsxBin) {
+const tsxImportEntrypoint = resolveTsxImportEntrypoint();
+if (!tsxImportEntrypoint) {
   // eslint-disable-next-line no-console
   console.error('[tests] Missing `tsx` dependency. Run `yarn install` and retry.');
   process.exit(1);
@@ -36,8 +31,8 @@ if (!tsxBin) {
 const cliPath = resolve(repoRoot, 'packages', 'tests', 'src', 'testkit', 'maestro', 'mobileMaestroCli.ts');
 
 const result = await runManagedChildCommand({
-  command: tsxBin,
-  args: [cliPath, ...process.argv.slice(2)],
+  command: process.execPath,
+  args: ['--import', tsxImportEntrypoint, cliPath, ...process.argv.slice(2)],
   spawnOptions: {
     stdio: 'inherit',
     env: process.env,

@@ -63,7 +63,7 @@ describe('AgentStateRequestStore', () => {
         );
     });
 
-    it('cancels all outstanding requests', () => {
+    it('cancels all outstanding requests with an optional terminal decision', () => {
         const session = new FakeSession();
         const store = new AgentStateRequestStore({
             session,
@@ -85,15 +85,16 @@ describe('AgentStateRequestStore', () => {
 
         store.cancelAllRequests({
             reason: 'Session ended',
+            decision: 'abort',
         });
 
         expect(Object.keys(session.agentState.requests ?? {})).toEqual([]);
         expect(Object.keys(session.agentState.completedRequests ?? {}).sort()).toEqual(['req-1', 'req-2']);
         expect(session.agentState.completedRequests!['req-1']).toEqual(
-            expect.objectContaining({ status: 'canceled', reason: 'Session ended' }),
+            expect.objectContaining({ status: 'canceled', reason: 'Session ended', decision: 'abort' }),
         );
         expect(session.agentState.completedRequests!['req-2']).toEqual(
-            expect.objectContaining({ status: 'canceled', reason: 'Session ended' }),
+            expect.objectContaining({ status: 'canceled', reason: 'Session ended', decision: 'abort' }),
         );
     });
 });

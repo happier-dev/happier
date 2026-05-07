@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createTurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import {
   createCodexMcpMessageHandler,
   forwardCodexErrorToUi,
@@ -57,6 +58,46 @@ describe('forwardCodexErrorToUi', () => {
 });
 
 describe('createCodexMcpMessageHandler', () => {
+  it('tracks the latest cumulative assistant message for the current task', () => {
+    let thinking = false;
+    let currentTaskId: string | null = null;
+    const tracker = createTurnAssistantPreviewTracker();
+    const session = {
+      sendAgentMessage: vi.fn(),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendCodexMessage: vi.fn(),
+      sendSessionEvent: vi.fn(),
+      keepAlive: vi.fn(),
+    };
+    const handler = createCodexMcpMessageHandler({
+      logger: { debug: vi.fn() },
+      session,
+      messageBuffer: { addMessage: vi.fn() },
+      sendReady: vi.fn(),
+      publishCodexThreadIdToMetadata: vi.fn(),
+      diffProcessor: { processDiff: vi.fn() },
+      getCurrentTaskId: () => currentTaskId,
+      setCurrentTaskId: (next: string | null) => {
+        currentTaskId = next;
+      },
+      getThinking: () => thinking,
+      setThinking: (next: boolean) => {
+        thinking = next;
+      },
+      turnAssistantPreviewTracker: tracker,
+    });
+
+    handler({ type: 'task_started' });
+    handler({ type: 'agent_message', message: 'Hello' });
+    handler({ type: 'agent_message', message: 'Hello from Codex' });
+
+    expect(tracker.getPreview()).toBe('Hello from Codex');
+
+    handler({ type: 'task_started' });
+
+    expect(tracker.getPreview()).toBeNull();
+  });
+
   it('logs MCP message shapes without leaking string payloads', () => {
     let thinking = false;
     let currentTaskId: string | null = null;

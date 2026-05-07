@@ -5,12 +5,18 @@ import { spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 
+import { resolveYarnCommandInvocation } from '../../../../../../scripts/workspaces/execYarnCommand.mjs';
+
 function runBuildStep(args: string[], label: string): void {
-  const result = spawnSync('yarn', args, {
+  const invocation = resolveYarnCommandInvocation(args);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: process.cwd(),
     env: { ...process.env },
     encoding: 'utf-8',
     timeout: 180_000,
+    ...(invocation.windowsVerbatimArguments
+      ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+      : {}),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {

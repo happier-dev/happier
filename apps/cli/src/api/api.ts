@@ -35,6 +35,7 @@ import type {
   SealedConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
 import { resolveSessionCreateEncryptionMode } from '@/api/session/resolveSessionCreateEncryptionMode';
+import { createScmConnectedAccountCredentialResolver } from './connectedServices/scmConnectedAccountCredentialResolver';
 
 export class MachineIdConflictError extends Error {
   readonly machineId: string;
@@ -399,7 +400,16 @@ export class ApiClient {
       serviceLabel?: string;
     }>,
   ): ApiMachineClient {
-    return new ApiMachineClient(this.credential.token, machine, ownershipMetadata);
+    return new ApiMachineClient(this.credential.token, machine, ownershipMetadata, {
+      connectedAccounts: this.createConnectedAccountCredentialResolver(),
+    });
+  }
+
+  private createConnectedAccountCredentialResolver() {
+    return createScmConnectedAccountCredentialResolver({
+      credentials: this.credential,
+      api: this,
+    });
   }
 
   push(): PushNotificationClient {

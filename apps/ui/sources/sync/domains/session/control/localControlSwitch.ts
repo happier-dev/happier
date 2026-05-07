@@ -19,11 +19,9 @@ export function shouldRenderChatTimelineForSession(opts: {
     pendingMessagesCount: number;
     controlledByUser: boolean;
     forceRenderFooter?: boolean;
-    showLocalControlFooter?: boolean;
 }): boolean {
     return opts.committedMessagesCount > 0
         || opts.pendingMessagesCount > 0
         || opts.controlledByUser === true
-        || opts.showLocalControlFooter === true
         || opts.forceRenderFooter === true;
 }

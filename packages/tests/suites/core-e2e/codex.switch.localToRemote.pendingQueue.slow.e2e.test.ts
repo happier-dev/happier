@@ -29,6 +29,7 @@ import {
 
 const run = createRunDirs({ runLabel: 'core' });
 type RemoteBackend = 'acp' | 'appServer';
+type SwitchTrigger = 'rpc' | 'queuedMessage';
 const requireFromRepoRoot = createRequire(import.meta.url);
 
 type DecryptedSessionMetadata = Readonly<{ codexSessionId?: string }>;
@@ -68,12 +69,19 @@ function readAcpAgentMessage(value: unknown): DecryptedAcpAgentMessage | null {
 
 async function runLocalToRemotePendingSwitchScenario(params: Readonly<{
   remoteBackend: RemoteBackend;
+  localTurnLifecycle?: 'idle' | 'active';
+  switchTrigger?: SwitchTrigger;
 }>): Promise<void> {
-  const testName = params.remoteBackend === 'appServer'
+  const activeLocalTurn = params.localTurnLifecycle === 'active';
+  const switchTrigger = params.switchTrigger ?? 'rpc';
+  const testName = activeLocalTurn
+    ? 'codex-switch-local-to-remote-pending-active-app-server'
+    : params.remoteBackend === 'appServer'
     ? 'codex-switch-local-to-remote-pending-app-server'
     : 'codex-switch-local-to-remote-pending';
   const testDir = run.testDir(testName);
   const startedAt = new Date().toISOString();
+  const taskCompleteSignalPath = resolve(join(testDir, 'complete-local-codex-turn'));
 
   let server: StartedServer | null = null;
   let proc: SpawnedProcess | null = null;
@@ -146,6 +154,16 @@ function write(line) {
 
 write(JSON.stringify({ type: 'session_meta', payload: { id, timestamp: new Date().toISOString(), cwd: process.cwd() } }));
 
+if (process.env.HAPPIER_E2E_CODEX_LOCAL_TASK_ACTIVE === '1') {
+  write(JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: id } }));
+  const completeSignalPath = process.env.HAPPIER_E2E_CODEX_LOCAL_TASK_COMPLETE_PATH;
+  const completePoll = setInterval(() => {
+    if (!completeSignalPath || !fs.existsSync(completeSignalPath)) return;
+    write(JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: id } }));
+    clearInterval(completePoll);
+  }, 50);
+}
+
 process.on('SIGTERM', () => process.exit(0));
 setInterval(() => {}, 1000);
 `,
@@ -191,6 +209,12 @@ setInterval(() => {}, 1000);
       HAPPIER_CODEX_TUI_BIN: fakeCodexPath,
       HAPPIER_CODEX_SESSIONS_DIR: codexSessionsDir,
       HAPPIER_E2E_CODEX_SESSION_ID: codexSessionId,
+      ...(activeLocalTurn
+        ? {
+            HAPPIER_E2E_CODEX_LOCAL_TASK_ACTIVE: '1',
+            HAPPIER_E2E_CODEX_LOCAL_TASK_COMPLETE_PATH: taskCompleteSignalPath,
+          }
+        : {}),
       ...(params.remoteBackend === 'acp'
         ? {
             HAPPIER_EXPERIMENTAL_CODEX_ACP: '1',
@@ -276,7 +300,31 @@ setInterval(() => {}, 1000);
       );
     }, { timeoutMs: 20_000 });
 
-    await expect(requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 25_000 })).resolves.toBe(true);
+    if (activeLocalTurn) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const snapBeforeComplete = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+      const agentStateBeforeComplete = snapBeforeComplete.agentState
+        ? readAgentState(decryptLegacyBase64Normalized(snapBeforeComplete.agentState, secret))
+        : null;
+      expect(agentStateBeforeComplete?.controlledByUser).toBe(true);
+
+      const pendingBeforeComplete = await listPendingQueueV2({
+        baseUrl: serverBaseUrl,
+        token: auth.token,
+        sessionId,
+        timeoutMs: 20_000,
+      });
+      expect(pendingBeforeComplete.status).toBe(200);
+      expect(pendingBeforeComplete.data?.pending).toEqual(expect.arrayContaining([
+        expect.objectContaining({ localId: pendingLocalId, status: 'queued' }),
+      ]));
+
+      await writeFile(taskCompleteSignalPath, 'complete', 'utf8');
+    }
+
+    if (switchTrigger === 'rpc') {
+      await expect(requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 25_000 })).resolves.toBe(true);
+    }
 
     await waitFor(async () => {
       const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
@@ -375,5 +423,13 @@ describe('core e2e: Codex local→remote switch drains pending UI message', () =
 
   it('switches to app-server remote after a pending message is enqueued, then drains that message through the app-server runtime', async () => {
     await runLocalToRemotePendingSwitchScenario({ remoteBackend: 'appServer' });
+  }, 240_000);
+
+  it('waits for an active local rollout task to complete before automatically draining a queued message through app-server remote', async () => {
+    await runLocalToRemotePendingSwitchScenario({
+      remoteBackend: 'appServer',
+      localTurnLifecycle: 'active',
+      switchTrigger: 'queuedMessage',
+    });
   }, 240_000);
 });

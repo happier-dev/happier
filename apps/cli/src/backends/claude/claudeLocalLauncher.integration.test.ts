@@ -315,6 +315,47 @@ describe('claudeLocalLauncher', () => {
     expect(result).toEqual({ type: 'exit', code: 0 });
   });
 
+  it('arms the pending-queue watcher only after the remote→local discard gate completes', async () => {
+    vi.useFakeTimers();
+    const { session, client } = createLocalHarness();
+    const discardDeferred = createDeferred<number>();
+    let pendingCount = 1;
+
+    const previousE2e = process.env.HAPPIER_E2E_PROVIDERS;
+    process.env.HAPPIER_E2E_PROVIDERS = '1';
+
+    client.peekPendingMessageQueueV2Count = vi.fn(async () => pendingCount);
+    client.discardPendingMessageQueueV2All = vi.fn(async () => {
+      const discarded = await discardDeferred.promise;
+      pendingCount = 0;
+      return discarded;
+    });
+
+    mockClaudeLocal.mockImplementationOnce(async () => {});
+
+    try {
+      const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+      const launcherPromise = claudeLocalLauncher(session, { entry: 'switch' });
+
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+
+      expect(client.peekPendingMessageQueueV2Count).toHaveBeenCalledTimes(1);
+      expect(mockClaudeLocal).not.toHaveBeenCalled();
+
+      discardDeferred.resolve(1);
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(launcherPromise).resolves.toEqual({ type: 'exit', code: 0 });
+      expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+      expect(client.peekPendingMessageQueueV2Count).toHaveBeenCalledTimes(2);
+    } finally {
+      process.env.HAPPIER_E2E_PROVIDERS = previousE2e;
+      vi.useRealTimers();
+    }
+  });
+
   it('adopts permission mode metadata updates during local mode for future spawns', async () => {
     const metadataSnapshot: MetadataSnapshot = {
       permissionMode: 'default',
@@ -346,6 +387,135 @@ describe('claudeLocalLauncher', () => {
     await abortHandler();
 
     await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
+  });
+
+  it('defers UI-triggered remote switch until the active local Claude turn settles', async () => {
+    vi.useFakeTimers();
+    const { session } = createLocalHarness();
+    let scannerOptions: SessionScannerOptions | null = null;
+    let abortObserved = false;
+    const localStarted = createDeferred<void>();
+
+    mockCreateSessionScanner.mockImplementation(async (opts: SessionScannerOptions) => {
+      scannerOptions = opts;
+      return createSessionScannerStub();
+    });
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      localStarted.resolve(undefined);
+      await waitForAbort(opts.abort);
+      abortObserved = true;
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const launcherPromise = claudeLocalLauncher(session);
+
+    await localStarted.promise;
+    expect(scannerOptions).not.toBeNull();
+    session.onSessionFound('sid1', hookWithTranscript('/tmp/sid1.jsonl'));
+
+    scannerOptions!.onMessage({
+      type: 'user',
+      uuid: 'user_prompt_1',
+      message: { content: 'do work' },
+    } as any);
+
+    session.queue.push('queued from ui', defaultMode);
+    await Promise.resolve();
+    expect(abortObserved).toBe(false);
+
+    scannerOptions!.onMessage({
+      type: 'assistant',
+      uuid: 'assistant_draft',
+      isSidechain: false,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'draft' }],
+        stop_reason: 'end_turn',
+      },
+    } as any);
+    await vi.advanceTimersByTimeAsync(250);
+    scannerOptions!.onMessage({
+      type: 'user',
+      uuid: 'stop_feedback',
+      isMeta: true,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Stop hook feedback:\nPlease finish.' }],
+      },
+    } as any);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(abortObserved).toBe(false);
+
+    scannerOptions!.onMessage({
+      type: 'assistant',
+      uuid: 'assistant_final',
+      isSidechain: false,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'final' }],
+        stop_reason: 'end_turn',
+      },
+    } as any);
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
+    expect(abortObserved).toBe(true);
+  });
+
+  it('defers server-pending-queue remote switch until the active local Claude turn settles', async () => {
+    vi.useFakeTimers();
+    const { session, client } = createLocalHarness();
+    let scannerOptions: SessionScannerOptions | null = null;
+    let abortObserved = false;
+    let pendingCount = 0;
+    const localStarted = createDeferred<void>();
+
+    client.peekPendingMessageQueueV2Count = vi.fn(async () => pendingCount);
+
+    mockCreateSessionScanner.mockImplementation(async (opts: SessionScannerOptions) => {
+      scannerOptions = opts;
+      return createSessionScannerStub();
+    });
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      localStarted.resolve(undefined);
+      await waitForAbort(opts.abort);
+      abortObserved = true;
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const launcherPromise = claudeLocalLauncher(session);
+
+    await localStarted.promise;
+    expect(scannerOptions).not.toBeNull();
+    session.onSessionFound('sid1', hookWithTranscript('/tmp/sid1.jsonl'));
+
+    scannerOptions!.onMessage({
+      type: 'user',
+      uuid: 'user_prompt_1',
+      message: { content: 'do work' },
+    } as any);
+
+    pendingCount = 1;
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+
+    expect(client.peekPendingMessageQueueV2Count).toHaveBeenCalled();
+    expect(abortObserved).toBe(false);
+
+    scannerOptions!.onMessage({
+      type: 'assistant',
+      uuid: 'assistant_final',
+      isSidechain: false,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'final' }],
+        stop_reason: 'end_turn',
+      },
+    } as any);
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
+    expect(abortObserved).toBe(true);
   });
 
   it('returns switch after repeated Claude process failures (no infinite retry loop)', async () => {

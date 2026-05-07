@@ -119,6 +119,125 @@ describe('sync AppState pause/resume', () => {
         expect(pauseController.isPaused()).toBe(false);
     });
 
+    it('quiesces native crypto worker dispatch on background and resumes it on active', async () => {
+        const { Encryption } = await import('./encryption/encryption');
+        const markQuiescentSpy = vi.spyOn(Encryption, 'markNativeCryptoWorkerQueueQuiescent');
+        const markActiveSpy = vi
+            .spyOn(Encryption, 'markNativeCryptoWorkerQueueActive')
+            .mockResolvedValue();
+        const { sync } = await import('./sync');
+
+        try {
+            const handler = Array.from(appStateHandlers)[0];
+            expect(handler).toBeTruthy();
+
+            handler!('background');
+
+            expect(markQuiescentSpy).toHaveBeenCalledTimes(1);
+            expect(markQuiescentSpy).toHaveBeenCalledWith({
+                telemetryEnabled: false,
+            });
+
+            handler!('active');
+
+            expect(markActiveSpy).toHaveBeenCalledTimes(1);
+            expect(markActiveSpy).toHaveBeenCalledWith({
+                telemetryEnabled: false,
+                capabilityStalenessMs: 300_000,
+                revalidateCapabilities: undefined,
+            });
+            expect(sync).toBeTruthy();
+        } finally {
+            markActiveSpy.mockRestore();
+            markQuiescentSpy.mockRestore();
+        }
+    });
+
+    it('debounces inactive before flushing durable checkpoints', async () => {
+        vi.useFakeTimers();
+        try {
+            const { sync } = await import('./sync');
+
+            const handler = Array.from(appStateHandlers)[0];
+            expect(handler).toBeTruthy();
+
+            (sync as any).sessionMaterializedMaxSeqById = { s1: 5 };
+            (sync as any).sessionMaterializedMaxSeqDirty = true;
+
+            handler!('inactive');
+
+            expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+            expect(kvStore.get('session-materialized-max-seq-v1')).toBeUndefined();
+
+            await vi.advanceTimersByTimeAsync(299);
+            expect(kvStore.get('session-materialized-max-seq-v1')).toBeUndefined();
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(JSON.parse(kvStore.get('session-materialized-max-seq-v1') ?? '{}')).toEqual({ s1: 5 });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('cancels inactive checkpoint debounce when active returns quickly', async () => {
+        vi.useFakeTimers();
+        try {
+            const { sync } = await import('./sync');
+
+            const handler = Array.from(appStateHandlers)[0];
+            expect(handler).toBeTruthy();
+
+            (sync as any).sessionMaterializedMaxSeqById = { s1: 5 };
+            (sync as any).sessionMaterializedMaxSeqDirty = true;
+
+            handler!('inactive');
+            handler!('active');
+            await vi.advanceTimersByTimeAsync(300);
+
+            expect(kvStore.get('session-materialized-max-seq-v1')).toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not flush inactive checkpoints after the server scope changes', async () => {
+        vi.useFakeTimers();
+        try {
+            const { sync } = await import('./sync');
+
+            const handler = Array.from(appStateHandlers)[0];
+            expect(handler).toBeTruthy();
+
+            (sync as any).sessionMaterializedMaxSeqById = { s_old: 5 };
+            (sync as any).sessionMaterializedMaxSeqDirty = true;
+
+            handler!('inactive');
+            (sync as any).serverScopeGeneration += 1;
+
+            await vi.advanceTimersByTimeAsync(300);
+
+            expect(kvStore.get('session-materialized-max-seq-v1')).toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not flush materialized seq checkpoints after the server scope changes', async () => {
+        vi.useFakeTimers();
+        try {
+            const { sync } = await import('./sync');
+
+            (sync as any).markSessionMaterializedMaxSeq('s_old', 5);
+            (sync as any).serverScopeGeneration += 1;
+
+            await vi.advanceTimersByTimeAsync(2_000);
+
+            expect(kvStore.get('session-materialized-max-seq-v1')).toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('seeds initial web visibility hidden as backgrounded (pauses immediately on startup)', async () => {
         const globalWithDocument = globalThis as unknown as { document?: unknown };
         const originalDocument = globalWithDocument.document;
@@ -199,12 +318,16 @@ describe('sync AppState pause/resume', () => {
             expect(pauseController.isPaused()).toBe(false);
             expect(apiSocketDisconnect).toHaveBeenCalledTimes(0);
 
+            (sync as any).sessionMaterializedMaxSeqById = { s1: 7 };
+            (sync as any).sessionMaterializedMaxSeqDirty = true;
+
             documentStub.visibilityState = 'hidden';
             for (const handler of handlers.get('visibilitychange') ?? []) {
                 handler();
             }
             expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
             expect(pauseController.isPaused()).toBe(true);
+            expect(JSON.parse(kvStore.get('session-materialized-max-seq-v1') ?? '{}')).toEqual({ s1: 7 });
 
             documentStub.visibilityState = 'visible';
             for (const handler of handlers.get('visibilitychange') ?? []) {
@@ -215,6 +338,171 @@ describe('sync AppState pause/resume', () => {
             expect(pauseController.isPaused()).toBe(false);
         } finally {
             globalWithDocument.document = originalDocument;
+        }
+    });
+
+    it('resumes on BFCache pageshow even when visibility did not change', async () => {
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const originalAddEventListener = globalThis.addEventListener;
+        const originalRemoveEventListener = globalThis.removeEventListener;
+        const documentHandlers = new Map<string, Set<() => void>>();
+        const windowHandlers = new Map<string, Set<(event?: { persisted?: boolean }) => void>>();
+        const documentStub = {
+            visibilityState: 'visible',
+            addEventListener: (event: string, listener: () => void) => {
+                const set = documentHandlers.get(event) ?? new Set<() => void>();
+                set.add(listener);
+                documentHandlers.set(event, set);
+            },
+            removeEventListener: (event: string, listener: () => void) => {
+                documentHandlers.get(event)?.delete(listener);
+            },
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+        globalThis.addEventListener = ((event: string, listener: (event?: { persisted?: boolean }) => void) => {
+            const set = windowHandlers.get(event) ?? new Set<(event?: { persisted?: boolean }) => void>();
+            set.add(listener);
+            windowHandlers.set(event, set);
+        }) as typeof globalThis.addEventListener;
+        globalThis.removeEventListener = ((event: string, listener: (event?: { persisted?: boolean }) => void) => {
+            windowHandlers.get(event)?.delete(listener);
+        }) as typeof globalThis.removeEventListener;
+
+        try {
+            const { sync } = await import('./sync');
+
+            const onlineState: ManagedEndpointSupervisorState = {
+                phase: 'online',
+                reason: null,
+                attempt: 0,
+                nextRetryAt: null,
+                lastConnectedAt: Date.now(),
+                lastDisconnectedAt: null,
+                lastErrorMessage: null,
+                lastProbe: { status: 'ready' },
+            };
+
+            const invalidate = vi.fn();
+            sync.setActiveEndpointSupervisor({
+                start: vi.fn(async () => {}),
+                stop: vi.fn(async () => {}),
+                invalidate,
+                reportFailure: vi.fn(),
+                waitUntilOnline: vi.fn(async () => {}),
+                getState: () => onlineState,
+                subscribe: () => () => {},
+            });
+
+            expect(windowHandlers.has('pageshow')).toBe(true);
+            for (const handler of windowHandlers.get('pageshow') ?? []) {
+                handler({ persisted: true });
+            }
+
+            expect(apiSocketConnect).toHaveBeenCalledTimes(1);
+            expect(invalidate).toHaveBeenCalledTimes(1);
+        } finally {
+            globalWithDocument.document = originalDocument;
+            globalThis.addEventListener = originalAddEventListener;
+            globalThis.removeEventListener = originalRemoveEventListener;
+        }
+    });
+
+    it('resumes on web startup when the browser reports the page was discarded', async () => {
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const documentStub = {
+            visibilityState: 'visible',
+            wasDiscarded: true,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+
+        try {
+            await import('./sync');
+
+            expect(apiSocketConnect).toHaveBeenCalledTimes(1);
+        } finally {
+            globalWithDocument.document = originalDocument;
+        }
+    });
+
+    it('resumes once when the web lifecycle heartbeat detects a forward clock jump', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const documentStub = {
+            visibilityState: 'visible',
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+
+        try {
+            const { sync } = await import('./sync');
+
+            const invalidate = vi.fn();
+            sync.setActiveEndpointSupervisor({
+                start: vi.fn(async () => {}),
+                stop: vi.fn(async () => {}),
+                invalidate,
+                reportFailure: vi.fn(),
+                waitUntilOnline: vi.fn(async () => {}),
+                getState: () => ({
+                    phase: 'online',
+                    reason: null,
+                    attempt: 0,
+                    nextRetryAt: null,
+                    lastConnectedAt: Date.now(),
+                    lastDisconnectedAt: null,
+                    lastErrorMessage: null,
+                    lastProbe: { status: 'ready' },
+                }),
+                subscribe: () => () => {},
+            });
+            apiSocketConnect.mockClear();
+
+            vi.setSystemTime(91_000);
+            await vi.advanceTimersByTimeAsync(30_000);
+
+            expect(apiSocketConnect).toHaveBeenCalledTimes(1);
+            expect(invalidate).toHaveBeenCalledTimes(1);
+        } finally {
+            globalWithDocument.document = originalDocument;
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not enter a resume loop when the web lifecycle heartbeat sees a backwards clock jump', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(100_000);
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        const documentStub = {
+            visibilityState: 'visible',
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: (_event: unknown) => {},
+        };
+        globalWithDocument.document = documentStub;
+
+        try {
+            await import('./sync');
+            apiSocketConnect.mockClear();
+
+            vi.setSystemTime(1_000);
+            await vi.advanceTimersByTimeAsync(30_000);
+            await vi.advanceTimersByTimeAsync(30_000);
+
+            expect(apiSocketConnect).toHaveBeenCalledTimes(0);
+        } finally {
+            globalWithDocument.document = originalDocument;
+            vi.useRealTimers();
         }
     });
 });

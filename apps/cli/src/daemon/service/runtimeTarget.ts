@@ -20,7 +20,7 @@ function isJavaScriptRuntimeExecutable(pathLike: string | null | undefined): boo
 }
 
 function resolveBundledDaemonEntrypoint(): string {
-  return resolvePackagedRuntimeEntrypoint('index.mjs');
+  return resolvePackagedRuntimeEntrypoint('index.mjs', { packageDistOnly: true });
 }
 
 export function resolveDaemonServiceRuntimeTarget(params: Readonly<{

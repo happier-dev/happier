@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useAllMachines, useAllSessions, useProjectForSession, useSession } from '@/sync/domains/state/storage';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
+import { resolveSessionMachineId } from '@/sync/domains/session/directSessions/resolveSessionMachineId';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
 export function useSessionMachineReachability(sessionId: string): Readonly<{
@@ -14,6 +15,7 @@ export function useSessionMachineReachability(sessionId: string): Readonly<{
     const project = useProjectForSession(sessionId);
     const allMachines = useAllMachines();
     const allSessions = useAllSessions();
+    const sessionMachineId = resolveSessionMachineId(session?.metadata);
 
     const machineTarget = React.useMemo(
         () => readMachineTargetForSession(sessionId),
@@ -24,7 +26,7 @@ export function useSessionMachineReachability(sessionId: string): Readonly<{
             project?.key?.path,
             session?.metadata?.homeDir,
             session?.metadata?.host,
-            session?.metadata?.machineId,
+            sessionMachineId,
             session?.metadata?.path,
             sessionId,
         ],

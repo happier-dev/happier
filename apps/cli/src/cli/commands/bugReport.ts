@@ -16,7 +16,15 @@ async function handleBugReportCommand(args: string[]): Promise<void> {
 
   const result = await runBugReportCommand(args);
   if (result.mode === 'fallback') {
-    console.log(chalk.yellow('Bug report service is unavailable for this relay. Open this fallback issue URL:'));
+    const reasonLine = result.reason === 'submit-failed'
+      ? 'Bug report submission failed. You can still file the issue manually using this fallback URL:'
+      : result.reason === 'feature-fetch-failed'
+        ? 'Could not reach your Happier server to check bug-report config. Use this fallback URL to file the issue manually:'
+        : 'Bug report service is unavailable for this server. Open this fallback issue URL:';
+    console.log(chalk.yellow(reasonLine));
+    if (result.errorMessage) {
+      console.log(chalk.gray(`  Underlying error: ${result.errorMessage}`));
+    }
     console.log(result.issueUrl);
     return;
   }

@@ -131,4 +131,130 @@ describe('warmCacheAdapters', () => {
         expect(entry.keepVisibleWhenInactive).toBe(true);
         expect(buildSessionListRenderableFromCacheEntry(entry).keepVisibleWhenInactive).toBe(true);
     });
+
+    it('roundtrips session unread state through cache entries', () => {
+        const entry = buildSessionListCacheEntryFromRenderable({
+            id: 's1',
+            seq: 7,
+            createdAt: 5,
+            updatedAt: 20,
+            active: true,
+            activeAt: 20,
+            archivedAt: null,
+            pendingCount: 0,
+            pendingVersion: 0,
+            lastViewedSessionSeq: 4,
+            metadataVersion: 2,
+            agentStateVersion: 4,
+            metadata: {
+                name: 'Cached title',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+                host: 'mbp',
+                machineId: 'm1',
+                flavor: 'codex',
+                directSessionV1: null,
+                hiddenSystemSession: false,
+            },
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+            hasUnreadMessages: true,
+        });
+
+        expect(entry).toEqual(expect.objectContaining({
+            seq: 7,
+            lastViewedSessionSeq: 4,
+            hasUnreadMessages: true,
+        }));
+        expect(buildSessionListRenderableFromCacheEntry(entry)).toEqual(expect.objectContaining({
+            seq: 7,
+            lastViewedSessionSeq: 4,
+            hasUnreadMessages: true,
+        }));
+    });
+
+    it('does not hydrate placeholder session metadata from an empty warm-cache identity', () => {
+        const renderable = buildSessionListRenderableFromCacheEntry({
+            sessionId: 's1',
+            seq: 7,
+            metadataVersion: 0,
+            agentStateVersion: 0,
+            updatedAt: 20,
+            createdAt: 5,
+            active: false,
+            activeAt: 5,
+            archivedAt: null,
+            lastViewedSessionSeq: null,
+            pendingCount: 0,
+            pendingVersion: 0,
+            summaryText: null,
+            path: '',
+            homeDir: null,
+            host: null,
+            machineId: null,
+            flavor: null,
+            directSessionV1: null,
+            hiddenSystemSession: false,
+            keepVisibleWhenInactive: false,
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+            hasUnreadMessages: true,
+        });
+
+        expect(renderable.metadata).toBeNull();
+        expect(renderable.metadataUnavailable).toBe(true);
+    });
+
+    it('does not preserve placeholder session metadata from a previous empty warm-cache identity', () => {
+        const previousEntry = {
+            sessionId: 's1',
+            seq: 7,
+            metadataVersion: 0,
+            agentStateVersion: 0,
+            updatedAt: 20,
+            createdAt: 5,
+            active: false,
+            activeAt: 5,
+            archivedAt: null,
+            lastViewedSessionSeq: null,
+            pendingCount: 0,
+            pendingVersion: 0,
+            summaryText: null,
+            path: '',
+            homeDir: null,
+            host: null,
+            machineId: null,
+            flavor: null,
+            directSessionV1: null,
+            hiddenSystemSession: false,
+            keepVisibleWhenInactive: false,
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+            hasUnreadMessages: true,
+        };
+
+        const entry = buildSessionListCacheEntryFromRenderable({
+            id: 's1',
+            seq: 8,
+            createdAt: 5,
+            updatedAt: 30,
+            active: false,
+            activeAt: 5,
+            archivedAt: null,
+            pendingCount: 0,
+            pendingVersion: 0,
+            metadataVersion: 1,
+            agentStateVersion: 0,
+            metadata: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 5,
+            metadataUnavailable: true,
+        } as any, previousEntry);
+
+        expect(entry.metadataVersion).toBe(1);
+        expect(entry.path).toBe('');
+        expect(entry.name).toBeUndefined();
+    });
 });

@@ -7,6 +7,9 @@ import { useDesktopUpdater } from './useDesktopUpdater';
 
 type DesktopStorage = ReturnType<typeof createLocalStorage>;
 type TauriInvoke = (command: string, args?: Record<string, unknown>) => unknown | Promise<unknown>;
+const UPDATE_CHECKS_ENV = 'EXPO_PUBLIC_HAPPIER_DESKTOP_UPDATES_ENABLED';
+const originalUpdateChecksEnv = process.env[UPDATE_CHECKS_ENV];
+const originalDevFlag = (globalThis as { __DEV__?: boolean }).__DEV__;
 
 function createLocalStorage() {
     const map = new Map<string, string>();
@@ -25,6 +28,12 @@ function clearDesktopGlobals() {
     delete (globalThis as any).__TAURI_INTERNALS__;
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     delete (globalThis as any).localStorage;
+    if (originalDevFlag === undefined) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete (globalThis as { __DEV__?: boolean }).__DEV__;
+    } else {
+        (globalThis as { __DEV__?: boolean }).__DEV__ = originalDevFlag;
+    }
 }
 
 function setDesktopGlobals(options: {
@@ -57,12 +66,18 @@ async function renderDesktopUpdaterHook(options: {
 describe('useDesktopUpdater (hook)', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        process.env[UPDATE_CHECKS_ENV] = '1';
         clearDesktopGlobals();
     });
 
     afterEach(() => {
         standardCleanup();
         clearDesktopGlobals();
+        if (originalUpdateChecksEnv === undefined) {
+            delete process.env[UPDATE_CHECKS_ENV];
+        } else {
+            process.env[UPDATE_CHECKS_ENV] = originalUpdateChecksEnv;
+        }
     });
 
     it('stays idle when not running in Tauri', async () => {
@@ -73,6 +88,31 @@ describe('useDesktopUpdater (hook)', () => {
         });
 
         const latest = hook.getCurrent();
+        expect(latest?.status).toBe('idle');
+        expect(latest?.availableVersion).toBe(null);
+    });
+
+    it('stays idle when running from a source development Tauri bundle', async () => {
+        delete process.env[UPDATE_CHECKS_ENV];
+        (globalThis as { __DEV__?: boolean }).__DEV__ = true;
+        const invokeMock = vi.fn(async () => {
+            return {
+                version: '9.9.9',
+                currentVersion: '9.9.8',
+                notes: null,
+                pubDate: null,
+            };
+        });
+
+        const storage = createLocalStorage();
+        const hook = await renderDesktopUpdaterHook({
+            storage,
+            invokeMock,
+            isDesktop: true,
+        });
+
+        const latest = hook.getCurrent();
+        expect(invokeMock).not.toHaveBeenCalled();
         expect(latest?.status).toBe('idle');
         expect(latest?.availableVersion).toBe(null);
     });
@@ -102,6 +142,28 @@ describe('useDesktopUpdater (hook)', () => {
         expect(invokeMock).toHaveBeenCalledWith('desktop_fetch_update', undefined);
         expect(latest?.status).toBe('available');
         expect(latest?.availableVersion).toBe('9.9.9');
+    });
+
+    it('exposes check failures as retryable errors', async () => {
+        const invokeMock = vi.fn(async (cmd: string) => {
+            if (cmd === 'desktop_fetch_update') {
+                throw new Error('network timeout');
+            }
+            throw new Error(`unexpected command: ${cmd}`);
+        });
+
+        const storage = createLocalStorage();
+        const hook = await renderDesktopUpdaterHook({
+            storage,
+            invokeMock,
+            isDesktop: true,
+        });
+
+        const latest = hook.getCurrent();
+        expect(invokeMock).toHaveBeenCalledWith('desktop_fetch_update', undefined);
+        expect(latest?.status).toBe('error');
+        expect(latest?.availableVersion).toBe(null);
+        expect(latest?.error).toContain('network timeout');
     });
 
     it('persists dismissal until available version changes', async () => {

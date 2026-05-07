@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit';
@@ -10,6 +10,29 @@ import { installFileOpsRendererCommonModuleMocks } from './fileOpsRendererTestHe
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffFilesListSpy = vi.fn();
+const storageState = vi.hoisted(() => ({
+    current: {
+        sessions: {},
+        machines: {},
+        sessionListViewDataByServerId: {},
+        getProjectForSession: () => null,
+        upsertWorkspaceReviewCommentDraft: () => {},
+        deleteWorkspaceReviewCommentDraft: () => {},
+    } as any,
+    store: undefined as any,
+}));
+storageState.store = Object.assign(
+    ((selector?: (value: any) => unknown) => (
+        typeof selector === 'function' ? selector(storageState.current) : storageState.current
+    )),
+    {
+        getState: () => storageState.current,
+        getInitialState: () => storageState.current,
+        setState: () => undefined,
+        subscribe: () => () => undefined,
+        destroy: () => undefined,
+    },
+);
 
 installFileOpsRendererCommonModuleMocks({
     storage: async () => {
@@ -21,8 +44,8 @@ installFileOpsRendererCommonModuleMocks({
                 if (key === 'filesDiffFileListVirtualizationMinFiles') return 999;
                 return undefined;
             },
-            useSessionReviewCommentsDrafts: () => [],
-            storage: { getState: () => ({ upsertSessionReviewCommentDraft: () => {}, deleteSessionReviewCommentDraft: () => {} }) },
+            useWorkspaceReviewCommentsDrafts: () => [],
+            storage: storageState.store,
         });
     },
 });
@@ -74,6 +97,24 @@ vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
 });
 
 describe('DiffView (review comments)', () => {
+    beforeEach(() => {
+        storageState.current = {
+            sessions: {
+                s1: {
+                    id: 's1',
+                    active: true,
+                    serverId: 'server-1',
+                    metadata: { machineId: 'machine-1', path: '/repo' },
+                },
+            },
+            machines: {},
+            sessionListViewDataByServerId: {},
+            getProjectForSession: () => null,
+            upsertWorkspaceReviewCommentDraft: () => {},
+            deleteWorkspaceReviewCommentDraft: () => {},
+        };
+    });
+
     it('passes a renderInlineUnifiedDiff override when review comments are enabled and sessionId is available', async () => {
         diffFilesListSpy.mockClear();
         const { DiffView } = await import('./DiffView');
@@ -101,5 +142,50 @@ describe('DiffView (review comments)', () => {
 
         expect(node?.type).toBe('DiffReviewCommentsViewer');
         expect(node?.props?.filePath).toBe('src/a.ts');
+    });
+
+    it('enables review comments after the session workspace state loads without changing sessions', async () => {
+        storageState.current = {
+            sessions: {},
+            machines: {},
+            sessionListViewDataByServerId: {},
+            getProjectForSession: () => null,
+            upsertWorkspaceReviewCommentDraft: () => {},
+            deleteWorkspaceReviewCommentDraft: () => {},
+        };
+        diffFilesListSpy.mockClear();
+        const { DiffView } = await import('./DiffView');
+
+        const tool = makeToolCall({
+            name: 'Diff',
+            state: 'completed',
+            input: { unified_diff: 'diff --git a/src/a.ts b/src/a.ts' },
+            result: null,
+        });
+        const element = React.createElement(DiffView, makeToolViewProps(tool, { sessionId: 's1', detailLevel: 'full' }));
+
+        const screen = await renderScreen(element);
+
+        expect(diffFilesListSpy.mock.calls.at(-1)?.[0]?.renderInlineUnifiedDiff).toBeUndefined();
+
+        storageState.current = {
+            sessions: {
+                s1: {
+                    id: 's1',
+                    active: true,
+                    serverId: 'server-1',
+                    metadata: { machineId: 'machine-1', path: '/repo' },
+                },
+            },
+            machines: {},
+            sessionListViewDataByServerId: {},
+            getProjectForSession: () => null,
+            upsertWorkspaceReviewCommentDraft: () => {},
+            deleteWorkspaceReviewCommentDraft: () => {},
+        };
+
+        await screen.update(React.createElement(DiffView, makeToolViewProps(tool, { sessionId: 's1', detailLevel: 'summary' })));
+
+        expect(typeof diffFilesListSpy.mock.calls.at(-1)?.[0]?.renderInlineUnifiedDiff).toBe('function');
     });
 });

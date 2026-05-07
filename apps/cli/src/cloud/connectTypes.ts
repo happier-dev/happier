@@ -3,10 +3,12 @@ import type { CloudConnectTargetStatus, CloudVendorKey } from '@happier-dev/agen
 
 export type { CloudConnectTargetStatus, CloudVendorKey };
 
-export type ConnectTargetId = CatalogAgentId;
+export type ConnectedAccountVendorKey = CloudVendorKey | 'github';
+
+export type ConnectTargetId = CatalogAgentId | 'github';
 
 export type CloudConnectResult = Readonly<{
-  vendorKey: CloudVendorKey;
+  vendorKey: ConnectedAccountVendorKey;
   oauth: unknown;
 }>;
 
@@ -21,7 +23,7 @@ export type CloudConnectTarget = Readonly<{
   id: ConnectTargetId;
   displayName: string;
   vendorDisplayName: string;
-  vendorKey: CloudVendorKey;
+  vendorKey: ConnectedAccountVendorKey;
   /**
    * Whether this connect target is actively consumed by Happy (CLI/app) today.
    *

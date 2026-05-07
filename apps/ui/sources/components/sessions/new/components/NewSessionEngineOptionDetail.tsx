@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import { buildBackendTargetKey, type BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getAgentCore } from '@/agents/catalog/catalog';
@@ -13,6 +13,12 @@ import {
 } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/acp/configOptionsControl';
+import {
+    buildFavoriteModelAvailabilityById,
+    resolveAvailableFavoriteModelsForBackend,
+    type FavoriteModelBackendIdentity,
+    type FavoriteModelSelectionV1,
+} from '@/sync/domains/models/favoriteModelSelections';
 import { t } from '@/text';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
@@ -29,6 +35,11 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     selectedModelId?: string | null;
     selectedSessionModeId?: string | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
+    favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
+    onToggleFavoriteModel?: (model: Readonly<{
+        modelId: string;
+        modelLabel: string;
+    }>) => void;
     onSelectionChange?: (selection: Readonly<{
         modelId: string;
         sessionModeId: string;
@@ -168,7 +179,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         () => resolveProviderAgentIdForBackendTarget(props.backendTarget),
         [props.backendTarget],
     );
-    const providerSupportsFreeform = getAgentCore(providerAgentId).model.supportsFreeform === true;
+    const providerCore = React.useMemo(() => getAgentCore(providerAgentId), [providerAgentId]);
+    const providerSupportsFreeform = providerCore.model.supportsFreeform === true;
     const canEnterCustomModel = preflightModels?.supportsFreeform === true || providerSupportsFreeform;
     const effectiveModelLabel = React.useMemo(
         () => resolveEffectiveModelLabel(modelOptions, selectedModelId),
@@ -204,6 +216,36 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         }) ?? null;
     }, [modelOptions, props.backendTarget, selectedConfigOverrides, selectedModelId]);
 
+    const favoriteBackendIdentity = React.useMemo<FavoriteModelBackendIdentity>(() => ({
+        backendTargetKey: buildBackendTargetKey(props.backendTarget),
+        providerAgentId,
+        builtInAgentId: props.backendTarget.kind === 'builtInAgent' ? props.backendTarget.agentId : null,
+        configuredBackendId: props.backendTarget.kind === 'configuredAcpBackend' ? props.backendTarget.backendId : null,
+    }), [props.backendTarget, providerAgentId]);
+
+    const favoriteModelAvailabilityById = React.useMemo(() => buildFavoriteModelAvailabilityById({
+        mode: providerCore.model.dynamicProbe === 'static-only' ? 'static-only' : 'dynamic',
+        modelOptions,
+        preflightModels,
+    }), [modelOptions, preflightModels, providerCore.model.dynamicProbe]);
+
+    const favoriteModelValues = React.useMemo(() => {
+        const availableFavorites = resolveAvailableFavoriteModelsForBackend({
+            favorites: props.favoriteModelSelections ?? [],
+            backend: favoriteBackendIdentity,
+            availabilityById: favoriteModelAvailabilityById,
+        });
+        return new Set(availableFavorites.map((model) => model.modelId));
+    }, [
+        favoriteBackendIdentity,
+        favoriteModelAvailabilityById,
+        props.favoriteModelSelections,
+    ]);
+
+    const isModelFavoritable = React.useCallback((option: { value: string }) => {
+        return favoriteModelAvailabilityById.has(option.value);
+    }, [favoriteModelAvailabilityById]);
+
     const unifiedProbe = React.useMemo(() => {
         return mergeOptionPickerProbes([
             props.refreshProbe ?? null,
@@ -221,6 +263,14 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             modelEmptyText={t('agentInput.model.configureInCli')}
             canEnterCustomModel={canEnterCustomModel}
             modelProbe={unifiedProbe}
+            favoriteModelValues={props.onToggleFavoriteModel ? favoriteModelValues : undefined}
+            isModelFavoritable={isModelFavoritable}
+            onToggleFavoriteModel={props.onToggleFavoriteModel ? (option) => {
+                props.onToggleFavoriteModel?.({
+                    modelId: option.value,
+                    modelLabel: option.label,
+                });
+            } : undefined}
             onSelectModel={(modelId) => {
                 publishSelection({
                     ...selectionRef.current,

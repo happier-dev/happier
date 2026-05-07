@@ -1,6 +1,6 @@
 ---
 title: Installables
-description: Let Happier manage machine-local tools like Codex ACP for explicit ACP sessions, with automatic install and update policies per machine.
+description: Let Happier manage machine-local tools like Codex ACP and GitHub CLI, with install and update policies per machine.
 ---
 
 Some Happier features depend on **machine-local tools** being present on the connected machine.
@@ -10,6 +10,7 @@ Happier calls these **Installables**.
 Today, the main user-facing installables are:
 
 - **Codex ACP** — used when you explicitly run Codex in ACP mode instead of the default App Server path
+- **GitHub CLI (`gh`)** — optional helper for GitHub source-control workflows when you want to use local GitHub CLI authentication instead of a connected GitHub token
 
 ## Why Installables exist
 
@@ -61,10 +62,14 @@ Each installable also has an **Auto-update** policy:
 - **Notify**: show that an update is available, but do not upgrade automatically
 - **Auto**: upgrade automatically in the background when Happier checks and sees that a newer version is available
 
-Default behavior for Happier-managed installables is:
+Default behavior varies by installable.
+
+For Codex ACP, the default is:
 
 - **Auto-install when needed**: on
 - **Auto-update**: auto
+
+For optional helper tools such as `gh`, Happier can use a more conservative policy such as "do not auto-install" and "notify about updates."
 
 ## What happens for Codex-related installables
 
@@ -103,6 +108,44 @@ If resume is important on a machine, leave Codex ACP installed and let Happier k
 ### Plain MCP note
 
 If you switch Codex to plain `mcp`, Happier can still start fresh Codex sessions there, but vendor resume is not available on that path in current builds.
+
+## What happens for GitHub CLI (`gh`)
+
+GitHub CLI is a generic installable dependency, not an agent backend.
+
+Happier can use `gh` for GitHub source-control workflows when:
+
+- you have not connected a GitHub token in Happier, or
+- the local `gh` path is the most appropriate way to use an already-authenticated machine
+
+Workflows that can use `gh` include:
+
+- publishing a local repository to GitHub
+- opening or reusing a GitHub pull request
+- checking out a GitHub pull request
+
+Resolution order:
+
+1. Happier prefers a working system `gh` if it is already installed.
+2. If a Happier-managed `gh` exists for the machine, Happier can use it.
+3. If neither exists, Happier can show installation/remediation guidance.
+
+Installing `gh` does not authenticate it. To use the CLI path, authenticate it on that machine with GitHub CLI's normal auth flow, such as:
+
+```bash
+gh auth login
+```
+
+For cross-machine workflows, a connected GitHub token is usually more portable because it travels through Happier's connected-service model. The `gh` path is best when the machine is already set up and authenticated.
+
+Default policy for `gh` differs from Codex ACP:
+
+- **Auto-install when needed**: off
+- **Auto-update**: notify
+
+That keeps GitHub CLI installation explicit. Happier does not silently install a new GitHub CLI binary just because you opened a source-control screen.
+
+GitLab note: GitLab merge-request workflows can use an authenticated `glab` CLI when it is already available, but `glab` is not currently a Happier-managed installable.
 
 ## Scope and expectations
 

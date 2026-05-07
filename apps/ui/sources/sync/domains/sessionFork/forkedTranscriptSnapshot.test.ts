@@ -58,6 +58,7 @@ function sessionMessagesRow(params: Readonly<{
     latestThinkingMessageId: null,
     latestThinkingMessageActivityAtMs: null,
     messagesVersion: params.messagesVersion,
+    lastAppliedAgentStateVersion: null,
     isLoaded: params.isLoaded,
   };
 }

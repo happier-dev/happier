@@ -50,6 +50,7 @@ import { registerMachinePromptAssetsRpcHandlers } from './rpcHandlers.promptAsse
 import { registerMachinePromptAssetTransferRpcHandlers } from './rpcHandlers.promptAssetTransfers';
 import { registerMachinePromptRegistriesRpcHandlers } from './rpcHandlers.promptRegistries';
 import { registerMachinePromptRegistryTransferRpcHandlers } from './rpcHandlers.promptRegistryTransfers';
+import { registerPetRpcHandlers } from '@/pets/rpc/registerPetRpcHandlers';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
 import { configuration } from '@/configuration';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -57,6 +58,9 @@ import { resolveFilesystemPolicyDefaultDirectory } from '@/rpc/handlers/fileSyst
 import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 import type {
+  AccountPetCreateRequestV1,
+  AccountPetCreateResponseV1,
+  DirectSessionTranscriptDeltaEphemeral,
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
   TransferEndpointCandidate,
@@ -94,6 +98,8 @@ export type MachineRpcHandlerDeps = Readonly<{
   promptAssetsHappierHomeDir?: () => string;
   machineRpcWorkingDirectory?: string;
   filesystemAccessPolicy?: FilesystemAccessPolicy;
+  emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+  createAccountPet?: (request: AccountPetCreateRequestV1) => Promise<AccountPetCreateResponseV1>;
 }>;
 
 async function fetchForkChildSessionOrThrow(params: Readonly<{
@@ -445,6 +451,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
     rpcHandlerManager,
     spawnSession,
     stopSession,
+    emitDirectSessionTranscriptUpdate: params.deps?.emitDirectSessionTranscriptUpdate,
+  });
+  registerPetRpcHandlers({
+    rpcHandlerManager,
+    createAccountPet: params.deps?.createAccountPet,
   });
   registerMachineSessionHandoffRpcHandlers({
     rpcHandlerManager,

@@ -831,6 +831,7 @@ vi.mock('@/components/ui/media/FileIcon', () => ({
 
 vi.mock('@/components/sessions/sourceControl/changes/ScmChangeRow', () => ({
     ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
+    resolveScmChangeStatsColumnWidth: () => 38,
 }));
 
 vi.mock('@/constants/Typography', () => ({

@@ -28,7 +28,7 @@ describe('settingsParse provider plugin defaults', () => {
             codexBackendMode: 'mcp',
         } as any);
 
-        expect((settings as any).schemaVersion).toBe(7);
+        expect((settings as any).schemaVersion).toBe(8);
         expect((settings as any).codexBackendMode).toBe('mcp');
     });
 

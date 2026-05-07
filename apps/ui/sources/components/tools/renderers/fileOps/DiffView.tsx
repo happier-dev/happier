@@ -12,9 +12,10 @@ import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
 import { useDiffFilesExpansionState } from '@/components/ui/code/diff/useDiffFilesExpansionState';
 import { DiffPresentationStyleToggleButton } from '@/components/ui/code/diff/DiffPresentationStyleToggleButton';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useSessionReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useSessionReviewCommentDraftHandlers';
-import { useSessionReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { useWorkspaceReviewCommentDraftHandlers } from '@/components/sessions/reviews/comments/useWorkspaceReviewCommentDraftHandlers';
+import { useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { useInlineUnifiedDiffReviewCommentsRenderer } from '@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewCommentsRenderer';
+import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 
 
 export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionId: sessionIdProp }) => {
@@ -43,10 +44,11 @@ export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionI
     const showFileList = effectiveDetailLevel !== 'title';
 
     const reviewCommentsFeatureEnabled = useFeatureEnabled('files.reviewComments');
-    const reviewCommentsEnabled = reviewCommentsFeatureEnabled === true && Boolean(sessionId);
-    const reviewCommentDrafts = useSessionReviewCommentsDrafts(sessionId ?? '');
+    const reviewScope = useWorkspaceScopeForSession(sessionId);
+    const reviewCommentsEnabled = reviewCommentsFeatureEnabled === true && Boolean(reviewScope);
+    const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
 
-    const reviewDraftHandlers = useSessionReviewCommentDraftHandlers(sessionId);
+    const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
 
     const renderInlineUnifiedDiff = useInlineUnifiedDiffReviewCommentsRenderer({
         enabled: reviewCommentsEnabled,

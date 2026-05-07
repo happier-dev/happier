@@ -14,9 +14,9 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { MachineSetupTextField } from '@/components/settings/machines/shared/MachineSetupTextField';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot, setActiveServer, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { clearPendingSetupIntent, getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
-import { listServerProfiles, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { listServerProfiles, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { validateServerUrl } from '@/sync/domains/server/serverConfig';
 import { t } from '@/text';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
@@ -115,7 +115,7 @@ function PreAuthSetupRoute() {
             source: 'manual',
             replaceEquivalentStoredUrl: true,
         });
-        setActiveServerId(profile.id, { scope: 'device' });
+        setActiveServer({ serverId: profile.id, scope: 'device' });
         setCustomRelayUrl('');
         setCustomRelayName('');
         setCustomRelayError(null);
@@ -173,7 +173,7 @@ function PreAuthSetupRoute() {
                                 selected={profile.id === snapshot.serverId}
                                 showChevron={false}
                                 onPress={() => {
-                                    setActiveServerId(profile.id, { scope: 'device' });
+                                    setActiveServer({ serverId: profile.id, scope: 'device' });
                                 }}
                             />
                         ))}

@@ -56,6 +56,8 @@ const themeColors = {
     shadow: { color: '#000', opacity: 0.2 },
 } as const;
 
+let workspaceLabelsV1: Record<string, string> = {};
+
 installSessionShellCommonModuleMocks({
     reactNative: async () =>
         createReactNativeWebMock({
@@ -102,7 +104,7 @@ installSessionShellCommonModuleMocks({
             presence: 'online',
             active: true,
             accessLevel: 'edit',
-            metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
+            metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/Users/test' },
             agentState: {},
         };
 
@@ -132,10 +134,14 @@ installSessionShellCommonModuleMocks({
                 localSettingsDefaults[key],
                 vi.fn<(value: LocalSettings[K]) => void>(),
             ],
-            useSetting: <K extends keyof Settings>(key: K) => settingsDefaults[key],
+            useSetting: <K extends keyof Settings>(key: K) => {
+                if (key === 'workspaceLabelsV1') return workspaceLabelsV1 as Settings[K];
+                return settingsDefaults[key];
+            },
             useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
             useAutomations: () => [],
             useMachine: () => null,
+            useAllMachines: () => [{ id: 'm1', metadata: {} }],
         });
     },
 });
@@ -330,6 +336,7 @@ describe('SessionView info navigation', () => {
         routerBackSpy.mockClear();
         chatHeaderPropsSpy.mockReset();
         capturedOpenSessionSpy.mockReset();
+        workspaceLabelsV1 = {};
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockImplementation((sessionId: string) =>
             sessionId === 's1' ? 'server-cache' : null
@@ -345,7 +352,32 @@ describe('SessionView info navigation', () => {
         standardCleanup();
     });
 
-    it('opens session info via singular navigate using the route-scoped server id instead of stacking pushes', async () => {
+    it('opens session info via singular navigate using the cached owning server id instead of a stale route server id', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        await renderScreen(
+            <SessionView id="s1" routeServerId="server-2" />,
+            { wrapper: AppPaneProviderWrapper },
+        );
+
+        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
+        expect(typeof headerProps?.onAvatarPress).toBe('function');
+
+        headerProps?.onAvatarPress?.();
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-cache', expect.objectContaining({
+            dangerouslySingular: expect.any(Function),
+        }));
+
+        const singular = routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular;
+        expect(typeof singular).toBe('function');
+        expect(singular()).toBe('session-info');
+    });
+
+    it('opens session info via singular navigate using the route server id when cache resolution is unavailable', async () => {
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue(null);
         const { SessionView } = await import('./SessionView');
 
         await renderScreen(
@@ -363,10 +395,6 @@ describe('SessionView info navigation', () => {
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-2', expect.objectContaining({
             dangerouslySingular: expect.any(Function),
         }));
-
-        const singular = routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular;
-        expect(typeof singular).toBe('function');
-        expect(singular()).toBe('session-info');
     });
 
     it('opens session info via singular navigate using the cached owning server id when the route is missing server scope', async () => {
@@ -405,7 +433,50 @@ describe('SessionView info navigation', () => {
         expect(routerBackSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('opens child sessions with the route-scoped server id when cache resolution is unavailable', async () => {
+    it('requests start-side truncation for the session header path subtitle', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        await renderScreen(
+            <SessionView id="s1" />,
+            { wrapper: AppPaneProviderWrapper },
+        );
+
+        expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            subtitle: '/tmp',
+            subtitleEllipsizeMode: 'head',
+        }));
+    });
+
+    it('keeps the header top inset when only content safe-area padding is external', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        await renderScreen(
+            <SessionView id="s1" safeAreaTopMode="external" headerSafeAreaTopMode="internal" />,
+            { wrapper: AppPaneProviderWrapper },
+        );
+
+        expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            includeTopInset: true,
+        }));
+    });
+
+    it('uses the renamed workspace label for the session header subtitle', async () => {
+        workspaceLabelsV1 = {
+            wl_07600b8c: 'Renamed Workspace',
+        };
+        const { SessionView } = await import('./SessionView');
+
+        await renderScreen(
+            <SessionView id="s1" />,
+            { wrapper: AppPaneProviderWrapper },
+        );
+
+        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
+        expect(headerProps?.subtitle).toBe('Renamed Workspace');
+        expect(headerProps?.subtitleEllipsizeMode).not.toBe('head');
+    });
+
+    it('opens child sessions with the current session owner when child cache resolution is unavailable', async () => {
         const { SessionView } = await import('./SessionView');
 
         await renderScreen(
@@ -415,6 +486,6 @@ describe('SessionView info navigation', () => {
 
         capturedOpenSessionSpy('child-session-1');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-2');
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-cache');
     });
 });

@@ -16,10 +16,16 @@ import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process
 import { resolveCodexCliInvocation } from './utils/resolveCodexCliInvocation';
 import { delay } from '@/utils/time';
 import { resolveConfiguredCodexHome } from './utils/resolveConfiguredCodexHome';
+import { configuration } from '@/configuration';
 
 import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
 import { discoverCodexRolloutFileOnce } from './localControl/rolloutDiscovery';
 import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
+import {
+  createDeferredRemoteSwitchController,
+  createLocalTurnLifecycleController,
+} from '@/agent/localControl/turnLifecycle';
+import { startLocalPendingQueueRemoteSwitchWatcher } from '@/agent/localControl/pendingQueue/startLocalPendingQueueRemoteSwitchWatcher';
 
 export type CodexLauncherResult = { type: 'switch'; resumeId: string } | { type: 'exit'; code: number };
 
@@ -178,8 +184,11 @@ export async function codexLocalLauncher<TMode>(opts: {
   let switchRequested = false;
   let switchNotified = false;
   let mirror: CodexRolloutMirror | null = null;
+  let pendingQueueWatcher: { stop: () => void } | null = null;
   let child: ReturnType<typeof spawn> | null = null;
   let childStopRequested = false;
+  const turnLifecycle = createLocalTurnLifecycleController({ completionQuiescenceMs: 0 });
+  turnLifecycle.observe({ type: 'turn_started', providerTurnId: null, source: 'codex_rollout_discovery_pending' });
 
   const publishRemoteControlState = (tag: 'switch' | 'exit' | 'launch_error'): void => {
     try {
@@ -292,18 +301,45 @@ export async function codexLocalLauncher<TMode>(opts: {
     }
   };
 
+  const deferredRemoteSwitch = createDeferredRemoteSwitchController<TMode>({
+    lifecycle: turnLifecycle,
+    providerLabel: 'Codex',
+    requestSwitchToRemote: async () => {
+      await doSwitch();
+      return true;
+    },
+  });
+
+  const releasePendingRolloutDiscoveryLifecycle = (): void => {
+    const snapshot = turnLifecycle.snapshot();
+    if (!snapshot.active || snapshot.terminal || snapshot.providerTurnId !== null) return;
+    turnLifecycle.observe({
+      type: 'turn_terminal',
+      providerTurnId: null,
+      reason: 'completed',
+      source: 'codex_rollout_replay_ready',
+    });
+  };
+
   try {
-    // Local-control: any incoming UI message triggers a mode switch to remote.
-    opts.messageQueue.setOnMessage(() => {
-      void doSwitch();
+    // Local-control: incoming UI messages request a remote switch. If Codex is
+    // in an active local turn, the deferred switch controller waits for the
+    // rollout terminal event before asking the launcher to stop the child.
+    opts.messageQueue.setOnMessage((message, mode) => {
+      deferredRemoteSwitch.onQueuedMessage(message, mode);
+    });
+
+    pendingQueueWatcher = startLocalPendingQueueRemoteSwitchWatcher({
+      peekPendingCount: () => opts.session.peekPendingMessageQueueV2Count(),
+      pollIntervalMs: configuration.pendingQueueIdleWakePollIntervalMs,
+      requestRemoteSwitch: () => deferredRemoteSwitch.requestRemoteSwitch('server_pending_queue'),
     });
 
     // Allow the UI to request a switch explicitly.
     opts.session.rpcHandlerManager.registerHandler('switch', async (params: any) => {
       const to = params && typeof params === 'object' ? (params as any).to : undefined;
       if (to === 'local') return true;
-      await doSwitch();
-      return true;
+      return await deferredRemoteSwitch.requestRemoteSwitch('rpc_switch');
     });
 
     const { command, args } = await resolveCodexTuiInvocation({
@@ -348,6 +384,12 @@ export async function codexLocalLauncher<TMode>(opts: {
     }
 
     const childExitPromise = managedChild.waitForTermination().then((event) => {
+      turnLifecycle.observe({
+        type: 'turn_terminal',
+        providerTurnId: turnLifecycle.snapshot().providerTurnId,
+        reason: 'process-exited',
+        source: 'codex_child_process_exit',
+      });
       if (event.type === 'exited') return event.code;
       if (event.type === 'signaled') return childStopRequested ? 0 : 1;
       return 1;
@@ -499,9 +541,13 @@ export async function codexLocalLauncher<TMode>(opts: {
         queueCodexSessionIdPublish(id);
         await publishPendingCodexSessionIdNow();
       },
+      onTurnLifecycleEvent: (event) => {
+        turnLifecycle.observe(event);
+      },
     });
     logger.debug('[codex] mirror: start awaiting', { filePath: candidateFile.filePath });
     await mirror.start();
+    releasePendingRolloutDiscoveryLifecycle();
     logger.debug('[codex] mirror: started', { filePath: candidateFile.filePath });
 
     // Wait for either a switch request or process exit.
@@ -541,6 +587,10 @@ export async function codexLocalLauncher<TMode>(opts: {
     await mirror.stop();
     mirror = null;
 
+    if (!exitReason && switchRequested && knownResumeId.value) {
+      exitReason = { type: 'switch', resumeId: knownResumeId.value };
+    }
+
     if (exitReason) {
       publishRemoteControlState('switch');
       return exitReason;
@@ -557,6 +607,9 @@ export async function codexLocalLauncher<TMode>(opts: {
     publishRemoteControlState('launch_error');
     return { type: 'exit', code: 1 };
   } finally {
+    pendingQueueWatcher?.stop();
+    deferredRemoteSwitch.dispose();
+    turnLifecycle.dispose();
     opts.messageQueue.setOnMessage(null);
     try {
       await mirror?.stop();

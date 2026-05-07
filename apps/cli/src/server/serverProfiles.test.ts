@@ -141,6 +141,30 @@ describe('server profiles', () => {
     });
   });
 
+  it('can resolve a server profile by relay URL without changing the active server', async () => {
+    await withTempDir('happier-cli-servers-resolve-url-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+      const { addServerProfile, getActiveServerProfile, getServerProfile } = await import('./serverProfiles');
+
+      await addServerProfile({
+        name: 'remote-dev-tui',
+        serverUrl: 'http://127.0.0.1:52753',
+        webappUrl: 'http://127.0.0.1:52753',
+        use: true,
+      });
+
+      expect((await getActiveServerProfile()).id).toBe('remote-dev-tui');
+      expect((await getServerProfile('http://127.0.0.1:52753/')).id).toBe('remote-dev-tui');
+      expect((await getActiveServerProfile()).id).toBe('remote-dev-tui');
+    });
+  });
+
   it('refuses to create a server profile with reserved name "cloud"', async () => {
     await withTempDir('happier-cli-servers-reserved-', async (homeDir) => {
       envScope.patch({

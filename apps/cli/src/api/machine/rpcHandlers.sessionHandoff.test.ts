@@ -47,6 +47,38 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+type IsolatedProcessHome = Readonly<{
+  homeDir: string;
+  restore: () => void;
+}>;
+
+async function createIsolatedProcessHome(prefix: string): Promise<IsolatedProcessHome> {
+  const previousHome = process.env.HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  const homeDir = await mkdtemp(join(os.tmpdir(), prefix));
+  let restored = false;
+  process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
+
+  return {
+    homeDir,
+    restore: () => {
+      if (restored) return;
+      restored = true;
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      if (previousUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = previousUserProfile;
+      }
+    },
+  };
+}
+
 function createLoopbackMachineTransferChannels() {
   const listenersByMachine = new Map<string, Set<LoopbackListener>>();
   const sentEnvelopes: MachineTransferSendEnvelope[] = [];
@@ -4543,13 +4575,13 @@ function createLoopbackMachineTransferChannels() {
     const targetActiveServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-server-routed-deferred-target-'));
     const workspaceBlobPayload = Buffer.from('server-routed-pack\n', 'utf8');
     await writeFile(join(sourcePath, 'README.md'), workspaceBlobPayload);
-	    const workspaceTransfer = {
-	      enabled: true as const,
-	      strategy: 'sync_changes' as const,
-	      conflictPolicy: 'replace_existing' as const,
-	      includeIgnoredMode: 'include_selected' as const,
-	      ignoredIncludeGlobs: ['dist/**'],
-	    };
+    const workspaceTransfer = {
+      enabled: true as const,
+      strategy: 'sync_changes' as const,
+      conflictPolicy: 'replace_existing' as const,
+      includeIgnoredMode: 'include_selected' as const,
+      ignoredIncludeGlobs: ['dist/**'],
+    };
     const sourceRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const targetRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const exportDeferred = createDeferred<Readonly<{
@@ -4572,11 +4604,11 @@ function createLoopbackMachineTransferChannels() {
         resume: 'claude_session_target',
         transcriptStorage: 'persisted',
       }),
-	    }));
-	    const loadCurrentTargetManifest = vi.fn(async () => ({
-	      entries: [],
-	      fingerprint: `sha256:${'0'.repeat(64)}`,
-	    }));
+    }));
+    const loadCurrentTargetManifest = vi.fn(async () => ({
+      entries: [],
+      fingerprint: `sha256:${'0'.repeat(64)}`,
+    }));
     const channels = createLoopbackMachineTransferChannels();
     const sourceRpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
@@ -4588,6 +4620,8 @@ function createLoopbackMachineTransferChannels() {
         targetRegistered.set(method, handler);
       },
     } as any;
+
+    const isolatedHome = await createIsolatedProcessHome('happier-session-handoff-server-routed-deferred-home-');
 
     try {
       const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir: targetActiveServerDir });
@@ -4633,32 +4667,32 @@ function createLoopbackMachineTransferChannels() {
         }),
         exportSessionBundle: vi.fn(async () => await exportDeferred.promise),
         machineTransferChannel: channels.source,
-	      });
+      });
 
-	      vi.resetModules();
-	      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
-	      vi.doMock('@/configuration', async () => {
-	        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
-	        return {
-	          ...actual,
-	          configuration: {
-	            ...actual.configuration,
-	            activeServerDir: targetActiveServerDir,
-	            activeServerId: 'test_server_routed_deferred_target',
-	            filesTransferSessionTtlMs: 2_000,
-	            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
-	            workspaceReplicationBlobPackMaxBlobs: 64,
-	            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
-	          },
-	        };
-	      });
+      vi.resetModules();
+      vi.doUnmock('../../session/handoff/workspaceReplicationAdapter/sessionHandoffWorkspaceReplicationAdapter');
+      vi.doMock('@/configuration', async () => {
+        const actual = await vi.importActual<typeof import('@/configuration')>('@/configuration');
+        return {
+          ...actual,
+          configuration: {
+            ...actual.configuration,
+            activeServerDir: targetActiveServerDir,
+            activeServerId: 'test_server_routed_deferred_target',
+            filesTransferSessionTtlMs: 2_000,
+            workspaceReplicationBlobPackTargetBytes: 4 * 1024 * 1024,
+            workspaceReplicationBlobPackMaxBlobs: 64,
+            workspaceReplicationBlobPackMaxSingleBlobBytes: 16 * 1024 * 1024,
+          },
+        };
+      });
       const { registerMachineSessionHandoffRpcHandlers: registerTargetHandlers } = await import('./rpcHandlers.sessionHandoff');
 
-	      registerTargetHandlers({
-	        rpcHandlerManager: targetRpcHandlerManager,
-	        importSessionBundle,
-	        machineTransferChannel: channels.target,
-	      });
+      registerTargetHandlers({
+        rpcHandlerManager: targetRpcHandlerManager,
+        importSessionBundle,
+        machineTransferChannel: channels.target,
+      });
 
       const sourceStart = sourceRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_START);
       const targetPrepare = targetRegistered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
@@ -4755,6 +4789,7 @@ function createLoopbackMachineTransferChannels() {
         },
       });
       const importedDirectory = ready.resume.directory;
+      expect(importedDirectory).toBe(join(isolatedHome.homeDir, 'repo-target'));
       expect(importSessionBundle).toHaveBeenCalledWith(
         {
           providerId: 'claude',
@@ -4774,10 +4809,12 @@ function createLoopbackMachineTransferChannels() {
       }
       vi.doUnmock('@/configuration');
       vi.resetModules();
+      isolatedHome.restore();
       if (process.env.HAPPIER_DEBUG_KEEP_HANDOFF_TMP !== '1') {
         await rm(sourcePath, { recursive: true, force: true });
         await rm(sourceActiveServerDir, { recursive: true, force: true });
         await rm(targetActiveServerDir, { recursive: true, force: true });
+        await rm(isolatedHome.homeDir, { recursive: true, force: true });
       }
     }
   });
@@ -4792,13 +4829,13 @@ function createLoopbackMachineTransferChannels() {
     const workspaceBlobPayload = Buffer.from('direct-peer-deferred-pack\n', 'utf8');
     await writeFile(join(sourcePath, 'README.md'), workspaceBlobPayload);
 
-	    const workspaceTransfer = {
-	      enabled: true as const,
-	      strategy: 'sync_changes' as const,
-	      conflictPolicy: 'replace_existing' as const,
-	      includeIgnoredMode: 'include_selected' as const,
-	      ignoredIncludeGlobs: ['dist/**'],
-	    };
+    const workspaceTransfer = {
+      enabled: true as const,
+      strategy: 'sync_changes' as const,
+      conflictPolicy: 'replace_existing' as const,
+      includeIgnoredMode: 'include_selected' as const,
+      ignoredIncludeGlobs: ['dist/**'],
+    };
 
     const sourceRegistered = new Map<string, (params: unknown) => Promise<any>>();
     const targetRegistered = new Map<string, (params: unknown) => Promise<any>>();
@@ -4842,6 +4879,8 @@ function createLoopbackMachineTransferChannels() {
         targetRegistered.set(method, handler);
       },
     } as any;
+
+    const isolatedHome = await createIsolatedProcessHome('happier-session-handoff-direct-peer-deferred-home-');
 
     try {
       const baselineStore = createWorkspaceReplicationBaselineStore({ activeServerDir: targetActiveServerDir });
@@ -4997,6 +5036,7 @@ function createLoopbackMachineTransferChannels() {
       }, { timeout: 10_000 });
 
       expect(ready.status.transportStrategy).toBe('direct_peer');
+      expect(ready.resume.directory).toBe(join(isolatedHome.homeDir, 'repo-target'));
 
       // Ensure the replication engine actually ran on the target.
       const { createWorkspaceReplicationJobStore } = await import('@/workspaces/replication/jobs/workspaceReplicationJobStore');
@@ -5023,11 +5063,13 @@ function createLoopbackMachineTransferChannels() {
       vi.doUnmock('@/configuration');
       vi.resetModules();
       await published.dispose();
+      isolatedHome.restore();
       if (process.env.HAPPIER_DEBUG_KEEP_HANDOFF_TMP !== '1') {
         await rm(sourcePath, { recursive: true, force: true });
         await rm(sourceActiveServerDir, { recursive: true, force: true });
         await rm(targetActiveServerDir, { recursive: true, force: true });
         await rm(targetPath, { recursive: true, force: true });
+        await rm(isolatedHome.homeDir, { recursive: true, force: true });
       }
     }
   });

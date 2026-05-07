@@ -108,6 +108,7 @@ describe('happier self __install-payload', () => {
         hadLegacyCurrentInstallWithoutVersionMarkers: false,
         argv: ['repair'],
         commandPath: 'happier doctor',
+        forceNonInteractive: true,
       });
     } finally {
       logSpy.mockRestore();

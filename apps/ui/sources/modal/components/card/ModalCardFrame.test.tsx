@@ -24,8 +24,20 @@ installModalComponentCommonModuleMocks({
     },
 });
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({
+            ...acc,
+            ...flattenStyle(entry),
+        }), {});
+    }
+    if (typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}
+
 describe('ModalCardFrame', () => {
-    it('renders a flexing body wrapper even when layout is fit (so scrollable content can clamp to maxHeight)', async () => {
+    it('keeps fit-layout body content intrinsically measurable for alerts and compact cards', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
 
@@ -171,15 +183,11 @@ describe('ModalCardFrame', () => {
         if (body == null) {
             throw new Error('expected modal card body to exist');
         }
-        expect(body.props.style).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    flexGrow: 1,
-                    flexShrink: 1,
-                    flexBasis: 'auto',
-                    minHeight: 0,
-                }),
-            ]),
-        );
+        expect(flattenStyle(body.props.style)).toEqual(expect.objectContaining({
+            flexGrow: 1,
+            flexShrink: 1,
+            flexBasis: 0,
+            minHeight: 0,
+        }));
     });
 });

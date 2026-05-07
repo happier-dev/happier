@@ -137,10 +137,6 @@ vi.mock('@/components/navigation/shell/InboxView', () => ({
     InboxView: 'InboxView',
 }));
 
-vi.mock('@/components/settings/shell/SettingsViewWrapper', () => ({
-    SettingsViewWrapper: 'SettingsViewWrapper',
-}));
-
 vi.mock('@/components/sessions/shell/SessionsListWrapper', () => ({
     SessionsListWrapper: 'SessionsListWrapper',
 }));

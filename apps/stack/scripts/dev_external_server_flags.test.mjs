@@ -73,3 +73,18 @@ test('dev --tauri --json reports desktop tauri mode', async () => {
   assert.equal(parsed.startTauri, true);
   assert.equal(parsed.startUi, true);
 });
+
+test('dev --expo-tailscale --json enables mobile dev-client mode', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir); // apps/stack
+  const repoRoot = dirname(dirname(packageRoot)); // repo root
+  const devScript = join(packageRoot, 'scripts', 'dev.mjs');
+
+  const res = await runNode(
+    [devScript, '--json', '--expo-tailscale', '--server-url=https://api.example.com', '--no-daemon'],
+    { cwd: repoRoot, env: process.env }
+  );
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  const parsed = JSON.parse(res.stdout);
+  assert.equal(parsed.startMobile, true);
+});

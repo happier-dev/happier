@@ -33,10 +33,33 @@ test('buildMobileDevClientInstallInvocation sets EXPO_APP_SCHEME for dev-client 
   });
 
   assert.equal(invocation.env.EXPO_APP_SCHEME, invocation.identity.scheme);
+  assert.equal(invocation.env.EXPO_APP_BUNDLE_ID, 'dev.happier.app.dev.internal.devclient');
+  assert.equal(invocation.env.EXPO_ANDROID_PACKAGE, 'dev.happier.app.internaldev.devclient');
   assert.equal(
     invocation.env.EXPO_APP_SLUG,
     '',
     'expected EXPO_APP_SLUG to be explicitly blank so pipeline env files/Keychain bundles cannot override it',
+  );
+});
+
+test('buildMobileDevClientInstallInvocation selects public dev profile identities', async () => {
+  const invocation = buildMobileDevClientInstallInvocation({
+    rootDir: '/repo/apps/stack',
+    argv: ['--install', '--profile=publicdev'],
+    baseEnv: { USER: 'leeroy' },
+  });
+
+  assert.equal(invocation.profile, 'publicdev');
+  assert.equal(invocation.identity.iosAppName, 'Happier (dev)');
+  assert.equal(invocation.identity.iosBundleId, 'dev.happier.app.publicdev.devclient');
+  assert.equal(invocation.identity.androidPackage, 'dev.happier.app.publicdev.devclient');
+  assert.equal(invocation.identity.scheme, 'happier-dev');
+  assert.equal(invocation.env.EXPO_APP_BUNDLE_ID, 'dev.happier.app.publicdev.devclient');
+  assert.equal(invocation.env.EXPO_ANDROID_PACKAGE, 'dev.happier.app.publicdev.devclient');
+  assert.ok(invocation.nodeArgs.includes('--app-env=publicdev'), 'expected public dev profile app env');
+  assert.ok(
+    invocation.nodeArgs.includes('--ios-bundle-id=dev.happier.app.publicdev.devclient'),
+    'expected public dev iOS bundle id to be forwarded to mobile.mjs',
   );
 });
 
@@ -63,6 +86,17 @@ test('buildMobileDevClientInstallInvocation allows overriding bundle id via --bu
     'expected overridden bundle id to be forwarded to mobile.mjs',
   );
   assert.equal(invocation.env.EXPO_APP_BUNDLE_ID, 'com.example.happier.devclient');
+});
+
+test('buildMobileDevClientInstallInvocation allows overriding Android package via --android-package', async () => {
+  const invocation = buildMobileDevClientInstallInvocation({
+    rootDir: '/repo/apps/stack',
+    argv: ['--install', '--android-package=com.example.happier.android.devclient'],
+    baseEnv: { USER: 'leeroy' },
+  });
+
+  assert.equal(invocation.identity.androidPackage, 'com.example.happier.android.devclient');
+  assert.equal(invocation.env.EXPO_ANDROID_PACKAGE, 'com.example.happier.android.devclient');
 });
 
 test('buildMobileDevClientInstallInvocation allows overriding app name via --app-name', async () => {

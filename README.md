@@ -1,7 +1,7 @@
 <div align="center">
   <img src="/.github/logotype-dark.png" title="Happier Dev" alt="Happier Dev" width="280" />
 
-  ### Open-source web, desktop and mobile client for Claude Code, Codex, OpenCode, ...
+  ### Mobile, Web and Desktop client for Claude Code, Codex, OpenCode, ...
   
   Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer<br />and continue seamlessly from your phone, browser, or desktop app.
 
@@ -10,18 +10,15 @@
   **End-to-end encrypted. Self-hostable.<br />
   Built by developers, for developers.**
 
-  <p><img src="/.github/illustration.png" title="Happier Dev" alt="Happier Dev" width="650" /></p>
+  <p><img src="/.github/illustration.png" title="Happier Dev" alt="Happier Dev" width="850" /></p>
 </div>
 
-## Happier is in alpha preview stage: https://discord.gg/W6Pb8KuHfg
+## We want to hear your feedback!
 
+Happier is in alpha preview stage and might be buggy here and there.
 We are iterating fast and adding new features, improvements and bug fixes constantly.
 
-Make sure to star the repo and [subscribe to the announcements channel](https://github.com/happier-dev/happier/discussions/categories/announcements) to be informed of all the latest changes.
-
-You can also [join the Discord](https://discord.gg/W6Pb8KuHfg) channel to ask any questions or report any issues that you might have.
-
-### We want to hear your feedback!
+You can also **[join the Discord](https://discord.gg/W6Pb8KuHfg) to ask any questions or report any issues that you might have**.
 
 This project exists because we needed it ourselves, and **we want it to evolve through real feedback**. We aim to keep the community welcoming, and contributor-friendly, whether you’re signaling an issue or proposing a larger idea.
 

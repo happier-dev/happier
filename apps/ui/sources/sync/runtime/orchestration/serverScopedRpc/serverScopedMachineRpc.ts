@@ -1,5 +1,5 @@
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
@@ -9,12 +9,30 @@ import { recordCachedMachineRpcDirectRouteViable } from '@/sync/domains/transfer
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { resolveServerScopedContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedContext';
 import { resolveScopedMachineDataKey } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
+import {
+    MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS,
+    measureMachineEncryptRawAttribution,
+    type MachineEncryptRawAttributionEventName,
+} from '@/sync/encryption/machineEncryption';
 import { delay } from '@/utils/timing/time';
 
 import type { ServerScopedMachineRpcParams, SocketRpcResult } from './serverScopedRpcTypes';
 
+const SCOPED_MACHINE_RPC_SESSION_WRITE_METHODS = new Set<string>([
+    RPC_METHODS.SPAWN_HAPPY_SESSION,
+    RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
+    RPC_METHODS.SESSION_FORK,
+    SESSION_RPC_METHODS.SESSION_ROLLBACK,
+]);
+
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
+}
+
+function resolveScopedMachineRpcEncryptRawAttributionEvent(method: string): MachineEncryptRawAttributionEventName {
+    return SCOPED_MACHINE_RPC_SESSION_WRITE_METHODS.has(method)
+        ? MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS.scopedRpcSessionWrite
+        : MACHINE_ENCRYPT_RAW_ATTRIBUTION_EVENTS.scopedRpcOther;
 }
 
 type MachineRpcTimeoutScope = 'active' | 'scoped';
@@ -144,7 +162,10 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
                     .timeout(context.timeoutMs)
                     .emitWithAck(SOCKET_RPC_EVENTS.CALL, {
                         method: `${context.machineId}:${params.method}`,
-                        params: await machineEncryption.encryptRaw(params.payload),
+                        params: await measureMachineEncryptRawAttribution(
+                            resolveScopedMachineRpcEncryptRawAttributionEvent(params.method),
+                            async () => await machineEncryption.encryptRaw(params.payload),
+                        ),
                         timeoutMs: context.timeoutMs,
                     }) as Promise<SocketRpcResult>,
                 {

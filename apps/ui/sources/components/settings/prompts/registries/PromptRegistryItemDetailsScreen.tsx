@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type {
@@ -228,7 +228,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
       Modal.alert(t('common.error'), translatePromptLibraryMessage(imported.error));
       return;
     }
-    router.push(`/(app)/settings/prompts/skills/${imported.artifactId}`);
+    router.push(`/settings/prompts/skills/${imported.artifactId}`);
   }, [item, router]);
 
   const [importing, runImport] = useHappyAction(importItem);
@@ -254,7 +254,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
     if (!preview.ok) {
       Modal.alert(t('common.error'), translatePromptLibraryMessage(preview.error));
       if (preview.artifactId) {
-        router.push(`/(app)/settings/prompts/skills/${preview.artifactId}`);
+        router.push(`/settings/prompts/skills/${preview.artifactId}`);
       }
       return;
     }
@@ -284,12 +284,12 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
     if (!installed.ok) {
       Modal.alert(t('common.error'), translatePromptLibraryMessage(installed.error));
       if (installed.artifactId) {
-        router.push(`/(app)/settings/prompts/skills/${installed.artifactId}`);
+        router.push(`/settings/prompts/skills/${installed.artifactId}`);
       }
       return;
     }
     setPromptExternalLinksV1(installed.nextPromptExternalLinks ?? { v: 1, links: [] });
-    router.push(`/(app)/settings/prompts/skills/${installed.artifactId}`);
+    router.push(`/settings/prompts/skills/${installed.artifactId}`);
   }, [installScope, installType, promptExternalLinksV1, props.configuredSources, props.itemId, props.sourceId, router, selectedInstallMode, selectedMachineId, setPromptExternalLinksV1, targetInput, workspacePath]);
 
   const [installing, runInstall] = useHappyAction(installItem);
@@ -305,7 +305,6 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: screenTitle }} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <ItemList>
           <ItemGroup title={t('common.details')}>

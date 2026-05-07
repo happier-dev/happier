@@ -346,7 +346,7 @@ describe('PromptRegistriesScreen', () => {
             await pressTestInstanceAsync(registryItem);
         });
 
-        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('/(app)/settings/prompts/registries/item?'));
+        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('/settings/prompts/registries/item?'));
         expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('machineId=machine-1'));
         expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('sourceId=git%3Alocal-skills'));
         expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining('itemId=git%3Alocal-skills%3Areviewer'));
@@ -365,7 +365,7 @@ describe('PromptRegistriesScreen', () => {
             sourceId: 'git:local-skills',
             itemId: 'git:local-skills:reviewer',
         }));
-        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
+        expect(promptRegistriesRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills/bundle-1');
     });
 
     it('passes the search query through when rescanning the selected source', async () => {
@@ -613,7 +613,7 @@ describe('PromptRegistriesScreen', () => {
         });
 
         expect(importPromptRegistrySkillItemMock).toHaveBeenCalled();
-        expect(promptRegistriesRouterPushSpy).not.toHaveBeenCalledWith('/(app)/settings/prompts/skills/bundle-1');
+        expect(promptRegistriesRouterPushSpy).not.toHaveBeenCalledWith('/settings/prompts/skills/bundle-1');
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'promptLibrary.externalAssetsUnsupportedImport');
     });
 

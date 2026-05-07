@@ -464,95 +464,6 @@ describe('runBugReportCommand', () => {
     }
   });
 
-  it('expands ~/ stack diagnostics paths against HOME', async () => {
-    const collectBugReportMachineDiagnosticsSnapshot = (
-      __internal as unknown as {
-        collectBugReportMachineDiagnosticsSnapshot?: (input?: {
-          daemonLogLimit?: number;
-          stackLogLimit?: number;
-          stackRuntimeMaxChars?: number;
-        }) => Promise<{
-          stackContext?: {
-            stackName: string | null;
-            stackEnvPath: string | null;
-            runtimeStatePath: string | null;
-            runtimeState: string | null;
-            logCandidates: string[];
-          } | null;
-        }>;
-      }
-    ).collectBugReportMachineDiagnosticsSnapshot;
-    expect(typeof collectBugReportMachineDiagnosticsSnapshot).toBe('function');
-
-    const tempRoot = await mkdtemp(join(os.tmpdir(), 'bug-report-stack-diagnostics-tilde-'));
-    const homeDir = join(tempRoot, 'home');
-    const stackName = 'exp-stack';
-    const stackBaseDir = join(homeDir, '.happier', 'stacks', stackName);
-    const stackLogsDir = join(stackBaseDir, 'logs');
-    const envPath = join(stackBaseDir, 'env');
-    const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
-    const runnerLogPath = join(stackLogsDir, 'dev.1.log');
-
-    await mkdir(stackLogsDir, { recursive: true });
-    await writeFile(envPath, `HAPPIER_STACK_STACK=${stackName}\n`, 'utf8');
-    await writeFile(
-      runtimeStatePath,
-      JSON.stringify(
-        {
-          stackName,
-          logs: {
-            runner: runnerLogPath,
-          },
-        },
-        null,
-        2,
-      ),
-      'utf8',
-    );
-    await writeFile(runnerLogPath, 'stack runner started\n', 'utf8');
-
-    const previousStackName = process.env.HAPPIER_STACK_STACK;
-    const previousEnvPath = process.env.HAPPIER_STACK_ENV_FILE;
-    const previousRuntimePath = process.env.HAPPIER_STACK_RUNTIME_STATE_PATH;
-    const previousHome = process.env.HOME;
-    process.env.HOME = homeDir;
-    process.env.HAPPIER_STACK_STACK = stackName;
-    process.env.HAPPIER_STACK_ENV_FILE = `~/.happier/stacks/${stackName}/env`;
-    process.env.HAPPIER_STACK_RUNTIME_STATE_PATH = `~/.happier/stacks/${stackName}/stack.runtime.json`;
-
-    try {
-      const snapshot = await collectBugReportMachineDiagnosticsSnapshot!({
-        daemonLogLimit: 3,
-        stackLogLimit: 3,
-        stackRuntimeMaxChars: 64 * 1024,
-      });
-      expect(snapshot.stackContext?.stackEnvPath).toBe(envPath);
-      expect(snapshot.stackContext?.runtimeStatePath).toBe(runtimeStatePath);
-      expect(snapshot.stackContext?.logCandidates).toContain(runnerLogPath);
-    } finally {
-      if (previousStackName === undefined) {
-        delete process.env.HAPPIER_STACK_STACK;
-      } else {
-        process.env.HAPPIER_STACK_STACK = previousStackName;
-      }
-      if (previousEnvPath === undefined) {
-        delete process.env.HAPPIER_STACK_ENV_FILE;
-      } else {
-        process.env.HAPPIER_STACK_ENV_FILE = previousEnvPath;
-      }
-      if (previousRuntimePath === undefined) {
-        delete process.env.HAPPIER_STACK_RUNTIME_STATE_PATH;
-      } else {
-        process.env.HAPPIER_STACK_RUNTIME_STATE_PATH = previousRuntimePath;
-      }
-      if (previousHome === undefined) {
-        delete process.env.HOME;
-      } else {
-        process.env.HOME = previousHome;
-      }
-    }
-  });
-
   it('falls back to GitHub issue flow when server has no provider url', async () => {
     const submitSpy = vi.fn(async () => ({
       reportId: 'report-unexpected',
@@ -755,6 +666,114 @@ describe('runBugReportCommand', () => {
     expect(submissions[0]).toMatchObject({
       form: {
         summary: 'Valid summary',
+      },
+    });
+  });
+
+  it('falls back to a clickable issue URL when submitBugReport throws (B1)', async () => {
+    const deps = createDeps({
+      submitBugReport: async () => {
+        throw new Error('Unable to connect. Is the computer able to access the url?');
+      },
+    });
+
+    const result = await runBugReportCommand([
+      '--title', 'Network failure during submit',
+      '--summary', 'simulated submit failure',
+      '--current-behavior', 'cb',
+      '--expected-behavior', 'eb',
+      '--no-include-diagnostics',
+    ], deps);
+
+    expect(result.mode).toBe('fallback');
+    if (result.mode === 'fallback') {
+      expect(result.reason).toBe('submit-failed');
+      expect(result.errorMessage).toContain('Unable to connect');
+      expect(result.issueUrl).toMatch(/^https:\/\/github\.com\/happier-dev\/happier\/issues\/new/);
+    }
+  });
+
+  it('falls back when fetchBugReportsFeature throws (B2)', async () => {
+    const deps = createDeps({
+      fetchBugReportsFeature: async () => {
+        throw new Error('Active server unreachable');
+      },
+    });
+
+    const result = await runBugReportCommand([
+      '--title', 'Server unreachable',
+      '--summary', 'simulated feature-fetch failure',
+      '--no-include-diagnostics',
+    ], deps);
+
+    expect(result.mode).toBe('fallback');
+    if (result.mode === 'fallback') {
+      expect(result.reason).toBe('feature-fetch-failed');
+      expect(result.errorMessage).toContain('Active server unreachable');
+      expect(result.issueUrl).toMatch(/^https:\/\/github\.com\/happier-dev\/happier\/issues\/new/);
+    }
+  });
+
+  it('passes --attach* flags through to collectDiagnosticsArtifacts (B4)', async () => {
+    const collectInputs: unknown[] = [];
+    const deps = createDeps({
+      collectDiagnosticsArtifacts: async (input) => {
+        collectInputs.push(input);
+        return {
+          artifacts: [],
+          environment: {
+            appVersion: '1.0.0',
+            platform: 'darwin',
+            deploymentType: 'cloud',
+            serverUrl: 'https://api.happier.dev',
+          },
+        };
+      },
+    });
+
+    await runBugReportCommand([
+      '--title', 'attach test',
+      '--summary', 'attaching files',
+      '--accept-privacy-notice',
+      '--attach', '/tmp/extra.png',
+      '--attach-session-log', '/tmp/session.log',
+      '--attach-provider-transcript', '/tmp/claude.jsonl',
+    ], deps);
+
+    expect(collectInputs).toHaveLength(1);
+    expect(collectInputs[0]).toMatchObject({
+      extraAttachments: [
+        { path: '/tmp/extra.png', sourceKind: 'attachment' },
+        { path: '/tmp/session.log', sourceKind: 'session-log' },
+        { path: '/tmp/claude.jsonl', sourceKind: 'provider-transcript' },
+      ],
+    });
+  });
+
+  it('appends --session-id to the submitted summary (B5)', async () => {
+    const submissions: unknown[] = [];
+    const deps = createDeps({
+      submitBugReport: async (input) => {
+        submissions.push(input);
+        return {
+          reportId: 'r-sid',
+          issueNumber: 999,
+          issueUrl: 'https://github.com/happier-dev/happier/issues/999',
+        };
+      },
+    });
+
+    await runBugReportCommand([
+      '--title', 'session-bound report',
+      '--summary', 'short summary',
+      '--session-id', 'sess_abcdef123456',
+      '--no-include-diagnostics',
+    ], deps);
+
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0]).toMatchObject({
+      form: {
+        summary: expect.stringContaining('Happier session id: sess_abcdef123456'),
       },
     });
   });

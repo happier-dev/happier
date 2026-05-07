@@ -7,11 +7,14 @@ type RawEncryption = {
     decryptRaw: (value: string) => Promise<any>;
 };
 
-export async function fetchTodos(params: { credentials: AuthCredentials }): Promise<void> {
+export async function fetchTodos(params: { credentials: AuthCredentials; shouldContinue?: () => boolean }): Promise<void> {
     const { credentials } = params;
+    const shouldContinue = params.shouldContinue ?? (() => true);
+    if (!shouldContinue()) return;
 
     log.log('📝 Fetching todos...');
     const todoState = await fetchTodosDomain(credentials, { retry: 'none' });
+    if (!shouldContinue()) return;
     storage.getState().applyTodos(todoState);
     log.log('📝 Todos loaded');
 }

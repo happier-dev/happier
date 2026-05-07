@@ -71,6 +71,9 @@ export function buildXtermWebViewHtml(params: Readonly<{
         fontSizePx: ${Math.round(fontSizePx)},
         lineHeight: ${lineHeight},
       };
+      const INITIAL_READY_FIT_DELAY_MS = 20;
+      const READY_FIT_RETRY_INTERVAL_MS = 50;
+      const READY_FIT_RETRY_LIMIT = 30;
 
       function postRaw(value) {
         try {
@@ -140,6 +143,25 @@ export function buildXtermWebViewHtml(params: Readonly<{
           }));
         }
       }
+
+      function isBenignDisposedXtermRenderError(value) {
+        const message = String(value && value.message ? value.message : value || '');
+        const stack = String(value && value.stack ? value.stack : '');
+        return message.includes("Cannot read properties of undefined (reading 'dimensions')")
+          && (stack.includes('RenderService') || stack.includes('Viewport') || stack.includes('xterm'));
+      }
+
+      window.addEventListener('error', (event) => {
+        if (isBenignDisposedXtermRenderError(event.error || event.message)) {
+          event.preventDefault();
+        }
+      });
+
+      window.addEventListener('unhandledrejection', (event) => {
+        if (isBenignDisposedXtermRenderError(event.reason)) {
+          event.preventDefault();
+        }
+      });
 
       const pendingByMessageId = new Map();
 
@@ -226,6 +248,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
       let lastRows = 0;
       let pendingWrite = '';
       let isWriting = false;
+      let readyFitAttemptCount = 0;
 
       function scheduleWriteFlush() {
         if (!term) return;
@@ -278,10 +301,10 @@ export function buildXtermWebViewHtml(params: Readonly<{
       }
 
       function reportSize(kind) {
-        if (!term) return;
+        if (!term) return false;
         const cols = term.cols || 0;
         const rows = term.rows || 0;
-        if (cols <= 0 || rows <= 0) return;
+        if (cols <= 0 || rows <= 0) return false;
 
         if (cols !== lastCols || rows !== lastRows) {
           lastCols = cols;
@@ -294,20 +317,33 @@ export function buildXtermWebViewHtml(params: Readonly<{
         if (kind === 'ready') {
           didSendReady = true;
         }
+        return true;
       }
 
       function fitAndReport(kind) {
-        if (!fitAddon || !term) return;
+        if (!fitAddon || !term) return false;
         const root = document.getElementById('root');
-        if (!root) return;
+        if (!root) return false;
         const rect = root.getBoundingClientRect();
-        if (rect.width < 24 || rect.height < 24) return;
+        if (rect.width < 24 || rect.height < 24) return false;
         try {
           fitAddon.fit();
-          reportSize(kind);
+          return reportSize(kind);
         } catch (e) {
-          // ignore
+          return false;
         }
+      }
+
+      function scheduleReadyFitAttempt(delayMs) {
+        setTimeout(() => {
+          readyFitAttemptCount += 1;
+          fitAndReport('ready');
+          try { term && term.focus(); } catch {}
+          scheduleWriteFlush();
+          if (!didSendReady && readyFitAttemptCount < READY_FIT_RETRY_LIMIT) {
+            scheduleReadyFitAttempt(READY_FIT_RETRY_INTERVAL_MS);
+          }
+        }, delayMs);
       }
 
       function clearTerminal() {
@@ -368,6 +404,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
           fontSize: DEFAULT_CONFIG.fontSizePx,
           lineHeight: DEFAULT_CONFIG.lineHeight,
           scrollback: 5000,
+          screenReaderMode: false,
           theme: {
             background: DEFAULT_CONFIG.theme.backgroundColor,
             foreground: DEFAULT_CONFIG.theme.textColor,
@@ -391,12 +428,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
           }
         });
 
-        // Fit once layout settles.
-        setTimeout(() => {
-          fitAndReport('ready');
-          try { term.focus(); } catch {}
-          scheduleWriteFlush();
-        }, 20);
+        scheduleReadyFitAttempt(INITIAL_READY_FIT_DELAY_MS);
 
         const resizeObserver = typeof ResizeObserver !== 'undefined'
           ? new ResizeObserver(() => fitAndReport(didSendReady ? 'resize' : 'ready'))

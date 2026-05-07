@@ -292,4 +292,110 @@ describe('SourceControlBranchMenu worktrees', () => {
             worktreePath: '/repo/.worktrees/feature-auth',
         });
     });
+
+    it('checks out a pull request branch from a prompted reference', async () => {
+        sourceControlBranchMenuModuleState.modalPromptSpy.mockResolvedValue('glab mr checkout 17');
+        sourceControlBranchMenuModuleState.sessionScmPullRequestCheckoutMock.mockResolvedValue({
+            success: true,
+            branch: 'feature/gitlab',
+            headSha: 'abc123',
+            baseSha: 'def456',
+        });
+
+        const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
+
+        const screen = await renderScreen(<SourceControlBranchMenu
+                    sessionId="s1"
+                    currentBranch="main"
+                    snapshot={{
+                        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [] },
+                        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                        capabilities: {
+                            readBranches: true,
+                            writeBranchCheckout: true,
+                            writePullRequestCheckout: true,
+                            writePullRequestPrepareWorktree: true,
+                        },
+                        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+                        fetchedAt: Date.now(),
+                        projectKey: 'p1',
+                        hasConflicts: false,
+                        entries: [],
+                        stashCount: 0,
+                    } as any}
+                />);
+
+        await openSourceControlBranchMenu(screen);
+        const menu = screen.findByType('DropdownMenu' as any);
+
+        expect(menu.props.items.some((item: any) => item.id === 'pull-request:checkout-local')).toBe(true);
+
+        await act(async () => {
+            await menu.props.onSelect('pull-request:checkout-local');
+        });
+
+        expect(sourceControlBranchMenuModuleState.sessionScmPullRequestCheckoutMock).toHaveBeenCalledWith('s1', {
+            prReference: { number: 17 },
+        });
+    });
+
+    it('prepares a pull request worktree and opens a new session at the returned path', async () => {
+        sourceControlBranchMenuModuleState.readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo/packages/app' });
+        sourceControlBranchMenuModuleState.modalPromptSpy.mockResolvedValue('https://github.com/happier/dev/pull/42');
+        sourceControlBranchMenuModuleState.sessionScmPullRequestPrepareWorktreeMock.mockResolvedValue({
+            success: true,
+            targetPath: '/repo/.dev/worktree/pr-42/packages/app',
+            branch: 'pr-42',
+            head: 'abc123',
+        });
+
+        const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
+
+        const screen = await renderScreen(<SourceControlBranchMenu
+                    sessionId="s1"
+                    currentBranch="main"
+                    snapshot={{
+                        repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [] },
+                        branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                        capabilities: {
+                            readBranches: true,
+                            writeBranchCheckout: true,
+                            writePullRequestCheckout: true,
+                            writePullRequestPrepareWorktree: true,
+                        },
+                        totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+                        fetchedAt: Date.now(),
+                        projectKey: 'p1',
+                        hasConflicts: false,
+                        entries: [],
+                        stashCount: 0,
+                    } as any}
+                />);
+
+        await openSourceControlBranchMenu(screen);
+        const menu = screen.findByType('DropdownMenu' as any);
+
+        expect(menu.props.items.some((item: any) => item.id === 'pull-request:open-worktree')).toBe(true);
+
+        await act(async () => {
+            await menu.props.onSelect('pull-request:open-worktree');
+        });
+
+        expect(sourceControlBranchMenuModuleState.sessionScmPullRequestPrepareWorktreeMock).toHaveBeenCalledWith('s1', {
+            sourcePath: '/repo/packages/app',
+            mode: 'worktree',
+            prReference: { url: 'https://github.com/happier/dev/pull/42' },
+        });
+        expect(sourceControlBranchMenuModuleState.invalidateBranchesForSessionMock).toHaveBeenCalledWith({
+            sessionId: 's1',
+        });
+        expect(sourceControlBranchMenuModuleState.invalidateFromMutationAndAwaitMock).toHaveBeenCalledWith('s1');
+        expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                machineId: 'machine-1',
+                directory: '/repo/.dev/worktree/pr-42/packages/app',
+            },
+        });
+    });
 });

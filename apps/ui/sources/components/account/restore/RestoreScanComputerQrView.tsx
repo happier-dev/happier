@@ -127,7 +127,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                         requestedServerUrl: parsed.serverUrl,
                         activeServerUrl,
                     });
-                    if (target && activeServerUrl !== target) {
+                    if (target) {
                         await upsertActivateAndSwitchServer({
                             serverUrl: target,
                             source: 'url',

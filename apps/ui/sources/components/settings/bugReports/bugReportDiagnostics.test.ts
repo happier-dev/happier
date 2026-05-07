@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PersistedSyncReliabilityEvent } from '@/sync/domains/state/persistence';
+import type { SyncPerformanceTelemetrySummary } from '@/sync/runtime/syncPerformanceTelemetry';
 import type { PreRestartBugReportSnapshotV1 } from '@/utils/system/preRestartBugReportSnapshot';
 import { installBugReportComponentCommonModuleMocks } from './bugReportComponentTestHelpers';
 
@@ -69,6 +71,30 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
   ]),
 }));
 
+const { loadSyncReliabilityEventsMock } = vi.hoisted(() => ({
+  loadSyncReliabilityEventsMock: vi.fn<() => PersistedSyncReliabilityEvent[]>(() => []),
+}));
+
+const {
+  syncPerformanceTelemetryIsEnabledMock,
+  syncPerformanceTelemetrySnapshotMock,
+  syncPerformanceTelemetryFlushSummaryMock,
+  syncPerformanceTelemetryResetMock,
+} = vi.hoisted(() => ({
+  syncPerformanceTelemetryIsEnabledMock: vi.fn<() => boolean>(() => false),
+  syncPerformanceTelemetrySnapshotMock: vi.fn<() => SyncPerformanceTelemetrySummary>(() => ({ events: [] })),
+  syncPerformanceTelemetryFlushSummaryMock: vi.fn<() => SyncPerformanceTelemetrySummary | null>(() => null),
+  syncPerformanceTelemetryResetMock: vi.fn<() => void>(() => {}),
+}));
+vi.mock('@/sync/runtime/syncPerformanceTelemetry', () => ({
+  syncPerformanceTelemetry: {
+    isEnabled: syncPerformanceTelemetryIsEnabledMock,
+    snapshot: syncPerformanceTelemetrySnapshotMock,
+    flushSummary: syncPerformanceTelemetryFlushSummaryMock,
+    reset: syncPerformanceTelemetryResetMock,
+  },
+}));
+
 vi.mock('@/sync/domains/state/persistence', () => ({
   loadProfile: () => ({
     id: 'acct_ui_1',
@@ -81,6 +107,7 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     connectedServices: [],
     connectedServicesV2: [],
   }),
+  loadSyncReliabilityEvents: loadSyncReliabilityEventsMock,
 }));
 
 type ServerFetchResponseLike = Readonly<{
@@ -191,8 +218,126 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     serverFetchMock.mockClear();
     machineCollectBugReportDiagnosticsMock.mockClear();
     machineGetBugReportLogTailMock.mockClear();
+    loadSyncReliabilityEventsMock.mockReset();
+    loadSyncReliabilityEventsMock.mockReturnValue([]);
+    syncPerformanceTelemetryIsEnabledMock.mockReset();
+    syncPerformanceTelemetryIsEnabledMock.mockReturnValue(false);
+    syncPerformanceTelemetrySnapshotMock.mockReset();
+    syncPerformanceTelemetrySnapshotMock.mockReturnValue({ events: [] });
+    syncPerformanceTelemetryFlushSummaryMock.mockReset();
+    syncPerformanceTelemetryFlushSummaryMock.mockReturnValue(null);
+    syncPerformanceTelemetryResetMock.mockReset();
     isMachineOnlineMock.mockReset();
     isMachineOnlineMock.mockReturnValue(true);
+  });
+
+  it('includes persisted sync reliability events from the diagnostics context window', async () => {
+    const nowMs = Date.parse('2026-05-04T12:00:00.000Z');
+    loadSyncReliabilityEventsMock.mockReturnValue([
+      {
+        id: 'old-event',
+        name: 'sync.cursor.contractAnomaly',
+        atMs: nowMs - 31 * 60 * 1_000,
+        fields: { reason: 'old' },
+      },
+      {
+        id: 'event-1',
+        name: 'sync.cursor.contractAnomaly',
+        atMs: nowMs - 1_000,
+        fields: { reason: 'returned-after-cursor', afterCursor: '42' },
+      },
+    ]);
+
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [],
+      includeDiagnostics: true,
+      acceptedKinds: ['ui-mobile'],
+      maxArtifactBytes: 128_000,
+      nowMs,
+      contextWindowMs: 30 * 60 * 1_000,
+    });
+
+    const reliabilityArtifact = result.artifacts.find((artifact) => artifact.filename === 'sync-reliability-events.json');
+    expect(reliabilityArtifact).toMatchObject({
+      sourceKind: 'ui-mobile',
+      contentType: 'application/json',
+    });
+    const reliabilityPayload = JSON.parse(String(reliabilityArtifact?.content ?? '{}')) as {
+      eventCount?: number;
+      events?: Array<{ id?: string; name?: string; fields?: Record<string, unknown> }>;
+    };
+    expect(reliabilityPayload.eventCount).toBe(1);
+    expect(reliabilityPayload.events).toEqual([
+      {
+        id: 'event-1',
+        name: 'sync.cursor.contractAnomaly',
+        atMs: nowMs - 1_000,
+        fields: { reason: 'returned-after-cursor', afterCursor: '42' },
+      },
+    ]);
+
+    const appContext = result.artifacts.find((artifact) => artifact.filename === 'app-context.json');
+    const appContextJson = JSON.parse(String(appContext?.content ?? '{}')) as {
+      diagnosticsCollection?: Record<string, { status?: string }>;
+    };
+    expect(appContextJson.diagnosticsCollection?.syncReliability?.status).toBe('collected');
+  });
+
+  it('includes enabled sync performance telemetry snapshot without flushing it', async () => {
+    const nowMs = Date.parse('2026-05-04T12:00:00.000Z');
+    syncPerformanceTelemetryIsEnabledMock.mockReturnValue(true);
+    syncPerformanceTelemetrySnapshotMock.mockReturnValue({
+      events: [
+        {
+          name: 'sync.sessions.snapshot.fetch.page',
+          count: 2,
+          totalMs: 120,
+          minMs: 40,
+          maxMs: 80,
+          p50Ms: 64,
+          p90Ms: 64,
+          p99Ms: 64,
+          slowCount: 1,
+          durationBuckets: { '64': 1, '256': 1 },
+          fields: { sessions: 3 },
+          fieldStats: { sessions: { sum: 3, min: 1, max: 2, last: 2 } },
+        },
+      ],
+    });
+
+    const result = await collectBugReportDiagnosticsArtifacts({
+      machines: [],
+      includeDiagnostics: true,
+      acceptedKinds: ['ui-mobile'],
+      maxArtifactBytes: 128_000,
+      nowMs,
+      contextWindowMs: 30 * 60 * 1_000,
+    });
+
+    const performanceArtifact = result.artifacts.find((artifact) => artifact.filename === 'sync-performance-telemetry.json');
+    expect(performanceArtifact).toMatchObject({
+      sourceKind: 'ui-mobile',
+      contentType: 'application/json',
+    });
+    const performancePayload = JSON.parse(String(performanceArtifact?.content ?? '{}')) as {
+      eventCount?: number;
+      telemetry?: { events?: Array<{ name?: string; count?: number }> };
+    };
+    expect(performancePayload.eventCount).toBe(1);
+    expect(performancePayload.telemetry?.events).toEqual([
+      expect.objectContaining({
+        name: 'sync.sessions.snapshot.fetch.page',
+        count: 2,
+      }),
+    ]);
+    expect(syncPerformanceTelemetryFlushSummaryMock).not.toHaveBeenCalled();
+    expect(syncPerformanceTelemetryResetMock).not.toHaveBeenCalled();
+
+    const appContext = result.artifacts.find((artifact) => artifact.filename === 'app-context.json');
+    const appContextJson = JSON.parse(String(appContext?.content ?? '{}')) as {
+      diagnosticsCollection?: Record<string, { status?: string }>;
+    };
+    expect(appContextJson.diagnosticsCollection?.syncPerformance?.status).toBe('collected');
   });
 
   it('includes stack diagnostics artifacts from machine diagnostics', async () => {

@@ -26,6 +26,7 @@ const sessionState = vi.hoisted(() => ({
 }));
 
 const attachmentsTransferAvailableState = vi.hoisted(() => ({ value: true }));
+const attachmentsFeatureScopeState = vi.hoisted(() => ({ enabledForServerId: null as string | null }));
 
 installSessionShellCommonModuleMocks({
   reactNative: async () =>
@@ -126,7 +127,6 @@ installSessionShellCommonModuleMocks({
       useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
       useLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return false;
-        if (key === 'editorFocusModeEnabled') return false;
         if (key === 'acknowledgedCliVersions') return [];
         return null;
       },
@@ -198,7 +198,12 @@ const featureEnabledState: Record<string, boolean> = {
   'attachments.uploads': false,
 };
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
+  useFeatureEnabled: (featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) => {
+    if (featureId === 'attachments.uploads' && attachmentsFeatureScopeState.enabledForServerId != null) {
+      return scope?.scopeKind === 'spawn' && scope.serverId === attachmentsFeatureScopeState.enabledForServerId;
+    }
+    return featureEnabledState[featureId] === true;
+  },
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -353,6 +358,7 @@ const { SessionView } = await import('./SessionView');
 
 describe('SessionView attachments gating', () => {
   it('does not wire drag/drop/paste attachments when attachments.uploads is disabled', async () => {
+    attachmentsFeatureScopeState.enabledForServerId = null;
     featureEnabledState['attachments.uploads'] = false;
     attachmentsTransferAvailableState.value = true;
 
@@ -366,6 +372,7 @@ describe('SessionView attachments gating', () => {
   });
 
   it('fails closed when attachments.uploads is enabled but session file upload availability is false', async () => {
+    attachmentsFeatureScopeState.enabledForServerId = null;
     featureEnabledState['attachments.uploads'] = true;
     attachmentsTransferAvailableState.value = false;
 
@@ -376,5 +383,19 @@ describe('SessionView attachments gating', () => {
 
     const agentInput = tree.findByType('AgentInput' as any);
     expect(agentInput.props.onAttachmentsAdded).toBeUndefined();
+  });
+
+  it('wires attachments when the viewed session server enables uploads', async () => {
+    attachmentsFeatureScopeState.enabledForServerId = 'server-2';
+    featureEnabledState['attachments.uploads'] = false;
+    attachmentsTransferAvailableState.value = true;
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<AppPaneProvider>
+          <SessionView id="s1" routeServerId="server-2" />
+        </AppPaneProvider>)).tree;
+
+    const agentInput = tree.findByType('AgentInput' as any);
+    expect(agentInput.props.onAttachmentsAdded).toEqual(expect.any(Function));
   });
 });

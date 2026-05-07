@@ -1,6 +1,7 @@
 import { configuration } from '@/configuration';
 import { buildCodexSpawnRuntimeAffinityCompatFields } from '@happier-dev/agents';
 
+import { createPollingDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createPollingDirectSessionFollowLease';
 import {
   mergeDirectSessionEnvironmentVariables,
   type DirectSessionProviderOps,
@@ -54,6 +55,17 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
     });
     return { items: res.items, nextCursor: res.nextCursor ?? null, truncated: res.truncated === true };
     },
+    acquireFollowLease: async ({ source, remoteSessionId }) => createPollingDirectSessionFollowLease({
+      readAfterTranscript: ({ cursor, maxBytes, maxItems }) =>
+        readAfterCodexTranscript({
+          source,
+          activeServerDir: configuration.activeServerDir,
+          remoteSessionId,
+          cursor,
+          maxBytes,
+          maxItems,
+        }),
+    }),
     resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
       const homeEntries = await resolveCodexHomeEntriesForDirectSessionsSource({
         source: linked.source,

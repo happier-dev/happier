@@ -9,22 +9,28 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
 - openLink: ${HAPPIER_E2E_DEV_CLIENT_LAUNCH_URL}
 - extendedWaitUntil:
-    visible: "(Open in .*|DEVELOPMENT SERVERS|Development servers|New development server|Connect|Error loading app|This is the developer menu.*|Continue|Go home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    visible: "(Open in .*|Open with .*|DEVELOPMENT SERVERS|Development servers|New development server|Enter URL manually|Connect|Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
     timeout: 300000
 - runFlow:
     file: acceptIosOpenInPromptMaybe.yaml
+- runFlow:
+    file: acceptAndroidOpenWithPromptMaybe.yaml
 - waitForAnimationToEnd:
     timeout: 5000
 - extendedWaitUntil:
-    visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Connect|Error loading app|This is the developer menu.*|Continue|Go home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    visible: "(Open with .*|DEVELOPMENT SERVERS|Development servers|New development server|Enter URL manually|Connect|Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
     timeout: 300000
+- runFlow:
+    file: acceptAndroidOpenWithPromptMaybe.yaml
+- waitForAnimationToEnd:
+    timeout: 5000
 - runFlow:
     file: dismissDeveloperMenuMaybe.yaml
 - runFlow:
     file: dismissExpoDevMenuOverlayMaybe.yaml
 - runFlow:
     when:
-      visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Connect)"
+      visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Enter URL manually|Connect)"
     commands:
       - runFlow:
           file: connectUsingManualEntry.yaml

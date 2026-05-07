@@ -10,7 +10,6 @@ let lastProps: any = null;
 let mockedWindowHeightPx = 900;
 let mockedSettings: Record<string, any> = {
     uiMultiPanePanelsEnabled: true,
-    editorFocusModeEnabled: false,
     rightPaneWidthPx: 520,
     rightPaneWidthBasisPx: 1200,
     detailsPaneWidthPx: 520,
@@ -60,7 +59,6 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
         mockedWindowHeightPx = 900;
         mockedSettings = {
             uiMultiPanePanelsEnabled: true,
-            editorFocusModeEnabled: false,
             rightPaneWidthPx: 520,
             rightPaneWidthBasisPx: 1200,
             detailsPaneWidthPx: 520,
@@ -89,7 +87,6 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
         mockedWindowHeightPx = 900;
         mockedSettings = {
             uiMultiPanePanelsEnabled: true,
-            editorFocusModeEnabled: false,
             rightPaneWidthPx: 520,
             rightPaneWidthBasisPx: 1200,
             detailsPaneWidthPx: 520,
@@ -124,7 +121,6 @@ describe('AppPaneScopeHost (bottom overlay height)', () => {
         mockedWindowHeightPx = 900;
         mockedSettings = {
             uiMultiPanePanelsEnabled: true,
-            editorFocusModeEnabled: false,
             rightPaneWidthPx: 520,
             rightPaneWidthBasisPx: 1200,
             detailsPaneWidthPx: 520,

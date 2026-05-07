@@ -26,6 +26,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
     const [transcriptStreamingCoalesceEnabled, setTranscriptStreamingCoalesceEnabled] = useSettingMutable('transcriptStreamingCoalesceEnabled');
     const [transcriptStreamingCoalesceWindowMs, setTranscriptStreamingCoalesceWindowMs] = useSettingMutable('transcriptStreamingCoalesceWindowMs');
     const [transcriptStreamingCoalesceMaxBatchSize, setTranscriptStreamingCoalesceMaxBatchSize] = useSettingMutable('transcriptStreamingCoalesceMaxBatchSize');
+    const [transcriptStreamingPartialOutputEnabled, setTranscriptStreamingPartialOutputEnabled] = useSettingMutable('transcriptStreamingPartialOutputEnabled');
     const [transcriptThinkingPulseStaleMs, setTranscriptThinkingPulseStaleMs] = useSettingMutable('transcriptThinkingPulseStaleMs');
     const [transcriptListImplementation, setTranscriptListImplementation] = useSettingMutable('transcriptListImplementation');
 
@@ -114,6 +115,20 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                         if (!Number.isFinite(parsed)) return;
                         setTranscriptStreamingCoalesceMaxBatchSize(clampInt(parsed, { min: 1, max: 2000 }) as any);
                     }}
+                />
+
+                <Item
+                    title={t('settingsSession.transcript.advanced.streamingPartialOutputTitle')}
+                    subtitle={t('settingsSession.transcript.advanced.streamingPartialOutputSubtitle')}
+                    icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
+                    rightElement={
+                        <Switch
+                            value={transcriptStreamingPartialOutputEnabled !== false}
+                            onValueChange={(v) => setTranscriptStreamingPartialOutputEnabled(Boolean(v) as any)}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setTranscriptStreamingPartialOutputEnabled((transcriptStreamingPartialOutputEnabled === false) as any)}
                 />
 
                 <Item

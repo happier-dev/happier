@@ -1,0 +1,57 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: false
+    clearKeychain: false
+
+- runFlow:
+    file: _shared/dismissAndroidSystemNotRespondingDialogMaybe.yaml
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/server?auto=1&url=${HAPPIER_E2E_SERVER_URL}
+- runFlow:
+    file: _shared/acceptAndroidOpenWithPromptMaybe.yaml
+
+- extendedWaitUntil:
+    visible: ".*${HAPPIER_E2E_SERVER_VISIBLE_HOST_PATTERN}.*"
+    timeout: 240000
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///
+- runFlow:
+    file: _shared/acceptAndroidOpenWithPromptMaybe.yaml
+
+- extendedWaitUntil:
+    visible: "(Sessions|Start a session from your computer|What would you like to work on\\?|Hi! How can I help you today\\?)"
+    timeout: 240000
+
+- waitForAnimationToEnd:
+    timeout: 15000
+
+- runFlow:
+    when:
+      visible:
+        id: session-header-back
+    commands:
+      - tapOn:
+          id: session-header-back
+      - extendedWaitUntil:
+          visible: "(Sessions|Start a session from your computer)"
+          timeout: 240000
+
+- extendedWaitUntil:
+    visible:
+      id: "session-list-item-.*"
+    timeout: 240000
+
+- tapOn:
+    id: "session-list-item-.*"
+    index: 0
+    retryTapIfNoChange: true
+    waitToSettleTimeoutMs: 1000
+
+- extendedWaitUntil:
+    visible:
+      id: "(transcript-chat-list|session-empty-messages)"
+    timeout: 240000
+
+- waitForAnimationToEnd:
+    timeout: 15000

@@ -273,6 +273,53 @@ describe('handleServiceRepairCliCommand', () => {
     }));
   });
 
+  it('resolves doctor repair --server URLs to existing server profiles', async () => {
+    await withTempDir('happier-service-repair-server-url-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+      });
+      vi.resetModules();
+
+      const [{ addServerProfile }, { handleServiceRepairCliCommand }] = await Promise.all([
+        import('@/server/serverProfiles'),
+        import('./handleServiceRepairCliCommand'),
+      ]);
+
+      const created = await addServerProfile({
+        name: 'remote-dev-tui',
+        serverUrl: 'http://127.0.0.1:52753',
+        webappUrl: 'http://127.0.0.1:52753',
+        use: false,
+      });
+
+      const output = captureConsoleJsonOutput<{
+        report: {
+          findings: Array<{ kind: string; serverId?: string }>;
+          authProfiles: Array<{ serverId: string; isActive: boolean }>;
+        };
+      }>();
+      try {
+        await handleServiceRepairCliCommand({
+          argv: ['repair', '--server', 'http://127.0.0.1:52753', '--json'],
+          commandPath: 'happier service',
+        });
+
+        const json = output.json();
+        expect(json.report.findings).not.toContainEqual(expect.objectContaining({
+          kind: 'server_profile_missing',
+        }));
+        expect(json.report.authProfiles).toContainEqual(expect.objectContaining({
+          serverId: created.id,
+          isActive: true,
+        }));
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
   it('renders doctor repair preflight with automatic startup, current daemon status, and local relays', async () => {
     resolveDaemonServiceInventoryEntriesMock.mockImplementation(async () => [{
       serviceType: 'daemon',
@@ -642,8 +689,13 @@ describe('handleServiceRepairCliCommand', () => {
         systemUser: 'developer',
         userHomeDir: '/home/developer',
         happierHomeDir: '/home/developer/.happier',
-        nodePath: '/usr/bin/node',
-        entryPath: '/opt/happier/index.mjs',
+      }),
+    );
+    expect(applyBackgroundServiceRepairPlanMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({
+        nodePath: expect.anything(),
+        entryPath: expect.anything(),
       }),
     );
   });

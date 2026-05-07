@@ -6,9 +6,17 @@ import {
     pickLocalOnlyAccountSettings,
     stripLocalOnlyAccountSettings,
 } from '@/sync/domains/settings/localOnlyAccountSettings';
+import {
+    areAccountSettingsScopesEqual,
+    type AccountSettingsScope,
+} from '@/sync/domains/settings/scope/accountSettingsScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import { loadPendingSettings } from '@/sync/domains/state/persistence';
+import {
+    loadAccountSettings,
+    loadPendingAccountSettings,
+} from '@/sync/domains/state/accountSettingsPersistence';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import {
@@ -32,6 +40,7 @@ import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 export type SyncSettingsParams = {
     credentials: AuthCredentials;
     encryption: Encryption;
+    settingsScope?: AccountSettingsScope | null;
     pendingSettings: Partial<Settings>;
     clearPendingSettings: () => void;
     settingsSecretsKey?: Uint8Array | null;
@@ -40,6 +49,7 @@ export type SyncSettingsParams = {
 
 export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     const { credentials, encryption, pendingSettings, clearPendingSettings } = params;
+    const settingsScope = params.settingsScope ?? null;
     const settingsSecretsKey = params.settingsSecretsKey ?? null;
     const settingsSecretsReadKeys = params.settingsSecretsReadKeys ?? (settingsSecretsKey ? [settingsSecretsKey] : []);
 
@@ -51,6 +61,56 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
 
     const encryptionMode = await fetchAccountEncryptionMode(credentials);
     const accountMode = encryptionMode.mode === 'plain' ? 'plain' : 'e2ee';
+
+    function isSettingsScopeActive(): boolean {
+        if (!settingsScope) return true;
+        return areAccountSettingsScopesEqual(storage.getState().settingsScope, settingsScope);
+    }
+
+    function loadSettingsForCapturedScope(): { settings: Settings; version: number | null } {
+        if (!settingsScope || isSettingsScopeActive()) {
+            const currentState = storage.getState();
+            return {
+                settings: currentState.settings,
+                version: currentState.settingsVersion,
+            };
+        }
+        const loaded = loadAccountSettings(settingsScope);
+        return {
+            settings: settingsParse(loaded.settings),
+            version: loaded.version,
+        };
+    }
+
+    function loadPendingSettingsForCapturedScope(): Partial<Settings> {
+        // Pre-auth/bootstrap calls may not have a captured account scope yet. Authenticated
+        // sync paths always pass a scope and therefore use scoped pending settings.
+        return settingsScope ? loadPendingAccountSettings(settingsScope) : loadPendingSettings();
+    }
+
+    function applySettingsForCapturedScope(nextSettings: Settings, nextVersion: number): void {
+        if (settingsScope) {
+            storage.getState().applySettingsForScope(settingsScope, nextSettings, nextVersion);
+            return;
+        }
+        storage.getState().applySettings(nextSettings, nextVersion);
+    }
+
+    function replaceSettingsForCapturedScope(nextSettings: Settings, nextVersion: number): void {
+        if (settingsScope) {
+            storage.getState().replaceSettingsForScope(settingsScope, nextSettings, nextVersion);
+            return;
+        }
+        storage.getState().replaceSettings(nextSettings, nextVersion);
+    }
+
+    function applyActiveSettingsSideEffects(nextSettings: Settings): void {
+        if (!isSettingsScopeActive()) return;
+        if (tracking) {
+            nextSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
+        }
+        applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
+    }
 
     async function fetchSettingsV2(): Promise<{ content: unknown; version: number }> {
         const response = await serverFetch('/v2/account/settings', {
@@ -190,8 +250,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         });
 
         while (retryCount < maxRetries) {
-            const version = storage.getState().settingsVersion;
-            const mergedSettings = applySettings(storage.getState().settings, pendingServerSettings);
+            const scopedLocal = loadSettingsForCapturedScope();
+            const version = scopedLocal.version;
+            const mergedSettings = applySettings(scopedLocal.settings, pendingServerSettings);
             const settingsForServer = normalizeSettingsForServerStorage({ raw: mergedSettings, mode: accountMode });
 
             let e2eeCiphertext: string | null = null;
@@ -263,7 +324,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 const mergedServerSettings = applySettings(serverSettings, pendingServerSettings);
                 const mergedSettings = applySettings(
                     mergedServerSettings,
-                    pickLocalOnlyAccountSettings(storage.getState().settings),
+                    pickLocalOnlyAccountSettings(loadSettingsForCapturedScope().settings),
                 );
                 dbgSettings('syncSettings: version-mismatch merge', {
                     endpoint: activeServerUrl,
@@ -279,13 +340,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 // Important: `data.currentVersion` can be LOWER than our local `settingsVersion`
                 // (e.g. when switching accounts/servers, or after server-side reset). If we only
                 // "apply when newer", we'd never converge and would retry forever.
-                storage.getState().replaceSettings(mergedSettings, data.currentVersion);
+                replaceSettingsForCapturedScope(mergedSettings, data.currentVersion);
 
-                // Sync tracking state with merged settings
-                if (tracking) {
-                    mergedSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
-                }
-                applyCrashReportsOptOut(mergedSettings.crashReportsOptOut);
+                applyActiveSettingsSideEffects(mergedSettings);
 
                 // Log and retry
                 retryCount++;
@@ -364,7 +421,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     //   and accidentally clobber recent local edits before the pending POST flush runs.
     // - Pending settings are persisted for crash safety; reload from disk so in-flight sync calls
     //   don't miss deltas when the Sync instance replaces the pending object reference.
-    const pendingLatest = loadPendingSettings();
+    const pendingLatest = loadPendingSettingsForCapturedScope();
     const pendingLatestForServer = stripLocalOnlyAccountSettings(pendingLatest);
 
     const mergedWithPending =
@@ -372,16 +429,12 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             ? applySettings(parsedSettings, pendingLatestForServer)
             : parsedSettings;
 
-    const nextSettings = applySettings(mergedWithPending, pickLocalOnlyAccountSettings(storage.getState().settings));
+    const nextSettings = applySettings(mergedWithPending, pickLocalOnlyAccountSettings(loadSettingsForCapturedScope().settings));
 
     // Apply settings to storage
-    storage.getState().applySettings(nextSettings, fetched.version);
+    applySettingsForCapturedScope(nextSettings, fetched.version);
 
-    // Sync PostHog opt-out state with settings
-    if (tracking) {
-        nextSettings.analyticsOptOut ? tracking.optOut() : tracking.optIn();
-    }
-    applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
+    applyActiveSettingsSideEffects(nextSettings);
 
     // Best-effort migration: if settings were readable but not in canonical `account_scoped_v1` format,
     // rewrite them so other clients can decrypt them reliably.
@@ -415,7 +468,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                     expectedVersion: fetched.version,
                 });
                 if ((migrateRes as any)?.success) {
-                    storage.getState().applySettings(nextSettings, (migrateRes as any).version);
+                    applySettingsForCapturedScope(nextSettings, (migrateRes as any).version);
                 }
             }
         } catch {

@@ -159,6 +159,136 @@ describe('ScmStatusSync polling', () => {
     expect(applyScmStatusMock).toHaveBeenCalledTimes(1);
   });
 
+  it('hydrates a newly scoped session when the repository signature has not changed', async () => {
+    const firstSnapshot = buildRepoSnapshot({ fetchedAt: 100 });
+    const secondSnapshot = buildRepoSnapshot({ fetchedAt: 200 });
+    let hydratedSessionIds = new Set<string>();
+    let sessions: Record<string, any> = {
+      s1: { id: 's1', metadata: { machineId: 'machine-a', path: '/repo' } },
+    };
+
+    getStateMock.mockImplementation(() => ({
+      sessions,
+      applyScmStatus: applyScmStatusMock,
+      updateSessionProjectScmSnapshot: (sessionId: string, snapshot: unknown) => {
+        hydratedSessionIds.add(sessionId);
+        updateSnapshotMock(sessionId, snapshot);
+      },
+      updateSessionProjectScmSnapshotError: updateSnapshotErrorMock,
+      getSessionProjectScmSnapshotError: getSnapshotErrorMock,
+      getSessionProjectScmSnapshot: (sessionId: string) => (hydratedSessionIds.has(sessionId) ? firstSnapshot : null),
+      pruneSessionProjectScmTouchedPaths: pruneTouchedPathsMock,
+      pruneSessionProjectScmCommitSelectionPaths: pruneCommitSelectionPathsMock,
+      pruneSessionProjectScmCommitSelectionPatches: pruneCommitSelectionPatchesMock,
+    }));
+
+    fetchSnapshotForSessionMock
+      .mockResolvedValueOnce(firstSnapshot)
+      .mockResolvedValueOnce(secondSnapshot);
+
+    const { ScmStatusSync } = await import('./scmStatusSync');
+
+    const syncer = new ScmStatusSync();
+    await syncer.getSync('s1').invalidateAndAwait();
+
+    expect(updateSnapshotMock).toHaveBeenCalledTimes(1);
+    expect(updateSnapshotMock).toHaveBeenCalledWith('s1', firstSnapshot);
+
+    updateSnapshotMock.mockClear();
+    applyScmStatusMock.mockClear();
+    sessions = {
+      ...sessions,
+      s2: { id: 's2', metadata: { machineId: 'machine-a', path: '/repo/packages/app' } },
+    };
+
+    const s2Sync = syncer.getSync('s2');
+    hydratedSessionIds.delete('s2');
+    updateSnapshotMock.mockClear();
+    applyScmStatusMock.mockClear();
+
+    await s2Sync.invalidateAndAwait();
+
+    expect(updateSnapshotMock).toHaveBeenCalledWith('s2', secondSnapshot);
+    expect(updateSnapshotMock).not.toHaveBeenCalledWith('s1', secondSnapshot);
+    expect(applyScmStatusMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('hydrates a session from the cached project snapshot when it joins an already fetched repository', async () => {
+    const firstSnapshot = buildRepoSnapshot({ fetchedAt: 100 });
+    const hydratedSnapshots = new Map<string, unknown>();
+    let sessions: Record<string, any> = {
+      s1: { id: 's1', metadata: { machineId: 'machine-a', path: '/repo' } },
+    };
+
+    getStateMock.mockImplementation(() => ({
+      sessions,
+      applyScmStatus: applyScmStatusMock,
+      updateSessionProjectScmSnapshot: (sessionId: string, snapshot: unknown) => {
+        hydratedSnapshots.set(sessionId, snapshot);
+        updateSnapshotMock(sessionId, snapshot);
+      },
+      updateSessionProjectScmSnapshotError: updateSnapshotErrorMock,
+      getSessionProjectScmSnapshotError: getSnapshotErrorMock,
+      getSessionProjectScmSnapshot: (sessionId: string) => hydratedSnapshots.get(sessionId) ?? null,
+      pruneSessionProjectScmTouchedPaths: pruneTouchedPathsMock,
+      pruneSessionProjectScmCommitSelectionPaths: pruneCommitSelectionPathsMock,
+      pruneSessionProjectScmCommitSelectionPatches: pruneCommitSelectionPatchesMock,
+    }));
+
+    fetchSnapshotForSessionMock.mockResolvedValueOnce(firstSnapshot);
+
+    const { ScmStatusSync } = await import('./scmStatusSync');
+
+    const syncer = new ScmStatusSync();
+    await syncer.getSync('s1').invalidateAndAwait();
+
+    updateSnapshotMock.mockClear();
+    applyScmStatusMock.mockClear();
+    sessions = {
+      ...sessions,
+      s2: { id: 's2', metadata: { machineId: 'machine-a', path: '/repo/packages/app' } },
+    };
+
+    syncer.getSync('s2');
+
+    expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(1);
+    expect(updateSnapshotMock).toHaveBeenCalledWith('s2', firstSnapshot);
+    expect(applyScmStatusMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues refreshing after moving a session-path sync to the repository root key', async () => {
+    getStateMock.mockReturnValue({
+      sessions: {
+        s1: { id: 's1', metadata: { machineId: 'machine-a', path: '/repo/packages/app' } },
+      },
+      applyScmStatus: applyScmStatusMock,
+      updateSessionProjectScmSnapshot: updateSnapshotMock,
+      updateSessionProjectScmSnapshotError: updateSnapshotErrorMock,
+      getSessionProjectScmSnapshot: () => buildRepoSnapshot({ fetchedAt: 100 }),
+      getSessionProjectScmSnapshotError: getSnapshotErrorMock,
+      pruneSessionProjectScmTouchedPaths: pruneTouchedPathsMock,
+      pruneSessionProjectScmCommitSelectionPaths: pruneCommitSelectionPathsMock,
+      pruneSessionProjectScmCommitSelectionPatches: pruneCommitSelectionPatchesMock,
+    });
+
+    const firstSnapshot = buildRepoSnapshot({ fetchedAt: 100 });
+    const secondSnapshot = buildRepoSnapshot({ fetchedAt: 200, head: 'feature/refreshed' });
+    fetchSnapshotForSessionMock
+      .mockResolvedValueOnce(firstSnapshot)
+      .mockResolvedValueOnce(secondSnapshot);
+
+    const { ScmStatusSync } = await import('./scmStatusSync');
+
+    const syncer = new ScmStatusSync();
+    await syncer.getSync('s1').invalidateAndAwait();
+    updateSnapshotMock.mockClear();
+
+    await syncer.getSync('s1').invalidateAndAwait();
+
+    expect(fetchSnapshotForSessionMock).toHaveBeenCalledTimes(2);
+    expect(updateSnapshotMock).toHaveBeenCalledWith('s1', secondSnapshot);
+  });
+
   it('publishes snapshot updates when signature changes', async () => {
     getStateMock.mockReturnValue({
       sessions: {

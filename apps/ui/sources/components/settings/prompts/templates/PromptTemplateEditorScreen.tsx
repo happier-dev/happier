@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 
 import {
   PromptInvocationEntryV1Schema,
@@ -188,7 +188,6 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: props.invocationId ? t('promptLibrary.editTemplate') : t('promptLibrary.newTemplate') }} />
       <ItemList containerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <ItemGroup title={t('promptLibrary.general')}>
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>

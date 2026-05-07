@@ -11,6 +11,7 @@ import { resolveConnectedServicesFeature } from '../connectedServicesFeature';
 import { resolveChannelBridgesFeature } from '../channelBridgesFeature';
 import { resolveUpdatesFeature } from '../updatesFeature';
 import { resolveAttachmentsUploadsFeature } from '../attachmentsUploadsFeature';
+import { resolvePetsFeature } from '../petsFeature';
 import { resolveMachineTransferFeature } from '../machineTransferFeature';
 import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
 import { resolveTerminalFeature } from '../terminalFeature';
@@ -32,6 +33,7 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolveChannelBridgesFeature(env),
     (env) => resolveUpdatesFeature(env),
     (env) => resolveAttachmentsUploadsFeature(env),
+    (env) => resolvePetsFeature(env),
     (env) => resolveMachineTransferFeature(env),
     (env) => resolveSessionHandoffFeature(env),
     (env) => resolveTerminalFeature(env),

@@ -159,7 +159,7 @@ describe('MessageView (thinking pulse gating)', () => {
         expect(captured.thinkingPulseProps.at(-1)?.enabled).toBe(true);
         expect(captured.thinkingRowProps.at(-1)?.chrome).toBe('plain');
         expect(captured.markdownProps.at(-1)?.testID).toBe('transcript-thinking-body-markdown');
-        expect(captured.markdownProps.at(-1)?.variant).toBe('thinking');
+        expect(captured.markdownProps.at(-1)?.profile).toBe('thinking');
         expect(screen.findAll((node) => (node.props as any).testID === 'transcript-thinking-body-plain')).toHaveLength(0);
 
         captured.thinkingPulseProps.length = 0;

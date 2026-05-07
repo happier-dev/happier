@@ -32,4 +32,8 @@ export function useLocalSearchParams(): Record<string, string | string[] | undef
     return {};
 }
 
+export function useGlobalSearchParams(): Record<string, string | string[] | undefined> {
+    return {};
+}
+
 export const router = useRouter();

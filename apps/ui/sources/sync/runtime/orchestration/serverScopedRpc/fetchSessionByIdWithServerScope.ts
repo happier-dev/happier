@@ -47,6 +47,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
     activeCredentials: AuthCredentials;
     activeEncryption?: SessionByIdEncryption | null;
     sessionDataKeys: Map<string, Uint8Array>;
+    sessionDataKeyEnvelopes?: Map<string, string>;
     activeRequest: (path: string, init: RequestInit) => Promise<Response>;
     applySessions: (sessions: AppliedSession[]) => void;
     getExistingSession?: (sessionId: string) => Session | null | undefined;
@@ -68,6 +69,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             credentials: params.activeCredentials,
             encryption: params.activeEncryption,
             sessionDataKeys: params.sessionDataKeys,
+            sessionDataKeyEnvelopes: params.sessionDataKeyEnvelopes,
             request: params.activeRequest,
             applySessions: params.applySessions,
             getExistingSession: params.getExistingSession,
@@ -82,6 +84,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
         credentials: toScopedFetchCredentials(context.token),
         encryption: getScopedSessionByIdEncryption(context.encryption),
         sessionDataKeys: params.sessionDataKeys,
+        sessionDataKeyEnvelopes: params.sessionDataKeyEnvelopes,
         request: async (path: string, init: RequestInit) => {
             return await runtimeFetchWithServerReachability({
                 serverUrl: context.targetServerUrl,

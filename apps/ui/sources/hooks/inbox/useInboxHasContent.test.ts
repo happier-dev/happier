@@ -37,7 +37,14 @@ describe('useInboxHasContent', () => {
         (globalThis as any).__DEV__ = true;
         mockUpdateAvailable = false;
         mockHasUnread = false;
-        storage.setState({ friends: {}, feedItems: [], isDataReady: true } as any);
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {},
+            sessionListRenderables: {},
+            artifacts: {},
+            isDataReady: true,
+        } as any);
     });
 
     afterEach(() => {
@@ -48,7 +55,14 @@ describe('useInboxHasContent', () => {
             tree = null;
         }
         (globalThis as any).__DEV__ = originalDevFlag;
-        storage.setState({ friends: {}, feedItems: [], isDataReady: true } as any);
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {},
+            sessionListRenderables: {},
+            artifacts: {},
+            isDataReady: true,
+        } as any);
     });
 
     it('returns true when there are feed items', async () => {
@@ -151,6 +165,7 @@ describe('useInboxHasContent', () => {
             sessions: {
                 s1: {
                     id: 's1',
+                    active: true,
                     presence: 'online',
                     agentState: {
                         requests: {
@@ -162,6 +177,120 @@ describe('useInboxHasContent', () => {
                             },
                         },
                     },
+                },
+            },
+        } as any);
+
+        let latest: boolean | null = null;
+        function Test() {
+            latest = useInboxHasContent();
+            return React.createElement('View');
+        }
+
+        tree = (await renderScreen(React.createElement(Test))).tree;
+
+        expect(latest).toBe(true);
+    });
+
+    it('returns true when there are unread sessions', async () => {
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {
+                s1: {
+                    id: 's1',
+                    seq: 4,
+                    lastViewedSessionSeq: 1,
+                    updatedAt: 10,
+                    createdAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                    metadata: null,
+                    metadataVersion: 0,
+                    agentState: null,
+                    agentStateVersion: 0,
+                },
+            },
+        } as any);
+
+        let latest: boolean | null = null;
+        function Test() {
+            latest = useInboxHasContent();
+            return React.createElement('View');
+        }
+
+        tree = (await renderScreen(React.createElement(Test))).tree;
+
+        expect(latest).toBe(true);
+    });
+
+    it('returns true when an unread session only exists in the session list rows', async () => {
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {},
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 4,
+                    updatedAt: 10,
+                    createdAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                    metadata: {
+                        name: 'Renderable unread',
+                        path: '/Users/leeroy/renderable',
+                        homeDir: '/Users/leeroy',
+                    },
+                    metadataVersion: 0,
+                    agentStateVersion: 0,
+                    hasUnreadMessages: true,
+                },
+            },
+        } as any);
+
+        let latest: boolean | null = null;
+        function Test() {
+            latest = useInboxHasContent();
+            return React.createElement('View');
+        }
+
+        tree = (await renderScreen(React.createElement(Test))).tree;
+
+        expect(latest).toBe(true);
+    });
+
+    it('returns true for warm unread session rows before full data readiness', async () => {
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {},
+            isDataReady: false,
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 4,
+                    updatedAt: 10,
+                    createdAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 1,
+                    metadata: {
+                        name: 'Warm unread',
+                        path: '/Users/leeroy/warm',
+                        homeDir: '/Users/leeroy',
+                    },
+                    metadataVersion: 0,
+                    agentStateVersion: 0,
+                    hasUnreadMessages: true,
                 },
             },
         } as any);
