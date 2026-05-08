@@ -115,6 +115,52 @@ describe('enableServeUi (mountRoot)', () => {
     });
   });
 
+  it('serves precompressed static sidecars when accepted by the client', async () => {
+    await withTempDir('happier-ui-root-gzip-', async (dir) => {
+      await writeFile(join(dir, 'index.html'), '<!doctype html><html><body>ok</body></html>\n', 'utf-8');
+      await writeFile(join(dir, 'main.js'), 'console.log("identity");\n', 'utf-8');
+      await writeFile(join(dir, 'main.js.gz'), 'gzipped-js', 'utf-8');
+
+      await withApp(async (app) => {
+        enableServeUi(app, { dir, prefix: '/', mountRoot: true, required: false });
+        await app.ready();
+
+        const res = await app.inject({
+          method: 'GET',
+          url: '/main.js',
+          headers: { 'accept-encoding': 'gzip' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['content-encoding']).toBe('gzip');
+        expect(res.headers.vary).toBe('Accept-Encoding');
+        expect(res.body).toBe('gzipped-js');
+      });
+    });
+  });
+
+  it('uses Accept-Encoding q-values when choosing a precompressed sidecar', async () => {
+    await withTempDir('happier-ui-root-q-', async (dir) => {
+      await writeFile(join(dir, 'index.html'), '<!doctype html><html><body>ok</body></html>\n', 'utf-8');
+      await writeFile(join(dir, 'main.js'), 'console.log("identity");\n', 'utf-8');
+      await writeFile(join(dir, 'main.js.br'), 'brotli-js', 'utf-8');
+      await writeFile(join(dir, 'main.js.gz'), 'gzip-js', 'utf-8');
+
+      await withApp(async (app) => {
+        enableServeUi(app, { dir, prefix: '/', mountRoot: true, required: false });
+        await app.ready();
+
+        const res = await app.inject({
+          method: 'GET',
+          url: '/main.js',
+          headers: { 'accept-encoding': 'br;q=0.5, gzip;q=0.9' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['content-encoding']).toBe('gzip');
+        expect(res.body).toBe('gzip-js');
+      });
+    });
+  });
+
   it('does not rewrite unknown API routes to index.html when mounted at root', async () => {
     await withTempDir('happier-ui-root-api-404-', async (dir) => {
       await writeFile(join(dir, 'index.html'), '<!doctype html><html><body>ok</body></html>\n', 'utf-8');

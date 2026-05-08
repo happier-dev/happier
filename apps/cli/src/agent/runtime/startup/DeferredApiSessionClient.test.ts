@@ -235,7 +235,7 @@ describe('DeferredApiSessionClient', () => {
     expect(calls).toEqual(['live:Hello', 'commit:Hello world']);
   });
 
-  it('flushes buffered calls best-effort when an early write fails (no hang, no abort)', async () => {
+  it('rejects failed buffered metadata writes while continuing later buffered calls', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-1',
       limits: { maxEntries: 10, maxBytes: 10_000 },
@@ -271,10 +271,11 @@ describe('DeferredApiSessionClient', () => {
     } as const;
 
     const updatePromise = deferred.updateMetadata((metadata) => metadata) as Promise<void>;
+    const updateFailure = expect(updatePromise).rejects.toThrow('boom');
     deferred.sendSessionEvent({ type: 'message', message: 'hi' });
 
     await expect(deferred.attach(real)).resolves.toBeUndefined();
-    await expect(updatePromise).resolves.toBeUndefined();
+    await updateFailure;
     expect(events.some((e: any) => e && typeof e === 'object' && (e as any).message === 'hi')).toBe(true);
   });
 

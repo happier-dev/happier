@@ -1,5 +1,6 @@
 import type { Metadata } from '@/api/types';
 import { publishSessionControlsMetadataBestEffort } from '@/agent/runtime/controls/publishSessionControlsMetadataBestEffort';
+import { logger } from '@/ui/logger';
 
 import { probeClaudeHelpText } from './probeClaudeHelpText';
 import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsState';
@@ -30,8 +31,12 @@ export async function publishClaudeSessionModelsMetadataBestEffort(params: Reado
   }).catch(() => null);
   if (!state) return;
 
-  await publishSessionControlsMetadataBestEffort({
-    session: params.session,
-    sessionModelsState: state,
-  });
+  try {
+    await publishSessionControlsMetadataBestEffort({
+      session: params.session,
+      sessionModelsState: state,
+    });
+  } catch (error) {
+    logger.debug('[claude] Failed to publish session models metadata (non-fatal)', error);
+  }
 }

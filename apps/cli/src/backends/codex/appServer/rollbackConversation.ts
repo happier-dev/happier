@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { logger } from '@/ui/logger';
 
 import {
     captureCompletedTurnSeqRange,
@@ -81,12 +82,16 @@ export async function rollbackCodexAppServerConversation(params: Readonly<{
             await publishLatestTurnRollbackRangeMetadata({
                 session: params.session,
                 range,
+            }).catch((error) => {
+                logger.debug('[codex-app-server] Failed to publish rollback range metadata (non-fatal)', error);
             });
         } else {
             await publishRollbackRangeMetadata({
                 session: params.session,
                 target,
                 range,
+            }).catch((error) => {
+                logger.debug('[codex-app-server] Failed to publish rollback range metadata (non-fatal)', error);
             });
         }
     }

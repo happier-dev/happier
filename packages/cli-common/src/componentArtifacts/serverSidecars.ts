@@ -56,6 +56,7 @@ async function ensureUiWebDist({
   const uiDistPath = join(repoRoot, 'apps', 'ui', 'dist');
   const existingInfo = await stat(uiDistPath).catch(() => null);
   if (existingInfo?.isDirectory()) {
+    precompressUiWebDist({ repoRoot, env, runCommand });
     return uiDistPath;
   }
 
@@ -84,7 +85,26 @@ async function ensureUiWebDist({
   if (!builtInfo?.isDirectory()) {
     throw new Error(`[component-artifacts] missing ui web dist directory: ${uiDistPath}`);
   }
+  precompressUiWebDist({ repoRoot, env, runCommand });
   return uiDistPath;
+}
+
+function precompressUiWebDist({
+  repoRoot,
+  env,
+  runCommand,
+}: {
+  repoRoot: string;
+  env: NodeJS.ProcessEnv;
+  runCommand: RunCommand;
+}): void {
+  runCommand(process.execPath, ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'], {
+    cwd: repoRoot,
+    env: {
+      ...env,
+      CI: env.CI ?? '1',
+    },
+  });
 }
 
 export async function resolveServerBinarySidecarEntries({

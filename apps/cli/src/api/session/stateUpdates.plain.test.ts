@@ -2,6 +2,24 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { updateSessionAgentStateWithAck, updateSessionMetadataWithAck } from './stateUpdates';
 import { logger } from '@/ui/logger';
+import type { Metadata } from '@/api/types';
+
+type PlainMetadataAckPayload = {
+  metadata: string;
+  expectedVersion: number;
+};
+
+function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
+  return {
+    path: '/tmp',
+    host: 'localhost',
+    homeDir: '/home/test',
+    happyHomeDir: '/home/test/.happier',
+    happyLibDir: '/home/test/.happier/lib',
+    happyToolsDir: '/home/test/.happier/tools',
+    ...overrides,
+  };
+}
 
 describe('stateUpdates (plaintext sessions)', () => {
   it('sends + applies plaintext metadata updates when session encryption mode is plain', async () => {
@@ -160,5 +178,95 @@ describe('stateUpdates (plaintext sessions)', () => {
 
     expect(agentState.requests.req_permission.tool).toBe('Write');
     expect(version).toBe(2);
+  });
+
+  it('rejects metadata writes when the version remains unknown after snapshot sync', async () => {
+    const socket = { emitWithAck: vi.fn() };
+    let version = -1;
+
+    await expect(updateSessionMetadataWithAck({
+      socket,
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getMetadata: () => null,
+      setMetadata: () => {},
+      getMetadataVersion: () => version,
+      setMetadataVersion: (next) => {
+        version = next;
+      },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => ({ ...current, path: '/tmp' }),
+    })).rejects.toMatchObject({
+      code: 'metadata_version_unknown',
+      retryable: false,
+    });
+
+    expect(socket.emitWithAck).not.toHaveBeenCalled();
+  });
+
+  it('treats null metadata snapshots as empty objects once the version is known', async () => {
+    const emitWithAck = vi.fn(async (_event: string, payload: PlainMetadataAckPayload) => ({
+      result: 'success',
+      metadata: payload.metadata,
+      version: payload.expectedVersion + 1,
+    }));
+
+    let metadata: Metadata | null = null;
+    let version = 1;
+
+    await updateSessionMetadataWithAck({
+      socket: { emitWithAck },
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getMetadata: () => metadata,
+      setMetadata: (next) => {
+        metadata = next;
+      },
+      getMetadataVersion: () => version,
+      setMetadataVersion: (next) => {
+        version = next;
+      },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => createMetadata({ ...current, path: '/tmp' }),
+    });
+
+    expect(metadata).toEqual(createMetadata({ path: '/tmp' }));
+    expect(version).toBe(2);
+  });
+
+  it('uses socket ACK timeouts for metadata writes when supported by the socket', async () => {
+    const timedSocket = {
+      emitWithAck: vi.fn(async (_event: string, payload: PlainMetadataAckPayload) => ({
+        result: 'success',
+        metadata: payload.metadata,
+        version: payload.expectedVersion + 1,
+      })),
+    };
+    const socket = {
+      timeout: vi.fn(() => timedSocket),
+      emitWithAck: vi.fn(),
+    };
+
+    await updateSessionMetadataWithAck({
+      socket,
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getMetadata: () => createMetadata({ path: '/tmp' }),
+      setMetadata: () => {},
+      getMetadataVersion: () => 1,
+      setMetadataVersion: () => {},
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => current,
+    });
+
+    expect(socket.timeout).toHaveBeenCalledWith(expect.any(Number));
+    expect(timedSocket.emitWithAck).toHaveBeenCalledTimes(1);
+    expect(socket.emitWithAck).not.toHaveBeenCalled();
   });
 });

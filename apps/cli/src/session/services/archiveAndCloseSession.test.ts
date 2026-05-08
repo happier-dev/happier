@@ -15,7 +15,7 @@ type ArchiveAndCloseRuntimeSessionWithOptions = (
   } | null | undefined,
   credentials?: { token: string },
   archiveReason?: string | null,
-  options?: { timeoutMs?: number; pollIntervalMs?: number },
+  options?: { timeoutMs?: number; pollIntervalMs?: number; metadataTimeoutMs?: number },
 ) => Promise<void>;
 
 describe('archiveAndCloseRuntimeSession', () => {
@@ -138,5 +138,42 @@ describe('archiveAndCloseRuntimeSession', () => {
     expect(postSpy).toHaveBeenCalledTimes(2);
     expect(getSpy).toHaveBeenCalledTimes(1);
     expect(elapsedMs).toBeGreaterThanOrEqual(20);
+  });
+
+  it('waits for the archive metadata write before sending session death', async () => {
+    const postSpy = vi.spyOn(axios, 'post');
+    postSpy.mockResolvedValueOnce({ status: 200, data: { success: true, archivedAt: 1234 } } as never);
+
+    let releaseMetadataWrite!: () => void;
+    const session = {
+      sessionId: 'sess-runtime-3',
+      updateMetadata: vi.fn(async (updater: (metadata: Record<string, unknown>) => Record<string, unknown>) => {
+        updater({});
+        await new Promise<void>((resolve) => {
+          releaseMetadataWrite = resolve;
+        });
+      }),
+      sendSessionDeath: vi.fn(),
+      flush: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+    };
+
+    const invokeArchiveAndCloseRuntimeSession =
+      archiveAndCloseRuntimeSession as unknown as ArchiveAndCloseRuntimeSessionWithOptions;
+    const archivePromise = invokeArchiveAndCloseRuntimeSession(session, { token: 'token-1' }, null, {
+      timeoutMs: 50,
+      pollIntervalMs: 0,
+      metadataTimeoutMs: 100,
+    });
+
+    await vi.waitFor(() => {
+      expect(session.updateMetadata).toHaveBeenCalledTimes(1);
+    });
+    expect(session.sendSessionDeath).not.toHaveBeenCalled();
+
+    releaseMetadataWrite();
+    await archivePromise;
+
+    expect(session.sendSessionDeath).toHaveBeenCalledTimes(1);
   });
 });

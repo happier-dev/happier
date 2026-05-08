@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { createUiWebReleaseArtifacts } from '../pipeline/release/lib/ui-web-bundle.mjs';
+import { precompressUiWebAssets } from '../pipeline/release/lib/precompress-ui-web-assets.mjs';
 
 process.env.LC_ALL = 'C';
 process.env.LANG = 'C';
@@ -70,4 +71,21 @@ test('createUiWebReleaseArtifacts rejects dist directories missing index.html', 
   );
 
   await rm(root, { recursive: true, force: true });
+});
+
+test('precompressUiWebAssets can generate gzip-only sidecars for nginx static serving', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-ui-web-precompress-gzip-'));
+  try {
+    await writeFile(join(root, 'main.js'), 'console.log("gzip only");\n'.repeat(300), 'utf8');
+
+    const result = await precompressUiWebAssets({ dir: root, encodings: ['gzip'] });
+
+    assert.equal(result.scannedFiles, 1);
+    assert.equal(result.gzipFiles, 1);
+    assert.equal(result.brotliFiles, 0);
+    await stat(join(root, 'main.js.gz'));
+    await assert.rejects(() => stat(join(root, 'main.js.br')), /ENOENT/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

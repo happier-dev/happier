@@ -10,6 +10,7 @@ import {
   maybeSignFile,
   writeChecksumsFile,
 } from './binary-release.mjs';
+import { precompressUiWebAssets } from './precompress-ui-web-assets.mjs';
 
 export const UI_WEB_PRODUCT = 'happier-ui-web';
 export const UI_WEB_TARGET = Object.freeze({ os: 'web', arch: 'any' });
@@ -62,6 +63,7 @@ export async function createUiWebReleaseArtifacts({ version, distDir, outDir }) 
     const bundleRootPath = join(stageRoot, bundleRootName);
     await ensureCleanDir(bundleRootPath);
     await copyDirContents(source, bundleRootPath);
+    await precompressUiWebAssets({ dir: bundleRootPath });
 
     await createDeterministicArchive({
       artifactPath: archivePath,

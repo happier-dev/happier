@@ -125,6 +125,12 @@ export function createClaudeSessionRuntimePlan(sessionParams: unknown): HostSess
             opts,
           });
         },
+        onBeforeArchive: async ({ metadataTimeoutMs }) => {
+          await currentSessionRef.current?.drainCriticalMetadataWrites({ timeoutMs: metadataTimeoutMs });
+        },
+        onBeforeDispose: async () => {
+          await currentSessionRef.current?.drainCriticalMetadataWrites();
+        },
       },
       createNativeRuntime: async ({
         directory,

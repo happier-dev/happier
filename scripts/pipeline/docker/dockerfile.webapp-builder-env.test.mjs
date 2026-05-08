@@ -38,4 +38,14 @@ test("webapp-builder stage exports PostHog + Sentry public env and supports opti
 
   assert.match(section, /\bRUN if \[ -n "\$SENTRY_AUTH_TOKEN" \]; then\b/);
   assert.match(section, /\bsentry-expo-upload-sourcemaps dist\b/);
+  assert.match(section, /precompress-ui-web-assets\.mjs --dir apps\/ui\/dist --gzip-only/);
+});
+
+test("webapp nginx stage serves precompressed gzip sidecars", () => {
+  const dockerfilePath = path.join(repoRoot, "Dockerfile");
+  const raw = fs.readFileSync(dockerfilePath, "utf8");
+  const section = extractStageSection(raw, "FROM nginxinc/nginx-unprivileged:alpine AS webapp");
+
+  assert.match(section, /\bgzip_static on\b/);
+  assert.match(section, /\bgzip_vary on\b/);
 });

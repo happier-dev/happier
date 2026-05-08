@@ -38,6 +38,7 @@ import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/re
 import { resolveTerminationArchiveDecision } from '@/agent/runtime/lifecycle/terminationArchivePolicy';
 import { createRepositoryCheckpointPromptLifecycle } from '@/agent/runtime/checkpoints/repositoryCheckpointPromptLifecycle';
 import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseSession';
+import { createSessionMetadataShutdownDeadline } from '@/session/services/sessionMetadataShutdownDeadline';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
 import { resolvePendingQueueHandoff } from '@/agent/runtime/mode/switching/pendingQueueHandoffOrchestrator';
@@ -340,7 +341,15 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       });
       try {
         if (archiveDecision.archive) {
-          await archiveAndCloseRuntimeSessionFn(params.session, params.opts.credentials, archiveDecision.archiveReason);
+          const metadataDeadline = createSessionMetadataShutdownDeadline();
+          await params.config.lifecycleHooks?.onBeforeArchive?.({
+            session: params.session,
+            runtime: hookRuntimeForCallbacks,
+            metadataTimeoutMs: metadataDeadline.remainingMs(),
+          });
+          await archiveAndCloseRuntimeSessionFn(params.session, params.opts.credentials, archiveDecision.archiveReason, {
+            metadataTimeoutMs: metadataDeadline.remainingMs(),
+          });
         }
       } finally {
         await cleanupOnce();

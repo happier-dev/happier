@@ -932,6 +932,10 @@ test('buildServerBinaryArtifactPayload stages the compiled binary and runtime si
         cmd: 'yarn',
         args: ['--cwd', 'apps/server', '-s', 'generate:providers'],
       },
+      {
+        cmd: process.execPath,
+        args: ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'],
+      },
     ]);
     assert.equal(readFileSync(join(payloadDir, 'happier-server'), 'utf8'), '#!/bin/sh\necho happier-server\n');
     assert.equal(readFileSync(join(payloadDir, 'generated', 'sqlite-client', 'schema.prisma'), 'utf8'), '// sqlite\n');
@@ -1024,6 +1028,10 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
       {
         cmd: 'yarn',
         args: ['--cwd', 'apps/server', '-s', 'generate:providers'],
+      },
+      {
+        cmd: process.execPath,
+        args: ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'],
       },
     ]);
     assert.equal(
@@ -1217,6 +1225,7 @@ test('buildServerBinaryArtifactPayload builds ui-web dist when it is missing', a
       { cmd: 'yarn', args: ['--cwd', 'apps/server', '-s', 'generate:providers'] },
       { cmd: process.execPath, args: ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'] },
       { cmd: 'yarn', args: ['--cwd', 'apps/ui', '-s', 'expo', 'export', '--platform', 'web', '--output-dir', 'dist'] },
+      { cmd: process.execPath, args: ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'] },
     ]);
     assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'index.html'), 'utf8'), '<html>ui built</html>\n');
   } finally {

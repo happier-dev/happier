@@ -173,6 +173,8 @@ COPY packages/connection-supervisor ./packages/connection-supervisor
 COPY packages/protocol ./packages/protocol
 COPY packages/release-runtime ./packages/release-runtime
 COPY packages/transfers ./packages/transfers
+COPY scripts/pipeline/release/precompress-ui-web-assets.mjs ./scripts/pipeline/release/precompress-ui-web-assets.mjs
+COPY scripts/pipeline/release/lib/precompress-ui-web-assets.mjs ./scripts/pipeline/release/lib/precompress-ui-web-assets.mjs
 
 RUN yarn workspace @happier-dev/protocol postinstall:real \
     && yarn workspace @happier-dev/release-runtime postinstall:real \
@@ -183,6 +185,7 @@ RUN yarn workspace @happier-dev/app postinstall:real
 RUN rm -rf apps/ui/dist
 RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist --max-workers 1
 RUN if [ -n "$SENTRY_AUTH_TOKEN" ]; then cd apps/ui && SENTRY_AUTH_TOKEN="$SENTRY_AUTH_TOKEN" SENTRY_URL="$SENTRY_URL" SENTRY_RELEASE="$SENTRY_RELEASE" npx --yes sentry-expo-upload-sourcemaps dist; else echo "[docker] SENTRY_AUTH_TOKEN not set; skipping Sentry source maps upload"; fi
+RUN node scripts/pipeline/release/precompress-ui-web-assets.mjs --dir apps/ui/dist --gzip-only
 
 FROM nginxinc/nginx-unprivileged:alpine AS webapp
 USER root
@@ -191,6 +194,8 @@ COPY --from=webapp-builder /repo/apps/ui/dist /usr/share/nginx/html
 RUN rm /etc/nginx/conf.d/default.conf
 RUN echo 'server { \
     listen 8080; \
+    gzip_static on; \
+    gzip_vary on; \
     \
     location = /health { \
         return 200 "ok\n"; \

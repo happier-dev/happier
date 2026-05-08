@@ -7,6 +7,7 @@ export type DeferredSessionBufferEntry<TTarget> = Readonly<{
   approxBytes: number;
   flush: (target: TTarget) => void | Promise<void>;
   onDrop?: () => void;
+  onError?: (error: unknown) => void;
 }>;
 
 export type DeferredSessionBufferStats = Readonly<{

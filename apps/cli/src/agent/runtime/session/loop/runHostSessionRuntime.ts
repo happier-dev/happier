@@ -133,6 +133,11 @@ export type HostSessionRuntimeLifecycleHooks = Readonly<{
     session: ApiSessionClient;
     runtime: HostSessionRuntimeHookRuntime;
   }>) => void | Promise<void>;
+  onBeforeArchive?: (params: Readonly<{
+    session: ApiSessionClient;
+    runtime: HostSessionRuntimeHookRuntime;
+    metadataTimeoutMs: number;
+  }>) => void | Promise<void>;
   createCheckpointLifecycle?: (params: Readonly<{
     session: ApiSessionClient;
     runtime: HostSessionRuntimeHookRuntime;
