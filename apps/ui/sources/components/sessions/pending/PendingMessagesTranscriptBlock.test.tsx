@@ -37,13 +37,14 @@ const modalAlert = vi.fn();
 const reorderPendingMessages = vi.fn();
 
 let sessionValue: any = null;
+let settingValues: Record<string, unknown> = {};
 
 installPendingMessagesCommonModuleMocks({
     storage: async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit');
         return createPartialStorageModuleMock(importOriginal, {
             useSession: () => sessionValue,
-            useSetting: () => undefined,
+            useSetting: (key: string) => settingValues[key],
             storage: { getState: () => ({}) },
         });
     },
@@ -175,6 +176,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         modalAlert.mockReset();
         reorderPendingMessages.mockReset();
         sessionValue = null;
+        settingValues = {};
     });
 
     function flattenStyle(style: any): Record<string, any> {
@@ -447,6 +449,27 @@ describe('PendingMessagesTranscriptBlock', () => {
         const updatedScroll = screen.findByType('ScrollView');
         expect(updatedScroll.props.style?.maxHeight).toBe(520);
         expect(updatedScroll.props.style?.height).toBe(200);
+    });
+
+    it('does not shrink overflow height when compact max-height is higher than the expanded fallback default', async () => {
+        settingValues = {
+            transcriptPendingQueueMaxHeightPx: 700,
+        };
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        const scroll = screen.findByType('ScrollView');
+        await act(async () => {
+            scroll.props.onContentSizeChange?.(0, 900);
+        });
+
+        const updatedScroll = screen.findByType('ScrollView');
+        expect(updatedScroll.props.style?.maxHeight).toBe(700);
+        expect(updatedScroll.props.style?.height).toBe(700);
     });
 
     it('does not show discarded action icons until hover on web', async () => {

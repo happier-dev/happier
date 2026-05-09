@@ -58,7 +58,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const expandedMaxHeightPx =
         typeof expandedMaxHeightSetting === 'number' && Number.isFinite(expandedMaxHeightSetting)
             ? Math.max(maxHeightPx, Math.trunc(expandedMaxHeightSetting))
-            : settingsDefaults.transcriptPendingQueueExpandedMaxHeightPx;
+            : Math.max(maxHeightPx, settingsDefaults.transcriptPendingQueueExpandedMaxHeightPx);
 
     const collapseThresholdCharsSetting = useSetting('transcriptPendingMessageCollapseThresholdChars');
     const collapseThresholdChars =
