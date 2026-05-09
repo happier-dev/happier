@@ -35,9 +35,13 @@ vi.mock('@/components/tools/renderers/system/StructuredResultView', () => ({
   StructuredResultView: () => React.createElement('StructuredResultView'),
 }));
 
-vi.mock('@/components/tools/shell/presentation/ToolSectionView', () => ({
-  ToolSectionView: (props: any) => React.createElement('ToolSectionView', props, props.children),
-}));
+vi.mock('@/components/tools/shell/presentation/ToolSectionView', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/tools/shell/presentation/ToolSectionView')>();
+    return {
+        ...actual,
+        ToolSectionView: (props: any) => React.createElement('ToolSectionView', props, props.children),
+    };
+});
 
 vi.mock('@/components/ui/media/CodeView', () => ({
   CodeView: () => React.createElement('CodeView'),

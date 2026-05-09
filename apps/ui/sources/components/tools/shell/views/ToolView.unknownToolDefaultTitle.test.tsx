@@ -83,9 +83,13 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: () => React.createElement('CodeView', null),
 }));
 
-vi.mock('../presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
+vi.mock('../presentation/ToolSectionView', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../presentation/ToolSectionView')>();
+    return {
+        ...actual,
+        ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    };
+});
 
 vi.mock('@/hooks/ui/useElapsedTime', () => ({
     useElapsedTime: () => 0,

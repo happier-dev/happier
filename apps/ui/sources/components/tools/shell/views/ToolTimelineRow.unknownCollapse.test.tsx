@@ -59,9 +59,13 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: (props: any) => React.createElement('CodeView', props),
 }));
 
-vi.mock('@/components/tools/shell/presentation/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement('ToolSectionView', null, children),
-}));
+vi.mock('@/components/tools/shell/presentation/ToolSectionView', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/tools/shell/presentation/ToolSectionView')>();
+    return {
+        ...actual,
+        ToolSectionView: ({ children }: any) => React.createElement('ToolSectionView', null, children),
+    };
+});
 
 vi.mock('@/components/tools/shell/presentation/ToolHeaderActionsContext', () => ({
     ToolHeaderActionsContext: { Provider: ({ children }: any) => children },
