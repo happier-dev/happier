@@ -159,9 +159,29 @@ function readHappierTitleToolTitle(input: unknown): string | null {
     return record ? trimStringValue(record.title) : null;
 }
 
-function didHappierTitleToolSucceed(output: unknown): boolean {
+function readMcpContentTextPayloads(record: Record<string, unknown>): unknown[] {
+    const content = Array.isArray(record.content) ? record.content : [];
+    const parsed: unknown[] = [];
+    for (const entry of content) {
+        const entryRecord = readRecord(entry);
+        const text = entryRecord ? trimStringValue(entryRecord.text) : null;
+        if (!text) continue;
+        try {
+            parsed.push(JSON.parse(text));
+        } catch {
+            // Ignore non-JSON MCP text payloads.
+        }
+    }
+    return parsed;
+}
+
+function didHappierTitleToolSucceed(output: unknown, depth = 0): boolean {
+    if (depth > 2) return false;
     const record = readRecord(output);
-    return record ? record.success === true : false;
+    if (!record) return false;
+    if (record.success === true || record.ok === true) return true;
+    if (record.isError === true) return false;
+    return readMcpContentTextPayloads(record).some((payload) => didHappierTitleToolSucceed(payload, depth + 1));
 }
 
 function readRollbackUnsupportedErrorMessage(error: unknown): string | null {

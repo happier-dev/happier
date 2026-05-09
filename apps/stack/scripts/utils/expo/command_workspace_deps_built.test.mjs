@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import { expoExec } from './command.mjs';
 
@@ -43,6 +43,30 @@ async function writeYarnStub({ binDir, outputPath }) {
     'utf-8',
   );
   await chmod(yarnPath, 0o755);
+  await writeFile(
+    join(binDir, 'yarn.cmd'),
+    [
+      '@echo off',
+      'echo %CD% :: %*>>"%OUTPUT_PATH%"',
+      'if "%~1"=="--version" (',
+      '  echo 1.22.22',
+      '  exit /b 0',
+      ')',
+      'if "%~1"=="install" exit /b 0',
+      'if "%~1"=="-s" if "%~2"=="build" (',
+      '  if /I "%CD%"=="' + join(binDir, '..', 'packages', 'protocol') + '" (',
+      '    if not exist dist mkdir dist',
+      "    >dist\\index.js echo export const ok = true;",
+      "    >dist\\rpcErrors.js echo export const ok = true;",
+      "    >dist\\index.d.ts echo export declare const ok: boolean;",
+      "    >dist\\rpcErrors.d.ts echo export declare const ok: boolean;",
+      '  )',
+      '  exit /b 0',
+      ')',
+      'exit /b 0',
+    ].join('\r\n') + '\r\n',
+    'utf-8',
+  );
   await writeFile(outputPath, '', 'utf-8');
 }
 
@@ -64,6 +88,18 @@ async function writeExpoStub({ expoPath }) {
     'utf-8',
   );
   await chmod(expoPath, 0o755);
+  await writeFile(
+    `${expoPath}.cmd`,
+    [
+      '@echo off',
+      'if not exist "..\\..\\packages\\protocol\\dist\\rpcErrors.js" (',
+      '  echo missing ..\\..\\packages\\protocol\\dist\\rpcErrors.js 1>&2',
+      '  exit /b 3',
+      ')',
+      'exit /b 0',
+    ].join('\r\n') + '\r\n',
+    'utf-8',
+  );
 }
 
 async function writeExpoStubCaptureCwd({ expoPath }) {
@@ -86,6 +122,19 @@ async function writeExpoStubCaptureCwd({ expoPath }) {
     'utf-8',
   );
   await chmod(expoPath, 0o755);
+  await writeFile(
+    `${expoPath}.cmd`,
+    [
+      '@echo off',
+      'echo expo:cwd=%CD% bin=%~f0 args=%*>>"%OUTPUT_PATH%"',
+      'if not exist "..\\..\\packages\\protocol\\dist\\rpcErrors.js" (',
+      '  echo missing ..\\..\\packages\\protocol\\dist\\rpcErrors.js 1>&2',
+      '  exit /b 3',
+      ')',
+      'exit /b 0',
+    ].join('\r\n') + '\r\n',
+    'utf-8',
+  );
 }
 
 function escapeRegExp(value) {
@@ -93,8 +142,11 @@ function escapeRegExp(value) {
 }
 
 function applyEnvOverrides(t, vars) {
+  const effectiveVars = process.platform === 'win32' && Object.prototype.hasOwnProperty.call(vars, 'PATH')
+    ? { ...vars, Path: vars.PATH }
+    : vars;
   const previous = {};
-  for (const key of Object.keys(vars)) {
+  for (const key of Object.keys(effectiveVars)) {
     previous[key] = process.env[key];
   }
   t.after(() => {
@@ -103,7 +155,7 @@ function applyEnvOverrides(t, vars) {
       else process.env[key] = value;
     }
   });
-  for (const [key, value] of Object.entries(vars)) {
+  for (const [key, value] of Object.entries(effectiveVars)) {
     if (value == null) delete process.env[key];
     else process.env[key] = String(value);
   }
@@ -157,7 +209,7 @@ test('expoExec builds workspace dist deps for the projectDir (not the runnerDir)
   await writeExpoStub({ expoPath });
 
   applyEnvOverrides(t, {
-    PATH: `${binDir}:/usr/bin:/bin`,
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_ENV_FILE: null,
   });
@@ -227,7 +279,7 @@ test('expoExec falls back to the monorepo root expo bin when runnerDir lacks nod
   await writeExpoStubCaptureCwd({ expoPath });
 
   applyEnvOverrides(t, {
-    PATH: `${binDir}:/usr/bin:/bin`,
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_ENV_FILE: null,
   });
@@ -245,6 +297,6 @@ test('expoExec falls back to the monorepo root expo bin when runnerDir lacks nod
   assert.match(argvLog, /expo:cwd=/);
   // macOS can report tmp paths via `/private/var/...` even if `mkdtemp()` returns `/var/...`.
   // Only assert stable suffixes.
-  assert.match(argvLog, /expo:cwd=.*\/apps\/ui\b/);
-  assert.match(argvLog, /bin=.*\/node_modules\/\.bin\/expo\b/);
+  assert.match(argvLog, /expo:cwd=.*[\\/]apps[\\/]ui\b/);
+  assert.match(argvLog, /bin=.*[\\/]node_modules[\\/]\.bin[\\/]expo(?:\.cmd)?\b/);
 });

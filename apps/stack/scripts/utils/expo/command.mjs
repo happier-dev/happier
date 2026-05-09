@@ -12,11 +12,15 @@ const DEFAULT_EXPO_EXPORT_MAX_WORKERS_NONINTERACTIVE = 1;
 
 async function resolveExpoBin(runnerDir) {
   const workspaceBin = join(runnerDir, 'node_modules', '.bin', 'expo');
+  const workspaceCmdBin = `${workspaceBin}.cmd`;
+  if (process.platform === 'win32' && (await pathExists(workspaceCmdBin))) return workspaceCmdBin;
   if (await pathExists(workspaceBin)) return workspaceBin;
 
   const monorepoRoot = coerceHappyMonorepoRootFromPath(runnerDir);
   if (monorepoRoot) {
     const rootBin = join(monorepoRoot, 'node_modules', '.bin', 'expo');
+    const rootCmdBin = `${rootBin}.cmd`;
+    if (process.platform === 'win32' && (await pathExists(rootCmdBin))) return rootCmdBin;
     if (await pathExists(rootBin)) return rootBin;
   }
 

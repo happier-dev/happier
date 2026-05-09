@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 import { expoExec, expoSpawn } from './command.mjs';
 
@@ -30,6 +30,20 @@ async function writeYarnStub({ binDir }) {
     'utf-8'
   );
   await chmod(yarnPath, 0o755);
+
+  const yarnCmdPath = join(binDir, 'yarn.cmd');
+  await writeFile(
+    yarnCmdPath,
+    [
+      '@echo off',
+      'if "%~1"=="--version" (',
+      '  echo 1.22.22',
+      '  exit /b 0',
+      ')',
+      'exit /b 0',
+    ].join('\r\n') + '\r\n',
+    'utf-8'
+  );
 }
 
 async function writeExpoStubCaptureNodeOptions({ expoPath }) {
@@ -54,11 +68,55 @@ async function writeExpoStubCaptureNodeOptions({ expoPath }) {
     'utf-8'
   );
   await chmod(expoPath, 0o755);
+
+  await writeFile(
+    `${expoPath}.cmd`,
+    [
+      '@echo off',
+      'echo NODE_OPTIONS=%NODE_OPTIONS%>>"%OUTPUT_PATH%"',
+      'if not "%EXPECT_MAX_OLD_SPACE_SIZE%"=="" (',
+      '  echo %NODE_OPTIONS% | findstr /C:"--max-old-space-size=%EXPECT_MAX_OLD_SPACE_SIZE%" >nul',
+      '  if errorlevel 1 exit /b 11',
+      ')',
+      'exit /b 0',
+    ].join('\r\n') + '\r\n',
+    'utf-8'
+  );
+}
+
+async function writeExpoShimPairCaptureInvocation({ binDir, outputPath }) {
+  await mkdir(binDir, { recursive: true });
+
+  const expoPath = join(binDir, 'expo');
+  await writeFile(
+    expoPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "shim=posix bin=$0 args=$*" >> "${OUTPUT_PATH:?}"',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf-8'
+  );
+  await chmod(expoPath, 0o755);
+
+  await writeFile(
+    join(binDir, 'expo.cmd'),
+    [
+      '@echo off',
+      `echo shim=cmd bin=%~f0 args=%*>>"${outputPath}"`,
+      'exit /b 0',
+    ].join('\r\n') + '\r\n',
+    'utf-8'
+  );
 }
 
 function applyEnvOverrides(t, vars) {
+  const effectiveVars = process.platform === 'win32' && Object.prototype.hasOwnProperty.call(vars, 'PATH')
+    ? { ...vars, Path: vars.PATH }
+    : vars;
   const previous = {};
-  for (const key of Object.keys(vars)) {
+  for (const key of Object.keys(effectiveVars)) {
     previous[key] = process.env[key];
   }
   t.after(() => {
@@ -67,7 +125,7 @@ function applyEnvOverrides(t, vars) {
       else process.env[key] = value;
     }
   });
-  for (const [key, value] of Object.entries(vars)) {
+  for (const [key, value] of Object.entries(effectiveVars)) {
     if (value == null) delete process.env[key];
     else process.env[key] = String(value);
   }
@@ -102,7 +160,7 @@ test('expoExec defaults Expo heap limit to 8192MB (unless overridden)', async (t
   await writeExpoStubCaptureNodeOptions({ expoPath });
 
   applyEnvOverrides(t, {
-    PATH: `${binDir}:/usr/bin:/bin`,
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     EXPECT_MAX_OLD_SPACE_SIZE: '8192',
     HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB: null,
@@ -140,7 +198,7 @@ test('expoExec honors HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB override', async 
   await writeExpoStubCaptureNodeOptions({ expoPath });
 
   applyEnvOverrides(t, {
-    PATH: `${binDir}:/usr/bin:/bin`,
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     EXPECT_MAX_OLD_SPACE_SIZE: '4096',
     HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB: '4096',
@@ -178,7 +236,7 @@ test('expoExec overrides NODE_OPTIONS --max-old-space-size unless explicitly ove
   await writeExpoStubCaptureNodeOptions({ expoPath });
 
   applyEnvOverrides(t, {
-    PATH: `${binDir}:/usr/bin:/bin`,
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     EXPECT_MAX_OLD_SPACE_SIZE: '8192',
     HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB: null,
@@ -217,7 +275,7 @@ test('expoSpawn applies the same heap limit behavior', async (t) => {
   await writeExpoStubCaptureNodeOptions({ expoPath });
 
   applyEnvOverrides(t, {
-    PATH: `${binDir}:/usr/bin:/bin`,
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     EXPECT_MAX_OLD_SPACE_SIZE: '8192',
     HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB: null,
@@ -241,4 +299,47 @@ test('expoSpawn applies the same heap limit behavior', async (t) => {
 
   const logged = await readFile(outputPath, 'utf-8');
   assert.match(logged, /--max-old-space-size=8192/);
+});
+
+test('expoExec prefers the Windows cmd shim when both Expo shims exist', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-expo-windows-cmd-shim-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await writeMinimalRepo({ root });
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await mkdir(join(root, 'apps', 'ui', 'node_modules'), { recursive: true });
+
+  const binDir = join(root, 'bin');
+  await writeYarnStub({ binDir });
+
+  const outputPath = join(root, 'expo-invocation.txt');
+  await writeFile(outputPath, '', 'utf-8');
+  await writeExpoShimPairCaptureInvocation({
+    binDir: join(root, 'apps', 'ui', 'node_modules', '.bin'),
+    outputPath,
+  });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await expoExec({
+    dir: join(root, 'apps', 'ui'),
+    projectDir: join(root, 'apps', 'ui'),
+    args: ['--help'],
+    env: process.env,
+    quiet: true,
+  });
+
+  const logged = await readFile(outputPath, 'utf-8');
+  if (process.platform === 'win32') {
+    assert.match(logged, /shim=cmd/);
+  } else {
+    assert.match(logged, /shim=posix/);
+  }
 });

@@ -208,6 +208,18 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            }, 20);',
         '            continue;',
         '        }',
+        '        if (text === "bridge-mcp-title-tool-completed-content-envelope") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "mcp_title_content_1", type: "mcpToolCall", server: "happier", tool: "change_title", arguments: { title: "Content Envelope Title" } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "mcp_title_content_1", type: "mcpToolCall", result: { Ok: { content: [{ type: "text", text: "{\\"success\\":true,\\"title\\":\\"Content Envelope Title\\"}" }], isError: false } } } } }) + "\\n");',
+        '            }, 10);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
         '        if (text === "bridge-mcp-title-tool-blank-title") {',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "mcp_title_blank", type: "mcpToolCall", server: "happier", tool: "change_title", arguments: { title: "   " } } } }) + "\\n");',
@@ -1607,6 +1619,41 @@ describe('createCodexAppServerRuntime', () => {
                     expect.objectContaining({
                         method: 'thread/name/set',
                         params: { threadId: 'thread-started', name: 'New Title' },
+                        error: null,
+                    }),
+                ]),
+            );
+        } finally {
+            await runtime.reset();
+        }
+    });
+
+    it('syncs completed Happier title tool calls returned in MCP content envelopes to the Codex native thread name', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-native-title-sync-content-');
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+            } as any,
+            permissionHandler: { handleToolCall: vi.fn() } as any,
+        } as any);
+
+        try {
+            await runtime.startOrLoad({});
+            await runtime.sendPrompt('bridge-mcp-title-tool-completed-content-envelope');
+
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            const requestLog = await readRequestLog(requestLogPath);
+
+            expect(requestLog).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        method: 'thread/name/set',
+                        params: { threadId: 'thread-started', name: 'Content Envelope Title' },
                         error: null,
                     }),
                 ]),
