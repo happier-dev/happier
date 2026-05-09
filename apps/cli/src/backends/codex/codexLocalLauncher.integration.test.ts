@@ -776,6 +776,50 @@ describe('codexLocalLauncher', () => {
     }
   });
 
+  it('switches a fresh local session to remote when no rollout exists', async () => {
+    const fixture = await createCodexBinaryFixture();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      writeSessionMeta: false,
+      exitAfterMs: 500,
+      recordArgv: false,
+      handleSigint: false,
+    });
+
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: undefined,
+      TEST_CODEX_TIMESTAMP: undefined,
+      TEST_CODEX_ARGV_PATH: undefined,
+    });
+
+    try {
+      const launcherPromise = codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        rolloutDiscovery: {
+          initialTimeoutMs: 100,
+          initialPollIntervalMs: 25,
+          extendedPollIntervalMs: 25,
+        },
+      });
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: null });
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
   it('returns exit when the Codex TUI process cannot be spawned', async () => {
     const fixture = await createCodexBinaryFixture();
     const { session } = createLocalSessionHarness();

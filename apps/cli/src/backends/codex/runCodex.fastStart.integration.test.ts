@@ -328,6 +328,39 @@ describe('runCodex fast-start', () => {
     }
   });
 
+  it('passes initial resume id to local TUI after session init finishes', async () => {
+    const { runCodex } = await import('./runCodex');
+
+    const credentials = { token: 'test' } as Credentials;
+
+    let testError: unknown = null;
+    const runPromise = runCodex({
+      credentials,
+      startedBy: 'terminal',
+      startingMode: 'local',
+      resume: 'resume-123',
+    } as any).catch((e) => {
+      testError = e;
+    });
+
+    try {
+      await expect(waitFor(localStarted.promise, 1_000)).resolves.toBeUndefined();
+      expect(initResolved).toBe(true);
+    } catch (e) {
+      testError = e;
+    } finally {
+      localExit.resolve({ type: 'exit', code: 0 });
+      await runPromise;
+    }
+
+    const firstCall = codexLocalLauncherSpy.mock.calls[0]?.[0];
+    expect(firstCall?.resumeId).toBe('resume-123');
+
+    if (testError) {
+      throw testError;
+    }
+  });
+
   it('does not attach the deferred session to an offline stub; flushes buffered writes only after reconnection swap', async () => {
     const prevTiming = process.env.HAPPIER_STARTUP_TIMING_ENABLED;
     process.env.HAPPIER_STARTUP_TIMING_ENABLED = '1';

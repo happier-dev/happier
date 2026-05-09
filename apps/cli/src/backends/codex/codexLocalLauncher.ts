@@ -27,7 +27,7 @@ import {
 } from '@/agent/localControl/turnLifecycle';
 import { startLocalPendingQueueRemoteSwitchWatcher } from '@/agent/localControl/pendingQueue/startLocalPendingQueueRemoteSwitchWatcher';
 
-export type CodexLauncherResult = { type: 'switch'; resumeId: string } | { type: 'exit'; code: number };
+export type CodexLauncherResult = { type: 'switch'; resumeId: string | null } | { type: 'exit'; code: number };
 
 export type CodexRolloutDiscoveryConfig = Readonly<{
   /**
@@ -182,6 +182,7 @@ export async function codexLocalLauncher<TMode>(opts: {
 
   let exitReason: CodexLauncherResult | null = null;
   let switchRequested = false;
+  let remoteSwitchIntentObserved = false;
   let switchNotified = false;
   let mirror: CodexRolloutMirror | null = null;
   let pendingQueueWatcher: { stop: () => void } | null = null;
@@ -326,19 +327,24 @@ export async function codexLocalLauncher<TMode>(opts: {
     // in an active local turn, the deferred switch controller waits for the
     // rollout terminal event before asking the launcher to stop the child.
     opts.messageQueue.setOnMessage((message, mode) => {
+      remoteSwitchIntentObserved = true;
       deferredRemoteSwitch.onQueuedMessage(message, mode);
     });
 
     pendingQueueWatcher = startLocalPendingQueueRemoteSwitchWatcher({
       peekPendingCount: () => opts.session.peekPendingMessageQueueV2Count(),
       pollIntervalMs: configuration.pendingQueueIdleWakePollIntervalMs,
-      requestRemoteSwitch: () => deferredRemoteSwitch.requestRemoteSwitch('server_pending_queue'),
+      requestRemoteSwitch: () => {
+        remoteSwitchIntentObserved = true;
+        return deferredRemoteSwitch.requestRemoteSwitch('server_pending_queue');
+      },
     });
 
     // Allow the UI to request a switch explicitly.
     opts.session.rpcHandlerManager.registerHandler('switch', async (params: any) => {
       const to = params && typeof params === 'object' ? (params as any).to : undefined;
       if (to === 'local') return true;
+      remoteSwitchIntentObserved = true;
       return await deferredRemoteSwitch.requestRemoteSwitch('rpc_switch');
     });
 
@@ -449,6 +455,27 @@ export async function codexLocalLauncher<TMode>(opts: {
         });
       }
 
+      if (remoteSwitchIntentObserved && !opts.resumeId && now >= deadline) {
+        logger.debug('[codex] switch: starting fresh remote because no local rollout was discovered', {
+          elapsedSinceStartMs: now - startedAtMs,
+        });
+        exitReason = { type: 'switch', resumeId: null };
+        if (child && child.exitCode === null) {
+          childStopRequested = true;
+          if (isWindows) {
+            void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+          } else {
+            try {
+              child.kill('SIGTERM');
+            } catch {
+              // ignore
+            }
+          }
+        }
+        childExited = true;
+        break;
+      }
+
       candidateFile = await discoverCodexRolloutFileOnce({
         sessionsRootDir,
         startedAtMs,
@@ -474,6 +501,11 @@ export async function codexLocalLauncher<TMode>(opts: {
     }
 
     if (!candidateFile) {
+      if (exitReason) {
+        await childExitPromise;
+        publishRemoteControlState('switch');
+        return exitReason;
+      }
       logger.debug('[codex] rollout discovery: aborted without candidate', {
         elapsedMs: Date.now() - startedAtMs,
         childExited,

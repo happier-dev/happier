@@ -667,7 +667,7 @@ export async function runCodex(opts: {
                 session,
                 messageQueue,
                 permissionMode: initialPermissionMode,
-                resumeId: null,
+                resumeId: resumeIdFromArgs,
             }));
         if (localResult.type === 'exit') {
             clearInterval(keepAliveInterval);

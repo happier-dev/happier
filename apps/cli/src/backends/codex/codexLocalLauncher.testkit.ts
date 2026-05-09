@@ -123,6 +123,7 @@ export async function writeFakeCodexScript(path: string, opts: {
   taskCompleteAfterMs?: number;
   turnAbortedAfterMs?: number;
   turnAbortedReason?: string;
+  writeSessionMeta?: boolean;
 }): Promise<void> {
   const sessionMetaDelayMs = typeof opts.sessionMetaDelayMs === 'number' ? opts.sessionMetaDelayMs : 0;
   const assistantText = typeof opts.assistantText === 'string' ? opts.assistantText : null;
@@ -137,6 +138,7 @@ export async function writeFakeCodexScript(path: string, opts: {
   const taskCompleteAfterMs = typeof opts.taskCompleteAfterMs === 'number' ? opts.taskCompleteAfterMs : null;
   const turnAbortedAfterMs = typeof opts.turnAbortedAfterMs === 'number' ? opts.turnAbortedAfterMs : null;
   const turnAbortedReason = typeof opts.turnAbortedReason === 'string' ? opts.turnAbortedReason : 'interrupted';
+  const writeSessionMetaEnabled = opts.writeSessionMeta !== false;
 
 const script = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -192,9 +194,9 @@ function writeSessionMeta() {
   ${turnAbortedAfterMs != null ? `setTimeout(() => write(JSON.stringify({ type: 'event_msg', payload: { type: 'turn_aborted', turn_id: id, reason: ${JSON.stringify(turnAbortedReason)} } })), ${turnAbortedAfterMs});` : ''}
 }
 
-if (${sessionMetaDelayMs} > 0) {
+if (${writeSessionMetaEnabled ? 'true' : 'false'} && ${sessionMetaDelayMs} > 0) {
   setTimeout(writeSessionMeta, ${sessionMetaDelayMs});
-} else {
+} else if (${writeSessionMetaEnabled ? 'true' : 'false'}) {
   writeSessionMeta();
 }
 
