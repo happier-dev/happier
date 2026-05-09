@@ -66,4 +66,14 @@ describe('classifyHappyProcess', () => {
     expect(res).not.toBeNull();
     expect(res!.type).toBe('dev-daemon-spawned');
   });
+
+  it('should detect daemon-spawned snapshot sessions launched without tsx import hook', () => {
+    const res = classifyHappyProcess({
+      pid: 123,
+      name: 'node',
+      cmd: '/usr/bin/node /repo/.project/tmp/cli-dist-snapshot/src/index.ts claude --happy-starting-mode remote --started-by daemon',
+    });
+    expect(res).not.toBeNull();
+    expect(res!.type).toBe('daemon-spawned-session');
+  });
 });

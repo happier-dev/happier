@@ -51,6 +51,7 @@
 
 import { spawn, SpawnOptions, type ChildProcess } from 'child_process';
 import { basename, dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { existsSync } from 'node:fs';
@@ -60,6 +61,7 @@ import { resolveJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/resolve
 import { buildMissingJavaScriptRuntimeMessage } from '@/packagedRuntime/js/buildMissingJavaScriptRuntimeMessage';
 import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
+import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
 
 function getSubprocessRuntime(): 'node' | 'bun' {
   const override = process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
@@ -82,6 +84,21 @@ export function resolveTsxImportHookPath(): string | null {
   } catch {
     return null;
   }
+}
+
+export function toNodeImportSpecifier(importPath: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'win32') {
+    return pathToFileURL(importPath).href;
+  }
+  return importPath;
+}
+
+export function resolveTsxImportHookSpecifier(platform: NodeJS.Platform = process.platform): string | null {
+  const hookPath = resolveTsxImportHookPath();
+  if (!hookPath) {
+    return null;
+  }
+  return toNodeImportSpecifier(hookPath, platform);
 }
 
 function resolveSubprocessEntrypoint(): string {
@@ -185,7 +202,8 @@ export type HappyCliSubprocessLaunchSpec = {
 };
 
 function isRuntimeExecutablePath(pathLike: string): boolean {
-  const base = basename(String(pathLike ?? '').trim()).toLowerCase();
+  const normalized = String(pathLike ?? '').trim().replaceAll('\\', '/');
+  const base = normalized.split('/').at(-1)?.toLowerCase() ?? '';
   return base === 'node' || base === 'node.exe' || base === 'bun' || base === 'bun.exe';
 }
 
@@ -198,15 +216,15 @@ function isCurrentProcessSelfContainedBinary(): boolean {
 function isCurrentProcessBundledBunExecutable(): boolean {
   const execPath = String(process.execPath ?? '').trim();
   if (!execPath) return false;
-  const base = basename(execPath).toLowerCase();
+  const base = execPath.replaceAll('\\', '/').split('/').at(-1)?.toLowerCase() ?? '';
   return base === 'bun' || base === 'bun.exe';
 }
 
 function resolveCurrentProcessBundledScriptPath(): string | null {
   const scriptPath = String(process.argv[1] ?? '').trim();
   if (!scriptPath) return null;
+  if (isEmbeddedBunBundlePath(scriptPath)) return scriptPath;
   const normalized = scriptPath.replaceAll('\\', '/');
-  if (normalized.startsWith('/$bunfs/root/')) return scriptPath;
   if (!existsSync(scriptPath)) return null;
   const lowered = normalized.toLowerCase();
   const base = basename(lowered);
@@ -258,6 +276,9 @@ function buildWindowsPackagedBinaryInvocation(
 function buildCurrentProcessBundledBunFallbackInvocation(
   args: string[],
 ): HappyCliSubprocessInvocation | null {
+  // Bun virtual bundle paths are process-local on Windows and can fail when reused
+  // by detached/background children. Fail closed and require a stable entrypoint.
+  if (process.platform === 'win32') return null;
   const bundledScriptPath = resolveCurrentProcessBundledScriptPath();
   if (!bundledScriptPath) return null;
   if (isCurrentProcessSelfContainedBinary()) {
@@ -372,15 +393,15 @@ function buildCurrentProcessSourceInvocation(args: string[]): HappyCliSubprocess
 function buildDevTsxSubprocessInvocation(args: string[], entrypoint: string): HappyCliSubprocessInvocation | null {
   const tsxEntrypoint = resolveDevTsxFallbackEntrypoint(entrypoint);
   if (!existsSync(tsxEntrypoint)) return null;
-  const tsxHook = resolveTsxImportHookPath();
-  if (!tsxHook) {
+  const tsxHookSpecifier = resolveTsxImportHookSpecifier();
+  if (!tsxHookSpecifier) {
     const errorMessage = `tsx is required for TSX fallback but could not be resolved from the cli package`;
     logger.debug(`[SPAWN HAPPIER CLI] ${errorMessage}`);
     throw new Error(errorMessage);
   }
   return {
     runtime: 'node',
-    argv: ['--no-warnings', '--no-deprecation', '--import', tsxHook, tsxEntrypoint, ...args],
+    argv: ['--no-warnings', '--no-deprecation', '--import', tsxHookSpecifier, tsxEntrypoint, ...args],
     env: { TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath() },
   };
 }

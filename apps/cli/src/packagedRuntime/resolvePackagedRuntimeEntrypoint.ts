@@ -110,22 +110,35 @@ function resolveRuntimeRootFromScriptPath(pathLike: string): string | null {
 }
 
 function resolveManagedInstalledCliProjectRoot(): string | null {
+  const channels: Array<'stable' | 'preview' | 'publicdev'> = [];
   try {
-    const channel = readDefaultManagedReleaseChannelSync();
-    return resolveManagedInstalledCliProjectRootForChannel(channel);
+    channels.push(readDefaultManagedReleaseChannelSync());
   } catch {
-    return null;
+    // fall through to canonical channel sweep
   }
+  for (const channel of ['stable', 'preview', 'publicdev'] as const) {
+    if (!channels.includes(channel)) {
+      channels.push(channel);
+    }
+  }
+  for (const channel of channels) {
+    const resolved = resolveManagedInstalledCliProjectRootForChannel(channel);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  return null;
 }
 
 export function resolvePackagedRuntimeProjectRoots(): string[] {
   const roots: string[] = [];
+  const launchedScriptRuntimeRoot = resolveRuntimeRootFromScriptPath(process.argv[1]);
   const candidateRoots = [
+    launchedScriptRuntimeRoot,
     resolveRuntimeRootFromInstalledShimPath(process.execPath),
     resolveRuntimeRootFromInstalledShimPath(process.argv[0]),
     resolveManagedInstalledCliProjectRoot(),
     resolveRuntimeRootFromBinaryPath(process.execPath),
-    resolveRuntimeRootFromScriptPath(process.argv[1]),
     resolveRuntimeRootFromBinaryPath(process.argv[0]),
     (() => {
       const resolvedProjectPath = projectPath();

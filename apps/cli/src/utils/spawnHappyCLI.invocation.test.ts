@@ -134,12 +134,12 @@ describe('happier-cli subprocess invocation', () => {
             expect.arrayContaining([
                 '--no-warnings',
                 '--no-deprecation',
-                expect.stringMatching(/package-dist\/index\.mjs$/),
+                expect.stringMatching(/package-dist[\\/]index\.mjs$/),
                 'daemon',
                 'start-sync',
             ]),
         );
-        expect(inv.argv[2]).toMatch(/package-dist\/index\.mjs$/);
+        expect(inv.argv[2]).toMatch(/package-dist[\\/]index\.mjs$/);
     });
 
     it('falls back to tsx source entrypoint in dev mode when dist entrypoint is missing', async () => {

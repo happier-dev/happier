@@ -34,25 +34,17 @@ function buildWindowsDetachedDaemonCreateInvocation(params: Readonly<{
         : []
     ));
 
-  const childScript = [
+  const argsArrayLiteral = `@(${params.args.map((arg) => toPowerShellStringLiteral(arg)).join(', ')})`;
+  const script = [
     '$ErrorActionPreference = "Stop";',
     ...forwardedEnvAssignments,
-    `Set-Location -LiteralPath ${toPowerShellStringLiteral(params.cwd)};`,
-    `& ${toPowerShellStringLiteral(params.filePath)} ${params.args.map((arg) => toPowerShellStringLiteral(arg)).join(' ')};`,
-  ].join(' ');
-  const encodedChildScript = Buffer.from(childScript, 'utf16le').toString('base64');
-  const commandLine = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodedChildScript}`;
-
-  const outerScript = [
-    '$ErrorActionPreference = "Stop";',
-    `$result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${toPowerShellStringLiteral(commandLine)}; CurrentDirectory = ${toPowerShellStringLiteral(params.cwd)} };`,
-    'if ([int]$result.ReturnValue -ne 0) { throw "Win32_Process.Create failed with code $($result.ReturnValue)" }',
-    'Write-Output $result.ProcessId;',
+    `$p = Start-Process -FilePath ${toPowerShellStringLiteral(params.filePath)} -ArgumentList ${argsArrayLiteral} -WorkingDirectory ${toPowerShellStringLiteral(params.cwd)} -WindowStyle Hidden -PassThru;`,
+    'Write-Output $p.Id;',
   ].join(' ');
 
   return {
     command: 'powershell.exe',
-    args: ['-NoProfile', '-NonInteractive', '-Command', outerScript],
+    args: ['-NoProfile', '-NonInteractive', '-Command', script],
   };
 }
 

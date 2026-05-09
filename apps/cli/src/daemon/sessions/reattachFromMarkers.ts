@@ -31,6 +31,11 @@ function extractResumeIdFromCommand(command: string): string | null {
   return resumeId || null;
 }
 
+function indicatesDaemonStartedSessionCommand(command: string): boolean {
+  const normalized = command.replace(/\s+/g, ' ').trim();
+  return /(?:^|[\s"])--started-by"?(?:=|\s+)\s*"?daemon"?(?=$|[\s"])/i.test(normalized);
+}
+
 function extractBackendTargetFromCommand(command: string): SpawnSessionOptions['backendTarget'] | undefined {
   const happyStartingModeIndex = command.indexOf(' --happy-starting-mode');
   if (happyStartingModeIndex <= 0) return undefined;
@@ -148,6 +153,7 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
   }>;
   incompleteMarkerByPid: ReadonlyMap<number, Readonly<{
     happySessionId: string;
+    startedBy?: string;
     cwd?: string;
     respawn?: unknown;
   }>>;
@@ -167,25 +173,44 @@ async function recoverMarkerlessDaemonSpawnedSessions(params: Readonly<{
     const liveExistingSessionId = extractExistingSessionIdFromCommand(processInfo.command);
     const incompleteMarkerSessionId =
       typeof incompleteMarker?.happySessionId === 'string' ? incompleteMarker.happySessionId.trim() : '';
+    const incompleteMarkerStartedBy =
+      typeof incompleteMarker?.startedBy === 'string' ? incompleteMarker.startedBy.trim() : '';
     const canRecoverFromIncompleteMarker =
       incompleteMarker &&
       isGenericHappySession &&
       !!liveExistingSessionId &&
       liveExistingSessionId === incompleteMarkerSessionId;
+    const canRecoverDaemonSessionFromIncompleteMarker =
+      incompleteMarker &&
+      (
+        processInfo.type === 'daemon-spawned-session' ||
+        processInfo.type === 'dev-daemon-spawned' ||
+        indicatesDaemonStartedSessionCommand(processInfo.command)
+      ) &&
+      incompleteMarkerStartedBy === 'daemon' &&
+      !!incompleteMarkerSessionId;
     if (
       processInfo.type !== 'daemon-spawned-session' &&
       processInfo.type !== 'dev-daemon-spawned' &&
-      !canRecoverFromIncompleteMarker
+      !canRecoverFromIncompleteMarker &&
+      !canRecoverDaemonSessionFromIncompleteMarker
     ) {
       continue;
     }
     if (!isOwnedLiveDaemonSessionProcessCommand(processInfo.command)) {
-      continue;
+      if (canRecoverDaemonSessionFromIncompleteMarker) {
+        // CLI update takeover can reattach daemon-started runners from a previous runtime root
+        // when the prior daemon only persisted incomplete markers (no process-command hash).
+      } else {
+        continue;
+      }
     }
 
-    const happySessionId = isGenericHappySession
-      ? liveExistingSessionId
-      : liveExistingSessionId ?? incompleteMarkerSessionId;
+    const happySessionId = canRecoverDaemonSessionFromIncompleteMarker
+      ? liveExistingSessionId || incompleteMarkerSessionId
+      : isGenericHappySession
+        ? liveExistingSessionId
+        : liveExistingSessionId ?? incompleteMarkerSessionId;
     if (!happySessionId) {
       continue;
     }
@@ -289,6 +314,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
           marker.pid,
           {
             happySessionId: marker.happySessionId,
+            startedBy: marker.startedBy,
             cwd: marker.cwd,
             respawn: marker.respawn,
           },

@@ -19,7 +19,7 @@ vi.mock('./resolveDaemonLaunchSpec', () => ({
 }));
 
 describe('spawnDetachedDaemonStartSync', () => {
-  const envScope = createEnvKeyScope(['HAPPIER_RELEASE_RING', 'HAPPIER_PUBLIC_RELEASE_CHANNEL']);
+  const envScope = createEnvKeyScope(['HAPPIER_RELEASE_RING', 'HAPPIER_PUBLIC_RELEASE_CHANNEL', 'HAPPIER_HOME_DIR']);
   const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
   afterEach(() => {
@@ -33,9 +33,11 @@ describe('spawnDetachedDaemonStartSync', () => {
   });
 
   it('propagates the public release channel to the detached daemon so state files are scoped per lane', async () => {
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
     envScope.patch({
       HAPPIER_RELEASE_RING: 'dev',
       HAPPIER_PUBLIC_RELEASE_CHANNEL: undefined,
+      HAPPIER_HOME_DIR: '/tmp/happier-cli-test-home',
     });
 
     const mod = await import('./spawnDetachedDaemonStartSync');
@@ -79,11 +81,12 @@ describe('spawnDetachedDaemonStartSync', () => {
     expect(args).toEqual(expect.arrayContaining(['-NoProfile', '-NonInteractive', '-Command']));
     const commandIndex = args.indexOf('-Command');
     const script = args[commandIndex + 1] ?? '';
-    expect(script).toContain('Invoke-CimMethod');
-    expect(script).toContain('Win32_Process');
-    expect(script).toContain('EncodedCommand');
-    expect(script).toContain("CommandLine = 'powershell.exe -NoProfile -NonInteractive -EncodedCommand");
-    expect(script).toContain('CurrentDirectory');
+    expect(script).toContain('Start-Process');
+    expect(script).toContain('-FilePath');
+    expect(script).toContain('-ArgumentList');
+    expect(script).toContain('-WorkingDirectory');
+    expect(script).toContain('-WindowStyle Hidden');
+    expect(script).toContain('-PassThru');
     expect(options).toEqual(expect.objectContaining({
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

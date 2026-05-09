@@ -287,10 +287,28 @@ export function createOnHappySessionWebhook(params: Readonly<{
     // Also capture a process command hash so reattach/stop can be PID-reuse-safe.
     void (async () => {
       const proc = await findHappyProcessByPidFn(pid);
-      const processCommandHash = proc?.command ? hashProcessCommand(proc.command) : undefined;
+      const discoveredProcessCommand =
+        typeof proc?.command === 'string' && proc.command.trim().length > 0 ? proc.command : undefined;
+      const trackedProcessCommand =
+        typeof trackedForPid?.processCommand === 'string' && trackedForPid.processCommand.trim().length > 0
+          ? trackedForPid.processCommand
+          : undefined;
+      const daemonChildSpawnArgsCommand =
+        trackedForPid?.startedBy === 'daemon' &&
+        Array.isArray(trackedForPid.childProcess?.spawnargs) &&
+        trackedForPid.childProcess.spawnargs.length > 0
+          ? trackedForPid.childProcess.spawnargs
+              .filter((arg): arg is string => typeof arg === 'string' && arg.trim().length > 0)
+              .join(' ')
+          : undefined;
+      const processCommand = discoveredProcessCommand ?? trackedProcessCommand ?? daemonChildSpawnArgsCommand;
+      const processCommandHash = processCommand ? hashProcessCommand(processCommand) : undefined;
       if (processCommandHash) {
         // Store on the tracked session too so stopSession can require a match.
-        if (trackedForPid) trackedForPid.processCommandHash = processCommandHash;
+        if (trackedForPid) {
+          trackedForPid.processCommandHash = processCommandHash;
+          trackedForPid.processCommand = processCommand;
+        }
       } else {
         logger.debug(`[DAEMON RUN] Could not determine process command for PID ${pid}; marker will be weaker`);
       }
@@ -315,7 +333,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         startedBy: persistedMetadata.startedBy ?? 'terminal',
         cwd: normalizedPath,
         processCommandHash,
-        processCommand: proc?.command,
+        processCommand,
         metadata: persistedMetadata,
         ...(respawn ? { respawn } : {}),
       });

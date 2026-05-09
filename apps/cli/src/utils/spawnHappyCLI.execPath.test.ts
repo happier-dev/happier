@@ -252,8 +252,12 @@ describe('spawnHappyCLI runtime executable selection', () => {
   it('reuses the current bundled bun script when dist entrypoint is missing without a runtime override', async () => {
     const originalArgv = [...process.argv];
     const originalExecPath = process.execPath;
+    const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
 
     try {
+      Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
+      process.env.HAPPIER_HOME_DIR = '/tmp/happier-cli-test-home';
       process.argv = ['bun', '/$bunfs/root/happier-linux-arm64', 'daemon', 'start'];
       Object.defineProperty(process, 'execPath', {
         value: '/usr/bin/bun',
@@ -283,6 +287,54 @@ describe('spawnHappyCLI runtime executable selection', () => {
         value: originalExecPath,
         configurable: true,
       });
+      if (originalPlatformDescriptor) {
+        Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+      }
+      if (originalHappyHomeDir === undefined) {
+        delete process.env.HAPPIER_HOME_DIR;
+      } else {
+        process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+      }
+    }
+  });
+
+  it('fails closed on Windows when only an embedded bun bundle script path is available', async () => {
+    const originalArgv = [...process.argv];
+    const originalExecPath = process.execPath;
+    const originalPlatformDescriptorInner = Object.getOwnPropertyDescriptor(process, 'platform');
+
+    try {
+      process.argv = ['bun', 'B:/~BUN/root/happier.exe', 'daemon', 'start'];
+      Object.defineProperty(process, 'execPath', {
+        value: 'C:\\Program Files\\Bun\\bun.exe',
+        configurable: true,
+      });
+      Object.defineProperty(process, 'platform', { ...originalPlatformDescriptorInner, value: 'win32' });
+
+      envScope.patch({
+        HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: 'B:/~BUN/dist/index.mjs',
+        HAPPIER_CLI_SUBPROCESS_RUNTIME: undefined,
+        HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0',
+        HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '0',
+        HAPPIER_VARIANT: undefined,
+        HAPPIER_STACK_REPO_DIR: undefined,
+        HAPPIER_STACK_CLI_ROOT_DIR: undefined,
+        HAPPIER_STACK_STACK: undefined,
+      });
+
+      const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
+      expect(() => mod.buildHappyCliSubprocessLaunchSpec(['daemon', 'start-sync'])).toThrow(
+        /Entrypoint .* does not exist/,
+      );
+    } finally {
+      process.argv = originalArgv;
+      Object.defineProperty(process, 'execPath', {
+        value: originalExecPath,
+        configurable: true,
+      });
+      if (originalPlatformDescriptorInner) {
+        Object.defineProperty(process, 'platform', originalPlatformDescriptorInner);
+      }
     }
   });
 });

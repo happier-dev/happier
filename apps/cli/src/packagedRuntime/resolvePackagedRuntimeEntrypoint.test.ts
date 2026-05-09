@@ -108,6 +108,55 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
         );
     });
 
+    it('prefers the current argv[1] runtime snapshot over managed-installed payloads when both exist', () => {
+        Object.defineProperty(process, 'execPath', {
+            value: '/usr/local/bin/node',
+            configurable: true,
+        });
+        process.argv = ['/usr/local/bin/node', '/runtime/current/cli/package-dist/index.mjs'];
+        readDefaultManagedReleaseChannelSyncMock.mockReturnValue('stable');
+        resolveInstalledFirstPartyComponentPathsMock.mockImplementation((params: { channel?: string } = {}) => {
+            if (params.channel === 'stable') {
+                return {
+                    installRoot: '/Users/test/.happier/cli',
+                    currentPath: '/Users/test/.happier/cli/current',
+                    previousPath: '/Users/test/.happier/cli/previous',
+                    versionsDir: '/Users/test/.happier/cli/versions',
+                    binaryPath: '/Users/test/.happier/cli/current/happier',
+                    nodeEntrypointPath: '/Users/test/.happier/cli/current/package-dist/index.mjs',
+                    shimPaths: ['/Users/test/.happier/bin/happier'],
+                    resolvedCurrentPath: '/Users/test/.happier/cli/versions/0.2.6',
+                    resolvedBinaryPath: '/Users/test/.happier/cli/versions/0.2.6/happier',
+                    resolvedNodeEntrypointPath: '/Users/test/.happier/cli/versions/0.2.6/package-dist/index.mjs',
+                };
+            }
+            return {
+                installRoot: '/Users/test/.happier/cli-preview',
+                currentPath: '/Users/test/.happier/cli-preview/current',
+                previousPath: '/Users/test/.happier/cli-preview/previous',
+                versionsDir: '/Users/test/.happier/cli-preview/versions',
+                binaryPath: '/Users/test/.happier/cli-preview/current/happier',
+                nodeEntrypointPath: '/Users/test/.happier/cli-preview/current/package-dist/index.mjs',
+                shimPaths: ['/Users/test/.happier/bin/hprev'],
+                resolvedCurrentPath: '/Users/test/.happier/cli-preview/versions/0.2.6-preview.9',
+                resolvedBinaryPath: '/Users/test/.happier/cli-preview/versions/0.2.6-preview.9/happier',
+                resolvedNodeEntrypointPath: '/Users/test/.happier/cli-preview/versions/0.2.6-preview.9/package-dist/index.mjs',
+            };
+        });
+        vi.mocked(existsSync).mockImplementation((pathLike) => {
+            const path = String(pathLike);
+            return (
+                path === '/runtime/current/cli/package-dist/backends/codex/happyMcpStdioBridge.mjs'
+                || path === '/Users/test/.happier/cli/versions/0.2.6/package-dist/index.mjs'
+                || path === '/Users/test/.happier/cli/versions/0.2.6/package-dist/backends/codex/happyMcpStdioBridge.mjs'
+            );
+        });
+
+        expect(resolvePackagedRuntimeEntrypoint('backends/codex/happyMcpStdioBridge.mjs')).toBe(
+            '/runtime/current/cli/package-dist/backends/codex/happyMcpStdioBridge.mjs',
+        );
+    });
+
     it('prefers the managed installed cli payload root over a checkout root when running from a bundled binary', () => {
         Object.defineProperty(process, 'execPath', {
             value: '/$bunfs/root/happier',
@@ -264,5 +313,65 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
 
         vi.doUnmock('@/projectPath');
         vi.resetModules();
+    });
+
+    it('falls back to any installed managed channel root when default-channel payload is unavailable under embedded bun launch', () => {
+        readDefaultManagedReleaseChannelSyncMock.mockReturnValue('stable');
+        resolveInstalledFirstPartyComponentPathsMock.mockImplementation((params: { channel?: string } = {}) => {
+            if (params.channel === 'stable') {
+                return {
+                    installRoot: 'C:/Users/test/.happier/cli',
+                    currentPath: 'C:/Users/test/.happier/cli/current',
+                    previousPath: 'C:/Users/test/.happier/cli/previous',
+                    versionsDir: 'C:/Users/test/.happier/cli/versions',
+                    binaryPath: 'C:/Users/test/.happier/cli/current/happier.exe',
+                    nodeEntrypointPath: 'C:/Users/test/.happier/cli/current/package-dist/index.mjs',
+                    shimPaths: ['C:/Users/test/.happier/bin/happier.exe'],
+                    resolvedCurrentPath: 'C:/Users/test/.happier/cli/versions/0.2.6',
+                    resolvedBinaryPath: 'C:/Users/test/.happier/cli/versions/0.2.6/happier.exe',
+                    resolvedNodeEntrypointPath: 'C:/Users/test/.happier/cli/versions/0.2.6/package-dist/index.mjs',
+                };
+            }
+            if (params.channel === 'preview') {
+                return {
+                    installRoot: 'C:/Users/test/.happier/cli-preview',
+                    currentPath: 'C:/Users/test/.happier/cli-preview/current',
+                    previousPath: 'C:/Users/test/.happier/cli-preview/previous',
+                    versionsDir: 'C:/Users/test/.happier/cli-preview/versions',
+                    binaryPath: 'C:/Users/test/.happier/cli-preview/current/happier.exe',
+                    nodeEntrypointPath: 'C:/Users/test/.happier/cli-preview/current/package-dist/index.mjs',
+                    shimPaths: ['C:/Users/test/.happier/bin/hprev.exe'],
+                    resolvedCurrentPath: 'C:/Users/test/.happier/cli-preview/versions/0.2.6-preview.9',
+                    resolvedBinaryPath: 'C:/Users/test/.happier/cli-preview/versions/0.2.6-preview.9/happier.exe',
+                    resolvedNodeEntrypointPath: 'C:/Users/test/.happier/cli-preview/versions/0.2.6-preview.9/package-dist/index.mjs',
+                };
+            }
+            return {
+                installRoot: 'C:/Users/test/.happier/cli-dev',
+                currentPath: 'C:/Users/test/.happier/cli-dev/current',
+                previousPath: 'C:/Users/test/.happier/cli-dev/previous',
+                versionsDir: 'C:/Users/test/.happier/cli-dev/versions',
+                binaryPath: 'C:/Users/test/.happier/cli-dev/current/happier.exe',
+                nodeEntrypointPath: 'C:/Users/test/.happier/cli-dev/current/package-dist/index.mjs',
+                shimPaths: ['C:/Users/test/.happier/bin/hdev.exe'],
+                resolvedCurrentPath: 'C:/Users/test/.happier/cli-dev/versions/0.2.6-dev.1',
+                resolvedBinaryPath: 'C:/Users/test/.happier/cli-dev/versions/0.2.6-dev.1/happier.exe',
+                resolvedNodeEntrypointPath: 'C:/Users/test/.happier/cli-dev/versions/0.2.6-dev.1/package-dist/index.mjs',
+            };
+        });
+        Object.defineProperty(process, 'execPath', {
+            value: 'C:\\Program Files\\Bun\\bun.exe',
+            configurable: true,
+        });
+        process.argv = ['bun', 'B:/~BUN/root/happier.exe', 'daemon', 'start'];
+        vi.mocked(existsSync).mockImplementation((pathLike) => {
+            const path = String(pathLike).replaceAll('\\', '/');
+            return path === 'C:/Users/test/.happier/cli-preview/versions/0.2.6-preview.9/package-dist/backends/codex/happyMcpStdioBridge.mjs'
+                || path === 'C:/Users/test/.happier/cli-preview/versions/0.2.6-preview.9/package-dist/index.mjs';
+        });
+
+        expect(
+            resolvePackagedRuntimeEntrypoint('backends/codex/happyMcpStdioBridge.mjs').replaceAll('\\', '/'),
+        ).toBe('C:/Users/test/.happier/cli-preview/versions/0.2.6-preview.9/package-dist/backends/codex/happyMcpStdioBridge.mjs');
     });
 });

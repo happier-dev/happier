@@ -367,4 +367,50 @@ describe('createOnHappySessionWebhook', () => {
     expect(awaiter).toHaveBeenCalledTimes(1);
     expect(pidToAwaiter.has(wrapperPid)).toBe(false);
   });
+
+  it('falls back to daemon child spawn arguments when process discovery cannot resolve command identity', async () => {
+    const sessionPid = 777;
+    const spawnArgs = [
+      '/usr/bin/node',
+      '/repo/.project/tmp/cli-dist-snapshot/src/index.ts',
+      'claude',
+      '--happy-starting-mode',
+      'remote',
+      '--started-by',
+      'daemon',
+    ];
+    const tracked: TrackedSession = {
+      pid: sessionPid,
+      startedBy: 'daemon',
+      childProcess: { pid: sessionPid, spawnargs: spawnArgs } as any,
+    };
+    const pidToTrackedSession = new Map<number, TrackedSession>([[sessionPid, tracked]]);
+    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+
+    let markerArgs: any = null;
+    let resolveMarker!: () => void;
+    const markerWritten = new Promise<void>((resolve) => {
+      resolveMarker = resolve;
+    });
+
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession,
+      pidToAwaiter,
+      getParentPidFn: () => null,
+      findHappyProcessByPidFn: async () => null,
+      writeSessionMarkerFn: async (args) => {
+        markerArgs = args;
+        resolveMarker();
+      },
+    });
+
+    onWebhook('session-daemon-777', createMetadata(sessionPid, 'daemon', '/tmp/workspace'));
+    await markerWritten;
+
+    const expectedCommand = spawnArgs.join(' ');
+    expect(markerArgs.processCommand).toBe(expectedCommand);
+    expect(markerArgs.processCommandHash).toBeDefined();
+    expect(pidToTrackedSession.get(sessionPid)?.processCommand).toBe(expectedCommand);
+    expect(pidToTrackedSession.get(sessionPid)?.processCommandHash).toBe(markerArgs.processCommandHash);
+  });
 });
