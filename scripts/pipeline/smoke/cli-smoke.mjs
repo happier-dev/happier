@@ -60,6 +60,28 @@ function isWindowsShellShimPath(pathLike) {
   return /\.(cmd|bat)$/i.test(String(pathLike ?? '').trim());
 }
 
+function buildWindowsCommandCandidates(commandLike, env) {
+  const cmd = asNonEmptyString(commandLike);
+  if (!cmd) return [];
+
+  const exts = expandPathextCaseVariants(normalizePathext(readEnvPathext(env)));
+  const lowered = cmd.toLowerCase();
+  const hasKnownExt = exts.some((ext) => lowered.endsWith(ext.toLowerCase()));
+  return hasKnownExt ? [cmd] : [...exts.map((ext) => `${cmd}${ext}`), cmd];
+}
+
+function resolveWindowsCommandPath(commandPath, env = process.env) {
+  for (const candidate of buildWindowsCommandCandidates(commandPath, env)) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
 const cmdMetaCharsRegExp = /([()\][%!^"`<>&|;, *?])/g;
 const nodeModulesCmdShimRegExp = /node_modules[\\/].bin[\\/][^\\/]+\.cmd$/i;
 
@@ -107,10 +129,7 @@ function resolveWindowsCommandOnPath(command, env = process.env) {
   const pathEnv = asNonEmptyString(readEnvPath(env));
   if (!pathEnv) return null;
 
-  const exts = expandPathextCaseVariants(normalizePathext(readEnvPathext(env)));
-  const lowered = cmd.toLowerCase();
-  const hasKnownExt = exts.some((ext) => lowered.endsWith(ext.toLowerCase()));
-  const candidates = hasKnownExt ? [cmd] : [cmd, ...exts.map((ext) => `${cmd}${ext}`)];
+  const candidates = buildWindowsCommandCandidates(cmd, env);
 
   for (const dir of pathEnv.split(path.delimiter)) {
     const trimmedDir = dir.trim();
@@ -141,7 +160,7 @@ function resolveWindowsCommandInvocation(params) {
   const resolvedCommand =
     shouldResolveOnPath && isCommandOnly(command)
       ? (resolveWindowsCommandOnPath(command, env) ?? command)
-      : command;
+      : (resolveWindowsCommandPath(command, env) ?? command);
 
   if (!isWindowsShellShimPath(resolvedCommand)) {
     return { command: resolvedCommand, args };
@@ -361,8 +380,8 @@ function main() {
   if (!opts.dryRun) {
     process.stdout.write(daemonHelp);
     if (!daemonHelp.endsWith('\n')) process.stdout.write('\n');
-    if (!daemonHelp.includes('Daemon management')) {
-      fail('Expected `happier daemon --help` to include "Daemon management"');
+    if (!daemonHelp.includes('happier daemon') || !daemonHelp.includes('Usage:')) {
+      fail('Expected `happier daemon --help` to include command header and usage text');
     }
   }
 

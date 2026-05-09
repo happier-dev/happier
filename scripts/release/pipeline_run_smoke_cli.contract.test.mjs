@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,4 +23,12 @@ test('pipeline CLI exposes smoke-cli subcommand', async () => {
 
   assert.match(out, /scripts\/pipeline\/smoke\/cli-smoke\.mjs/);
   assert.match(out, /\bCLI smoke test passed\b/);
+});
+
+test('cli smoke daemon-help validation does not pin an exact subtitle', () => {
+  const scriptPath = resolve(repoRoot, 'scripts', 'pipeline', 'smoke', 'cli-smoke.mjs');
+  const raw = readFileSync(scriptPath, 'utf8');
+
+  assert.doesNotMatch(raw, /Daemon management/);
+  assert.match(raw, /happier daemon/);
 });

@@ -139,6 +139,35 @@ function prependPathEntries(entries) {
   return [...cleanEntries, String(process.env.PATH ?? '')].filter(Boolean).join(delimiter);
 }
 
+const DEFAULT_INSTALLERS_SMOKE_LIFECYCLE_STEP_TIMEOUT_MS = 300_000;
+const WIN32_LOCAL_BUILD_INSTALL_TIMEOUT_MS = 600_000;
+
+/**
+ * @param {{
+ *   env?: NodeJS.ProcessEnv;
+ *   platform?: 'linux' | 'darwin' | 'win32';
+ *   sourceKind?: string;
+ *   step?: string;
+ * }} params
+ */
+export function resolveInstallersSmokeLifecycleStepTimeoutMs({
+  env = {},
+  platform,
+  sourceKind,
+  step,
+}) {
+  const raw = String(env.HAPPIER_INSTALLERS_SMOKE_STEP_TIMEOUT_MS ?? '').trim();
+  if (!raw) {
+    if (platform === 'win32' && sourceKind === 'local-build' && step === 'install') {
+      return WIN32_LOCAL_BUILD_INSTALL_TIMEOUT_MS;
+    }
+    return DEFAULT_INSTALLERS_SMOKE_LIFECYCLE_STEP_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_INSTALLERS_SMOKE_LIFECYCLE_STEP_TIMEOUT_MS;
+  return Math.min(1_800_000, Math.max(30_000, parsed));
+}
+
 /**
  * @param {{
  *   repoRoot: string;
@@ -199,6 +228,9 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
   if (localBuildAssets) {
     env.HAPPIER_RELEASE_ASSETS_DIR = localBuildAssets.assetsDir;
     env.HAPPIER_MINISIGN_PUBKEY = localBuildAssets.publicKey;
+    if (localBuildAssets.installVersion) {
+      env.HAPPIER_INSTALL_VERSION = localBuildAssets.installVersion;
+    }
     env.PATH = prependPathEntries(localBuildAssets.envPathEntries);
   }
 
@@ -207,12 +239,13 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
   /**
    * @param {string[]} args
    */
-  function runInstaller(args = []) {
+  function runInstaller(args = [], timeoutMs) {
     if (platform === 'win32') {
       execFileSync('pwsh', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installerScratchPath, ...args], {
         cwd: repoRoot,
         env,
         stdio: 'inherit',
+        timeout: timeoutMs,
       });
       return;
     }
@@ -221,6 +254,7 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
       cwd: repoRoot,
       env,
       stdio: 'inherit',
+      timeout: timeoutMs,
     });
   }
 
@@ -241,36 +275,56 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
 
   try {
     for (const step of lifecycleSteps) {
+      const stepTimeoutMs = resolveInstallersSmokeLifecycleStepTimeoutMs({
+        env,
+        platform,
+        sourceKind: source?.kind,
+        step,
+      });
       if (step === 'install') {
-        runInstaller();
+        console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
+        runInstaller([], stepTimeoutMs);
+        console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
       if (step === 'check') {
-        runInstaller(['--check']);
+        console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
+        runInstaller(['--check'], stepTimeoutMs);
+        console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
       if (step === 'reinstall') {
-        runInstaller(['--reinstall']);
+        console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
+        runInstaller(['--reinstall'], stepTimeoutMs);
+        console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
       if (step === 'uninstall') {
-        runInstaller(['--uninstall']);
+        console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
+        runInstaller(['--uninstall'], stepTimeoutMs);
+        console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
       if (step === 'version') {
+        console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
         execFileSync(binaryPath, ['--version'], {
           cwd: repoRoot,
           env,
           stdio: 'inherit',
+          timeout: stepTimeoutMs,
         });
+        console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
       if (step === 'help') {
+        console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
         execFileSync(binaryPath, ['--help'], {
           cwd: repoRoot,
           env,
           stdio: 'ignore',
+          timeout: stepTimeoutMs,
         });
+        console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
       throw new Error(`Unsupported installers-smoke lifecycle step: ${step}`);

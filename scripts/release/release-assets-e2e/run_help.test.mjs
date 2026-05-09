@@ -113,11 +113,11 @@ test('npm-e2e-smoke remote-server-smoke.sh does not use an unterminated heredoc 
   assert.doesNotMatch(script, /\nNODE <<</);
 });
 
-test('npm-e2e-smoke remote-server-smoke.sh parses multi-line JSON output from config view', () => {
+test('npm-e2e-smoke remote-server-smoke.sh parses multi-line server.env output', () => {
   const script = fs.readFileSync(join(here, 'bin', 'remote-server-smoke.sh'), 'utf8');
-  assert.match(script, /JSON\.parse\(raw\)/);
-  assert.doesNotMatch(script, /raw\.split\(/);
-  assert.match(script, /self-host config view[^\n]*--mode=system/);
+  assert.match(script, /const raw = process\.env\.REMOTE_SERVER_CONFIG_ENV_TEXT \|\| '';/);
+  assert.match(script, /for \(const line of raw\.split\(\/\\r\?\\n\/\)\)/);
+  assert.match(script, /sudo -n cat .*remote_config_env_path/);
 });
 
 test('npm-e2e-smoke postgres validation asserts connectivity (pg_stat_activity) instead of table creation', () => {

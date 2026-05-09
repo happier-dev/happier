@@ -26,6 +26,79 @@ REMOTE_SELF_HOST_SERVER_BINARY="${REMOTE_SELF_HOST_SERVER_BINARY:-}"
 REMOTE_SELF_HOST_PRISMA_ENGINE_PATH="${REMOTE_SELF_HOST_PRISMA_ENGINE_PATH:-}"
 
 ssh_key_src="/work/ssh/id_ed25519"
+REMOTE_SSH_CONFIG_FILE="/root/.ssh/config"
+REMOTE_SSH_KNOWN_HOSTS_FILE="/root/.ssh/known_hosts"
+
+seed_strict_known_hosts_entry() {
+  local host="$1"
+  local known_hosts_file="$2"
+  local port="${3:-22}"
+
+  # Keep strict host-key verification deterministic across reruns by replacing
+  # any stale entries for this host+port before scanning the current key.
+  ssh-keygen -R "$host" -f "$known_hosts_file" >/dev/null 2>&1 || true
+  if [[ -n "$port" && "$port" != "22" ]]; then
+    ssh-keygen -R "[$host]:$port" -f "$known_hosts_file" >/dev/null 2>&1 || true
+  fi
+
+  local -a keyscan_args=(-T 5 -t ed25519)
+  if [[ -n "$port" && "$port" != "22" ]]; then
+    keyscan_args+=(-p "$port")
+  fi
+
+  local scanned_key=""
+  scanned_key="$(ssh-keyscan "${keyscan_args[@]}" "$host" 2>/dev/null | head -n 1 || true)"
+  if [[ -z "$scanned_key" ]]; then
+    echo "[remote-server] failed to resolve ED25519 host key for strict trust seeding: ${host}:${port}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$scanned_key" >>"$known_hosts_file"
+}
+
+resolve_happier_prefix_from_npm_global_package() {
+  local npm_global_root=""
+  npm_global_root="$(npm root -g 2>/dev/null || true)"
+
+  if [[ -z "$npm_global_root" || "$npm_global_root" == "undefined" || "$npm_global_root" == "null" ]]; then
+    echo "[remote-server] failed to resolve npm global root (npm root -g)" >&2
+    exit 1
+  fi
+
+  local expected="$npm_global_root/@happier-dev/cli/dist/index.mjs"
+  if [[ ! -f "$expected" ]]; then
+    echo "[remote-server] expected packaged CLI entrypoint at: $expected" >&2
+    exit 1
+  fi
+
+  if ! node "$expected" --version >/dev/null 2>&1; then
+    echo "[remote-server] expected packaged CLI entrypoint to be runnable: node $expected --version" >&2
+    exit 1
+  fi
+
+  HAPPIER_PREFIX=(node "$expected")
+}
+
+ensure_happier_command_from_global_cli_package() {
+  local npm_global_root=""
+  npm_global_root="$(npm root -g 2>/dev/null || true)"
+  local expected="$npm_global_root/@happier-dev/cli/bin/happier.mjs"
+  if [[ ! -f "$expected" ]]; then
+    echo "[remote-server] expected packaged happier bin at: $expected" >&2
+    exit 1
+  fi
+  chmod +x "$expected" >/dev/null 2>&1 || true
+  ln -sf "$expected" /usr/local/bin/happier
+}
+
+ensure_happier_command_from_npx_spec() {
+  cat > /usr/local/bin/happier <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+exec npx --yes -p "${HAPPIER_NPM_SPEC}" happier "\$@"
+EOF
+  chmod 755 /usr/local/bin/happier
+}
 
 if [[ -n "$HSTACK_TGZ" && -f "$HSTACK_TGZ" ]]; then
   echo "[remote-server] installing hstack from tarball: $HSTACK_TGZ"
@@ -40,14 +113,17 @@ if [[ -n "$HAPPIER_TGZ" && -f "$HAPPIER_TGZ" ]]; then
   # `@happier-dev/stack` also exposes a `happier` shim, so installing the CLI
   # into the same global prefix can fail with EEXIST on the bin link.
   npm install -g --force "$HAPPIER_TGZ" >/dev/null
-  HAPPIER_PREFIX=(happier)
+  resolve_happier_prefix_from_npm_global_package
+  ensure_happier_command_from_global_cli_package
 elif [[ "$HAPPIER_CLI_INSTALL_MODE" == "npx" ]]; then
   echo "[remote-server] running happier-cli via npx: $HAPPIER_NPM_SPEC"
   HAPPIER_PREFIX=(npx --yes -p "$HAPPIER_NPM_SPEC" happier)
+  ensure_happier_command_from_npx_spec
 else
   echo "[remote-server] installing happier-cli from npm: $HAPPIER_NPM_SPEC"
   npm install -g "$HAPPIER_NPM_SPEC" >/dev/null
-  HAPPIER_PREFIX=(happier)
+  resolve_happier_prefix_from_npm_global_package
+  ensure_happier_command_from_global_cli_package
 fi
 
 if [[ ! -f "$ssh_key_src" ]]; then
@@ -59,17 +135,19 @@ echo "[remote-server] configuring ssh client..."
 install -d -m 700 /root/.ssh
 install -m 600 "$ssh_key_src" /root/.ssh/id_ed25519
 
-cat > /root/.ssh/config <<EOF
+cat > "$REMOTE_SSH_CONFIG_FILE" <<EOF
 Host ${REMOTE_SSH_HOST}
   HostName ${REMOTE_SSH_HOST}
   User happy
   IdentityFile /root/.ssh/id_ed25519
   IdentitiesOnly yes
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
+  StrictHostKeyChecking yes
+  UserKnownHostsFile ${REMOTE_SSH_KNOWN_HOSTS_FILE}
   LogLevel ERROR
 EOF
-chmod 600 /root/.ssh/config
+chmod 600 "$REMOTE_SSH_CONFIG_FILE"
+touch "$REMOTE_SSH_KNOWN_HOSTS_FILE"
+chmod 600 "$REMOTE_SSH_KNOWN_HOSTS_FILE"
 
 echo "[remote-server] waiting for ssh to remote host..."
 if ! [[ "$REMOTE_SSH_WAIT_SECONDS" =~ ^[0-9]+$ ]] || [[ "$REMOTE_SSH_WAIT_SECONDS" -le 0 ]]; then
@@ -77,13 +155,23 @@ if ! [[ "$REMOTE_SSH_WAIT_SECONDS" =~ ^[0-9]+$ ]] || [[ "$REMOTE_SSH_WAIT_SECOND
   exit 2
 fi
 for _ in $(seq 1 "$REMOTE_SSH_WAIT_SECONDS"); do
-  if ssh -o ConnectTimeout=5 "$REMOTE_SSH_TARGET" 'echo ok' >/dev/null 2>&1; then
+  if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 "$REMOTE_SSH_TARGET" 'echo ok' >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-if ! ssh -o ConnectTimeout=5 "$REMOTE_SSH_TARGET" 'echo ok' >/dev/null 2>&1; then
+if ! ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 "$REMOTE_SSH_TARGET" 'echo ok' >/dev/null 2>&1; then
   echo "[remote-server] remote host did not become reachable via ssh: $REMOTE_SSH_TARGET" >&2
+  exit 1
+fi
+
+# `hstack remote server setup` executes relay-host install with strict host key checking.
+# Seed known_hosts explicitly so strict checks can pass in isolated smoke containers.
+resolved_ssh_port="$(ssh -G -F "$REMOTE_SSH_CONFIG_FILE" "$REMOTE_SSH_TARGET" 2>/dev/null | awk '$1=="port"{print $2; exit}' || true)"
+if [[ -z "$resolved_ssh_port" || ! "$resolved_ssh_port" =~ ^[0-9]+$ ]]; then
+  resolved_ssh_port="22"
+fi
+if ! seed_strict_known_hosts_entry "$REMOTE_SSH_HOST" "$REMOTE_SSH_KNOWN_HOSTS_FILE" "$resolved_ssh_port"; then
   exit 1
 fi
 
@@ -141,6 +229,8 @@ esac
 echo "[remote-server] running: hstack remote server setup (db=${REMOTE_SERVER_DB})..."
 setup_args=(
   --ssh "$REMOTE_SSH_TARGET"
+  --ssh-config-file "$REMOTE_SSH_CONFIG_FILE"
+  --known-hosts-path "$REMOTE_SSH_KNOWN_HOSTS_FILE"
   "${remote_channel_args[@]}"
   --mode system
   --env "PORT=${REMOTE_SERVER_PORT}"
@@ -164,40 +254,54 @@ if [[ -n "$REMOTE_SELF_HOST_PRISMA_ENGINE_PATH" ]]; then
   setup_args+=(--env "PRISMA_QUERY_ENGINE_LIBRARY=${REMOTE_SELF_HOST_PRISMA_ENGINE_PATH}")
 fi
 
-hstack remote server setup "${setup_args[@]}" --json >/dev/null
+set +e
+setup_output="$(hstack remote server setup "${setup_args[@]}" --json 2>&1)"
+setup_status=$?
+set -e
+if [[ $setup_status -ne 0 ]]; then
+  echo "[remote-server] hstack remote server setup failed (exit=${setup_status})" >&2
+  echo "$setup_output" >&2
+  exit "$setup_status"
+fi
 
 echo "[remote-server] checking remote server health..."
-ssh "$REMOTE_SSH_TARGET" "curl -fsS http://127.0.0.1:${REMOTE_SERVER_PORT}/health" >/dev/null
+ssh "$REMOTE_SSH_TARGET" "curl -fsS http://127.0.0.1:${REMOTE_SERVER_PORT}/v1/version" >/dev/null
 
 echo "[remote-server] checking remote server config reflects postgres..."
-config_json="$(ssh "$REMOTE_SSH_TARGET" "sudo -E ~/.happier/bin/hstack self-host config view --mode=system --channel=${remote_channel_flag} --json")"
+remote_config_env_path="/etc/happier/server.env"
+if [[ "$remote_channel_flag" == "preview" ]]; then
+  remote_config_env_path="/etc/happier-preview/server.env"
+fi
 
-HSTACK_REMOTE_SERVER_CONFIG_JSON="$config_json" node - <<'NODE' >/dev/null
-const raw = process.env.HSTACK_REMOTE_SERVER_CONFIG_JSON || '';
-let parsed;
-try {
-  parsed = JSON.parse(raw);
-} catch (err) {
-  console.error('[remote-server] expected JSON output from hstack self-host config view');
-  const msg = err && typeof err === 'object' && 'message' in err ? String(err.message) : String(err);
-  if (msg) console.error(`[remote-server] JSON parse error: ${msg}`);
-  process.exit(1);
+remote_config_env_text="$(ssh "$REMOTE_SSH_TARGET" "bash -lc 'sudo -n cat \"$remote_config_env_path\"'")"
+if [[ -z "${remote_config_env_text:-}" ]]; then
+  echo "[remote-server] expected remote config env at $remote_config_env_path, but it was empty or unreadable" >&2
+  exit 1
+fi
+
+REMOTE_SERVER_CONFIG_ENV_TEXT="$remote_config_env_text" node - <<'NODE' >/dev/null
+const raw = process.env.REMOTE_SERVER_CONFIG_ENV_TEXT || '';
+const env = {};
+for (const line of raw.split(/\r?\n/)) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith('#')) continue;
+  const idx = trimmed.indexOf('=');
+  if (idx <= 0) continue;
+  const key = trimmed.slice(0, idx).trim();
+  const value = trimmed.slice(idx + 1);
+  env[key] = value;
 }
-const env = parsed?.env || parsed?.config?.env || parsed?.data?.env || null;
-const paths = parsed?.paths || parsed?.config?.paths || parsed?.data?.paths || null;
-const provider = env?.HAPPIER_DB_PROVIDER || '';
-const port = String(env?.PORT || '');
+const provider = env.HAPPIER_DB_PROVIDER || '';
+const port = String(env.PORT || '');
 const expectedProvider = String(process.env.REMOTE_SERVER_DB || '').trim() || 'postgres';
 if (expectedProvider === 'postgres') {
   if (String(provider).trim() !== 'postgres') {
     console.error(`[remote-server] expected HAPPIER_DB_PROVIDER=postgres, got: ${String(provider)}`);
-    if (paths?.configEnvPath) console.error(`[remote-server] config env path: ${paths.configEnvPath}`);
     process.exit(1);
   }
 } else if (expectedProvider === 'sqlite') {
   if (String(provider).trim() !== 'sqlite') {
     console.error(`[remote-server] expected HAPPIER_DB_PROVIDER=sqlite, got: ${String(provider)}`);
-    if (paths?.configEnvPath) console.error(`[remote-server] config env path: ${paths.configEnvPath}`);
     process.exit(1);
   }
 } else {

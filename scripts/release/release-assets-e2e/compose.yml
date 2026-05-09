@@ -16,6 +16,7 @@ services:
 
       # Optional: override monorepo clone source (URL or local path) instead of GitHub.
       HSTACK_HAPPIER_REPO: ${HSTACK_HAPPIER_REPO:-}
+      HSTACK_E2E_WITH_UI: ${HSTACK_E2E_WITH_UI:-1}
 
       # Keep the smoke fast and headless.
       HAPPIER_STACK_SERVE_UI: ${HAPPIER_STACK_SERVE_UI:-1}

@@ -1356,9 +1356,15 @@ test('hstack auth login --method=mobile succeeds even when Expo web UI is not ru
       }
       throw e;
     }
+    const leakedCliHomeDir = join(fixture.tmp, 'leaked-cli-home');
+    await mkdir(leakedCliHomeDir, { recursive: true });
     const res = await runNodeCapture([authScriptPath(rootDir), 'login', '--method', 'mobile'], {
       cwd: rootDir,
-      env: fixture.env,
+      env: {
+        ...fixture.env,
+        // Guard against shell-env leakage from other stack sessions.
+        HAPPIER_HOME_DIR: leakedCliHomeDir,
+      },
       input: '\n\n',
     });
     assert.equal(res.code, 0, `expected exit 0 for mobile auth without Expo\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);

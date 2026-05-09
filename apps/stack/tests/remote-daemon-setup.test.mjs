@@ -52,3 +52,35 @@ test('hstack remote daemon setup forwards ssh config file and service mode to ha
   assert.ok(log.includes('--service-mode=none'), `expected service none delegation\n${log}`);
   assert.ok(log.includes('--ssh-config-file=/tmp/lima-ssh.config'), `expected ssh config delegation\n${log}`);
 });
+
+test('hstack remote daemon setup forwards --yes to happier machine setup', (t) => {
+  const h = createRemoteDaemonSetupHarness(t, { prefix: 'hstack-remote-daemon-yes-' });
+  const res = h.runRemoteCommand([
+    'daemon',
+    'setup',
+    '--ssh',
+    'dev@host',
+    '--yes',
+    '--json',
+  ]);
+  assert.equal(res.status, 0, res.stderr);
+
+  const log = h.readInvocationsLog();
+  assert.ok(log.includes('"bin":"happier"'), `expected local happier invocation\n${log}`);
+  assert.ok(log.includes('--yes'), `expected --yes delegation\n${log}`);
+});
+
+test('hstack remote daemon setup rejects --known-hosts-path explicitly', (t) => {
+  const h = createRemoteDaemonSetupHarness(t, { prefix: 'hstack-remote-daemon-known-hosts-' });
+  const res = h.runRemoteCommand([
+    'daemon',
+    'setup',
+    '--ssh',
+    'dev@host',
+    '--known-hosts-path',
+    '/tmp/lima-known_hosts',
+    '--json',
+  ]);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr ?? '', /known-hosts-path/i);
+});

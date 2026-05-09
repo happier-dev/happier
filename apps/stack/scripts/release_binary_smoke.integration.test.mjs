@@ -46,6 +46,20 @@ function didCommandTimeout(result) {
   return false;
 }
 
+function createSmokeCommandEnv(overrides = {}) {
+  const base = {};
+  for (const key of ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'SHELL', 'SYSTEMROOT', 'WINDIR']) {
+    const value = process.env[key];
+    if (typeof value === 'string' && value.length > 0) {
+      base[key] = value;
+    }
+  }
+  return {
+    ...base,
+    ...overrides,
+  };
+}
+
 function currentTarget() {
   const os = process.platform === 'linux' ? 'linux' : process.platform === 'darwin' ? 'darwin' : '';
   const arch = process.arch === 'x64' ? 'x64' : process.arch === 'arm64' ? 'arm64' : '';
@@ -116,12 +130,11 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
   const cliVersion = runWithHardTimeout(cliExtract.binaryPath, ['--version'], {
     cwd: '/tmp',
     encoding: 'utf-8',
-    env: { ...process.env, HAPPIER_NONINTERACTIVE: '1' },
-    timeout: 7000,
+    env: createSmokeCommandEnv({ HAPPIER_NONINTERACTIVE: '1' }),
+    timeout: 20_000,
   });
-  const cliTimedOut = didCommandTimeout(cliVersion);
-  const cliExited = (cliVersion.status ?? 1) === 0;
-  assert.ok(cliTimedOut || cliExited, cliVersion.stderr || cliVersion.stdout);
+  assert.equal(cliVersion.status, 0, formatSpawnSyncResult(cliVersion));
+  assert.equal(didCommandTimeout(cliVersion), false, formatSpawnSyncResult(cliVersion));
   const versionText = `${cliVersion.stdout || ''}${cliVersion.stderr || ''}`.trim();
   assert.ok(
     /version/i.test(versionText) || /^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$/.test(versionText),

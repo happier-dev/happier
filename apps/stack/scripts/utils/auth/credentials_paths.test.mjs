@@ -25,6 +25,17 @@ test('resolveStackCredentialPaths returns legacy + server-scoped paths', async (
   assert.deepEqual(out.paths, [out.serverScopedPath, out.hostPortServerScopedPath, out.legacyPath]);
 });
 
+test('resolveStackCredentialPaths hashes equivalent loopback server URLs to the same scoped id', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-'));
+  const loopback = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl: 'http://127.0.0.1:3009/' });
+  const localhost = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl: 'http://localhost:3009' });
+  const localhostDefaultPort = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl: 'http://localhost:80/' });
+  const loopbackDefaultPort = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl: 'http://127.0.0.1' });
+
+  assert.equal(loopback.urlHashServerId, localhost.urlHashServerId);
+  assert.equal(localhostDefaultPort.urlHashServerId, loopbackDefaultPort.urlHashServerId);
+});
+
 test('resolveStackCredentialPaths uses a neutral default server id when serverUrl is empty', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-'));
   const out = resolveStackCredentialPaths({ cliHomeDir: dir, serverUrl: '' });

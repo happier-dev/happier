@@ -2,7 +2,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 
 import { execYarn } from '../../../workspaces/execYarnCommand.mjs';
 import { resolveCoreE2eSlowSuiteCommand } from './core-e2e-slow-suite.mjs';
@@ -72,9 +72,13 @@ function resolvePackedTarballPath(packDir, raw) {
  * @param {{ tarballPath: string; exec: ExecFileSyncLike }} params
  */
 function assertCliPackHasRuntimeEntrypoints({ tarballPath, exec }) {
-  const raw = exec('tar', ['-tzf', tarballPath], {
+  const absoluteTarballPath = resolve(tarballPath);
+  const tarballDir = dirname(absoluteTarballPath);
+  const tarballName = basename(absoluteTarballPath);
+  const raw = exec('tar', ['-tzf', tarballName], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: tarballDir,
   });
   const listing = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw ?? '');
   const entries = new Set(listing.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean));

@@ -61,10 +61,7 @@ if ($Token) {
   $GitHubHeaders["Authorization"] = "Bearer $Token"
 }
 $InstallDir = if ($env:HAPPIER_INSTALL_DIR) { $env:HAPPIER_INSTALL_DIR } elseif ($env:HAPPIER_HOME_DIR) { $env:HAPPIER_HOME_DIR } else { Join-Path $env:USERPROFILE ".happier" }
-if (-not $env:HAPPIER_HOME_DIR) {
-  $env:HAPPIER_HOME_DIR = $InstallDir
-}
-$DaemonServiceStateHomeDir = $env:HAPPIER_HOME_DIR
+$DaemonServiceStateHomeDir = if ($env:HAPPIER_HOME_DIR) { $env:HAPPIER_HOME_DIR } else { $InstallDir }
 $LegacyBinDir = Join-Path $env:USERPROFILE ".local\bin"
 $BinDir = Join-Path $InstallDir "bin"
 if ($env:HAPPIER_BIN_DIR) {
@@ -220,12 +217,10 @@ function Invoke-InstallerCliRollback {
   Write-Host "Rolled back $shimName from $(if ($currentVersion) { $currentVersion } else { 'current' }) to $previousVersion."
 }
 
-function Resolve-TarExecutable {
-  foreach ($commandName in @("tar.exe", "tar")) {
-    $cmd = Get-Command $commandName -ErrorAction SilentlyContinue
-    if ($cmd -and $cmd.Source -and (Test-Path $cmd.Source)) {
-      return $cmd.Source
-    }
+function Resolve-TarExecutablePath {
+  $cmd = Get-Command "tar.exe" -ErrorAction SilentlyContinue
+  if ($cmd -and $cmd.Source -and (Test-Path $cmd.Source)) {
+    return $cmd.Source
   }
 
   $pathEntries = @()
@@ -247,40 +242,13 @@ function Resolve-TarExecutable {
     if (-not $trimmedEntry) {
       continue
     }
-    foreach ($commandName in @("tar.exe", "tar")) {
-      $candidate = Join-Path $trimmedEntry $commandName
-      if (Test-Path $candidate) {
-        return $candidate
-      }
+    $candidate = Join-Path $trimmedEntry "tar.exe"
+    if (Test-Path $candidate) {
+      return $candidate
     }
   }
 
-  throw "Failed to locate tar.exe/tar. Ensure Windows System32 is available or install tar before retrying."
-}
-
-function Resolve-TarExecutablePath {
-  return Resolve-TarExecutable
-}
-
-function Invoke-InstallerTarExtraction {
-  param (
-    [Parameter(Mandatory = $true)] [string] $ArchivePath,
-    [Parameter(Mandatory = $true)] [string] $DestinationDir
-  )
-
-  $tarPath = Resolve-TarExecutable
-  # Resolve-TarExecutable returns tar.exe/tar; keep extraction behind this
-  # wrapper so failures include actionable diagnostics instead of a raw shell
-  # error.
-  $result = Invoke-NativeCommandCapturingOutput {
-    & $tarPath -xzf $ArchivePath -C $DestinationDir
-  }
-  if ($result.ExitCode -ne 0) {
-    if ($result.Output) {
-      Write-Warning $result.Output.Trim()
-    }
-    throw "Failed to extract archive with tar.exe/tar. Ensure Windows System32 tar.exe is available and the archive is valid."
-  }
+  throw "Failed to locate tar.exe. Ensure Windows System32 is available or install tar before retrying."
 }
 
 function Show-PathReloadGuidance {
@@ -576,12 +544,11 @@ function Get-InstalledBackgroundServiceInventory {
       $propertyNames = @($payload.PSObject.Properties.Name)
       $entries = if ($propertyNames -contains 'entries') { @($payload.entries) } elseif ($propertyNames -contains 'existingServices') { @($payload.existingServices) } else { @() }
       $services = if ($propertyNames -contains 'services') { @($payload.services) } elseif ($propertyNames -contains 'existingServices') { @($payload.existingServices) } else { @() }
-      $canonicalEntries = if ($entries.Count -gt 0) { $entries } elseif ($services.Count -gt 0) { $services } else { @() }
       if ($entries.Count -gt 0 -or $services.Count -gt 0 -or $propertyNames -contains 'existingServices' -or $propertyNames -contains 'entries' -or $propertyNames -contains 'services') {
         return @{
           Supported = $true
           RepairSupported = $true
-          Entries = $canonicalEntries
+          Entries = $entries
           Services = $services
           DaemonStatus = if ($propertyNames -contains 'daemonStatus') { $payload.daemonStatus } else { $null }
           DaemonRunning = if ($propertyNames -contains 'daemonRunning') { $payload.daemonRunning } else { $null }
@@ -621,12 +588,11 @@ function Get-InstalledBackgroundServiceInventory {
     $propertyNames = @($payload.PSObject.Properties.Name)
     $entries = if ($propertyNames -contains 'entries') { @($payload.entries) } else { @() }
     $services = if ($propertyNames -contains 'services') { @($payload.services) } else { @() }
-    $canonicalEntries = if ($entries.Count -gt 0) { $entries } elseif ($services.Count -gt 0) { $services } else { @() }
     if ($entries.Count -gt 0 -or $services.Count -gt 0 -or $propertyNames -contains 'entries' -or $propertyNames -contains 'services') {
       return @{
         Supported = $true
         RepairSupported = $false
-        Entries = $canonicalEntries
+        Entries = $entries
         Services = $services
         DaemonStatus = $null
         DaemonRunning = $null
@@ -832,37 +798,25 @@ function Get-SupportedSetupRelayDefaultArgs {
   )
 
   $defaultArgs = @("--mode", "user", "--yes", "--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }), "--preserve-active-server")
-  # Filter these defaults against `relay host install --help` so older CLIs
-  # do not reject installer-provided flags they have not learned yet.
-  return Filter-SetupRelayDefaultArgsByHelp -CliPath $CliPath -DefaultArgs $defaultArgs
-}
-
-function Filter-SetupRelayDefaultArgsByHelp {
-  param (
-    [Parameter(Mandatory = $true)] [string] $CliPath,
-    [Parameter(Mandatory = $true)] [string[]] $DefaultArgs
-  )
-
-  $helpArgs = @("relay", "host", "install", "--help")
   $helpResult = Invoke-NativeCommandCapturingOutput {
-    & $CliPath @helpArgs
+    & $CliPath relay host install --help
   }
   $helpOutput = [string]$helpResult.Output
   if ([string]::IsNullOrWhiteSpace($helpOutput)) {
-    return $DefaultArgs
+    return $defaultArgs
   }
 
   $filteredArgs = @()
-  if ($DefaultArgs -contains "--mode" -and $helpOutput -match '(?m)--mode\b') {
+  if ($helpOutput -match '(?m)--mode\b') {
     $filteredArgs += @("--mode", "user")
   }
-  if ($DefaultArgs -contains "--yes" -and $helpOutput -match '(?m)--yes\b') {
+  if ($helpOutput -match '(?m)--yes\b') {
     $filteredArgs += @("--yes")
   }
-  if ($DefaultArgs -contains "--channel" -and $helpOutput -match '(?m)--channel\b') {
+  if ($helpOutput -match '(?m)--channel\b') {
     $filteredArgs += @("--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }))
   }
-  if ($DefaultArgs -contains "--preserve-active-server" -and $helpOutput -match '(?m)--preserve-active-server\b') {
+  if ($helpOutput -match '(?m)--preserve-active-server\b') {
     $filteredArgs += @("--preserve-active-server")
   }
   return $filteredArgs
@@ -886,7 +840,7 @@ function Invoke-PostInstallAction {
     $setupRelayDefaultArgs = @("--mode", "user", "--yes", "--channel", $(if ($Channel -eq "publicdev") { "dev" } else { $Channel }), "--preserve-active-server")
   }
   if ($runValue -eq "setup-relay") {
-    $setupRelayDefaultArgs = Filter-SetupRelayDefaultArgsByHelp -CliPath $CliPath -DefaultArgs $setupRelayDefaultArgs
+    $setupRelayDefaultArgs = Get-SupportedSetupRelayDefaultArgs -CliPath $CliPath
   }
   $requiredSubcommand = $null
   $argsToPass = @()
@@ -955,21 +909,82 @@ if ($Run -and -not $SetupRelay -and ($existing = Resolve-InstalledCliInvoker)) {
   exit 0
 }
 
+function Get-InstallerAssetVersionSortKey {
+  param (
+    [Parameter(Mandatory = $true)] [string] $Name
+  )
+
+  $version = ""
+  if ($Name -match '^checksums-.+-v(.+)\.txt\.minisig$') {
+    $version = $matches[1]
+  }
+  elseif ($Name -match '^checksums-.+-v(.+)\.txt$') {
+    $version = $matches[1]
+  }
+  elseif ($Name -match '^.+-v(.+)-(linux|darwin|windows)-[^-]+\.tar\.gz$') {
+    $version = $matches[1]
+  }
+  if (-not $version) {
+    return $Name
+  }
+
+  $versionWithoutBuild = $version -replace '\+.*$', ''
+  $core = $versionWithoutBuild
+  $prerelease = ""
+  if ($versionWithoutBuild.Contains('-')) {
+    $versionParts = $versionWithoutBuild -split '-', 2
+    $core = $versionParts[0]
+    $prerelease = $versionParts[1]
+  }
+
+  $coreParts = $core -split '\.'
+  $major = if ($coreParts.Length -gt 0 -and $coreParts[0] -match '^\d+$') { [int]$coreParts[0] } else { 0 }
+  $minor = if ($coreParts.Length -gt 1 -and $coreParts[1] -match '^\d+$') { [int]$coreParts[1] } else { 0 }
+  $patch = if ($coreParts.Length -gt 2 -and $coreParts[2] -match '^\d+$') { [int]$coreParts[2] } else { 0 }
+  $sortKey = '{0:D9}|{1:D9}|{2:D9}|' -f $major, $minor, $patch
+
+  if (-not $prerelease) {
+    return "${sortKey}1|stable|$Name"
+  }
+
+  $prereleaseRank = '0|'
+  foreach ($part in ($prerelease -split '\.')) {
+    if ($part -match '^\d+$') {
+      $prereleaseRank += '0|{0:D9}|' -f [int]$part
+    }
+    else {
+      $prereleaseRank += "1|$part|"
+    }
+  }
+  return "$sortKey$prereleaseRank$Name"
+}
+
+function Select-NewestInstallerAsset {
+  param (
+    [Parameter(Mandatory = $true)] [object[]] $Assets
+  )
+
+  $selected = $null
+  $selectedSortKey = ""
+  foreach ($asset in @($Assets)) {
+    if ($null -eq $asset) {
+      continue
+    }
+    $sortKey = Get-InstallerAssetVersionSortKey -Name ([string]$asset.name)
+    if ($null -eq $selected -or $sortKey -gt $selectedSortKey) {
+      $selected = $asset
+      $selectedSortKey = $sortKey
+    }
+  }
+  return $selected
+}
+
 function Get-AssetByPattern {
   param (
     [Parameter(Mandatory = $true)] [object] $Release,
     [Parameter(Mandatory = $true)] [string] $Pattern
   )
-  $matched = $null
-  $matchedSortKey = ""
-  foreach ($asset in @($Release.assets | Where-Object { $_.name -match $Pattern })) {
-    $sortKey = Get-ReleaseAssetVersionSortKey -Name ([string]$asset.name)
-    if (-not $matched -or $sortKey -gt $matchedSortKey) {
-      $matched = $asset
-      $matchedSortKey = $sortKey
-    }
-  }
-  return $matched
+  return Select-NewestInstallerAsset -Assets @($Release.assets | Where-Object { $_.name -match $Pattern })
 }
 
 function Get-LocalAssetByPattern {
@@ -982,91 +997,7 @@ function Get-LocalAssetByPattern {
   if (-not (Test-Path $ReleaseAssetsDir -PathType Container)) {
     throw "HAPPIER_RELEASE_ASSETS_DIR does not exist: $ReleaseAssetsDir"
   }
-  $matched = $null
-  $matchedSortKey = ""
-  foreach ($asset in @(Get-ChildItem -Path $ReleaseAssetsDir -File | Where-Object { $_.Name -match $Pattern })) {
-    $sortKey = Get-ReleaseAssetVersionSortKey -Name ([string]$asset.Name)
-    if (-not $matched -or $sortKey -gt $matchedSortKey) {
-      $matched = $asset
-      $matchedSortKey = $sortKey
-    }
-  }
-  return $matched
-}
-
-function Get-ReleaseAssetVersionFromName {
-  param (
-    [Parameter(Mandatory = $true)] [string] $Name
-  )
-
-  if ($Name -match '^checksums-.+-v(.+)\.txt\.minisig$') {
-    return $matches[1]
-  }
-  if ($Name -match '^checksums-.+-v(.+)\.txt$') {
-    return $matches[1]
-  }
-  if ($Name -match '^.+-v(.+)-windows-[^-]+\.tar\.gz$') {
-    return $matches[1]
-  }
-  return ""
-}
-
-function Get-ReleaseAssetVersionSortKey {
-  param (
-    [Parameter(Mandatory = $true)] [string] $Name
-  )
-
-  $version = Get-ReleaseAssetVersionFromName -Name $Name
-  $versionWithoutBuild = ($version -split '\+', 2)[0]
-  $core = $versionWithoutBuild
-  $prerelease = ""
-  if ($versionWithoutBuild -like '*-*') {
-    $parts = $versionWithoutBuild -split '-', 2
-    $core = $parts[0]
-    $prerelease = $parts[1]
-  }
-
-  $major = 0
-  $minor = 0
-  $patch = 0
-  $coreParts = @($core -split '\.')
-  if ($coreParts.Count -gt 0 -and $coreParts[0] -match '^\d+$') {
-    $major = [int]$coreParts[0]
-  }
-  if ($coreParts.Count -gt 1 -and $coreParts[1] -match '^\d+$') {
-    $minor = [int]$coreParts[1]
-  }
-  if ($coreParts.Count -gt 2 -and $coreParts[2] -match '^\d+$') {
-    $patch = [int]$coreParts[2]
-  }
-
-  $sortKey = "{0:D9}|{1:D9}|{2:D9}|" -f $major, $minor, $patch
-
-  # Keep stable builds ordered after preview/dev prereleases of the same core
-  # version, while still preserving semantic ordering within prerelease parts.
-  $prereleaseRank = "1|stable|"
-  if ($prerelease) {
-    $prereleaseRank = "0|"
-    foreach ($part in @($prerelease -split '\.')) {
-      if ($part -match '^\d+$') {
-        $prereleaseRank += ("1|0|{0:D9}|" -f ([int]$part))
-      }
-      else {
-        $prereleaseRank += "1|1|$part|"
-      }
-    }
-    $prereleaseRank += "0|"
-  }
-
-  return "$sortKey$prereleaseRank$Name"
-}
-
-function Resolve-InstallerDefaultVersionPattern {
-  switch ($Channel) {
-    "preview" { return '[^-]+-preview([.][0-9A-Za-z.+-]+)?' }
-    "publicdev" { return '[^-]+-dev([.][0-9A-Za-z.+-]+)?' }
-    default { return '[^-]+' }
-  }
+  return Select-NewestInstallerAsset -Assets @(Get-ChildItem -Path $ReleaseAssetsDir -File | Where-Object { $_.Name -match $Pattern })
 }
 
 function Resolve-InstallerRequestedVersionPattern {
@@ -1077,7 +1008,7 @@ function Resolve-InstallerRequestedVersionPattern {
   if ($Version) {
     return "^$([Regex]::Escape($Prefix))$([Regex]::Escape($Version))$([Regex]::Escape($Suffix))$"
   }
-  return "^$([Regex]::Escape($Prefix))$(Resolve-InstallerDefaultVersionPattern)$([Regex]::Escape($Suffix))$"
+  return "^$([Regex]::Escape($Prefix)).*$([Regex]::Escape($Suffix))$"
 }
 
 function Resolve-InstallerAsset {
@@ -1112,7 +1043,7 @@ function Copy-OrDownloadInstallerAsset {
     Copy-Item -Path $Source -Destination $DestinationPath -Force
     return
   }
-  Invoke-InstallerDownloadWithRetry -Uri $Source -DestinationPath $DestinationPath -Headers $GitHubHeaders
+  Invoke-InstallerWebRequestWithRetry -Uri $Source -Headers $GitHubHeaders -OutFile $DestinationPath
 }
 
 function Test-InstallerTransientWebException {
@@ -1145,50 +1076,6 @@ function Test-InstallerTransientWebException {
   return $false
 }
 
-function Invoke-InstallerDownloadWithRetry {
-  param (
-    [Parameter(Mandatory = $true)] [string] $Uri,
-    [string] $DestinationPath,
-    [hashtable] $Headers
-  )
-
-  $attemptsRaw = if ($env:HAPPIER_INSTALLER_DOWNLOAD_RETRY_ATTEMPTS) { $env:HAPPIER_INSTALLER_DOWNLOAD_RETRY_ATTEMPTS } else { "3" }
-  $delaySecondsRaw = if ($env:HAPPIER_INSTALLER_DOWNLOAD_RETRY_DELAY_SECONDS) { $env:HAPPIER_INSTALLER_DOWNLOAD_RETRY_DELAY_SECONDS } else { "0.25" }
-  $attempts = 3
-  $delaySeconds = 0.25
-  try {
-    $attempts = [Math]::Max(1, [int]$attemptsRaw)
-  }
-  catch {
-    $attempts = 3
-  }
-  try {
-    $delaySeconds = [Math]::Max(0, [double]$delaySecondsRaw)
-  }
-  catch {
-    $delaySeconds = 0.25
-  }
-
-  for ($attempt = 1; $attempt -le $attempts; $attempt += 1) {
-    try {
-      $params = @{ Uri = $Uri }
-      if ($Headers) {
-        $params.Headers = $Headers
-      }
-      if ($DestinationPath) {
-        $params.OutFile = $DestinationPath
-      }
-      return Invoke-WebRequest @params
-    }
-    catch {
-      if ($attempt -ge $attempts -or -not (Test-InstallerTransientWebException -ErrorRecord $_)) {
-        throw
-      }
-      Start-Sleep -Seconds $delaySeconds
-    }
-  }
-}
-
 function Invoke-InstallerWebRequestWithRetry {
   param (
     [Parameter(Mandatory = $true)] [string] $Uri,
@@ -1196,7 +1083,25 @@ function Invoke-InstallerWebRequestWithRetry {
     [string] $OutFile
   )
 
-  return Invoke-InstallerDownloadWithRetry -Uri $Uri -DestinationPath $OutFile -Headers $Headers
+  $retryDelaysMs = @(250, 1000)
+  for ($attempt = 0; $attempt -le $retryDelaysMs.Length; $attempt += 1) {
+    try {
+      $params = @{ Uri = $Uri }
+      if ($Headers) {
+        $params.Headers = $Headers
+      }
+      if ($OutFile) {
+        $params.OutFile = $OutFile
+      }
+      return Invoke-WebRequest @params
+    }
+    catch {
+      if ($attempt -ge $retryDelaysMs.Length -or -not (Test-InstallerTransientWebException -ErrorRecord $_)) {
+        throw
+      }
+      Start-Sleep -Milliseconds $retryDelaysMs[$attempt]
+    }
+  }
 }
 
 function Invoke-InstallerRestMethodWithRetry {
@@ -1293,6 +1198,89 @@ function Invoke-NativeCommandCapturingOutput {
   }
   finally {
     $ErrorActionPreference = $previousErrorActionPreference
+  }
+}
+
+function Resolve-InstallerPayloadPromotionTimeoutMs {
+  $raw = [string]$env:HAPPIER_INSTALLER_PAYLOAD_PROMOTION_TIMEOUT_MS
+  if (-not $raw) {
+    return 180000
+  }
+  $parsed = 0
+  if (-not [int]::TryParse($raw.Trim(), [ref]$parsed)) {
+    return 180000
+  }
+  if ($parsed -lt 30000) {
+    return 30000
+  }
+  if ($parsed -gt 600000) {
+    return 600000
+  }
+  return $parsed
+}
+
+function Invoke-InstallerPayloadPromotionWithTimeout {
+  param (
+    [Parameter(Mandatory = $true)] [string] $BinaryPath,
+    [Parameter(Mandatory = $true)] [string] $PayloadRoot,
+    [Parameter(Mandatory = $true)] [string] $Version,
+    [Parameter(Mandatory = $true)] [string] $ChannelValue,
+    [Parameter(Mandatory = $true)] [string] $InstallHomeDir
+  )
+
+  $timeoutMs = Resolve-InstallerPayloadPromotionTimeoutMs
+  $timeoutSeconds = [Math]::Ceiling($timeoutMs / 1000)
+
+  $job = Start-Job -ScriptBlock {
+    param($jobBinaryPath, $jobPayloadRoot, $jobVersion, $jobChannel, $jobInstallHomeDir)
+
+    $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
+    try {
+      $env:HAPPIER_HOME_DIR = $jobInstallHomeDir
+      $output = & $jobBinaryPath self __install-payload --component happier-cli --payload-root $jobPayloadRoot --version $jobVersion --channel $jobChannel 2>&1 | Out-String
+      $exitCode = $LASTEXITCODE
+      if ($null -eq $exitCode) {
+        $exitCode = 1
+      }
+      return @{
+        ExitCode = $exitCode
+        Output = if ($null -eq $output) { "" } else { $output }
+        TimedOut = $false
+      }
+    }
+    finally {
+      if ($null -eq $previousHappyHomeDir) {
+        Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
+      }
+      else {
+        $env:HAPPIER_HOME_DIR = $previousHappyHomeDir
+      }
+    }
+  } -ArgumentList @($BinaryPath, $PayloadRoot, $Version, $ChannelValue, $InstallHomeDir)
+
+  try {
+    $completed = Wait-Job -Job $job -Timeout $timeoutSeconds
+    if (-not $completed) {
+      Stop-Job -Job $job -ErrorAction SilentlyContinue | Out-Null
+      return @{
+        ExitCode = 124
+        Output = "Payload promotion timed out after $timeoutMs ms."
+        TimedOut = $true
+      }
+    }
+
+    $jobResult = Receive-Job -Job $job -ErrorAction SilentlyContinue
+    if ($jobResult -is [System.Array]) {
+      $jobResult = $jobResult | Select-Object -First 1
+    }
+    return @{
+      ExitCode = if ($null -eq $jobResult.ExitCode) { 1 } else { [int]$jobResult.ExitCode }
+      Output = [string]$jobResult.Output
+      TimedOut = [bool]$jobResult.TimedOut
+    }
+  }
+  finally {
+    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue | Out-Null
   }
 }
 
@@ -1443,7 +1431,8 @@ try {
 
   $extractDir = Join-Path $tmpDir.FullName "extract"
   New-Item -ItemType Directory -Path $extractDir | Out-Null
-  Invoke-InstallerTarExtraction -ArchivePath $archivePath -DestinationDir $extractDir
+  $tarPath = Resolve-TarExecutablePath
+  & $tarPath -xzf $archivePath -C $extractDir
   $version = $assetName -replace '^happier-v', '' -replace '-windows-x64\.tar\.gz$', ''
   if (-not $version -or $version -eq $assetName) {
     throw "Failed to infer release version from asset name: $assetName"
@@ -1460,32 +1449,28 @@ try {
   New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
   $target = Join-Path $BinDir "$((Resolve-CliShimName)).exe"
 
-  $previousHappyHomeDir = $env:HAPPIER_HOME_DIR
-  try {
-    $env:HAPPIER_HOME_DIR = $InstallDir
-    $promotionResult = Invoke-NativeCommandCapturingOutput {
-      & $binary self __install-payload --component happier-cli --payload-root $payloadRoot --version $version --channel $Channel
-    }
-  }
-  finally {
-    if ($null -eq $previousHappyHomeDir) {
-      Remove-Item Env:HAPPIER_HOME_DIR -ErrorAction SilentlyContinue
-    }
-    else {
-      $env:HAPPIER_HOME_DIR = $previousHappyHomeDir
-    }
-  }
+  $promotionResult = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath $binary -PayloadRoot $payloadRoot -Version $version -ChannelValue $Channel -InstallHomeDir $InstallDir
   if ($promotionResult.ExitCode -ne 0) {
-    if ($promotionResult.Output -match '(Unknown self subcommand:\s+__install-payload|ENOENT: no such file or directory, open)') {
-      Write-Warning "Payload promotion failed, falling back to direct binary copy."
-      if ($promotionResult.Output) {
-        Write-Warning $promotionResult.Output.Trim()
+    $promotionOutput = if ($promotionResult.Output) { $promotionResult.Output.Trim() } else { "" }
+    $legacyFallbackCompatible = $promotionOutput -match 'Unknown self subcommand:\s+__install-payload'
+    $unsafeDirectCopySignature = $promotionOutput -match '(ENOENT: no such file or directory, open|timed out after|ETIMEDOUT)'
+
+    if ($legacyFallbackCompatible) {
+      Write-Warning "Payload promotion is unsupported by this CLI build, falling back to legacy direct binary copy."
+      if ($promotionOutput) {
+        Write-Warning $promotionOutput
       }
       Copy-Item -Path $binary -Destination $target -Force
     }
+    elseif ($unsafeDirectCopySignature) {
+      if ($promotionOutput) {
+        Write-Warning $promotionOutput
+      }
+      throw "Payload promotion failed without a safe fallback. Refusing direct binary copy to avoid partial install state drift (versioned payload/current marker/shim/channel migration)."
+    }
     else {
-      if ($promotionResult.Output) {
-        Write-Warning $promotionResult.Output.Trim()
+      if ($promotionOutput) {
+        Write-Warning $promotionOutput
       }
       throw "Payload promotion failed."
     }

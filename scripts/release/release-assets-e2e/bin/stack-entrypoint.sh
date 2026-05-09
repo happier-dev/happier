@@ -29,6 +29,81 @@ STACK_CLI_ID="${STACK_CLI_ID:-stack_main__id_default}"
 STACK_BASE_DIR="/root/.happier/stacks/main"
 STACK_CLI_HOME_DIR="${STACK_BASE_DIR}/cli"
 STACK_APPROVER_HOME_DIR="${STACK_BASE_DIR}/cli-approver"
+STACK_NPM_RETRY_ATTEMPTS="${HAPPIER_RELEASE_ASSETS_NPM_RETRY_ATTEMPTS:-4}"
+STACK_NPM_RETRY_SLEEP_SECONDS="${HAPPIER_RELEASE_ASSETS_NPM_RETRY_SLEEP_SECONDS:-5}"
+
+is_npm_install_transient_error() {
+  local text="$1"
+  grep -Eiq 'ETIMEDOUT|ECONNRESET|network read ETIMEDOUT|503 Service Unavailable|504 Gateway Timeout' <<<"$text"
+}
+
+npm_install_with_retry() {
+  local label="$1"
+  shift
+  local -a cmd=("$@")
+
+  if ! [[ "$STACK_NPM_RETRY_ATTEMPTS" =~ ^[0-9]+$ ]] || [[ "$STACK_NPM_RETRY_ATTEMPTS" -lt 1 ]]; then
+    echo "[stack] invalid HAPPIER_RELEASE_ASSETS_NPM_RETRY_ATTEMPTS=$STACK_NPM_RETRY_ATTEMPTS (expected integer >= 1)" >&2
+    exit 2
+  fi
+  if ! [[ "$STACK_NPM_RETRY_SLEEP_SECONDS" =~ ^[0-9]+$ ]] || [[ "$STACK_NPM_RETRY_SLEEP_SECONDS" -lt 0 ]]; then
+    echo "[stack] invalid HAPPIER_RELEASE_ASSETS_NPM_RETRY_SLEEP_SECONDS=$STACK_NPM_RETRY_SLEEP_SECONDS (expected integer >= 0)" >&2
+    exit 2
+  fi
+
+  local attempt=1
+  local output=""
+  local status=0
+  while (( attempt <= STACK_NPM_RETRY_ATTEMPTS )); do
+    set +e
+    output="$("${cmd[@]}" 2>&1)"
+    status=$?
+    set -e
+    if [[ $status -eq 0 ]]; then
+      [[ -n "$output" ]] && printf '%s\n' "$output"
+      return 0
+    fi
+    if ! is_npm_install_transient_error "$output"; then
+      printf '%s\n' "$output" >&2
+      return "$status"
+    fi
+    printf '%s\n' "$output" >&2
+    if (( attempt == STACK_NPM_RETRY_ATTEMPTS )); then
+      echo "[stack] npm install retry budget exhausted for ${label} (${attempt}/${STACK_NPM_RETRY_ATTEMPTS})" >&2
+      return "$status"
+    fi
+    next_attempt=$((attempt + 1))
+    sleep_seconds=$((STACK_NPM_RETRY_SLEEP_SECONDS * attempt))
+    echo "[stack] transient npm install failure during ${label}; retrying (${next_attempt}/${STACK_NPM_RETRY_ATTEMPTS}) after ${sleep_seconds}s..." >&2
+    sleep "$sleep_seconds"
+    attempt=$next_attempt
+  done
+  return 1
+}
+
+resolve_happier_prefix_from_npm_global_package() {
+  local npm_global_root=""
+  npm_global_root="$(npm root -g 2>/dev/null || true)"
+  if [[ -z "$npm_global_root" || "$npm_global_root" == "undefined" || "$npm_global_root" == "null" ]]; then
+    echo "[stack] failed to resolve npm global root (npm root -g)" >&2
+    exit 1
+  fi
+
+  local expected="$npm_global_root/@happier-dev/cli/dist/index.mjs"
+  if [[ ! -f "$expected" ]]; then
+    echo "[stack] expected packaged CLI entrypoint at: $expected" >&2
+    exit 1
+  fi
+
+  if ! node "$expected" --version >/dev/null 2>&1; then
+    echo "[stack] expected packaged CLI entrypoint to be runnable: node $expected --version" >&2
+    exit 1
+  fi
+
+  # Do not rely on `happier` shims in this container: `@happier-dev/stack` also installs one
+  # that rewrites HAPPIER_HOME_DIR, which breaks the bootstrap approver identity path.
+  HAPPIER_PREFIX=(node "$expected")
+}
 
 setup_args=(
   setup
@@ -58,11 +133,11 @@ start_args=(
 
 if [[ -n "$HSTACK_TGZ" && -f "$HSTACK_TGZ" ]]; then
   echo "[stack] installing hstack from tarball: $HSTACK_TGZ"
-  npm install -g "$HSTACK_TGZ" >/dev/null
+  npm_install_with_retry "install hstack from tarball" npm install -g "$HSTACK_TGZ" >/dev/null
   HSTACK_PREFIX=(hstack)
 else
   echo "[stack] installing hstack from npm: $HSTACK_NPM_SPEC"
-  npm install -g "$HSTACK_NPM_SPEC" >/dev/null
+  npm_install_with_retry "install hstack from npm" npm install -g "$HSTACK_NPM_SPEC" >/dev/null
   HSTACK_PREFIX=(hstack)
 fi
 
@@ -71,15 +146,15 @@ if [[ -n "$HAPPIER_TGZ" && -f "$HAPPIER_TGZ" ]]; then
   # `@happier-dev/stack` also exposes a `happier` shim. When we test installing the CLI
   # tarball in the same environment, npm can fail with EEXIST on the `happier` bin link.
   # Use --force so the CLI wins (this is an isolated e2e container).
-  npm install -g --force "$HAPPIER_TGZ" >/dev/null
-  HAPPIER_PREFIX=(happier)
+  npm_install_with_retry "install happier-cli from tarball" npm install -g --force "$HAPPIER_TGZ" >/dev/null
+  resolve_happier_prefix_from_npm_global_package
 elif [[ "$HAPPIER_CLI_INSTALL_MODE" == "npx" ]]; then
   echo "[stack] running happier-cli via npx: $HAPPIER_NPM_SPEC"
   HAPPIER_PREFIX=(npx --yes -p "$HAPPIER_NPM_SPEC" happier)
 else
   echo "[stack] installing happier-cli from npm: $HAPPIER_NPM_SPEC"
-  npm install -g "$HAPPIER_NPM_SPEC" >/dev/null
-  HAPPIER_PREFIX=(happier)
+  npm_install_with_retry "install happier-cli from npm" npm install -g "$HAPPIER_NPM_SPEC" >/dev/null
+  resolve_happier_prefix_from_npm_global_package
 fi
 
 bootstrap_stack_credentials() {
@@ -173,12 +248,12 @@ if [[ "$HSTACK_E2E_WITH_DAEMON" == "1" ]]; then
 
   # Wait for server.
   for _ in $(seq 1 120); do
-    if curl -fsS "${STACK_INTERNAL_SERVER_URL}/health" >/dev/null 2>&1; then
+    if curl -fsS "${STACK_INTERNAL_SERVER_URL}/v1/version" >/dev/null 2>&1; then
       break
     fi
     sleep 1
   done
-  if ! curl -fsS "${STACK_INTERNAL_SERVER_URL}/health" >/dev/null 2>&1; then
+  if ! curl -fsS "${STACK_INTERNAL_SERVER_URL}/v1/version" >/dev/null 2>&1; then
     echo "[stack] server did not become ready for auth bootstrap" >&2
     kill "$phase1_pid" >/dev/null 2>&1 || true
     exit 1
@@ -209,8 +284,8 @@ echo "[stack] starting stack (phase 2)..."
 
 echo "[stack] keeping container alive (stack start daemonizes processes)..."
 while true; do
-  if ! curl -fsS "${STACK_INTERNAL_SERVER_URL}/health" >/dev/null 2>&1; then
-    echo "[stack] server healthcheck failed (${STACK_INTERNAL_SERVER_URL}/health)" >&2
+  if ! curl -fsS "${STACK_INTERNAL_SERVER_URL}/v1/version" >/dev/null 2>&1; then
+    echo "[stack] server healthcheck failed (${STACK_INTERNAL_SERVER_URL}/v1/version)" >&2
     exit 1
   fi
   sleep 5

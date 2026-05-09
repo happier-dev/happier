@@ -120,6 +120,16 @@ test('npm-e2e-smoke stack bootstrap uses packaged happier-cli (not monorepo bin)
   assert.match(raw, /HAPPIER_TGZ=/, 'expected stack entrypoint to accept HAPPIER_TGZ');
   assert.match(raw, /HAPPIER_CLI_INSTALL_MODE=/, 'expected stack entrypoint to accept HAPPIER_CLI_INSTALL_MODE');
   assert.match(raw, /\bnpx\b.*--yes.*-p/, 'expected stack entrypoint to support running happier via npx');
+  assert.match(
+    raw,
+    /resolve_happier_prefix_from_npm_global_package/,
+    'expected stack bootstrap to resolve happier-cli from the global @happier-dev/cli package path so auth bootstrap can bypass stack-managed happier shims'
+  );
+  assert.match(
+    raw,
+    /@happier-dev\/cli\/dist\/index\.mjs/,
+    'expected stack bootstrap to execute the packaged @happier-dev/cli dist entrypoint directly'
+  );
   assert.doesNotMatch(raw, /resolve_monorepo_cli_bin/, 'expected stack bootstrap to avoid monorepo cli bin');
   assert.doesNotMatch(raw, /workspace\/main/, 'expected stack bootstrap to avoid referencing cloned monorepo paths');
 });
@@ -132,6 +142,26 @@ test('npm-e2e-smoke stack entrypoint forces non-production dependency installs (
   assert.match(raw, /\bunset\s+YARN_PRODUCTION\b/, 'expected entrypoint to unset YARN_PRODUCTION');
 });
 
+test('npm-e2e-smoke stack entrypoint retries transient npm install network failures', async () => {
+  const entrypointPath = join(smokeDir, 'bin', 'stack-entrypoint.sh');
+  const raw = await readFile(entrypointPath, 'utf8');
+  assert.match(
+    raw,
+    /npm_install_with_retry/,
+    'expected stack entrypoint to provide a bounded npm install retry helper for transient network failures'
+  );
+  assert.match(
+    raw,
+    /ETIMEDOUT|ECONNRESET|network read ETIMEDOUT/,
+    'expected stack entrypoint retry helper to classify transient npm network timeout/reset signatures'
+  );
+  assert.match(
+    raw,
+    /npm_install_with_retry[\s\S]*npm install -g/,
+    'expected stack entrypoint to route global npm installs through the retry helper'
+  );
+});
+
 test('npm-e2e-smoke stack run checks daemon registers a machine on the server', async () => {
   const runnerPath = join(smokeDir, 'run.sh');
   const raw = await readFile(runnerPath, 'utf8');
@@ -139,9 +169,49 @@ test('npm-e2e-smoke stack run checks daemon registers a machine on the server', 
   assert.match(raw, /access\.key/, 'expected smoke runner to read a token from access.key for authenticated probes');
 });
 
+test('npm-e2e-smoke resolves stack cli access.key dynamically from canonical servers directory', async () => {
+  const runnerPath = join(smokeDir, 'run.sh');
+  const raw = await readFile(runnerPath, 'utf8');
+  assert.match(
+    raw,
+    /cli_servers_dir="\/root\/\.happier\/stacks\/main\/cli\/servers"/,
+    'expected smoke runner to resolve stack cli credentials from the canonical servers directory'
+  );
+  assert.match(
+    raw,
+    /find "\$cli_servers_dir" -mindepth 2 -maxdepth 2 -type f -name 'access\.key'/,
+    'expected smoke runner to discover access.key files dynamically when server-id shapes change'
+  );
+  assert.doesNotMatch(
+    raw,
+    /access_key="\/root\/\.happier\/stacks\/main\/cli\/servers\/stack_main__id_default\/access\.key"/,
+    'expected smoke runner to avoid a single hardcoded server-id credential path'
+  );
+});
+
 test('npm-e2e-smoke cli smoke waits for daemon to register a machine (connected check)', async () => {
   const cliSmokePath = join(smokeDir, 'bin', 'cli-smoke.sh');
   const raw = await readFile(cliSmokePath, 'utf8');
+  assert.match(
+    raw,
+    /command -v happier/,
+    'expected cli smoke to verify the installed happier command is present on PATH'
+  );
+  assert.match(
+    raw,
+    /\bhappier\b --version/,
+    'expected cli smoke to execute the real installed happier shim command for version proof'
+  );
+  assert.match(
+    raw,
+    /HAPPIER_PREFIX=\(happier\)/,
+    'expected cli smoke to run flow commands through the installed happier shim'
+  );
+  assert.doesNotMatch(
+    raw,
+    /HAPPIER_PREFIX=\(node "\$expected"\)/,
+    'expected cli smoke to avoid bypassing the installed command with direct node dist/index.mjs execution'
+  );
   assert.match(raw, /find\s+"\$CLIENT_HOME_DIR"\s+-mindepth\s+1\s+-maxdepth\s+1\s+-exec\s+rm\s+-rf\s+\{\}\s+\+/, 'expected cli smoke to clear client home contents and avoid stale auth tokens across reruns');
   assert.match(raw, /find\s+"\$APPROVER_HOME_DIR"\s+-mindepth\s+1\s+-maxdepth\s+1\s+-exec\s+rm\s+-rf\s+\{\}\s+\+/, 'expected cli smoke to clear approver home contents and avoid stale auth tokens across reruns');
   assert.match(raw, /\/v1\/machines/, 'expected cli smoke to probe /v1/machines for daemon connectivity');
@@ -160,8 +230,48 @@ test('npm-e2e-smoke includes a second CLI machine smoke', async () => {
   const cli2Raw = await readFile(cli2SmokePath, 'utf8');
   assert.match(
     cli2Raw,
+    /command -v happier/,
+    'expected cli2 smoke to verify the installed happier command is present on PATH'
+  );
+  assert.match(
+    cli2Raw,
+    /\bhappier\b --version/,
+    'expected cli2 smoke to execute the real installed happier shim command for version proof'
+  );
+  assert.match(
+    cli2Raw,
+    /HAPPIER_PREFIX=\(happier\)/,
+    'expected cli2 smoke to run flow commands through the installed happier shim'
+  );
+  assert.doesNotMatch(
+    cli2Raw,
+    /HAPPIER_PREFIX=\(node "\$expected"\)/,
+    'expected cli2 smoke to avoid bypassing the installed command with direct node dist/index.mjs execution'
+  );
+  assert.match(
+    cli2Raw,
     /find\s+"\$CLIENT_HOME_DIR"\s+-mindepth\s+1\s+-maxdepth\s+1\s+-exec\s+rm\s+-rf\s+\{\}\s+\+/,
     'expected cli2 smoke to clear client home contents and avoid stale auth tokens across reruns'
+  );
+  assert.match(
+    cli2Raw,
+    /find "\$approver_servers_dir" -mindepth 2 -maxdepth 2 -type f -name 'access\.key'/,
+    'expected cli2 smoke to discover approver access keys dynamically when active server ids drift'
+  );
+  assert.match(
+    cli2Raw,
+    /selected_approver_server_id="\$\(basename "\$\(dirname "\$selected_approver_access_key"\)"\)"/,
+    'expected cli2 smoke to derive active server id from the selected approver access-key path'
+  );
+  assert.match(
+    cli2Raw,
+    /HAPPIER_ACTIVE_SERVER_ID="\$selected_approver_server_id"/,
+    'expected cli2 smoke to scope client/approver auth commands to the selected approver server id'
+  );
+  assert.doesNotMatch(
+    cli2Raw,
+    /if \[\[ ! -f "\$APPROVER_HOME_DIR\/servers\/\$HAPPIER_ACTIVE_SERVER_ID\/access\.key" \]\]/,
+    'expected cli2 smoke to avoid failing immediately on a single hardcoded approver access-key path'
   );
 
   const runnerPath = join(smokeDir, 'run.sh');
@@ -263,9 +373,59 @@ test('npm-e2e-smoke local mode prepares a local linux server binary for remote s
   );
 });
 
-test('npm-e2e-smoke remote server smoke forwards self-host server binary override to hstack remote setup', async () => {
+test('npm-e2e-smoke remote server smoke forwards canonical server binary override to hstack remote setup', async () => {
   const remoteServerSmokePath = join(smokeDir, 'bin', 'remote-server-smoke.sh');
   const raw = await readFile(remoteServerSmokePath, 'utf8');
+  assert.match(
+    raw,
+    /resolve_happier_prefix_from_npm_global_package/,
+    'expected remote server smoke to resolve packaged CLI entrypoint from global @happier-dev/cli package'
+  );
+  assert.match(
+    raw,
+    /ensure_happier_command_from_global_cli_package/,
+    'expected remote server smoke to expose a stable `happier` command for hstack remote setup'
+  );
+  assert.match(
+    raw,
+    /bin\/happier\.mjs/,
+    'expected remote server smoke to source happier command from packaged cli bin/happier.mjs'
+  );
+  assert.match(
+    raw,
+    /ln -sf "\$expected" \/usr\/local\/bin\/happier/,
+    'expected remote server smoke to install a deterministic happier compatibility symlink in /usr/local/bin'
+  );
+  assert.match(
+    raw,
+    /setup_output="\$\(hstack remote server setup/,
+    'expected remote server smoke to capture hstack remote setup output for failure diagnostics'
+  );
+  assert.doesNotMatch(
+    raw,
+    /~\/\.happier\/bin\/hstack/,
+    'expected remote server smoke to avoid hardcoded remote hstack paths (remote install roots can vary)'
+  );
+  assert.match(
+    raw,
+    /remote_config_env_path="\/etc\/happier/,
+    'expected remote server smoke to resolve canonical remote relay config env path for system mode'
+  );
+  assert.match(
+    raw,
+    /sudo -n cat \\"\$remote_config_env_path\\"/,
+    'expected remote server smoke to read remote relay env config directly via sudo for deterministic verification'
+  );
+  assert.match(
+    raw,
+    /if \[\[ \$setup_status -ne 0 \]\]; then/,
+    'expected remote server smoke to check hstack remote setup exit status explicitly'
+  );
+  assert.match(
+    raw,
+    /echo "\$setup_output" >&2/,
+    'expected remote server smoke to print captured setup output when remote setup fails'
+  );
   assert.match(
     raw,
     /REMOTE_SSH_WAIT_SECONDS="\$\{REMOTE_SSH_WAIT_SECONDS:-180\}"/,
@@ -278,13 +438,136 @@ test('npm-e2e-smoke remote server smoke forwards self-host server binary overrid
   );
   assert.match(
     raw,
-    /--server-binary/,
-    'expected remote server smoke to forward a server binary override when provided'
+    /ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=\/dev\/null -o ConnectTimeout=5/,
+    'expected remote server smoke ssh readiness probe to bypass strict host checks before known_hosts is seeded'
+  );
+  assert.match(
+    raw,
+    /--ssh-config-file/,
+    'expected remote server smoke to pass an ssh config file to hstack remote setup so host-key trust policy is explicit'
+  );
+  assert.match(
+    raw,
+    /--known-hosts-path/,
+    'expected remote server smoke to pass an explicit known_hosts path to hstack remote setup for strict host-key verification'
+  );
+  assert.match(
+    raw,
+    /ssh-keyscan/,
+    'expected remote server smoke to seed known_hosts before strict hstack remote setup'
+  );
+  assert.match(
+    raw,
+    /keyscan_args=\(-T 5 -t ed25519\)/,
+    'expected remote server smoke known_hosts seeding to scan deterministic ED25519 host keys'
+  );
+  assert.match(
+    raw,
+    /ssh-keygen -R "\$host" -f "\$known_hosts_file"/,
+    'expected remote server smoke to remove stale known_hosts entries before reseeding strict host trust'
+  );
+  assert.match(raw, /--server-binary/, 'expected remote server smoke to forward the canonical server binary override flag');
+  assert.doesNotMatch(
+    raw,
+    /--self-host-server-binary/,
+    'expected remote server smoke to avoid the legacy self-host server binary override flag'
   );
   assert.match(
     raw,
     /PRISMA_QUERY_ENGINE_LIBRARY/,
     'expected remote server smoke to pass Prisma engine env overrides for local binary runs'
+  );
+});
+
+test('npm-e2e-smoke fails fast when stack bootstrap container exits during server readiness wait', async () => {
+  const runnerPath = join(smokeDir, 'run.sh');
+  const raw = await readFile(runnerPath, 'utf8');
+  const composePath = join(smokeDir, 'compose.yml');
+  const composeRaw = await readFile(composePath, 'utf8');
+  assert.match(
+    composeRaw,
+    /HSTACK_E2E_WITH_UI:\s*\$\{HSTACK_E2E_WITH_UI:-1\}/,
+    'expected compose stack env to forward HSTACK_E2E_WITH_UI so run.sh can disable UI bootstrap deterministically'
+  );
+  assert.match(
+    raw,
+    /echo "HSTACK_E2E_WITH_UI=0"/,
+    'expected release-assets stack smoke to disable UI dependency/bootstrap path for deterministic server readiness'
+  );
+  assert.match(
+    raw,
+    /stack container exited before server became ready/,
+    'expected stack bootstrap wait loop to fail fast when the stack container exits instead of waiting full timeout'
+  );
+  assert.match(
+    raw,
+    /docker inspect -f '\{\{\.State\.Status\}\}'/,
+    'expected stack bootstrap wait loop to inspect the live stack container state while waiting'
+  );
+  assert.match(
+    raw,
+    /stack container is missing before server became ready/,
+    'expected stack bootstrap wait loop to fail fast when the stack container has disappeared before readiness'
+  );
+  assert.match(
+    raw,
+    /exec -T stack bash -lc 'curl -fsS http:\/\/127\.0\.0\.1:3005\/v1\/version >/,
+    'expected stack readiness wait to use API health at /v1/version'
+  );
+  assert.doesNotMatch(
+    raw,
+    /exec -T stack bash -lc 'curl -fsS http:\/\/127\.0\.0\.1:3005\/v1\/version[^']*&&[^']*curl -fsS http:\/\/127\.0\.0\.1:3005\/[^']*grep -qi "<html"/,
+    'expected stack readiness wait to avoid blocking on root HTML availability'
+  );
+});
+
+test('npm-e2e-smoke retries docker compose build/up on transient docker auth registry failures', async () => {
+  const runnerPath = join(smokeDir, 'run.sh');
+  const raw = await readFile(runnerPath, 'utf8');
+  assert.match(
+    raw,
+    /docker_retry_attempts=/,
+    'expected release-assets runner to define bounded docker retry attempts for transient registry/auth failures'
+  );
+  assert.match(
+    raw,
+    /retry_docker_compose_transient/,
+    'expected release-assets runner to provide a dedicated docker transient retry helper'
+  );
+  assert.match(
+    raw,
+    /auth\.docker\.io\/token/,
+    'expected release-assets runner to classify docker auth token endpoint failures as transient'
+  );
+  assert.match(
+    raw,
+    /504 Gateway Timeout/,
+    'expected release-assets runner to classify 504 registry/token gateway failures as transient'
+  );
+  assert.match(
+    raw,
+    /retry_docker_compose_transient[\s\S]*\bbuild\b/,
+    'expected release-assets runner to wrap compose build with transient retry containment'
+  );
+  assert.match(
+    raw,
+    /retry_docker_compose_transient[\s\S]*\bup\b[\s\S]*\bstack\b/,
+    'expected release-assets runner to wrap stack startup compose up with transient retry containment'
+  );
+});
+
+test('npm-e2e-smoke retries transient docker daemon removal races during stack startup', async () => {
+  const runnerPath = join(smokeDir, 'run.sh');
+  const raw = await readFile(runnerPath, 'utf8');
+  assert.match(
+    raw,
+    /marked for removal and cannot be started/,
+    'expected release-assets runner to classify docker daemon container-removal races as transient startup failures'
+  );
+  assert.match(
+    raw,
+    /retry_docker_compose_transient[\s\S]*compose up stack/,
+    'expected release-assets runner to keep stack startup inside the bounded retry helper'
   );
 });
 
@@ -303,18 +586,13 @@ test('npm-e2e-smoke compose remote server smoke forwards local self-host env ove
   );
 });
 
-test('hstack remote server setup supports a server binary override flag', async () => {
+test('hstack remote server setup supports self-host server binary override flag', async () => {
   const remoteCmdPath = join(repoRoot, 'apps', 'stack', 'scripts', 'remote_cmd.mjs');
   const raw = await readFile(remoteCmdPath, 'utf8');
   assert.match(
     raw,
-    /--server-binary/,
-    'expected remote setup usage and parser to include --server-binary'
-  );
-  assert.match(
-    raw,
-    /\['--server-binary', serverBinary\]/,
-    'expected remote setup to forward --server-binary to the underlying happier relay host command'
+    /--self-host-server-binary/,
+    'expected remote setup usage and parser to include --self-host-server-binary'
   );
 });
 
@@ -421,5 +699,238 @@ test('remote daemon host install shim avoids unnecessary hstack install', async 
     raw,
     /npm install -g \/packs\/stack\.tgz/,
     'expected remote daemon host shim to skip /packs/stack.tgz install to reduce disk usage and avoid ENOSPC'
+  );
+});
+
+test('remote daemon reuse-cli smoke resolves primary access key dynamically and avoids command-substitution hints', async () => {
+  const path = join(smokeDir, 'bin', 'remote-daemon-authenticated-cli-smoke.sh');
+  const raw = await readFile(path, 'utf8');
+  assert.match(
+    raw,
+    /find "\$cli_servers_dir" -mindepth 2 -maxdepth 2 -type f -name 'access\.key'/,
+    'expected remote daemon reuse-cli smoke to discover primary access keys dynamically under the canonical servers directory'
+  );
+  assert.doesNotMatch(
+    raw,
+    /access_key="\$\{PRIMARY_CLI_HOME_DIR\}\/servers\/\$\{HAPPIER_ACTIVE_SERVER_ID\}\/access\.key"/,
+    'expected remote daemon reuse-cli smoke to avoid a single hardcoded primary access key path'
+  );
+  assert.doesNotMatch(
+    raw,
+    /`cli`/,
+    'expected remote daemon reuse-cli hint text to avoid shell command substitution in diagnostics'
+  );
+  assert.match(
+    raw,
+    /selected_server_id="\$\(basename "\$\(dirname "\$selected_access_key"\)"\)"/,
+    'expected remote daemon reuse-cli smoke to derive active server id from the selected access-key path'
+  );
+  assert.match(
+    raw,
+    /export HAPPIER_ACTIVE_SERVER_ID="\$selected_server_id"/,
+    'expected remote daemon reuse-cli smoke to export the selected server id so hstack and happier use the matching profile'
+  );
+  assert.match(
+    raw,
+    /remote_setup_output="\$\(mktemp -t remote-daemon-reuse-cli-setup-XXXXXX\)"/,
+    'expected remote daemon reuse-cli smoke to capture remote setup output in a temp log'
+  );
+  assert.match(
+    raw,
+    /tail -n 200 "\$remote_setup_output" >&2/,
+    'expected remote daemon reuse-cli smoke to print setup output on failure for deterministic root-cause diagnostics'
+  );
+  assert.doesNotMatch(
+    raw,
+    /hstack remote daemon setup \\\nremote_setup_output=/,
+    'expected remote daemon reuse-cli smoke to avoid a dangling pre-command continuation before the captured setup invocation'
+  );
+  assert.doesNotMatch(
+    raw,
+    /retrying without --public-server-url compatibility flag/,
+    'expected remote daemon reuse-cli smoke to fail closed instead of retrying without --public-server-url'
+  );
+  assert.doesNotMatch(
+    raw,
+    /Unknown machine setup arguments: --public-server-url/,
+    'expected remote daemon reuse-cli smoke to avoid arg-shape compatibility fallback signatures'
+  );
+});
+
+test('remote daemon smoke scripts fail closed when --public-server-url is unsupported', async () => {
+  const reuseCliPath = join(smokeDir, 'bin', 'remote-daemon-authenticated-cli-smoke.sh');
+  const reuseCliRaw = await readFile(reuseCliPath, 'utf8');
+  assert.doesNotMatch(
+    reuseCliRaw,
+    /retrying without --public-server-url compatibility flag/,
+    'expected reuse-cli remote daemon smoke to fail closed instead of retrying without --public-server-url'
+  );
+  assert.doesNotMatch(
+    reuseCliRaw,
+    /Unknown machine setup arguments: --public-server-url/,
+    'expected reuse-cli remote daemon smoke to avoid unsupported --public-server-url compatibility signatures'
+  );
+  assert.match(
+    reuseCliRaw,
+    /hstack remote daemon setup[\s\S]*--yes/,
+    'expected reuse-cli remote daemon setup to force --yes in non-interactive mode for SSH trust prompts'
+  );
+  assert.match(
+    reuseCliRaw,
+    /resolve_remote_happier_command\(\)/,
+    'expected reuse-cli remote daemon smoke to resolve the installed remote CLI shim dynamically'
+  );
+  assert.match(
+    reuseCliRaw,
+    /~\/\.happier\/bin\/h(prev|appier)/,
+    'expected reuse-cli remote daemon smoke to probe channel-specific managed shims on the remote host'
+  );
+  assert.match(
+    reuseCliRaw,
+    /~\/\.happier\/cli-preview\/current\/happier/,
+    'expected reuse-cli remote daemon smoke to probe installer-managed preview CLI payload paths when ~/.happier/bin is absent'
+  );
+  assert.doesNotMatch(
+    reuseCliRaw,
+    /ssh "\$REMOTE_SSH_TARGET" "~\/\.happier\/bin\/happier daemon start"/,
+    'expected reuse-cli remote daemon smoke to avoid hardcoding a stable-only remote CLI path'
+  );
+  assert.match(
+    reuseCliRaw,
+    /checking remote daemon connectivity after setup/,
+    'expected reuse-cli remote daemon smoke to verify machine registration after setup before forcing manual daemon start'
+  );
+  assert.match(
+    reuseCliRaw,
+    /auth status --json/,
+    'expected reuse-cli remote daemon smoke to probe remote auth status before forcing daemon start'
+  );
+  assert.match(
+    reuseCliRaw,
+    /auth request --json --persist/,
+    'expected reuse-cli remote daemon smoke to request remote auth pairing when credentials are missing'
+  );
+  assert.match(
+    reuseCliRaw,
+    /auth approve --json --public-key/,
+    'expected reuse-cli remote daemon smoke to approve remote auth request with local authenticated credentials'
+  );
+  assert.match(
+    reuseCliRaw,
+    /auth wait --public-key .*--json --persist/,
+    'expected reuse-cli remote daemon smoke to wait for approved remote auth credentials before daemon start'
+  );
+  assert.match(
+    reuseCliRaw,
+    /ssh "\$REMOTE_SSH_TARGET" "HAPPIER_ACTIVE_SERVER_ID='\$selected_server_id'[^"]* daemon start"/,
+    'expected reuse-cli remote daemon smoke to start remote daemon with explicit selected server scope to avoid default-profile drift'
+  );
+  assert.match(
+    reuseCliRaw,
+    /ssh "\$REMOTE_SSH_TARGET" "HAPPIER_ACTIVE_SERVER_ID='\$selected_server_id'[^"]* daemon status --json"/,
+    'expected reuse-cli remote daemon smoke to query daemon status with explicit selected server scope'
+  );
+  assert.match(
+    reuseCliRaw,
+    /j\.daemon&&j\.daemon\.running===true/,
+    'expected reuse-cli remote daemon smoke to treat daemon.running=true status payloads as healthy'
+  );
+  assert.match(
+    reuseCliRaw,
+    /tail -n 200 ['"]\$daemon_log_path['"]/,
+    'expected reuse-cli remote daemon smoke to print remote daemon logs when daemon start fails'
+  );
+  assert.match(
+    reuseCliRaw,
+    /already registered a machine after setup; skipping manual start/,
+    'expected reuse-cli remote daemon smoke to tolerate setup flows that already start/register the remote daemon'
+  );
+
+  const bootstrapPath = join(smokeDir, 'bin', 'remote-daemon-smoke.sh');
+  const bootstrapRaw = await readFile(bootstrapPath, 'utf8');
+  assert.doesNotMatch(
+    bootstrapRaw,
+    /retrying without --public-server-url compatibility flag/,
+    'expected bootstrap remote daemon smoke to fail closed instead of retrying without --public-server-url'
+  );
+  assert.doesNotMatch(
+    bootstrapRaw,
+    /Unknown machine setup arguments: --public-server-url/,
+    'expected bootstrap remote daemon smoke to avoid unsupported --public-server-url compatibility signatures'
+  );
+  assert.match(
+    bootstrapRaw,
+    /hstack remote daemon setup[\s\S]*--yes/,
+    'expected bootstrap remote daemon setup to force --yes in non-interactive mode for SSH trust prompts'
+  );
+  assert.match(
+    bootstrapRaw,
+    /resolve_remote_happier_command\(\)/,
+    'expected bootstrap remote daemon smoke to resolve the installed remote CLI shim dynamically'
+  );
+  assert.match(
+    bootstrapRaw,
+    /~\/\.happier\/bin\/h(prev|appier)/,
+    'expected bootstrap remote daemon smoke to probe channel-specific managed shims on the remote host'
+  );
+  assert.match(
+    bootstrapRaw,
+    /~\/\.happier\/cli-preview\/current\/happier/,
+    'expected bootstrap remote daemon smoke to probe installer-managed preview CLI payload paths when ~/.happier/bin is absent'
+  );
+  assert.doesNotMatch(
+    bootstrapRaw,
+    /ssh "\$REMOTE_SSH_TARGET" "~\/\.happier\/bin\/happier daemon start"/,
+    'expected bootstrap remote daemon smoke to avoid hardcoding a stable-only remote CLI path'
+  );
+  assert.match(
+    bootstrapRaw,
+    /checking remote daemon connectivity after setup/,
+    'expected bootstrap remote daemon smoke to verify machine registration after setup before forcing manual daemon start'
+  );
+  assert.match(
+    bootstrapRaw,
+    /auth status --json/,
+    'expected bootstrap remote daemon smoke to probe remote auth status before forcing daemon start'
+  );
+  assert.match(
+    bootstrapRaw,
+    /auth request --json --persist/,
+    'expected bootstrap remote daemon smoke to request remote auth pairing when credentials are missing'
+  );
+  assert.match(
+    bootstrapRaw,
+    /auth approve --json --public-key/,
+    'expected bootstrap remote daemon smoke to approve remote auth request with local authenticated credentials'
+  );
+  assert.match(
+    bootstrapRaw,
+    /auth wait --public-key .*--json --persist/,
+    'expected bootstrap remote daemon smoke to wait for approved remote auth credentials before daemon start'
+  );
+  assert.match(
+    bootstrapRaw,
+    /ssh "\$REMOTE_SSH_TARGET" "HAPPIER_ACTIVE_SERVER_ID='\$HAPPIER_ACTIVE_SERVER_ID'[^"]* daemon start"/,
+    'expected bootstrap remote daemon smoke to start remote daemon with explicit active server scope to avoid default-profile drift'
+  );
+  assert.match(
+    bootstrapRaw,
+    /ssh "\$REMOTE_SSH_TARGET" "HAPPIER_ACTIVE_SERVER_ID='\$HAPPIER_ACTIVE_SERVER_ID'[^"]* daemon status --json"/,
+    'expected bootstrap remote daemon smoke to query daemon status with explicit active server scope'
+  );
+  assert.match(
+    bootstrapRaw,
+    /j\.daemon&&j\.daemon\.running===true/,
+    'expected bootstrap remote daemon smoke to treat daemon.running=true status payloads as healthy'
+  );
+  assert.match(
+    bootstrapRaw,
+    /tail -n 200 ['"]\$daemon_log_path['"]/,
+    'expected bootstrap remote daemon smoke to print remote daemon logs when daemon start fails'
+  );
+  assert.match(
+    bootstrapRaw,
+    /already registered a machine after setup; skipping manual start/,
+    'expected bootstrap remote daemon smoke to tolerate setup flows that already start/register the remote daemon'
   );
 });

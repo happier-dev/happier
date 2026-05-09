@@ -14,57 +14,71 @@ HAPPIER_WEBAPP_URL="${HAPPIER_WEBAPP_URL:-$HAPPIER_SERVER_URL}"
 CLIENT_HOME_DIR="${CLIENT_HOME_DIR:-/work/happier-home}"
 APPROVER_HOME_DIR="${APPROVER_HOME_DIR:-/work/happier-approver-home}"
 
-resolve_happier_prefix_from_npm_global_bin() {
+resolve_happier_prefix_from_npm_global_package() {
+  local npm_global_root=""
   local npm_global_prefix=""
+  npm_global_root="$(npm root -g 2>/dev/null || true)"
   npm_global_prefix="$(npm prefix -g 2>/dev/null || true)"
-  if [[ -z "$npm_global_prefix" || "$npm_global_prefix" == "undefined" || "$npm_global_prefix" == "null" ]]; then
-    npm_global_prefix="$(npm config get prefix 2>/dev/null || true)"
-  fi
 
-  if [[ -z "$npm_global_prefix" || "$npm_global_prefix" == "undefined" || "$npm_global_prefix" == "null" ]]; then
-    echo "[cli] failed to resolve npm global prefix (npm prefix -g / npm config get prefix)" >&2
+  if [[ -z "$npm_global_root" || "$npm_global_root" == "undefined" || "$npm_global_root" == "null" ]]; then
+    echo "[cli] failed to resolve npm global root (npm root -g)" >&2
     echo "[cli] npm --version: $(npm --version 2>/dev/null || echo unknown)" >&2
-    echo "[cli] npm prefix -g: $(npm prefix -g 2>/dev/null || true)" >&2
-    echo "[cli] npm config get prefix: $(npm config get prefix 2>/dev/null || true)" >&2
+    echo "[cli] npm root -g: $(npm root -g 2>/dev/null || true)" >&2
     exit 1
   fi
 
-  NPM_GLOBAL_BIN="$npm_global_prefix/bin"
-  local expected="$NPM_GLOBAL_BIN/happier"
-  if [[ ! -x "$expected" ]]; then
-    local npm_global_root=""
-    npm_global_root="$(npm root -g 2>/dev/null || true)"
-
-    echo "[cli] expected happier to be installed globally, but it was not found at: $expected" >&2
+  local expected_entrypoint="$npm_global_root/@happier-dev/cli/dist/index.mjs"
+  if [[ ! -f "$expected_entrypoint" ]]; then
+    echo "[cli] expected packaged CLI entrypoint at: $expected_entrypoint" >&2
     echo "[cli] npm --version: $(npm --version 2>/dev/null || echo unknown)" >&2
-    echo "[cli] npm prefix -g: $(npm prefix -g 2>/dev/null || true)" >&2
-    echo "[cli] npm config get prefix: $(npm config get prefix 2>/dev/null || true)" >&2
     echo "[cli] npm root -g: ${npm_global_root:-}" >&2
     echo "[cli] PATH: $PATH" >&2
-    echo "[cli] listing npm global bin dir: $NPM_GLOBAL_BIN" >&2
-    ls -la "$NPM_GLOBAL_BIN" >&2 || true
-    if [[ -n "$npm_global_root" ]]; then
-      echo "[cli] listing global @happier-dev/cli (if present): $npm_global_root/@happier-dev/cli" >&2
-      ls -la "$npm_global_root/@happier-dev/cli" >&2 || true
-      ls -la "$npm_global_root/@happier-dev/cli/bin" >&2 || true
-    fi
+    ls -la "$npm_global_root/@happier-dev/cli" >&2 || true
+    ls -la "$npm_global_root/@happier-dev/cli/bin" >&2 || true
     exit 1
   fi
 
-  if ! "$expected" --version >/dev/null 2>&1; then
-    echo "[cli] expected happier to be runnable, but version check failed: $expected --version" >&2
+  local expected_bin="$npm_global_root/@happier-dev/cli/bin/happier.mjs"
+  if [[ ! -f "$expected_bin" ]]; then
+    echo "[cli] expected packaged happier command entrypoint at: $expected_bin" >&2
     echo "[cli] npm --version: $(npm --version 2>/dev/null || echo unknown)" >&2
-    echo "[cli] npm prefix -g: $(npm prefix -g 2>/dev/null || true)" >&2
-    echo "[cli] npm config get prefix: $(npm config get prefix 2>/dev/null || true)" >&2
+    echo "[cli] npm root -g: ${npm_global_root:-}" >&2
     echo "[cli] PATH: $PATH" >&2
-    ls -la "$expected" >&2 || true
+    ls -la "$npm_global_root/@happier-dev/cli/bin" >&2 || true
     exit 1
   fi
 
-  HAPPIER_PREFIX=("$expected")
-  return 0
+  if ! command -v happier >/dev/null 2>&1; then
+    echo "[cli] expected installed happier shim command, but it is not on PATH" >&2
+    echo "[cli] npm prefix -g: ${npm_global_prefix:-}" >&2
+    echo "[cli] npm root -g: ${npm_global_root:-}" >&2
+    echo "[cli] PATH: $PATH" >&2
+    exit 1
+  fi
 
-  # unreachable
+  local command_path
+  command_path="$(command -v happier)"
+  local resolved_command_path
+  resolved_command_path="$(readlink -f "$command_path" 2>/dev/null || echo "$command_path")"
+  local resolved_expected_bin
+  resolved_expected_bin="$(readlink -f "$expected_bin" 2>/dev/null || echo "$expected_bin")"
+  if [[ "$resolved_command_path" != "$resolved_expected_bin" ]]; then
+    echo "[cli] expected happier command to resolve to packaged bin entrypoint" >&2
+    echo "[cli] command -v happier: $command_path" >&2
+    echo "[cli] resolved command path: $resolved_command_path" >&2
+    echo "[cli] expected packaged bin path: $resolved_expected_bin" >&2
+    exit 1
+  fi
+
+  if ! happier --version >/dev/null 2>&1; then
+    echo "[cli] expected installed happier shim command to be runnable: happier --version" >&2
+    echo "[cli] command -v happier: $command_path" >&2
+    echo "[cli] resolved command path: $resolved_command_path" >&2
+    exit 1
+  fi
+
+  echo "[cli] installed happier shim proof: $command_path -> $resolved_command_path"
+  HAPPIER_PREFIX=(happier)
 }
 
 # Reset state so reruns cannot reuse stale tokens from previous stack instances.
@@ -75,7 +89,7 @@ find "$APPROVER_HOME_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 if [[ -n "$HAPPIER_TGZ" && -f "$HAPPIER_TGZ" ]]; then
   echo "[cli] installing happier-cli from tarball: $HAPPIER_TGZ"
   npm_config_bin_links=true npm install -g "$HAPPIER_TGZ" >/dev/null
-  resolve_happier_prefix_from_npm_global_bin
+  resolve_happier_prefix_from_npm_global_package
 elif [[ "$HAPPIER_CLI_INSTALL_MODE" == "preinstalled" ]]; then
   echo "[cli] using preinstalled happier-cli"
   if ! command -v happier >/dev/null 2>&1; then
@@ -89,7 +103,7 @@ elif [[ "$HAPPIER_CLI_INSTALL_MODE" == "npx" ]]; then
 else
   echo "[cli] installing happier-cli from npm: $HAPPIER_NPM_SPEC"
   npm_config_bin_links=true npm install -g "$HAPPIER_NPM_SPEC" >/dev/null
-  resolve_happier_prefix_from_npm_global_bin
+  resolve_happier_prefix_from_npm_global_package
 fi
 
 echo "[cli] configuring server: $HAPPIER_SERVER_URL"

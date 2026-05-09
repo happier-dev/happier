@@ -91,6 +91,25 @@ async function getInternalServerUrlCompat() {
   return { port, url: internalServerUrl };
 }
 
+function resolveAuthStackCliHomeDir({ stackName }) {
+  const { baseDir, envPath } = resolveStackEnvPath(stackName);
+  let stackEnv = {};
+  try {
+    if (existsSync(envPath)) {
+      const raw = readFileSync(envPath, 'utf-8');
+      stackEnv = raw ? parseEnvToObject(raw) : {};
+    }
+  } catch {
+    stackEnv = {};
+  }
+
+  const mergedEnv = { ...stackEnv, ...process.env };
+  if (!String(mergedEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim()) {
+    mergedEnv.HAPPIER_STACK_CLI_HOME_DIR = getCliHomeDirFromEnvOrDefault({ stackBaseDir: baseDir, env: stackEnv });
+  }
+  return resolveCliHomeDir(mergedEnv, { preferStackCliHomeDir: true });
+}
+
 async function resolveWebappUrlFromRunningExpo({ rootDir, stackName, env = process.env }) {
   return await resolveBestExpoWebappUrlForAuth({ rootDir, stackName, env, timeoutMs: 250 });
 }
@@ -1177,7 +1196,7 @@ async function cmdCopyFrom({ argv, json }) {
   const serverComponent = resolveServerComponentForCurrentStack();
   const serverDirForPrisma = resolveServerComponentDir({ rootDir, serverComponent });
   const targetBaseDir = getDefaultAutostartPaths().baseDir;
-  const targetCli = resolveCliHomeDir();
+  const targetCli = resolveAuthStackCliHomeDir({ stackName });
   const targetServerLightDataDir =
     (process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').trim() || join(targetBaseDir, 'server-light');
   const targetSecretFile =
@@ -1547,7 +1566,10 @@ async function cmdStatus({ json }) {
     stackName,
   });
 
-  const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: resolveCliHomeDir(), identity });
+  const cliHomeDir = resolveCliHomeDirForIdentity({
+    cliHomeDir: resolveAuthStackCliHomeDir({ stackName }),
+    identity,
+  });
   const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env: process.env });
   const existingCredentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl, env: process.env });
   const settingsPath = join(cliHomeDir, 'settings.json');
@@ -1765,7 +1787,10 @@ async function cmdLogin({ argv, json }) {
   const flow = 'guided';
 
   const identity = parseCliIdentityOrThrow((kv.get('--identity') ?? '').trim());
-  const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: resolveCliHomeDir(), identity });
+  const cliHomeDir = resolveCliHomeDirForIdentity({
+    cliHomeDir: resolveAuthStackCliHomeDir({ stackName }),
+    identity,
+  });
 
   const force =
     argv.includes('--force') ||

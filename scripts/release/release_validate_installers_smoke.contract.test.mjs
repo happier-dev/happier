@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   resolveInstallersSmokeBinaryPath,
   resolveInstallersSmokeLifecycleSteps,
+  resolveInstallersSmokeLifecycleStepTimeoutMs,
   resolveInstallersSmokePlan,
 } from '../pipeline/release-validation/executors/installers-smoke.mjs';
 
@@ -183,24 +184,28 @@ test('installers-smoke lifecycle steps include reinstall/check/uninstall where s
 });
 
 test('installers-smoke resolves the managed binary path for each native installer surface', () => {
+  const normalizeSlashes = (value) => String(value).replaceAll('\\', '/');
+  const linuxPath = resolveInstallersSmokeBinaryPath({
+    platform: 'linux',
+    installDir: '/tmp/happier-install',
+    requestedBinDir: '/tmp/bin',
+    binaryName: 'happier',
+  });
+  const darwinPath = resolveInstallersSmokeBinaryPath({
+    platform: 'darwin',
+    installDir: '/tmp/happier-install',
+    requestedBinDir: '/tmp/bin',
+    binaryName: 'happier',
+  });
   assert.equal(
-    resolveInstallersSmokeBinaryPath({
-      platform: 'linux',
-      installDir: '/tmp/happier-install',
-      requestedBinDir: '/tmp/bin',
-      binaryName: 'happier',
-    }),
+    normalizeSlashes(linuxPath),
     '/tmp/bin/happier',
   );
   assert.equal(
-    resolveInstallersSmokeBinaryPath({
-      platform: 'darwin',
-      installDir: '/tmp/happier-install',
-      requestedBinDir: '/tmp/bin',
-      binaryName: 'happier',
-    }),
+    normalizeSlashes(darwinPath),
     '/tmp/bin/happier',
   );
+  assert.equal(darwinPath, linuxPath);
   assert.equal(
     resolveInstallersSmokeBinaryPath({
       platform: 'win32',
@@ -209,5 +214,54 @@ test('installers-smoke resolves the managed binary path for each native installe
       binaryName: 'hdev.exe',
     }),
     'C:\\Users\\lee\\.happier\\bin\\hdev.exe',
+  );
+});
+
+test('installers-smoke lifecycle step timeout is bounded and configurable', () => {
+  assert.equal(resolveInstallersSmokeLifecycleStepTimeoutMs({ env: {} }), 300_000);
+  assert.equal(
+    resolveInstallersSmokeLifecycleStepTimeoutMs({
+      env: {
+        HAPPIER_INSTALLERS_SMOKE_STEP_TIMEOUT_MS: '120000',
+      },
+    }),
+    120_000,
+  );
+  assert.equal(
+    resolveInstallersSmokeLifecycleStepTimeoutMs({
+      env: {
+        HAPPIER_INSTALLERS_SMOKE_STEP_TIMEOUT_MS: '-10',
+      },
+    }),
+    30_000,
+  );
+  assert.equal(
+    resolveInstallersSmokeLifecycleStepTimeoutMs({
+      env: {
+        HAPPIER_INSTALLERS_SMOKE_STEP_TIMEOUT_MS: '999999999',
+      },
+    }),
+    1_800_000,
+  );
+});
+
+test('installers-smoke applies a larger default install timeout for win32 local-build', () => {
+  assert.equal(
+    resolveInstallersSmokeLifecycleStepTimeoutMs({
+      env: {},
+      platform: 'win32',
+      sourceKind: 'local-build',
+      step: 'install',
+    }),
+    600_000,
+  );
+  assert.equal(
+    resolveInstallersSmokeLifecycleStepTimeoutMs({
+      env: {},
+      platform: 'win32',
+      sourceKind: 'local-build',
+      step: 'version',
+    }),
+    300_000,
   );
 });

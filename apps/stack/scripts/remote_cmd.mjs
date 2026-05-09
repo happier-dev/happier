@@ -32,6 +32,19 @@ function takeFlagValue(args, name) {
   return { value, rest };
 }
 
+function takeFlag(args, name) {
+  const rest = [];
+  let present = false;
+  for (const a of args) {
+    if (!present && a === name) {
+      present = true;
+      continue;
+    }
+    rest.push(a);
+  }
+  return { present, rest };
+}
+
 function safeBashSingleQuote(s) {
   const raw = String(s ?? '');
   if (raw === '') return "''";
@@ -75,6 +88,13 @@ export async function runRemoteDaemonSetupWithDeps(argvRaw, deps = {}) {
 
   const sshConfigFile = takeFlagValue(args, '--ssh-config-file');
   args = sshConfigFile.rest;
+  const knownHostsPath = takeFlagValue(args, '--known-hosts-path');
+  args = knownHostsPath.rest;
+  if (knownHostsPath.value) {
+    throw new Error('[remote] --known-hosts-path is not supported for daemon setup; use remote server setup');
+  }
+  const yesFlag = takeFlag(args, '--yes');
+  args = yesFlag.rest;
 
   const channel = assertPublicChannel(resolveChannel(argv0));
 
@@ -102,6 +122,7 @@ export async function runRemoteDaemonSetupWithDeps(argvRaw, deps = {}) {
       ...(serverUrlFlag.value ? [`--server-url=${serverUrlFlag.value}`] : []),
       ...(webappUrlFlag.value ? [`--webapp-url=${webappUrlFlag.value}`] : []),
       ...(publicServerUrlFlag.value ? [`--public-server-url=${publicServerUrlFlag.value}`] : []),
+      ...(yesFlag.present ? ['--yes'] : []),
       ...(json ? ['--json'] : []),
     ],
   });
@@ -116,13 +137,13 @@ function usageText() {
     '    [--json]',
     '',
     '  hstack remote server setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
-    '    [--mode <user|system>]',
+    '    [--mode <user|system>] [--ssh-config-file <path>] [--known-hosts-path <path>]',
     '    [--server-binary <path>]',
     '    [--env KEY=VALUE]...',
     '    [--json]',
     '',
     '  hstack remote relay setup --ssh <user@host> [--preview|--dev|--stable] [--channel <stable|preview|dev>]',
-    '    [--mode <user|system>]',
+    '    [--mode <user|system>] [--ssh-config-file <path>] [--known-hosts-path <path>]',
     '    [--server-binary <path>]',
     '    [--env KEY=VALUE]...',
     '    [--json]',
@@ -203,7 +224,14 @@ async function runRemoteDaemonSetup(argvRaw) {
   await runRemoteDaemonSetupWithDeps(argvRaw);
 }
 
-async function runRemoteServerSetup(argvRaw) {
+export async function runRemoteServerSetupWithDeps(argvRaw, deps = {}) {
+  const resolvedDeps = {
+    runRelayHostInstall: async ({ args }) => {
+      await run('happier', args, { env: process.env });
+    },
+    ...deps,
+  };
+
   const argv0 = argvRaw.slice();
   const json = wantsJson(argv0);
 
@@ -214,6 +242,11 @@ async function runRemoteServerSetup(argvRaw) {
     process.stderr.write('Missing required flag: --ssh <user@host>\n');
     process.exit(2);
   }
+
+  const sshConfigFile = takeFlagValue(args, '--ssh-config-file');
+  args = sshConfigFile.rest;
+  const knownHostsPath = takeFlagValue(args, '--known-hosts-path');
+  args = knownHostsPath.rest;
 
   const channel = assertPublicChannel(resolveChannel(argv0));
 
@@ -237,9 +270,8 @@ async function runRemoteServerSetup(argvRaw) {
 
   const envValues = collectEnvValues(argv0);
 
-  await run(
-    'happier',
-    [
+  await resolvedDeps.runRelayHostInstall({
+    args: [
       'relay',
       'host',
       'install',
@@ -247,12 +279,17 @@ async function runRemoteServerSetup(argvRaw) {
       ssh.value,
       `--channel=${channel === 'publicdev' ? 'dev' : channel}`,
       `--mode=${mode}`,
+      ...(sshConfigFile.value ? [`--ssh-config-file=${sshConfigFile.value}`] : []),
+      ...(knownHostsPath.value ? [`--known-hosts-path=${knownHostsPath.value}`] : []),
       ...(serverBinary ? ['--server-binary', serverBinary] : []),
       ...envValues.flatMap((value) => ['--env', value]),
       ...(json ? ['--json'] : []),
     ],
-    { env: process.env },
-  );
+  });
+}
+
+async function runRemoteServerSetup(argvRaw) {
+  await runRemoteServerSetupWithDeps(argvRaw);
 }
 
 async function main() {

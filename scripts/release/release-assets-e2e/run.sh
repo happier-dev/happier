@@ -23,6 +23,8 @@ with_relay_upgrade=""
 relay_upgrade_from_channel=""
 relay_upgrade_db=""
 show_help="0"
+docker_retry_attempts="${HAPPIER_RELEASE_ASSETS_DOCKER_RETRY_ATTEMPTS:-4}"
+docker_retry_sleep_seconds="${HAPPIER_RELEASE_ASSETS_DOCKER_RETRY_SLEEP_SECONDS:-5}"
 
 usage() {
   cat <<EOF
@@ -240,6 +242,63 @@ cleanup() {
 }
 trap cleanup EXIT
 
+is_docker_registry_transient_error() {
+  local text="$1"
+  grep -Eiq \
+    'auth\.docker\.io/token|auth.docker.io/token|failed to fetch oauth token|504 Gateway Timeout|TLS handshake timeout|i/o timeout|connection reset by peer|temporary failure|toomanyrequests|container is marked for removal and cannot be started|conflict.*container.*removal.*in progress' \
+    <<<"$text"
+}
+
+retry_docker_compose_transient() {
+  local label="$1"
+  shift
+  local -a cmd=("$@")
+
+  if ! [[ "$docker_retry_attempts" =~ ^[0-9]+$ ]] || [[ "$docker_retry_attempts" -lt 1 ]]; then
+    echo "[npm-e2e-smoke] invalid HAPPIER_RELEASE_ASSETS_DOCKER_RETRY_ATTEMPTS=$docker_retry_attempts (expected integer >= 1)" >&2
+    exit 2
+  fi
+  if ! [[ "$docker_retry_sleep_seconds" =~ ^[0-9]+$ ]] || [[ "$docker_retry_sleep_seconds" -lt 0 ]]; then
+    echo "[npm-e2e-smoke] invalid HAPPIER_RELEASE_ASSETS_DOCKER_RETRY_SLEEP_SECONDS=$docker_retry_sleep_seconds (expected integer >= 0)" >&2
+    exit 2
+  fi
+
+  local attempt=1
+  local output=""
+  local status=0
+  while (( attempt <= docker_retry_attempts )); do
+    set +e
+    output="$("${cmd[@]}" 2>&1)"
+    status=$?
+    set -e
+    if [[ $status -eq 0 ]]; then
+      if [[ -n "$output" ]]; then
+        printf '%s\n' "$output"
+      fi
+      return 0
+    fi
+
+    if ! is_docker_registry_transient_error "$output"; then
+      printf '%s\n' "$output" >&2
+      return "$status"
+    fi
+
+    printf '%s\n' "$output" >&2
+    if (( attempt == docker_retry_attempts )); then
+      echo "[npm-e2e-smoke] docker transient retry budget exhausted for ${label} (${attempt}/${docker_retry_attempts})" >&2
+      return "$status"
+    fi
+
+    next_attempt=$((attempt + 1))
+    sleep_seconds=$((docker_retry_sleep_seconds * attempt))
+    echo "[npm-e2e-smoke] transient docker failure during ${label}; retrying (${next_attempt}/${docker_retry_attempts}) after ${sleep_seconds}s..." >&2
+    sleep "$sleep_seconds"
+    attempt=$next_attempt
+  done
+
+  return 1
+}
+
 echo "[npm-e2e-smoke] docker sanity check..."
 docker version >/dev/null
 
@@ -262,6 +321,9 @@ ssh-keygen -t ed25519 -N '' -f "$ssh_dir/id_ed25519" >/dev/null
     echo "HSTACK_NPM_SPEC=$stack_spec"
     echo "HAPPIER_NPM_SPEC=$cli_spec"
     echo "HAPPIER_CLI_INSTALL_MODE=$cli_install_mode"
+    # Keep release-assets smoke deterministic: UI build/serve is not required for these lanes.
+    echo "HSTACK_E2E_WITH_UI=0"
+    echo "HAPPIER_STACK_SERVE_UI=0"
     echo "HAPPIER_SERVER_URL=http://stack:3005"
     if [[ "$remote_installer" == "shim" ]]; then
       echo "REMOTE_SHIM_HAPPIER_INSTALLER=1"
@@ -540,7 +602,7 @@ run_dockerhub_images_smoke() {
       echo "[npm-e2e-smoke] waiting for dockerhub relay-server..."
       start_ts="$(date +%s)"
       while true; do
-        if "${compose_images[@]}" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/health >/dev/null && curl -fsS http://127.0.0.1:3005/ | head -c 4096 | grep -qi "<html"' >/dev/null 2>&1; then
+        if "${compose_images[@]}" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/v1/version >/dev/null && curl -fsS http://127.0.0.1:3005/ | head -c 4096 | grep -qi "<html"' >/dev/null 2>&1; then
           break
         fi
         now_ts="$(date +%s)"
@@ -708,7 +770,7 @@ run_relay_upgrade_smoke() {
 
       "${compose_upgrade[@]}" --env-file "$upgrade_env_from" up -d --no-deps --force-recreate --renew-anon-volumes --remove-orphans relay >/dev/null
       for _ in $(seq 1 120); do
-        if "${compose_upgrade[@]}" --env-file "$upgrade_env_from" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/health >/dev/null' >/dev/null 2>&1; then
+        if "${compose_upgrade[@]}" --env-file "$upgrade_env_from" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/v1/version >/dev/null' >/dev/null 2>&1; then
           break
         fi
         sleep 2
@@ -734,7 +796,7 @@ run_relay_upgrade_smoke() {
       "${compose_upgrade[@]}" --env-file "$upgrade_env_to" up -d --no-deps --force-recreate --renew-anon-volumes --remove-orphans relay >/dev/null
 
       for _ in $(seq 1 120); do
-        if "${compose_upgrade[@]}" --env-file "$upgrade_env_to" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/health >/dev/null' >/dev/null 2>&1; then
+        if "${compose_upgrade[@]}" --env-file "$upgrade_env_to" exec -T relay bash -lc 'curl -fsS http://127.0.0.1:3005/v1/version >/dev/null' >/dev/null 2>&1; then
           break
         fi
         sleep 2
@@ -795,19 +857,24 @@ if [[ "$with_any_remote" == "1" ]]; then
   if [[ "$with_remote_server" == "1" ]]; then
     build_targets+=(remote-server1 remote-server-smoke)
   fi
-  "${compose_remote[@]}" --env-file "$env_file" build "${build_targets[@]}"
+  retry_docker_compose_transient \
+    "compose build (remote)" \
+    "${compose_remote[@]}" --env-file "$env_file" build "${build_targets[@]}"
 else
-  "${compose[@]}" --env-file "$env_file" build stack cli cli2
+  retry_docker_compose_transient \
+    "compose build (local)" \
+    "${compose[@]}" --env-file "$env_file" build stack cli cli2
 fi
 
 echo "[npm-e2e-smoke] starting stack..."
- "${compose[@]}" --env-file "$env_file" up -d --build \
-  --no-deps \
-  --force-recreate \
-  --renew-anon-volumes \
-  --remove-orphans \
-  stack \
-  >/dev/null
+retry_docker_compose_transient \
+  "compose up stack" \
+  "${compose[@]}" --env-file "$env_file" up -d --build \
+    --no-deps \
+    --force-recreate \
+    --renew-anon-volumes \
+    --remove-orphans \
+    stack >/dev/null
 
 echo "[npm-e2e-smoke] waiting for server..."
 if ! [[ "$timeout_s" =~ ^[0-9]+$ ]] || [[ "$timeout_s" -le 0 ]]; then
@@ -816,10 +883,33 @@ if ! [[ "$timeout_s" =~ ^[0-9]+$ ]] || [[ "$timeout_s" -le 0 ]]; then
 fi
 start_ts="$(date +%s)"
 while true; do
-  if "${compose[@]}" exec -T stack bash -lc 'curl -fsS http://127.0.0.1:3005/health >/dev/null && curl -fsS http://127.0.0.1:3005/ | head -c 4096 | grep -qi "<html"' >/dev/null 2>&1; then
+  if "${compose[@]}" exec -T stack bash -lc 'curl -fsS http://127.0.0.1:3005/v1/version >/dev/null' >/dev/null 2>&1; then
     break
   fi
+
+  stack_container_id="$("${compose[@]}" --env-file "$env_file" ps -q stack 2>/dev/null | head -n 1 || true)"
   now_ts="$(date +%s)"
+  if [[ -z "$stack_container_id" ]]; then
+    # Compose can briefly report no container id right after startup. If it stays missing,
+    # the stack process is gone and waiting for timeout only hides the real failure.
+    if (( now_ts - start_ts > 15 )); then
+      echo "[npm-e2e-smoke] stack container is missing before server became ready" >&2
+      "${compose[@]}" --env-file "$env_file" ps >&2 || true
+      "${compose[@]}" --env-file "$env_file" logs --no-color stack >&2 || true
+      exit 1
+    fi
+    sleep 2
+    continue
+  fi
+
+  stack_container_state=""
+  stack_container_state="$(docker inspect -f '{{.State.Status}}' "$stack_container_id" 2>/dev/null || true)"
+  if [[ -n "$stack_container_state" && "$stack_container_state" != "running" ]]; then
+    echo "[npm-e2e-smoke] stack container exited before server became ready (state=${stack_container_state})" >&2
+    "${compose[@]}" --env-file "$env_file" logs --no-color stack >&2 || true
+    exit 1
+  fi
+
   if (( now_ts - start_ts > timeout_s )); then
     echo "[npm-e2e-smoke] server did not become ready in ${timeout_s}s" >&2
     "${compose[@]}" --env-file "$env_file" logs --no-color stack >&2 || true
@@ -835,27 +925,41 @@ echo "[npm-e2e-smoke] checking stack daemon connectivity (machine registration).
 "${compose[@]}" exec -T stack bash -lc '
   set -euo pipefail
 
-  access_key="/root/.happier/stacks/main/cli/servers/stack_main__id_default/access.key"
-  if [[ ! -f "$access_key" ]]; then
-    echo "[npm-e2e-smoke] missing access key at $access_key" >&2
-    exit 1
-  fi
-
-  token="$(node -e "const fs=require(\"fs\");const j=JSON.parse(fs.readFileSync(process.argv[1],\"utf8\"));process.stdout.write(String(j.token||\"\"))" "$access_key")"
-  if [[ -z "$token" ]]; then
-    echo "[npm-e2e-smoke] access.key did not contain a token" >&2
-    exit 1
-  fi
-
+  cli_servers_dir="/root/.happier/stacks/main/cli/servers"
+  preferred_access_key="${cli_servers_dir}/stack_main__id_default/access.key"
   base="http://127.0.0.1:3005"
+
   for _ in $(seq 1 60); do
-    count="$(curl -fsS -H "Authorization: Bearer $token" "$base/v1/machines" | node -e "const fs=require(\"fs\");const j=JSON.parse(fs.readFileSync(0,\"utf8\"));process.stdout.write(String(Array.isArray(j)?j.length:0))")" || true
-    if [[ "$count" =~ ^[0-9]+$ ]] && [[ "$count" -ge 1 ]]; then
-      exit 0
+    access_keys=""
+    if [[ -f "$preferred_access_key" ]]; then
+      access_keys="$preferred_access_key"
+    else
+      access_keys="$(find "$cli_servers_dir" -mindepth 2 -maxdepth 2 -type f -name 'access.key' | sort || true)"
+    fi
+
+    if [[ -n "$access_keys" ]]; then
+      while IFS= read -r access_key; do
+        [[ -n "$access_key" ]] || continue
+        token="$(node -e "const fs=require(\"fs\");const j=JSON.parse(fs.readFileSync(process.argv[1],\"utf8\"));process.stdout.write(String(j.token||\"\"))" "$access_key")" || true
+        if [[ -z "${token:-}" ]]; then
+          continue
+        fi
+        count="$(curl -fsS -H "Authorization: Bearer $token" "$base/v1/machines" | node -e "const fs=require(\"fs\");const j=JSON.parse(fs.readFileSync(0,\"utf8\"));process.stdout.write(String(Array.isArray(j)?j.length:0))")" || true
+        if [[ "$count" =~ ^[0-9]+$ ]] && [[ "$count" -ge 1 ]]; then
+          exit 0
+        fi
+      done <<<"$access_keys"
     fi
     sleep 1
   done
 
+  discovered_access_keys="$(find "$cli_servers_dir" -mindepth 2 -maxdepth 2 -type f -name 'access.key' | sort || true)"
+  if [[ -z "$discovered_access_keys" ]]; then
+    echo "[npm-e2e-smoke] missing access keys under $cli_servers_dir" >&2
+  else
+    echo "[npm-e2e-smoke] access keys discovered but no authenticated machine registration response:" >&2
+    echo "$discovered_access_keys" >&2
+  fi
   echo "[npm-e2e-smoke] expected stack daemon to register a machine (GET /v1/machines)" >&2
   exit 1
 ' >/dev/null
