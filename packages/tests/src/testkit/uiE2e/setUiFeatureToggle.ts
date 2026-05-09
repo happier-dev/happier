@@ -1,5 +1,9 @@
 import type { Page } from '@playwright/test';
 
+import {
+  accountSettingsScopeKeySuffix,
+  type UiE2eAccountSettingsScope,
+} from './accountSettingsScopeKeySuffix';
 import { gotoDomContentLoadedWithRetries } from './pageNavigation';
 
 type PersistedSettingsEnvelope = {
@@ -8,20 +12,21 @@ type PersistedSettingsEnvelope = {
 
 type PendingSettingsEnvelope = Readonly<Record<string, unknown>>;
 
-type AccountSettingsScope = Readonly<{
-  serverId: string;
-  accountId: string;
-}>;
-
 export async function setUiFeatureToggle(params: Readonly<{
   page: Page;
   baseUrl: string;
   featureId: string;
   enabled: boolean;
-  settingsScope?: AccountSettingsScope;
+  settingsScope?: UiE2eAccountSettingsScope;
 }>): Promise<void> {
+  const scopedSettingsSuffix = params.settingsScope ? accountSettingsScopeKeySuffix(params.settingsScope) : null;
+
   await params.page.evaluate(
-    ({ featureId, enabled, settingsScope }) => {
+    ({
+      featureId,
+      enabled,
+      scopedSettingsSuffix,
+    }) => {
       const mergeFeatureToggleMap = (raw: unknown): Record<string, boolean> => {
         const map = typeof raw === 'object' && raw ? (raw as Record<string, unknown>) : {};
         return {
@@ -31,34 +36,56 @@ export async function setUiFeatureToggle(params: Readonly<{
           [featureId]: enabled,
         };
       };
-      const encodeScopePart = (value: string): string => `${value.length}:${value}`;
-      const accountSettingsScopeKeySuffix = (scope: AccountSettingsScope): string =>
-        `${encodeScopePart(scope.serverId)}${encodeScopePart(scope.accountId)}`;
-      const settingsKeyPrefix = 'mmkv.default\\account-settings:v2:';
-      const pendingSettingsKeyPrefix = 'mmkv.default\\pending-account-settings:v2:';
-      const scopedSettingsKeys: string[] = [];
+      const accountSettingsLogicalKeyPrefix = 'account-settings:v2:';
+      const pendingAccountSettingsLogicalKeyPrefix = 'pending-account-settings:v2:';
+      type ParsedScopedSettingsKey = Readonly<{
+        fullKey: string;
+        logicalKey: string;
+        storageNamespace: string;
+      }>;
+      const parseScopedSettingsKey = (rawKey: string): ParsedScopedSettingsKey | null => {
+        const separatorIndex = rawKey.lastIndexOf('\\');
+        if (separatorIndex <= 0 || separatorIndex >= rawKey.length - 1) return null;
+
+        const storageNamespace = rawKey.slice(0, separatorIndex);
+        const logicalKey = rawKey.slice(separatorIndex + 1);
+        if (!logicalKey.startsWith(accountSettingsLogicalKeyPrefix)) return null;
+
+        return {
+          fullKey: rawKey,
+          logicalKey,
+          storageNamespace,
+        };
+      };
+
+      const scopedSettingsKeys: ParsedScopedSettingsKey[] = [];
       for (let index = 0; index < window.localStorage.length; index += 1) {
-        const key = window.localStorage.key(index);
-        if (key?.startsWith(settingsKeyPrefix)) scopedSettingsKeys.push(key);
+        const rawKey = window.localStorage.key(index);
+        if (!rawKey) continue;
+
+        const parsedKey = parseScopedSettingsKey(rawKey);
+        if (parsedKey) scopedSettingsKeys.push(parsedKey);
       }
       if (scopedSettingsKeys.length === 0) throw new Error('missing scoped persisted settings');
-      const requestedSettingsKey = settingsScope
-        ? `${settingsKeyPrefix}${accountSettingsScopeKeySuffix(settingsScope)}`
+
+      const requestedLogicalKey = scopedSettingsSuffix
+        ? `${accountSettingsLogicalKeyPrefix}${scopedSettingsSuffix}`
         : null;
-      const settingsKey = requestedSettingsKey
-        ? scopedSettingsKeys.find((key) => key === requestedSettingsKey)
+
+      const settingsKey = requestedLogicalKey
+        ? scopedSettingsKeys.find((key) => key.logicalKey === requestedLogicalKey)
         : scopedSettingsKeys.length === 1
-          ? scopedSettingsKeys[0]
+          ? scopedSettingsKeys[0]!
           : null;
       if (!settingsKey) {
         throw new Error(
-          requestedSettingsKey
+          requestedLogicalKey
             ? 'missing scoped persisted settings for requested account scope'
             : `settingsScope is required when multiple scoped persisted settings records exist (${scopedSettingsKeys.length})`,
         );
       }
-      const pendingSettingsKey = `${pendingSettingsKeyPrefix}${settingsKey.slice(settingsKeyPrefix.length)}`;
-      const rawSettings = window.localStorage.getItem(settingsKey);
+      const pendingSettingsKey = `${settingsKey.storageNamespace}\\${pendingAccountSettingsLogicalKeyPrefix}${settingsKey.logicalKey.slice(accountSettingsLogicalKeyPrefix.length)}`;
+      const rawSettings = window.localStorage.getItem(settingsKey.fullKey);
       if (!rawSettings) throw new Error('missing persisted settings');
 
       const parsed = JSON.parse(rawSettings) as PersistedSettingsEnvelope;
@@ -75,7 +102,7 @@ export async function setUiFeatureToggle(params: Readonly<{
         featureToggles,
       };
 
-      window.localStorage.setItem(settingsKey, JSON.stringify(parsed));
+      window.localStorage.setItem(settingsKey.fullKey, JSON.stringify(parsed));
       window.localStorage.setItem(
         pendingSettingsKey,
         JSON.stringify({
@@ -85,7 +112,7 @@ export async function setUiFeatureToggle(params: Readonly<{
         }),
       );
     },
-    { featureId: params.featureId, enabled: params.enabled, settingsScope: params.settingsScope },
+    { featureId: params.featureId, enabled: params.enabled, scopedSettingsSuffix },
   );
 
   await gotoDomContentLoadedWithRetries(params.page, `${params.baseUrl}/`);

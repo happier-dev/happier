@@ -2,14 +2,16 @@ import type { Page } from '@playwright/test';
 
 import { gotoDomContentLoadedWithRetries } from '../uiE2e/pageNavigation';
 
-export async function setSingleAccountUiFeatureToggle(params: Readonly<{
+type SingleAccountSettingsUpdate = Readonly<{
   page: Page;
   baseUrl: string;
-  featureId: string;
-  enabled: boolean;
-}>): Promise<void> {
+  featureToggles?: Readonly<Record<string, boolean>>;
+  settingsPatch?: Readonly<Record<string, unknown>>;
+}>;
+
+async function updateSingleAccountSettings(params: SingleAccountSettingsUpdate): Promise<void> {
   await params.page.evaluate(
-    ({ featureId, enabled }) => {
+    ({ featureToggles, settingsPatch }) => {
       const accountSettingsLogicalKeyPrefix = 'account-settings:v2:';
       const pendingAccountSettingsLogicalKeyPrefix = 'pending-account-settings:v2:';
       const parseSettings = (raw: string | null): Record<string, unknown> => {
@@ -19,16 +21,30 @@ export async function setSingleAccountUiFeatureToggle(params: Readonly<{
           ? parsed as Record<string, unknown>
           : {};
       };
-      const mergeFeatureToggleMap = (raw: unknown): Record<string, boolean> => {
-        const map = typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+      const readObjectRecord = (raw: unknown): Record<string, unknown> => (
+        typeof raw === 'object' && raw !== null && !Array.isArray(raw)
           ? raw as Record<string, unknown>
-          : {};
+          : {}
+      );
+      const mergeFeatureToggleMap = (raw: unknown): Record<string, boolean> => {
+        const map = readObjectRecord(raw);
         return {
           ...Object.fromEntries(
             Object.entries(map).filter(([, value]) => typeof value === 'boolean') as Array<[string, boolean]>,
           ),
-          [featureId]: enabled,
+          ...(featureToggles ?? {}),
         };
+      };
+      const applySettingsPatch = (raw: Record<string, unknown>): Record<string, unknown> => {
+        const next = {
+          ...raw,
+          ...(settingsPatch ?? {}),
+        };
+        if (featureToggles) {
+          next.experiments = true;
+          next.featureToggles = mergeFeatureToggleMap(raw.featureToggles);
+        }
+        return next;
       };
 
       const scopedSettingsKeys: Array<{ fullKey: string; logicalKey: string; storageNamespace: string }> = [];
@@ -49,35 +65,48 @@ export async function setSingleAccountUiFeatureToggle(params: Readonly<{
       const settingsKey = scopedSettingsKeys[0]!;
       const pendingSettingsKey = `${settingsKey.storageNamespace}\\${pendingAccountSettingsLogicalKeyPrefix}${settingsKey.logicalKey.slice(accountSettingsLogicalKeyPrefix.length)}`;
       const parsed = parseSettings(window.localStorage.getItem(settingsKey.fullKey));
-      const settings = typeof parsed.settings === 'object' && parsed.settings !== null && !Array.isArray(parsed.settings)
-        ? parsed.settings as Record<string, unknown>
-        : {};
+      const settings = readObjectRecord(parsed.settings);
       const pending = parseSettings(window.localStorage.getItem(pendingSettingsKey));
-      const featureToggles = mergeFeatureToggleMap(settings.featureToggles);
-      const pendingFeatureToggles = mergeFeatureToggleMap(pending.featureToggles);
 
       window.localStorage.setItem(
         settingsKey.fullKey,
         JSON.stringify({
           ...parsed,
-          settings: {
-            ...settings,
-            experiments: true,
-            featureToggles,
-          },
+          settings: applySettingsPatch(settings),
         }),
       );
       window.localStorage.setItem(
         pendingSettingsKey,
-        JSON.stringify({
-          ...pending,
-          experiments: true,
-          featureToggles: pendingFeatureToggles,
-        }),
+        JSON.stringify(applySettingsPatch(pending)),
       );
     },
-    { featureId: params.featureId, enabled: params.enabled },
+    { featureToggles: params.featureToggles, settingsPatch: params.settingsPatch },
   );
 
-  await gotoDomContentLoadedWithRetries(params.page, `${params.baseUrl}/`);
+  await gotoDomContentLoadedWithRetries(params.page, `${params.baseUrl}/?happier_hmr=0`, 180_000);
+}
+
+export async function setSingleAccountUiFeatureToggle(params: Readonly<{
+  page: Page;
+  baseUrl: string;
+  featureId: string;
+  enabled: boolean;
+}>): Promise<void> {
+  await updateSingleAccountSettings({
+    page: params.page,
+    baseUrl: params.baseUrl,
+    featureToggles: { [params.featureId]: params.enabled },
+  });
+}
+
+export async function setSingleAccountPetsEnabled(params: Readonly<{
+  page: Page;
+  baseUrl: string;
+  enabled: boolean;
+}>): Promise<void> {
+  await updateSingleAccountSettings({
+    page: params.page,
+    baseUrl: params.baseUrl,
+    settingsPatch: { petsEnabled: params.enabled },
+  });
 }

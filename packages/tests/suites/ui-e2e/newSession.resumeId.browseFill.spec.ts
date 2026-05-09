@@ -10,6 +10,7 @@ import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } f
 import { enableDirectSessionsFeature } from '../../src/testkit/uiE2e/enableDirectSessionsFeature';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { selectNewSessionAgent } from '../../src/testkit/uiE2e/selectNewSessionAgent';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -161,10 +162,7 @@ test.describe('ui e2e: /new resume id browse fills from direct sessions', () => 
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 
     // Select the Codex engine so the resume browse can find seeded Codex sessions.
-    await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('agent-input-agent-chip').click();
-    await expect(page.getByTestId('new-session-agent:codex')).toHaveCount(1, { timeout: 120_000 });
-    await page.getByTestId('new-session-agent:codex').click();
+    await selectNewSessionAgent({ page, agentId: 'codex' });
 
     // Pick the first machine (if not already selected) so the browse modal is scoped.
     await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });

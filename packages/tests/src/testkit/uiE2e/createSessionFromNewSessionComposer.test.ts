@@ -145,6 +145,11 @@ describe('createSessionFromNewSessionComposer', () => {
             fill: inputFillSpy,
           };
         }
+        if (testId === 'session-composer-input') {
+          return {
+            count: async (): Promise<number> => (sessionComposerVisible ? 1 : 0),
+          };
+        }
         if (testId === 'agent-input-machine-chip') {
           return {
             count: async (): Promise<number> => (machineChipVisible ? 1 : 0),
@@ -236,6 +241,11 @@ describe('createSessionFromNewSessionComposer', () => {
             count: async (): Promise<number> => 1,
             fill: inputFillSpy,
             press: inputPressSpy,
+          };
+        }
+        if (testId === 'session-composer-input') {
+          return {
+            count: async (): Promise<number> => (sessionComposerVisible ? 1 : 0),
           };
         }
         if (testId === 'agent-input-machine-chip') {
@@ -339,6 +349,11 @@ describe('createSessionFromNewSessionComposer', () => {
             fill: inputFillSpy,
           };
         }
+        if (testId === 'session-composer-input') {
+          return {
+            count: async (): Promise<number> => (sessionComposerVisible ? 1 : 0),
+          };
+        }
         if (testId === 'agent-input-machine-chip') {
           return {
             count: async (): Promise<number> => 1,
@@ -397,5 +412,274 @@ describe('createSessionFromNewSessionComposer', () => {
 
     expect(exactMachineClickSpy).toHaveBeenCalledTimes(1);
     expect(inputFillSpy).toHaveBeenCalledWith('duplicate machine prompt');
+  });
+
+  it('waits for machine selection row to become actionable instead of failing on a temporarily disabled row', async () => {
+    let nowMs = 0;
+    let currentUrl = 'http://127.0.0.1:3000/new';
+    let sessionComposerVisible = false;
+    let machineClickable = false;
+
+    const machineChipClickSpy = vi.fn(async () => {});
+    const machineClickSpy = vi.fn(async () => {
+      if (!machineClickable) {
+        throw new Error('element is not enabled');
+      }
+      machineClickable = true;
+    });
+    const sendClickSpy = vi.fn(async () => {
+      currentUrl = 'http://127.0.0.1:3000/session/session-789';
+      sessionComposerVisible = true;
+    });
+    const inputFillSpy = vi.fn(async () => {});
+
+    const page = {
+      getByTestId: vi.fn((testId: string) => {
+        if (testId === 'new-session-composer-input') {
+          return {
+            count: async (): Promise<number> => 1,
+            fill: inputFillSpy,
+          };
+        }
+        if (testId === 'session-composer-input') {
+          return {
+            count: async (): Promise<number> => (sessionComposerVisible ? 1 : 0),
+          };
+        }
+        if (testId === 'agent-input-machine-chip') {
+          return {
+            count: async (): Promise<number> => 1,
+            click: machineChipClickSpy,
+          };
+        }
+        if (testId === 'new-session-composer-send') {
+          return {
+            count: async (): Promise<number> => 1,
+            click: sendClickSpy,
+          };
+        }
+        if (testId === 'new-session-machine:machine-delayed-enabled') {
+          return {
+            count: async (): Promise<number> => 1,
+            click: machineClickSpy,
+          };
+        }
+        throw new Error(`unexpected test id: ${testId}`);
+      }),
+      locator: vi.fn((selector: string) => {
+        if (selector === '[data-testid^="new-session-machine:"]') {
+          return {
+            first: () => ({
+              count: async (): Promise<number> => 1,
+            }),
+          };
+        }
+        if (selector === 'textarea[data-testid="session-composer-input"]:visible') {
+          return {
+            count: async (): Promise<number> => (sessionComposerVisible ? 1 : 0),
+          };
+        }
+        throw new Error(`unexpected selector: ${selector}`);
+      }),
+      goto: vi.fn(async (url: string) => {
+        currentUrl = url;
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+        if (nowMs >= 500) {
+          machineClickable = true;
+        }
+      }),
+      waitForURL: vi.fn(async (matcher: (url: URL) => boolean) => {
+        const url = new URL(currentUrl);
+        if (!matcher(url)) {
+          throw new Error(`url predicate did not match: ${currentUrl}`);
+        }
+      }),
+      url: vi.fn(() => currentUrl),
+    };
+
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    await expect(createSessionFromNewSessionComposer({
+      page: page as never,
+      uiBaseUrl: 'http://127.0.0.1:3000',
+      machineId: 'machine-delayed-enabled',
+      prompt: 'wait for enabled machine',
+    })).resolves.toBe('session-789');
+
+    expect(machineClickSpy).toHaveBeenCalledTimes(3);
+    expect(sendClickSpy).toHaveBeenCalledTimes(1);
+    expect(inputFillSpy).toHaveBeenCalledWith('wait for enabled machine');
+  });
+
+  it('accepts session composer readiness when session-composer-input exists without a textarea wrapper', async () => {
+    let nowMs = 0;
+    let currentUrl = 'http://127.0.0.1:3000/new';
+    let sessionComposerVisible = false;
+
+    const machineChipClickSpy = vi.fn(async () => {});
+    const machineClickSpy = vi.fn(async () => {});
+    const sendClickSpy = vi.fn(async () => {
+      currentUrl = 'http://127.0.0.1:3000/session/session-901';
+      sessionComposerVisible = true;
+    });
+    const inputFillSpy = vi.fn(async () => {});
+
+    const page = {
+      getByTestId: vi.fn((testId: string) => {
+        if (testId === 'new-session-composer-input') {
+          return {
+            count: async (): Promise<number> => 1,
+            fill: inputFillSpy,
+          };
+        }
+        if (testId === 'session-composer-input') {
+          return {
+            count: async (): Promise<number> => (sessionComposerVisible ? 1 : 0),
+            click: vi.fn(async () => {}),
+          };
+        }
+        if (testId === 'agent-input-machine-chip') {
+          return {
+            count: async (): Promise<number> => 1,
+            click: machineChipClickSpy,
+          };
+        }
+        if (testId === 'new-session-composer-send') {
+          return {
+            count: async (): Promise<number> => 1,
+            click: sendClickSpy,
+          };
+        }
+        if (testId === 'new-session-machine:machine-session-input-only') {
+          return {
+            count: async (): Promise<number> => 1,
+            click: machineClickSpy,
+          };
+        }
+        throw new Error(`unexpected test id: ${testId}`);
+      }),
+      locator: vi.fn((selector: string) => {
+        if (selector === '[data-testid^="new-session-machine:"]') {
+          return {
+            first: () => ({
+              count: async (): Promise<number> => 1,
+            }),
+          };
+        }
+        if (selector === 'textarea[data-testid="session-composer-input"]:visible') {
+          return {
+            count: async (): Promise<number> => 0,
+          };
+        }
+        throw new Error(`unexpected selector: ${selector}`);
+      }),
+      goto: vi.fn(async (url: string) => {
+        currentUrl = url;
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      waitForURL: vi.fn(async (matcher: (url: URL) => boolean) => {
+        const url = new URL(currentUrl);
+        if (!matcher(url)) {
+          throw new Error(`url predicate did not match: ${currentUrl}`);
+        }
+      }),
+      url: vi.fn(() => currentUrl),
+    };
+
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    await expect(createSessionFromNewSessionComposer({
+      page: page as never,
+      uiBaseUrl: 'http://127.0.0.1:3000',
+      machineId: 'machine-session-input-only',
+      prompt: 'session input only prompt',
+    })).resolves.toBe('session-901');
+
+    expect(machineClickSpy).toHaveBeenCalledTimes(1);
+    expect(sendClickSpy).toHaveBeenCalledTimes(1);
+    expect(inputFillSpy).toHaveBeenCalledWith('session input only prompt');
+  });
+
+  it('does not swallow unrelated locator errors while waiting for session composer readiness', async () => {
+    let nowMs = 0;
+    let currentUrl = 'http://127.0.0.1:3000/new';
+
+    const page = {
+      getByTestId: vi.fn((testId: string) => {
+        if (testId === 'new-session-composer-input') {
+          return {
+            count: async (): Promise<number> => 1,
+            fill: vi.fn(async () => {}),
+          };
+        }
+        if (testId === 'session-composer-input') {
+          return {
+            count: async (): Promise<number> => 0,
+          };
+        }
+        if (testId === 'agent-input-machine-chip') {
+          return {
+            count: async (): Promise<number> => 1,
+            click: vi.fn(async () => {}),
+          };
+        }
+        if (testId === 'new-session-composer-send') {
+          return {
+            count: async (): Promise<number> => 1,
+            click: vi.fn(async () => {
+              currentUrl = 'http://127.0.0.1:3000/session/session-xyz';
+            }),
+          };
+        }
+        if (testId === 'new-session-machine:machine-error') {
+          return {
+            count: async (): Promise<number> => 1,
+            click: vi.fn(async () => {}),
+          };
+        }
+        throw new Error(`unexpected test id: ${testId}`);
+      }),
+      locator: vi.fn((selector: string) => {
+        if (selector === '[data-testid^="new-session-machine:"]') {
+          return {
+            first: () => ({
+              count: async (): Promise<number> => 1,
+            }),
+          };
+        }
+        if (selector === 'textarea[data-testid="session-composer-input"]:visible') {
+          return {
+            count: async (): Promise<number> => {
+              throw new Error('Target page, context or browser has been closed');
+            },
+          };
+        }
+        throw new Error(`unexpected selector: ${selector}`);
+      }),
+      goto: vi.fn(async (url: string) => {
+        currentUrl = url;
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      waitForURL: vi.fn(async (matcher: (url: URL) => boolean) => {
+        const url = new URL(currentUrl);
+        if (!matcher(url)) throw new Error(`url predicate did not match: ${currentUrl}`);
+      }),
+      url: vi.fn(() => currentUrl),
+    };
+
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    await expect(createSessionFromNewSessionComposer({
+      page: page as never,
+      uiBaseUrl: 'http://127.0.0.1:3000',
+      machineId: 'machine-error',
+      prompt: 'propagate playwright error',
+    })).rejects.toThrow('Target page, context or browser has been closed');
   });
 });

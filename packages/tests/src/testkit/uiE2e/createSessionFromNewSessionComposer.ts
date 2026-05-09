@@ -37,13 +37,25 @@ async function waitForCount(
   return (await locator.count()) === expectedCount;
 }
 
-async function clickFirstMachineMatch(page: Page, machineId: string): Promise<boolean> {
+type MachineClickResult = 'clicked' | 'absent' | 'present_not_actionable';
+
+async function clickFirstMachineMatch(page: Page, machineId: string): Promise<MachineClickResult> {
   const exact = page.getByTestId(`new-session-machine:${machineId}`);
   if ((await exact.count()) === 0) {
-    return false;
+    return 'absent';
   }
-  await exact.first().click();
-  return true;
+
+  const clickTarget =
+    typeof (exact as { first?: () => { click: (options?: { timeout?: number }) => Promise<void> } }).first === 'function'
+      ? (exact as { first: () => { click: (options?: { timeout?: number }) => Promise<void> } }).first()
+      : (exact as { click: (options?: { timeout?: number }) => Promise<void> });
+
+  try {
+    await clickTarget.click({ timeout: 5_000 });
+    return 'clicked';
+  } catch {
+    return 'present_not_actionable';
+  }
 }
 
 export async function openNewSessionMachineSelection(
@@ -126,15 +138,19 @@ export async function createSessionFromNewSessionComposer(
   const machineSelectionResult = await openNewSessionMachineSelection({ page, uiBaseUrl });
   const pickDeadlineMs = Date.now() + 120_000;
   while (true) {
-    if (await clickFirstMachineMatch(page, machineId)) {
+    const clickResult = await clickFirstMachineMatch(page, machineId);
+    if (clickResult === 'clicked') {
       break;
     }
 
-    if (machineSelectionResult === 'returned_to_new') {
+    if (machineSelectionResult === 'returned_to_new' && clickResult === 'absent') {
       break;
     }
 
     if (Date.now() > pickDeadlineMs) {
+      if (clickResult === 'present_not_actionable') {
+        throw new Error(`Machine selector was present but not actionable for machine ${machineId} within 120000ms.`);
+      }
       await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 1 });
     }
 
@@ -147,7 +163,19 @@ export async function createSessionFromNewSessionComposer(
   await page.getByTestId('new-session-composer-input').fill(prompt);
   await expect(page.getByTestId('new-session-composer-send')).toHaveCount(1, { timeout: 60_000 });
   await page.getByTestId('new-session-composer-send').click();
-  await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
+
+  const sessionComposerTextarea = page.locator('textarea[data-testid="session-composer-input"]:visible');
+  const sessionComposer = page.getByTestId('session-composer-input');
+  const composerDeadlineMs = Date.now() + 180_000;
+  while (Date.now() < composerDeadlineMs) {
+    if ((await sessionComposerTextarea.count()) > 0) break;
+    if ((await sessionComposer.count()) > 0) break;
+    await page.waitForTimeout(250);
+  }
+
+  if ((await sessionComposerTextarea.count()) === 0 && (await sessionComposer.count()) === 0) {
+    await expect(sessionComposerTextarea).toHaveCount(1, { timeout: 1 });
+  }
 
   const pathname = new URL(page.url()).pathname;
   const parts = pathname.split('/').filter(Boolean);
