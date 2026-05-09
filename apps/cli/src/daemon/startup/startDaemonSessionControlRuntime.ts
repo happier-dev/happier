@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
+import { materializeNextPendingQueueV2MessageViaHttp } from '@/api/session/pendingQueueV2Transport';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
@@ -33,6 +35,26 @@ function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds
     const parsed = Number.parseInt(value, 10);
     if (!Number.isFinite(parsed)) return fallback;
     return Math.min(bounds.max, Math.max(bounds.min, parsed));
+}
+
+async function nudgeAlreadyRunningExistingSessionPendingQueue(params: Readonly<{
+    sessionId: string;
+    daemonToken: string;
+}>): Promise<void> {
+    const token = params.daemonToken.trim();
+    if (!token) return;
+
+    try {
+        await materializeNextPendingQueueV2MessageViaHttp({
+            token,
+            sessionId: params.sessionId,
+        });
+    } catch (error) {
+        logger.debug('[DAEMON RUN] Failed to nudge pending queue for already-running session resume', {
+            sessionId: params.sessionId,
+            error: serializeAxiosErrorForLog(error),
+        });
+    }
 }
 
 export async function startDaemonSessionControlRuntime(
@@ -104,6 +126,12 @@ export async function startDaemonSessionControlRuntime(
                     waitForExitTimeoutMs: configuration.daemonSpawnExistingSessionWaitForExitMs,
                     waitForExitPollIntervalMs: configuration.daemonSpawnExistingSessionWaitForExitPollIntervalMs,
                     logDebug: (message, payload) => logger.debug(message, payload),
+                    onAlreadyRunning: async (sessionId) => {
+                        await nudgeAlreadyRunningExistingSessionPendingQueue({
+                            sessionId,
+                            daemonToken: params.credentials.token,
+                        });
+                    },
                 });
                 if (existingSessionPreGate.shortCircuitResult) {
                     return existingSessionPreGate.shortCircuitResult;

@@ -13,6 +13,7 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
   waitForExitTimeoutMs: number;
   waitForExitPollIntervalMs: number;
   logDebug: (message: string, payload?: unknown) => void;
+  onAlreadyRunning?: (sessionId: string) => Promise<void>;
 }>): Promise<ResolveExistingSessionSpawnPreGateResult> {
   const normalizedExistingSessionId = typeof params.existingSessionId === 'string' ? params.existingSessionId.trim() : '';
   if (!normalizedExistingSessionId) {
@@ -57,6 +58,7 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
   }
 
   params.logDebug(`[DAEMON RUN] Resume requested for ${normalizedExistingSessionId}, but session is already running`);
+  await params.onAlreadyRunning?.(normalizedExistingSessionId);
   return {
     shortCircuitResult: {
       type: 'success',

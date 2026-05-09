@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -8,15 +8,9 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { enableEnhancedSessionWizard } from '../../src/testkit/uiE2e/enableEnhancedSessionWizard';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
-
-async function enableEnhancedSessionWizardInSettings(page: Page, baseUrl: string) {
-  await page.goto(`${baseUrl}/settings/features`, { waitUntil: 'domcontentloaded' });
-  const enhancedWizardToggle = page.getByTestId('settings-feature-toggle-useEnhancedSessionWizard');
-  await expect(enhancedWizardToggle).toHaveCount(1, { timeout: 60_000 });
-  await enhancedWizardToggle.click();
-}
 
 test.describe('ui e2e: new-session agent picker testIDs', () => {
   test.describe.configure({ mode: 'serial' });
@@ -133,7 +127,7 @@ test.describe('ui e2e: new-session agent picker testIDs', () => {
       )
       .toBe(true);
 
-    await enableEnhancedSessionWizardInSettings(page, uiBaseUrl);
+    await enableEnhancedSessionWizard({ page, baseUrl: uiBaseUrl });
 
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });

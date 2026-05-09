@@ -3,9 +3,20 @@ import { expect, type Page } from '@playwright/test';
 const AGENT_PICKER_APPLY_TEST_ID = 'agent-input-chip-picker.apply';
 const AGENT_PICKER_CLOSE_TEST_ID = 'agent-input-chip-picker.close';
 const AGENT_CHIP_TEST_ID = 'agent-input-agent-chip';
+const WIZARD_AGENT_DROPDOWN_TRIGGER_TEST_ID = 'new-session-agent-dropdown-trigger';
+
+const AGENT_LABEL_BY_ID: Readonly<Record<string, string>> = {
+  codex: 'Codex',
+};
+
+function expectedAgentLabel(agentId: string): string {
+  return AGENT_LABEL_BY_ID[agentId] ?? agentId;
+}
 
 function buildAgentOptionTestIds(agentId: string): string[] {
+  const dropdownSafeAgentId = agentId.replace(/[^a-zA-Z0-9_-]/g, '_');
   return [
+    `dropdown-option-${dropdownSafeAgentId}`,
     `new-session-agent:${agentId}`,
     `agent-input-chip-picker.option:${agentId}`,
     `agent-input-chip-picker.option:engine:${agentId}`,
@@ -58,6 +69,38 @@ async function maybeApplyAndClosePicker(page: Page): Promise<void> {
   }
 }
 
+async function openAgentSelectionSurface(page: Page): Promise<void> {
+  const wizardDropdownTrigger = page.getByTestId(WIZARD_AGENT_DROPDOWN_TRIGGER_TEST_ID).first();
+  if ((await wizardDropdownTrigger.count()) > 0) {
+    await wizardDropdownTrigger.click();
+    return;
+  }
+
+  const agentChip = page.getByTestId(AGENT_CHIP_TEST_ID).first();
+  if ((await agentChip.count()) > 0) {
+    await agentChip.click();
+  }
+}
+
+async function isAgentSelected(params: Readonly<{
+  page: Page;
+  agentId: string;
+}>): Promise<boolean> {
+  const expectedLabel = expectedAgentLabel(params.agentId);
+  const selectedSurfaces = [
+    params.page.getByTestId(WIZARD_AGENT_DROPDOWN_TRIGGER_TEST_ID).first(),
+    params.page.getByTestId(AGENT_CHIP_TEST_ID).first(),
+  ];
+
+  for (const surface of selectedSurfaces) {
+    if ((await surface.count()) === 0) continue;
+    const text = await surface.textContent().catch(() => null);
+    if (text?.toLowerCase().includes(expectedLabel.toLowerCase())) return true;
+  }
+
+  return false;
+}
+
 export async function selectNewSessionAgent(params: Readonly<{
   page: Page;
   agentId: string;
@@ -68,14 +111,13 @@ export async function selectNewSessionAgent(params: Readonly<{
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    const agentChip = params.page.getByTestId(AGENT_CHIP_TEST_ID).first();
-    if ((await agentChip.count()) > 0) {
-      await agentChip.click();
-    }
+    if (await isAgentSelected({ page: params.page, agentId: params.agentId })) return;
+
+    await openAgentSelectionSurface(params.page);
 
     if (await clickFirstEnabledOption({ page: params.page, agentOptionTestIds })) {
       await maybeApplyAndClosePicker(params.page);
-      return;
+      if (await isAgentSelected({ page: params.page, agentId: params.agentId })) return;
     }
 
     await params.page.waitForTimeout(250);

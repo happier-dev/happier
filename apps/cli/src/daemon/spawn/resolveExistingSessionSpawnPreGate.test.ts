@@ -6,6 +6,7 @@ describe('resolveExistingSessionSpawnPreGate', () => {
   it('returns the already-running existing session before spawning a new attach process', async () => {
     const isSessionRunnerActive = vi.fn(async () => true);
     const logDebug = vi.fn();
+    const onAlreadyRunning = vi.fn(async () => {});
 
     const resolved = await resolveExistingSessionSpawnPreGate({
       existingSessionId: 'sess-live',
@@ -14,6 +15,7 @@ describe('resolveExistingSessionSpawnPreGate', () => {
       waitForExitTimeoutMs: 0,
       waitForExitPollIntervalMs: 50,
       logDebug,
+      onAlreadyRunning,
     });
 
     expect(resolved).toEqual({
@@ -24,5 +26,6 @@ describe('resolveExistingSessionSpawnPreGate', () => {
     });
     expect(isSessionRunnerActive).toHaveBeenCalledWith('sess-live');
     expect(logDebug).toHaveBeenCalledWith('[DAEMON RUN] Resume requested for sess-live, but session is already running');
+    expect(onAlreadyRunning).toHaveBeenCalledWith('sess-live');
   });
 });

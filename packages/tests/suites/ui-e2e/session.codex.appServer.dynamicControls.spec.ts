@@ -13,6 +13,8 @@ import {
 } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+import { enableEnhancedSessionWizard } from '../../src/testkit/uiE2e/enableEnhancedSessionWizard';
+import { selectNewSessionAgent } from '../../src/testkit/uiE2e/selectNewSessionAgent';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -314,17 +316,6 @@ async function setSessionReplayEnabled(page: Page, uiBaseUrl: string, enabled: b
     }
 }
 
-async function enableEnhancedSessionWizard(page: Page, uiBaseUrl: string): Promise<void> {
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/features`);
-    const enhancedWizardToggle = page.getByTestId('settings-feature-toggle-useEnhancedSessionWizard');
-    await expect(enhancedWizardToggle).toHaveCount(1, { timeout: 60_000 });
-    const isChecked = await enhancedWizardToggle.isChecked().catch(() => false);
-    if (!isChecked) {
-        await enhancedWizardToggle.click();
-    }
-    await expect(enhancedWizardToggle).toBeChecked({ timeout: 60_000 });
-}
-
 async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
     page: Page;
     testDir: string;
@@ -376,7 +367,7 @@ async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
     });
 
     await setCodexBackendModeToAppServer(params.page, params.uiBaseUrl);
-    await enableEnhancedSessionWizard(params.page, params.uiBaseUrl);
+    await enableEnhancedSessionWizard({ page: params.page, baseUrl: params.uiBaseUrl });
     await setSessionReplayEnabled(params.page, params.uiBaseUrl, false);
 
     const machineId = await readDaemonMachineIdFromHappyHomeDir({ happyHomeDir: resolve(join(params.testDir, 'cli-home')) });
@@ -507,35 +498,6 @@ async function maybeDismissDetectedClisModal(page: Page, opts?: Readonly<{ timeo
     return true;
 }
 
-async function selectNewSessionBackend(page: Page, backendId: string): Promise<void> {
-    const modal = page.locator('[data-testid="detected-clis:modal"]:visible').first();
-
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-        await maybeDismissDetectedClisModal(page, { timeoutMs: attempt === 0 ? 30_000 : 3_000 }).catch(() => false);
-
-        const openDialogs = page.locator('[role="dialog"][data-state="open"]');
-        const topDialog = openDialogs.last();
-
-        const dialogOption = topDialog.locator(`[data-testid="new-session-agent:${backendId}"]:visible`).first();
-        const inlineOption = page.locator(`[data-testid="new-session-agent:${backendId}"]:visible`).first();
-
-        const target = (await dialogOption.count()) > 0 ? dialogOption : inlineOption;
-
-        await expect(target).toBeEnabled({ timeout: 120_000 });
-        await target.scrollIntoViewIfNeeded().catch(() => {});
-
-        try {
-            await target.click({ timeout: 3_000 });
-            return;
-        } catch (error) {
-            if ((await modal.count()) > 0) continue;
-            throw error;
-        }
-    }
-
-    await expect(modal).toHaveCount(0, { timeout: 60_000 });
-}
-
 async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseUrl: string; machineId: string }>): Promise<void> {
     await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new`);
 
@@ -576,7 +538,7 @@ async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseU
     await maybeDismissDetectedClisModal(params.page, { timeoutMs: 30_000 }).catch(() => false);
     await expect(blockingGuidance).toHaveCount(0, { timeout: 60_000 });
 
-    await selectNewSessionBackend(params.page, 'codex');
+    await selectNewSessionAgent({ page: params.page, agentId: 'codex' });
 
     const pathChip = params.page.getByTestId('agent-input-path-chip');
     if ((await pathChip.count()) > 0) {
