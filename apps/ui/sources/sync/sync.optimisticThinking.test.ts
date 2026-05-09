@@ -487,7 +487,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         });
     });
 
-    it('prefers session runtime RPC for active sessions so steering-capable agents receive the user message directly', async () => {
+    it('clears the local pending row after active-session runtime RPC accepts the message', async () => {
         const sessionId = 's_active_runtime_rpc';
         storage.getState().applySessions([createSession({ sessionId })]);
 
@@ -528,7 +528,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(emitWithAck).not.toHaveBeenCalled();
 
         const pending = storage.getState().sessionPending[sessionId]?.messages ?? [];
-        expect(pending.map((message) => message.text)).toEqual(['steer this']);
+        expect(pending).toEqual([]);
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
 
         sessionRpcSpy.mockRestore();

@@ -431,6 +431,24 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(scroll.props.style?.maxHeight).toBe(64);
     });
 
+    it('expands the pending queue block when content overflows the compact height', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        const scroll = screen.findByType('ScrollView');
+        await act(async () => {
+            scroll.props.onContentSizeChange?.(0, 200);
+        });
+
+        const updatedScroll = screen.findByType('ScrollView');
+        expect(updatedScroll.props.style?.maxHeight).toBe(520);
+        expect(updatedScroll.props.style?.height).toBe(200);
+    });
+
     it('does not show discarded action icons until hover on web', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {

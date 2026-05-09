@@ -1482,9 +1482,8 @@ class Sync {
                         return await encryption.encryptRawRecord(content);
                     })();
 
-            // Track this outbound user message in the local pending queue until it is committed.
-            // This prevents “ghost” optimistic transcript items when the send fails, and it lets the UI
-            // show a pending bubble while we await ACK / catch-up.
+            // Track this outbound user message in the local pending queue until the active runtime accepts it
+            // or the lower-level commit path materializes it into transcript state.
             const createdAt = nowServerMs();
             storage.getState().upsertPendingMessage(sessionId, {
                 id: localId,
@@ -1515,6 +1514,7 @@ class Sync {
                         },
                         { timeoutMs: this.syncTuning.sessionRpcTimeoutMs },
                     );
+                    storage.getState().removePendingMessage(sessionId, localId);
                     await publishNextPromptPermissionModeIfNeeded();
                     return;
                 } catch (error) {

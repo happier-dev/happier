@@ -54,6 +54,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         typeof maxHeightSetting === 'number' && Number.isFinite(maxHeightSetting)
             ? Math.max(1, Math.trunc(maxHeightSetting))
             : settingsDefaults.transcriptPendingQueueMaxHeightPx;
+    const expandedMaxHeightSetting = useSetting('transcriptPendingQueueExpandedMaxHeightPx');
+    const expandedMaxHeightPx =
+        typeof expandedMaxHeightSetting === 'number' && Number.isFinite(expandedMaxHeightSetting)
+            ? Math.max(maxHeightPx, Math.trunc(expandedMaxHeightSetting))
+            : settingsDefaults.transcriptPendingQueueExpandedMaxHeightPx;
 
     const collapseThresholdCharsSetting = useSetting('transcriptPendingMessageCollapseThresholdChars');
     const collapseThresholdChars =
@@ -608,7 +613,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
     if (pendingCount <= 0 && discardedCount <= 0) return null;
 
-    const maxHeight = maxHeightPx;
+    const maxHeight =
+        typeof scrollContentHeightPx === 'number' && Number.isFinite(scrollContentHeightPx) && scrollContentHeightPx > maxHeightPx
+            ? expandedMaxHeightPx
+            : maxHeightPx;
     const headerLabel =
         pendingCount > 0
             ? `${t('session.pendingMessages.title')} (${pendingCount})`
