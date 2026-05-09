@@ -201,6 +201,7 @@ describe('MessageView (streaming smoothing)', () => {
         );
 
         expect(captured.markdownProps).toHaveLength(1);
+        expect(captured.markdownProps[0]?.staticRenderPlaceholderEnabled).toBe(false);
         captured.markdownProps.length = 0;
         captured.extractMentionsCalls = 0;
 
@@ -225,6 +226,7 @@ describe('MessageView (streaming smoothing)', () => {
             streamingMode: 'streaming',
             streamingAnimated: true,
             streamingRevealPreset: 'subtle',
+            staticRenderPlaceholderEnabled: false,
         });
         expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
         expect(captured.extractMentionsCalls).toBe(0);
@@ -251,6 +253,7 @@ describe('MessageView (streaming smoothing)', () => {
             streamingMode: 'streaming',
             streamingAnimated: true,
             streamingRevealPreset: 'subtle',
+            staticRenderPlaceholderEnabled: false,
         });
         expect(screen.findByTestId('transcript-streaming-plain:m1')).toBe(null);
         captured.markdownProps.length = 0;
@@ -264,6 +267,7 @@ describe('MessageView (streaming smoothing)', () => {
         expect(captured.markdownProps).toHaveLength(1);
         expect(captured.markdownProps[0]?.markdown).toBe('Hello world!');
         expect(captured.markdownProps[0]?.streamingMode).toBeUndefined();
+        expect(captured.markdownProps[0]?.staticRenderPlaceholderEnabled).toBe(false);
         expect(captured.extractMentionsCalls).toBeGreaterThan(0);
     });
 

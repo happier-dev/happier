@@ -468,7 +468,15 @@ function UserTextBlock(props: {
                 });
               }}
             />
-            <MarkdownView markdown={renderedMarkdownText} onOptionPress={handleOptionPress} onLinkPress={handleMarkdownLinkPress} selectable={true} profile="transcript" textStyle={styles.transcriptMarkdownText} />
+            <MarkdownView
+              markdown={renderedMarkdownText}
+              onOptionPress={handleOptionPress}
+              onLinkPress={handleMarkdownLinkPress}
+              selectable={true}
+              profile="transcript"
+              textStyle={styles.transcriptMarkdownText}
+              staticRenderPlaceholderEnabled={false}
+            />
             {sessionMediaInlineImages.length > 0 ? (
               <SessionMediaInlineImages
                 sessionId={props.sessionId}
@@ -796,6 +804,7 @@ function AgentTextBlock(props: {
                     selectable={true}
                     profile="thinking"
                     textStyle={thinkingMarkdownTextStyle}
+                    staticRenderPlaceholderEnabled={false}
                   />
                 </ThinkingTimelineRow>
             ) : (
@@ -810,6 +819,7 @@ function AgentTextBlock(props: {
                   streamingMode="streaming"
                   streamingAnimated={streamingRevealAnimationEnabled}
                   streamingRevealPreset={streamingRevealPreset}
+                  staticRenderPlaceholderEnabled={false}
                 />
               ) : shouldRenderStreamingPlain ? (
                 <Text
@@ -827,6 +837,7 @@ function AgentTextBlock(props: {
                   selectable={true}
                   profile={props.message.isThinking ? 'thinking' : 'transcript'}
                   textStyle={props.message.isThinking ? styles.thinkingMarkdownText : styles.transcriptMarkdownText}
+                  staticRenderPlaceholderEnabled={false}
                 />
               )
             )

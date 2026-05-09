@@ -25,6 +25,7 @@ export const MarkdownView = React.memo((props: {
     streamingMode?: MarkdownStreamingMode;
     streamingAnimated?: boolean;
     streamingRevealPreset?: StreamingTextRevealPreset;
+    staticRenderPlaceholderEnabled?: boolean;
 }) => {
     const profile = normalizeMarkdownRenderingProfile({
         profile: props.profile,
@@ -44,6 +45,7 @@ export const MarkdownView = React.memo((props: {
             streamingMode={props.streamingMode === 'streaming' ? 'streaming' : 'static'}
             streamingAnimated={props.streamingAnimated === true}
             streamingRevealPreset={props.streamingRevealPreset}
+            staticRenderPlaceholderEnabled={props.staticRenderPlaceholderEnabled !== false}
         />
     );
 });
