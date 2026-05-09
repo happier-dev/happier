@@ -71,7 +71,7 @@ describe('ApiMachineClient connect ordering', () => {
     });
 
     (client as any).startKeepAlive = () => undefined;
-    (client as any).syncChangesOnConnect = () => undefined;
+    (client as any).syncChangesOnConnect = async () => undefined;
 
     vi.spyOn(client, 'updateDaemonState').mockImplementation(async () => {
       callOrder.push('state');
