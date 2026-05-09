@@ -2,29 +2,17 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const spawnSyncMock = vi.hoisted(() => vi.fn());
+const { spawnSyncMock } = vi.hoisted(() => ({
+    spawnSyncMock: vi.fn(),
+}));
 
 vi.mock('node:child_process', () => ({
     spawnSync: spawnSyncMock,
 }));
 
 import { compileBunBinary, execOrThrow, resolveBunCommand } from './commands.js';
-
-const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
-
-function withWindowsPlatform<T>(fn: () => T): T {
-    if (!originalPlatformDescriptor) {
-        throw new Error('Expected process.platform to be configurable for this test');
-    }
-    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
-    try {
-        return fn();
-    } finally {
-        Object.defineProperty(process, 'platform', originalPlatformDescriptor);
-    }
-}
 
 describe('resolveBunCommand', () => {
     it('expands ~/ explicit bun overrides against HOME', () => {
@@ -74,32 +62,86 @@ describe('resolveBunCommand', () => {
 });
 
 describe('execOrThrow', () => {
-    it('routes Windows cmd shims through cmd.exe before spawning', () => {
-        withWindowsPlatform(() => {
-            spawnSyncMock.mockReturnValue({ status: 0, stderr: '', error: undefined });
+    const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
-            execOrThrow('yarn.cmd', ['build', '--cwd', 'apps/cli'], {
-                cwd: '/repo',
+    afterEach(() => {
+        spawnSyncMock.mockReset();
+        if (originalPlatformDescriptor) {
+            Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+        }
+    });
+
+    it('wraps Windows shell shims through cmd.exe before spawning', () => {
+        if (!originalPlatformDescriptor) {
+            throw new Error('Expected process.platform to be configurable for this test');
+        }
+        Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+        const tempRoot = mkdtempSync(join(tmpdir(), 'cli-common-win32-cmd-shim-'));
+
+        try {
+            const shimDir = join(tempRoot, 'node_modules', '.bin');
+            const yarnShimPath = join(shimDir, 'yarn.cmd');
+            mkdirSync(shimDir, { recursive: true });
+            writeFileSync(yarnShimPath, '@echo off\r\n', 'utf8');
+            spawnSyncMock.mockReturnValue({ status: 0, stderr: '' });
+
+            execOrThrow('yarn', ['--cwd', 'apps/cli', 'build'], {
+                cwd: 'C:\\repo',
                 env: {
-                    PATH: '/repo/node_modules/.bin',
+                    PATH: shimDir,
                     PATHEXT: '.CMD;.EXE',
-                },
+                    ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+                } as NodeJS.ProcessEnv,
+                stdio: 'pipe',
             });
+
+            expect(spawnSyncMock).toHaveBeenCalledTimes(1);
+            const [command, args, options] = spawnSyncMock.mock.calls[0] ?? [];
+            expect(command).toBe('C:\\Windows\\System32\\cmd.exe');
+            expect(args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
+            expect(String(args[3]).toLowerCase()).toContain(yarnShimPath.toLowerCase());
+            expect(String(args[3])).toContain('--cwd');
+            expect(String(args[3])).toContain('apps/cli');
+            expect(String(args[3])).toContain('build');
+            expect(options).toEqual(expect.objectContaining({
+                cwd: 'C:\\repo',
+                encoding: 'utf-8',
+                stdio: 'pipe',
+                windowsVerbatimArguments: true,
+            }));
+        } finally {
+            rmSync(tempRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('forwards timeoutMs to the spawned process timeout option', () => {
+        spawnSyncMock.mockReturnValue({ status: 0, stderr: '' });
+
+        execOrThrow('tar', ['--version'], {
+            cwd: process.cwd(),
+            stdio: 'pipe',
+            timeoutMs: 1234,
         });
 
         expect(spawnSyncMock).toHaveBeenCalledTimes(1);
-        expect(spawnSyncMock).toHaveBeenCalledWith(
-            'cmd.exe',
-            expect.arrayContaining(['/d', '/s', '/c', expect.stringContaining('yarn.cmd')]),
-            expect.objectContaining({
-                cwd: '/repo',
-                env: expect.objectContaining({
-                    PATH: '/repo/node_modules/.bin',
-                    PATHEXT: '.CMD;.EXE',
-                }),
-                encoding: 'utf-8',
-            }),
-        );
+        const [, , options] = spawnSyncMock.mock.calls[0] ?? [];
+        expect(options).toEqual(expect.objectContaining({
+            timeout: 1234,
+            stdio: 'pipe',
+            encoding: 'utf-8',
+        }));
+    });
+
+    it('preserves process error code for timeout-aware callers', () => {
+        const processError = Object.assign(new Error('spawnSync tar ETIMEDOUT'), { code: 'ETIMEDOUT' });
+        spawnSyncMock.mockReturnValue({ error: processError });
+
+        expect(() => execOrThrow('tar', ['-czf', 'artifact.tar.gz', 'payload'], {
+            stdio: 'pipe',
+            timeoutMs: 1,
+        })).toThrowError(expect.objectContaining({
+            code: 'ETIMEDOUT',
+        }));
     });
 });
 

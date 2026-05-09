@@ -1,12 +1,17 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createServerLightTemplateCacheKey, prepareCachedDataDir } from './serverLightTemplateCache';
 
 describe('serverLightTemplateCache', () => {
+  afterEach(() => {
+    vi.doUnmock('node:fs/promises');
+    vi.resetModules();
+  });
+
   it('builds the template once and reuses it for later targets', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-server-light-template-cache-'));
     const cacheRootDir = resolve(rootDir, 'cache');
@@ -69,6 +74,29 @@ describe('serverLightTemplateCache', () => {
     expect(buildCount).toBe(1);
   });
 
+  it('rebuilds stale cache entries that are missing the ready marker', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-server-light-template-cache-'));
+    const cacheRootDir = resolve(rootDir, 'cache');
+    const targetDir = resolve(rootDir, 'target');
+    const staleDataDir = resolve(cacheRootDir, 'sqlite-seed', 'data');
+    mkdirSync(staleDataDir, { recursive: true });
+    writeFileSync(resolve(staleDataDir, 'stale.txt'), 'stale\n', 'utf8');
+
+    const result = await prepareCachedDataDir({
+      cacheRootDir,
+      templateKey: 'sqlite-seed',
+      targetDir,
+      buildTemplateInto: async (templateDataDir: string) => {
+        mkdirSync(templateDataDir, { recursive: true });
+        writeFileSync(resolve(templateDataDir, 'seed.txt'), 'fresh\n', 'utf8');
+      },
+    });
+
+    expect(result.cacheHit).toBe(false);
+    expect(readFileSync(resolve(result.cacheEntryDir, 'data', 'seed.txt'), 'utf8')).toBe('fresh\n');
+    expect(readFileSync(resolve(targetDir, 'seed.txt'), 'utf8')).toBe('fresh\n');
+  });
+
   it('changes the cache key when migration contents change', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-server-light-template-key-'));
     mkdirSync(resolve(rootDir, 'apps', 'server', 'prisma', 'sqlite'), { recursive: true });
@@ -82,5 +110,43 @@ describe('serverLightTemplateCache', () => {
     const after = await createServerLightTemplateCacheKey({ rootDir, provider: 'sqlite' });
 
     expect(before).not.toBe(after);
+  });
+
+  it('retries cache publish when rename returns a transient EPERM error', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-server-light-template-cache-'));
+    const cacheRootDir = resolve(rootDir, 'cache');
+    const targetDir = resolve(rootDir, 'target');
+
+    vi.resetModules();
+    vi.doMock('node:fs/promises', async () => {
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+      let firstRename = true;
+      return {
+        ...actual,
+        rename: vi.fn(async (...args: Parameters<typeof actual.rename>) => {
+          if (firstRename) {
+            firstRename = false;
+            const error = Object.assign(new Error('simulated windows file lock'), { code: 'EPERM' });
+            throw error;
+          }
+          return await actual.rename(...args);
+        }),
+      };
+    });
+
+    const { prepareCachedDataDir: prepareWithRetry } = await import('./serverLightTemplateCache');
+    const result = await prepareWithRetry({
+      cacheRootDir,
+      templateKey: 'sqlite-seed',
+      targetDir,
+      buildTemplateInto: async (templateDataDir: string) => {
+        mkdirSync(templateDataDir, { recursive: true });
+        writeFileSync(resolve(templateDataDir, 'seed.txt'), 'seed\n', 'utf8');
+      },
+    });
+
+    expect(result.cacheHit).toBe(false);
+    expect(readFileSync(resolve(result.cacheEntryDir, 'data', 'seed.txt'), 'utf8')).toBe('seed\n');
+    expect(readFileSync(resolve(targetDir, 'seed.txt'), 'utf8')).toBe('seed\n');
   });
 });

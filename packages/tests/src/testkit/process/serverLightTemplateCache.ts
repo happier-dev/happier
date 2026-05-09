@@ -1,7 +1,7 @@
 import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -20,6 +20,8 @@ type PrepareCachedDataDirResult = {
 
 const READY_MARKER_FILE = 'ready.json';
 const TEMPLATE_DATA_DIR = 'data';
+const CACHE_PUBLISH_MAX_ATTEMPTS = 6;
+const CACHE_PUBLISH_RETRY_DELAY_MS = 50;
 
 const activeTemplateBuilds = new Map<string, Promise<void>>();
 
@@ -76,7 +78,7 @@ async function ensureCacheEntryReady(params: {
   }
 
   const buildPromise = (async () => {
-    await mkdir(params.cacheEntryDir, { recursive: true });
+    await mkdir(dirname(params.cacheEntryDir), { recursive: true });
     const tempEntryDir = resolve(params.cacheEntryDir, '..', `${basename(params.cacheEntryDir) || 'template'}-tmp-${process.pid}-${randomUUID()}`);
     const tempDataDir = resolve(tempEntryDir, TEMPLATE_DATA_DIR);
 
@@ -87,11 +89,42 @@ async function ensureCacheEntryReady(params: {
       await params.buildTemplateInto(tempDataDir);
       await writeFile(resolve(tempEntryDir, READY_MARKER_FILE), JSON.stringify({ createdAt: new Date().toISOString() }) + '\n', 'utf8');
       try {
-        await rename(tempEntryDir, params.cacheEntryDir);
+        let published = false;
+        for (let attempt = 1; attempt <= CACHE_PUBLISH_MAX_ATTEMPTS; attempt += 1) {
+          try {
+            await rename(tempEntryDir, params.cacheEntryDir);
+            published = true;
+            break;
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException | undefined)?.code;
+            const isRetryable = code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
+            if (!isRetryable || attempt === CACHE_PUBLISH_MAX_ATTEMPTS) {
+              throw error;
+            }
+            await new Promise((resolvePromise) => setTimeout(resolvePromise, CACHE_PUBLISH_RETRY_DELAY_MS));
+          }
+        }
+
+        if (!published && !(await pathExists(readyMarkerPath))) {
+          throw new Error(`Server-light template cache entry publish did not complete: ${params.cacheEntryDir}`);
+        }
       } catch (error) {
         const code = (error as NodeJS.ErrnoException | undefined)?.code;
-        if (code !== 'EEXIST' && code !== 'ENOTEMPTY') {
+        if (code !== 'EEXIST' && code !== 'ENOTEMPTY' && code !== 'EPERM' && code !== 'EACCES') {
           throw error;
+        }
+
+        // Recover from stale cache directories left by interrupted runs that have no ready marker.
+        if (!(await pathExists(readyMarkerPath))) {
+          await rm(params.cacheEntryDir, { recursive: true, force: true });
+          try {
+            await rename(tempEntryDir, params.cacheEntryDir);
+          } catch (recoveryError) {
+            const recoveryCode = (recoveryError as NodeJS.ErrnoException | undefined)?.code;
+            if (recoveryCode !== 'EEXIST' && recoveryCode !== 'ENOTEMPTY' && recoveryCode !== 'EPERM' && recoveryCode !== 'EACCES') {
+              throw recoveryError;
+            }
+          }
         }
       }
 

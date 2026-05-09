@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { isProcessAlive, terminateProcessTreeByPid } from './processTree';
 import { spawnDetachedInlineNodeTestProcess, spawnDetachedTestProcess, spawnTestProcess } from './testSpawn';
-import { resolveTsxImportHookPath } from './tsxImportHook';
+import { resolveTsxImportHookSpecifier } from './tsxImportHook';
 import { repoRootDir } from '../paths';
 
 describe('testSpawn', () => {
@@ -36,8 +36,8 @@ describe('testSpawn', () => {
   });
 
   it('terminateProcessTreeByPid does not SIGTERM the caller when the target shares its process group', async () => {
-    const tsxHookPath = resolveTsxImportHookPath();
-    if (!tsxHookPath) {
+    const tsxHookSpecifier = resolveTsxImportHookSpecifier();
+    if (!tsxHookSpecifier) {
       throw new Error('tsx import hook is required for processTree regression coverage but could not be resolved');
     }
 
@@ -45,7 +45,7 @@ describe('testSpawn', () => {
       process.execPath,
       [
         '--import',
-        tsxHookPath,
+        tsxHookSpecifier,
         '--input-type=module',
         '-e',
         [

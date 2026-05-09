@@ -1412,6 +1412,32 @@ export async function ensureCliDistSnapshotEntrypoint(
     ensureSnapshotProjectLink(dir, rootDir, 'bin');
     ensureSnapshotProjectFile(dir, rootDir, 'tsconfig.json');
   };
+  const ensureSnapshotNodeModules = (dir: string): void => {
+    const mode = (params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? '').toString().trim().toLowerCase();
+    if (mode === 'symlink') {
+      const snapshotNodeModulesDir = resolve(dir, 'node_modules');
+      if (existsSync(snapshotNodeModulesDir)) return;
+
+      const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
+      const rootNodeModulesDir = resolve(rootDir, 'node_modules');
+      const source = existsSync(cliNodeModulesDir) ? cliNodeModulesDir : rootNodeModulesDir;
+      if (!existsSync(source)) return;
+
+      mkdirSync(dirname(snapshotNodeModulesDir), { recursive: true });
+      try {
+        symlinkSync(source, snapshotNodeModulesDir, process.platform === 'win32' ? 'junction' : 'dir');
+      } catch {
+        // Best-effort only.
+      }
+      return;
+    }
+
+    ensureCliDistSnapshotNodeModules({
+      snapshotDir: dir,
+      snapshotDistDir: resolve(dir, 'dist'),
+      rootDir,
+    });
+  };
   const findReusableReplacementSnapshotEntrypoint = (): string | null => {
     const parentDir = dirname(options.snapshotDir);
     const replacementPrefix = `${basename(options.snapshotDir)}-`;
@@ -1437,6 +1463,7 @@ export async function ensureCliDistSnapshotEntrypoint(
     candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
     const best = candidates[0]?.dir;
     if (!best) return null;
+    ensureSnapshotNodeModules(best);
     ensureSnapshotScaffolding(best);
     return resolve(best, 'dist', 'index.mjs');
   };
@@ -1447,6 +1474,7 @@ export async function ensureCliDistSnapshotEntrypoint(
   }
 
   if (isReadyReusableSnapshot(options.snapshotDir)) {
+    ensureSnapshotNodeModules(options.snapshotDir);
     ensureSnapshotScaffolding(options.snapshotDir);
     return snapshotEntrypoint;
   }
@@ -1489,33 +1517,6 @@ export async function ensureCliDistSnapshotEntrypoint(
 
           const resolveReplacementSnapshotDir = (): string => {
             return `${options.snapshotDir}-${process.pid}-${Date.now()}-${attempt}`;
-          };
-
-          const ensureSnapshotNodeModules = (dir: string): void => {
-            const mode = (params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? '').toString().trim().toLowerCase();
-            if (mode === 'symlink') {
-              const snapshotNodeModulesDir = resolve(dir, 'node_modules');
-              if (existsSync(snapshotNodeModulesDir)) return;
-
-              const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
-              const rootNodeModulesDir = resolve(rootDir, 'node_modules');
-              const source = existsSync(cliNodeModulesDir) ? cliNodeModulesDir : rootNodeModulesDir;
-              if (!existsSync(source)) return;
-
-              mkdirSync(dirname(snapshotNodeModulesDir), { recursive: true });
-              try {
-                symlinkSync(source, snapshotNodeModulesDir, process.platform === 'win32' ? 'junction' : 'dir');
-              } catch {
-                // Best-effort only.
-              }
-              return;
-            }
-
-            ensureCliDistSnapshotNodeModules({
-              snapshotDir: dir,
-              snapshotDistDir: resolve(dir, 'dist'),
-              rootDir,
-            });
           };
 
           const markSnapshotReady = (dir: string): void => {
@@ -1583,6 +1584,8 @@ export async function ensureCliDistSnapshotEntrypoint(
 
           if (snapshotIsReusable(options.snapshotDir) && snapshotHasReadyMarker(options.snapshotDir)) {
             // Fast path: keep daemon startups cheap during slow E2E lanes.
+            // Still reconcile runtime deps so stale snapshots self-heal when bundled dependency shapes change.
+            ensureSnapshotNodeModules(options.snapshotDir);
             ensureSnapshotScaffolding(options.snapshotDir);
             return snapshotEntrypoint;
           }

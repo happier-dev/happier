@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { randomInt } from 'node:crypto';
@@ -12,8 +12,7 @@ import { waitForOkHealth } from '../http';
 import { yarnCommand } from './commands';
 import { resolveServerAppWorkspaceName } from './serverWorkspaceName';
 import { createServerLightTemplateCacheKey, prepareCachedDataDir } from './serverLightTemplateCache';
-import { resolveTsxImportHookPath } from './tsxImportHook';
-import { redactHarnessLogText } from './harnessLogRedaction';
+import { resolveTsxImportHookSpecifier } from './tsxImportHook';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -100,15 +99,6 @@ function composeServerStartTail(stderrTail: string, stdoutTail: string): string 
   return `${stderrTail}\n${stdoutTail}`.trim();
 }
 
-function looksLikeMissingInternalWorkspaceDistExport(params: { stderrTail: string; stdoutTail: string }): boolean {
-  const tail = composeServerStartTail(params.stderrTail, params.stdoutTail);
-  if (!tail) return false;
-  if (!tail.includes('ERR_MODULE_NOT_FOUND') && !tail.includes('Cannot find module')) return false;
-  // Typical failure shape when internal workspace `dist/` outputs are stale/missing under workspaces.
-  // Example: "...node_modules/@happier-dev/cli-common/dist/process/commandExists.js..."
-  return /node_modules\/@happier-dev\/[^/]+\/dist\//u.test(tail);
-}
-
 function looksLikeServerLightCommand(command: string): boolean {
   const normalized = command.replaceAll('\\', '/');
   return normalized.includes('start:light')
@@ -166,7 +156,7 @@ function attachServerStartTailToError(params: {
   stderrTail: string;
   stdoutTail: string;
 }): unknown {
-  const tail = redactHarnessLogText(composeServerStartTail(params.stderrTail, params.stdoutTail)).trim();
+  const tail = composeServerStartTail(params.stderrTail, params.stdoutTail);
   if (!tail) {
     return params.error;
   }
@@ -200,12 +190,6 @@ export function shouldRetryServerStartFromFailureContext(params: {
   if (
     params.attempt < params.maxAttempts
     && isHealthTimeoutDuringAuthInit({ error: contextualError, stdoutTail: params.stdoutTail })
-  ) {
-    return true;
-  }
-  if (
-    params.attempt < params.maxAttempts
-    && looksLikeMissingInternalWorkspaceDistExport({ stderrTail: params.stderrTail, stdoutTail: params.stdoutTail })
   ) {
     return true;
   }
@@ -269,73 +253,11 @@ function resolveServerSharedDepsOutputPaths(rootDir: string): string[] {
     resolve(rootDir, 'packages', 'agents', 'dist', 'index.js'),
     resolve(rootDir, 'packages', 'protocol', 'dist', 'index.js'),
     resolve(rootDir, 'packages', 'cli-common', 'dist', 'tailscale', 'index.js'),
-    resolve(rootDir, 'packages', 'cli-common', 'dist', 'relayAccess', 'index.js'),
-    resolve(rootDir, 'packages', 'cli-common', 'dist', 'systemTasks', 'index.js'),
-    // Server startup (and its `tsx`/ESM loader) relies on cli-common process helpers; missing outputs
-    // can manifest as `ERR_MODULE_NOT_FOUND` under `node_modules/@happier-dev/cli-common/dist/process/*`.
-    resolve(rootDir, 'packages', 'cli-common', 'dist', 'process', 'commandExists.js'),
-    // Server runtime imports relay-access provider modules through the workspace-linked node_modules tree.
-    // If this bundled path is absent, server-light can exit before /health is ready with ENOENT.
-    resolve(rootDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'relayAccess', 'providers', 'localOnly', 'index.js'),
   ];
 }
 
-function listExplicitNamedExportsFromModuleSource(sourceText: string): string[] {
-  const namedExports: string[] = [];
-  const exportDeclarationPattern = /\bexport\s+(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gu;
-  for (const match of sourceText.matchAll(exportDeclarationPattern)) {
-    const exportName = match[1];
-    if (exportName) namedExports.push(exportName);
-  }
-
-  const exportListPattern = /\bexport\s*\{([\s\S]*?)\}\s*(?:from\b[\s\S]*?)?;/gu;
-  for (const match of sourceText.matchAll(exportListPattern)) {
-    const specifierBlock = match[1];
-    if (!specifierBlock) continue;
-    const specifiers = specifierBlock.split(',');
-    for (const rawSpecifier of specifiers) {
-      const normalizedSpecifier = rawSpecifier.replace(/\/\*[\s\S]*?\*\//gu, '').trim();
-      if (!normalizedSpecifier) continue;
-      const aliasMatch = normalizedSpecifier.match(/\bas\s+([A-Za-z_$][\w$]*)$/u);
-      if (aliasMatch?.[1]) {
-        namedExports.push(aliasMatch[1]);
-        continue;
-      }
-      const directMatch = normalizedSpecifier.match(/^([A-Za-z_$][\w$]*)$/u);
-      if (directMatch?.[1]) {
-        namedExports.push(directMatch[1]);
-      }
-    }
-  }
-
-  return namedExports;
-}
-
-function hasDuplicateExplicitNamedExports(sourceText: string): boolean {
-  const seenExports = new Set<string>();
-  for (const exportName of listExplicitNamedExportsFromModuleSource(sourceText)) {
-    if (seenExports.has(exportName)) return true;
-    seenExports.add(exportName);
-  }
-  return false;
-}
-
-function hasValidProtocolDistIndexExports(rootDir: string): boolean {
-  const protocolDistIndexPath = resolve(rootDir, 'packages', 'protocol', 'dist', 'index.js');
-  try {
-    const sourceText = readFileSync(protocolDistIndexPath, 'utf8');
-    if (!sourceText.trim()) return false;
-    return !hasDuplicateExplicitNamedExports(sourceText);
-  } catch {
-    return false;
-  }
-}
-
 export function hasServerSharedDepsOutputs(rootDir: string): boolean {
-  if (!resolveServerSharedDepsOutputPaths(rootDir).every((outputPath) => existsSync(outputPath))) {
-    return false;
-  }
-  return hasValidProtocolDistIndexExports(rootDir);
+  return resolveServerSharedDepsOutputPaths(rootDir).every((outputPath) => existsSync(outputPath));
 }
 
 function parseBuildLockOwner(raw: string): BuildLockOwner {
@@ -490,11 +412,80 @@ function readFileIfExists(filePath: string): string | null {
   }
 }
 
+function splitPrismaSchemaLineTokens(line: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  const pushCurrent = () => {
+    if (current.length > 0) {
+      tokens.push(current);
+      current = "";
+    }
+  };
+
+  for (const char of line) {
+    if (quote) {
+      current += char;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === "\"" || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+
+    if (char === "(" || char === "[" || char === "{") {
+      depth += 1;
+      current += char;
+      continue;
+    }
+
+    if (char === ")" || char === "]" || char === "}") {
+      depth = Math.max(0, depth - 1);
+      current += char;
+      continue;
+    }
+
+    if (/\s/.test(char) && depth === 0) {
+      pushCurrent();
+      continue;
+    }
+
+    current += char;
+  }
+
+  pushCurrent();
+  return tokens;
+}
+
+function normalizePrismaFieldAttributeOrder(line: string): string {
+  const tokens = splitPrismaSchemaLineTokens(line);
+  if (tokens.length < 4) return line;
+  const attributes = tokens.slice(2);
+  if (!attributes.every((token) => token.startsWith("@") && !token.startsWith("@@"))) {
+    return line;
+  }
+  return [...tokens.slice(0, 2), ...[...attributes].sort()].join(" ");
+}
+
 function normalizeGeneratedSchemaForFreshnessCheck(input: string): string {
   return input
     .replace(/\r\n/g, '\n')
     .split('\n')
-    .map((line) => line.trim().replace(/\s+/g, ' '))
+    .map((line) => normalizePrismaFieldAttributeOrder(line.trim().replace(/\s+/g, ' ')))
     .join('\n')
     .trim();
 }
@@ -568,14 +559,14 @@ export function resolveServerStartLaunchSpec(params: {
       throw new Error(`Server source entrypoint missing for test launch: ${sourceEntrypoint}`);
     }
 
-    const tsxHookPath = resolveTsxImportHookPath();
-    if (!tsxHookPath) {
+    const tsxHookSpecifier = resolveTsxImportHookSpecifier();
+    if (!tsxHookSpecifier) {
       throw new Error('tsx import hook is required for server source entrypoint mode but could not be resolved');
     }
 
     return {
       command: process.execPath,
-      args: ['--preserve-symlinks', '--preserve-symlinks-main', '--import', tsxHookPath, sourceEntrypoint],
+      args: ['--import', tsxHookSpecifier, sourceEntrypoint],
       cwd: resolveServerWorkspaceDir(rootDir),
       env: {
         TSX_TSCONFIG_PATH: resolveServerTsconfigPath(rootDir),
@@ -587,6 +578,9 @@ export function resolveServerStartLaunchSpec(params: {
     command: yarnCommand(),
     args: resolveStartCommandArgs(params.provider),
     cwd: rootDir,
+    env: {
+      TSX_TSCONFIG_PATH: resolveServerTsconfigPath(rootDir),
+    },
   };
 }
 
@@ -820,6 +814,7 @@ export async function startServerLight(params: {
   extraEnv?: NodeJS.ProcessEnv;
   dbProvider?: TestDbProvider;
   dataDirMode?: 'fresh' | 'reuse-existing';
+  preserveExistingDataDir?: boolean;
   /**
    * Test-only hook: override port selection to force EADDRINUSE scenarios.
    * Not part of the public API; used to validate retry behavior deterministically.
@@ -887,7 +882,11 @@ export async function startServerLight(params: {
 
   // Ensure the light database schema exists before the server boots.
   // Server light uses pglite/sqlite + Prisma but does not auto-migrate on startup.
-  if (params.dataDirMode !== 'reuse-existing') {
+  const shouldReuseExistingDataDir =
+    (params.dataDirMode === 'reuse-existing' || params.preserveExistingDataDir === true)
+    && existsSync(dataDir)
+    && readdirSync(dataDir).length > 0;
+  if (!shouldReuseExistingDataDir) {
     await prepareServerLightDataDir({
       rootDir: repoRootDir(),
       testDir: params.testDir,

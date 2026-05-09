@@ -3,8 +3,9 @@ import { join } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { accessSync, constants as fsConstants } from 'node:fs';
 
+import { commandExistsOnPath } from '../process/index.js';
+import { resolveWindowsCommandInvocation } from '../process/index.js';
 import { expandHomeDirPath } from '../path/expandHomeDirPath.js';
-import { commandExistsOnPath, resolveWindowsCommandInvocation } from '../process/index.js';
 
 export type RunCommand = (
   cmd: string,
@@ -14,17 +15,19 @@ export type RunCommand = (
     env?: NodeJS.ProcessEnv;
     stdio?: 'inherit' | 'pipe' | 'ignore';
     input?: string;
+    timeoutMs?: number;
   },
 ) => void;
 
 export function execOrThrow(
   cmd: string,
   args: string[],
-  { cwd = process.cwd(), env = process.env, stdio = 'inherit', input }: {
+  { cwd = process.cwd(), env = process.env, stdio = 'inherit', input, timeoutMs }: {
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     stdio?: 'inherit' | 'pipe' | 'ignore';
     input?: string;
+    timeoutMs?: number;
   } = {},
 ): void {
   const invocation = resolveWindowsCommandInvocation({
@@ -38,10 +41,19 @@ export function execOrThrow(
     stdio,
     encoding: 'utf-8',
     input,
-    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    ...(typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) ? { timeout: timeoutMs } : {}),
+    ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
   if (result.error) {
-    throw new Error(`[component-artifacts] failed to run ${cmd}: ${String(result.error.message || result.error)}`);
+    const wrapped = new Error(`[component-artifacts] failed to run ${cmd}: ${String(result.error.message || result.error)}`);
+    const errorCode = result.error && typeof result.error === 'object' && 'code' in result.error
+      ? String(result.error.code ?? '')
+      : '';
+    if (errorCode) {
+      Object.assign(wrapped, { code: errorCode });
+    }
+    Object.assign(wrapped, { cause: result.error });
+    throw wrapped;
   }
   if (typeof result.status === 'number' && result.status !== 0) {
     const stderr = String(result.stderr || '').trim();

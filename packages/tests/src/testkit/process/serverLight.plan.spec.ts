@@ -19,6 +19,8 @@ import {
 } from "./serverLight";
 import { resolveServerAppWorkspaceName } from "./serverWorkspaceName";
 
+const normalizeForPathAssertions = (value: string): string => value.replace(/\\/g, "/");
+
 describe("startServerLight planning helpers", () => {
   it("defaults to pglite when HAPPIER_E2E_DB_PROVIDER is unset", () => {
     expect(resolveTestDbProvider({})).toBe("pglite");
@@ -44,6 +46,23 @@ describe("startServerLight planning helpers", () => {
     ["mysql", "start"],
   ])("uses the expected start command for %s", (provider, expectedScript) => {
     expect(resolveStartCommandArgs(provider)).toEqual(["-s", "workspace", resolveServerAppWorkspaceName(), expectedScript]);
+  });
+
+  it("pins TSX_TSCONFIG_PATH for workspace-driven server launches", () => {
+    const launch = resolveServerStartLaunchSpec({
+      provider: "sqlite",
+      env: {},
+    });
+
+    expect(launch.command).toMatch(/yarn(?:\.cmd)?$/);
+    expect(launch.args).toEqual(["-s", "workspace", resolveServerAppWorkspaceName(), "start:light"]);
+    expect(launch.cwd.length).toBeGreaterThan(0);
+    expect(launch.env).toMatchObject({
+      TSX_TSCONFIG_PATH: expect.stringContaining("tsconfig.json"),
+    });
+    const tsconfigPath = launch.env?.TSX_TSCONFIG_PATH;
+    expect(tsconfigPath).toBeDefined();
+    expect(normalizeForPathAssertions(tsconfigPath ?? "")).toContain("/apps/server/tsconfig.json");
   });
 
   it.each<[TestDbProvider, string]>([
@@ -99,54 +118,22 @@ describe("startServerLight planning helpers", () => {
     expect(secondEntered).toBe(true);
   });
 
-  it("detects when shared server dependency outputs already exist", () => {
-    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-shared-deps-"));
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
+	  it("detects when shared server dependency outputs already exist", () => {
+	    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-shared-deps-"));
+	    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
 
-    mkdirSync(resolve(rootDir, "packages", "agents", "dist"), { recursive: true });
-    writeFileSync(resolve(rootDir, "packages", "agents", "dist", "index.js"), "export {};\n", "utf8");
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
+	    mkdirSync(resolve(rootDir, "packages", "agents", "dist"), { recursive: true });
+	    writeFileSync(resolve(rootDir, "packages", "agents", "dist", "index.js"), "export {};\n", "utf8");
+	    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
 
-    mkdirSync(resolve(rootDir, "packages", "protocol", "dist"), { recursive: true });
-    writeFileSync(resolve(rootDir, "packages", "protocol", "dist", "index.js"), "export {};\n", "utf8");
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
+	    mkdirSync(resolve(rootDir, "packages", "protocol", "dist"), { recursive: true });
+	    writeFileSync(resolve(rootDir, "packages", "protocol", "dist", "index.js"), "export {};\n", "utf8");
+	    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
 
-    mkdirSync(resolve(rootDir, "packages", "cli-common", "dist", "tailscale"), { recursive: true });
-    writeFileSync(resolve(rootDir, "packages", "cli-common", "dist", "tailscale", "index.js"), "export {};\n", "utf8");
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
-
-    mkdirSync(resolve(rootDir, "packages", "cli-common", "dist", "relayAccess"), { recursive: true });
-    writeFileSync(resolve(rootDir, "packages", "cli-common", "dist", "relayAccess", "index.js"), "export {};\n", "utf8");
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
-
-    mkdirSync(resolve(rootDir, "packages", "cli-common", "dist", "systemTasks"), { recursive: true });
-    writeFileSync(resolve(rootDir, "packages", "cli-common", "dist", "systemTasks", "index.js"), "export {};\n", "utf8");
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
-
-    mkdirSync(resolve(rootDir, "packages", "cli-common", "dist", "process"), { recursive: true });
-    writeFileSync(resolve(rootDir, "packages", "cli-common", "dist", "process", "commandExists.js"), "export {};\n", "utf8");
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
-
-    mkdirSync(resolve(rootDir, "node_modules", "@happier-dev", "cli-common", "dist", "relayAccess", "providers", "localOnly"), {
-      recursive: true,
-    });
-    writeFileSync(
-      resolve(rootDir, "node_modules", "@happier-dev", "cli-common", "dist", "relayAccess", "providers", "localOnly", "index.js"),
-      "export {};\n",
-      "utf8",
-    );
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(true);
-
-    writeFileSync(
-      resolve(rootDir, "packages", "protocol", "dist", "index.js"),
-      [
-        "export const ProviderCliRuntimeV1Schema = {};",
-        "export { ProviderCliRuntimeV1Schema };",
-      ].join("\n"),
-      "utf8",
-    );
-    expect(hasServerSharedDepsOutputs(rootDir)).toBe(false);
-  });
+	    mkdirSync(resolve(rootDir, "packages", "cli-common", "dist", "tailscale"), { recursive: true });
+	    writeFileSync(resolve(rootDir, "packages", "cli-common", "dist", "tailscale", "index.js"), "export {};\n", "utf8");
+	    expect(hasServerSharedDepsOutputs(rootDir)).toBe(true);
+	  });
 
   it("detects when generated provider outputs are current", () => {
     const rootDir = mkdtempSync(join(tmpdir(), "happier-server-generated-"));
@@ -160,17 +147,40 @@ describe("startServerLight planning helpers", () => {
 
     writeFileSync(resolve(rootDir, "apps", "server", "prisma", "schema.prisma"), "datasource db { provider = \"postgresql\" }\n", "utf8");
     writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), "datasource db { provider = \"sqlite\" }\n", "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "mysql", "schema.prisma"), "datasource db { provider = \"mysql\" }\n", "utf8");
+    writeFileSync(
+      resolve(rootDir, "apps", "server", "prisma", "mysql", "schema.prisma"),
+      [
+        "datasource db { provider = \"mysql\" }",
+        "model PublicSessionShare {",
+        "  id String @id",
+        "  tokenHash Bytes @db.VarBinary(32) @unique",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
 
     writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "index.js"), "export {};\n", "utf8");
     writeFileSync(resolve(rootDir, "apps", "server", "generated", "mysql-client", "index.js"), "export {};\n", "utf8");
     writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "default.js"), "module.exports={};\n", "utf8");
 
     writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "schema.prisma"), "datasource db { provider = \"sqlite\" }\n", "utf8");
-    writeFileSync(resolve(rootDir, "apps", "server", "generated", "mysql-client", "schema.prisma"), "datasource db { provider = \"mysql\" }\n", "utf8");
+    writeFileSync(
+      resolve(rootDir, "apps", "server", "generated", "mysql-client", "schema.prisma"),
+      [
+        "datasource db { provider = \"mysql\" }",
+        "model PublicSessionShare {",
+        "  id String @id",
+        "  tokenHash Bytes @unique @db.VarBinary(32)",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
     writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "schema.prisma"), "datasource db { provider = \"postgresql\" }\n", "utf8");
 
     expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
+    expect(hasServerGeneratedProviderOutputs(rootDir, "mysql")).toBe(true);
 
     writeFileSync(resolve(rootDir, "apps", "server", "generated", "mysql-client", "schema.prisma"), "stale mysql\n", "utf8");
     expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
@@ -187,19 +197,6 @@ describe("startServerLight planning helpers", () => {
       preflightPortAvailable: true,
       error: new Error("server-light exited before /health was ready (code=1)"),
       stderrTail: "Error: listen EADDRINUSE: address already in use 127.0.0.1:58786",
-      stdoutTail: "",
-    });
-    expect(retry).toBe(true);
-  });
-
-  it("retries server start when internal workspace dist exports are missing", () => {
-    const retry = shouldRetryServerStartFromFailureContext({
-      attempt: 1,
-      maxAttempts: 5,
-      preflightPortAvailable: true,
-      error: new Error("server-light exited before /health was ready (code=1)"),
-      stderrTail:
-        "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/leeroy/Documents/Development/happier/dev/node_modules/@happier-dev/cli-common/dist/process/commandExists.js' imported from /Users/leeroy/Documents/Development/happier/dev/node_modules/@happier-dev/cli-common/dist/process/index.js",
       stdoutTail: "",
     });
     expect(retry).toBe(true);
@@ -237,30 +234,19 @@ describe("startServerLight planning helpers", () => {
     });
 
     expect(launch.command).toBe(process.execPath);
-    expect(launch.cwd).toContain(`/apps/server`);
+    expect(normalizeForPathAssertions(launch.cwd)).toContain(`/apps/server`);
     expect(launch.args).toEqual(
       expect.arrayContaining([
         "--import",
-        expect.stringContaining(`${process.platform === "win32" ? "tsx\\dist\\esm\\index.mjs" : "tsx/dist/esm/index.mjs"}`),
+        expect.stringContaining("tsx/dist/esm/index.mjs"),
         expect.stringContaining(expectedEntrypoint),
       ]),
     );
     expect(launch.env).toMatchObject({
-      TSX_TSCONFIG_PATH: expect.stringContaining(`/apps/server/tsconfig.json`),
+      TSX_TSCONFIG_PATH: expect.stringContaining("tsconfig.json"),
     });
-  });
-
-  it("preserves symlink resolution when using the direct server source entrypoint", () => {
-    const launch = resolveServerStartLaunchSpec({
-      provider: "sqlite",
-      env: { HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: "1" },
-    });
-
-    expect(launch.args).toEqual(
-      expect.arrayContaining([
-        "--preserve-symlinks",
-        "--preserve-symlinks-main",
-      ]),
-    );
+    const tsconfigPath = launch.env?.TSX_TSCONFIG_PATH;
+    expect(tsconfigPath).toBeDefined();
+    expect(normalizeForPathAssertions(tsconfigPath ?? "")).toContain("/apps/server/tsconfig.json");
   });
 });

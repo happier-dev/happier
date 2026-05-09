@@ -66,6 +66,36 @@ function stripInternalWorkspaceDeps(pkgJson) {
   };
 }
 
+const CLI_PUBLISHED_BIN_CONTRACT = Object.freeze({
+  happier: './bin/happier.mjs',
+  'happier-dev': './bin/happier-dev.mjs',
+  'happier-mcp': './bin/happier-mcp.mjs',
+});
+
+function restoreCliPublishedBinContract(pkgJson) {
+  if (pkgJson?.name !== '@happier-dev/cli') {
+    return pkgJson;
+  }
+
+  const currentBin = (pkgJson?.bin && typeof pkgJson.bin === 'object') ? { ...pkgJson.bin } : {};
+  let changed = false;
+  for (const [binName, binPath] of Object.entries(CLI_PUBLISHED_BIN_CONTRACT)) {
+    if (currentBin[binName] !== binPath) {
+      currentBin[binName] = binPath;
+      changed = true;
+    }
+  }
+
+  if (!changed && pkgJson.bin && Object.keys(currentBin).length === Object.keys(pkgJson.bin).length) {
+    return pkgJson;
+  }
+
+  return {
+    ...pkgJson,
+    bin: currentBin,
+  };
+}
+
 function readDeferredVoiceInferenceConfig(pkgJson) {
   const voiceInference = pkgJson?.happier?.voiceInference;
   const deferredRuntimePackages = Array.isArray(voiceInference?.deferredRuntimePackages)
@@ -142,9 +172,10 @@ export async function patchPackedTarballForBun(options = {}) {
     const pkgJsonRaw = fs.readFileSync(pkgJsonPath, 'utf8');
     const pkgJsonParsed = JSON.parse(pkgJsonRaw);
     const strippedInternal = stripInternalWorkspaceDeps(pkgJsonParsed);
-    const patched = stripDeferredVoiceInferenceDepsIfArchived(strippedInternal, {
+    const strippedDeferredVoiceDeps = stripDeferredVoiceInferenceDepsIfArchived(strippedInternal, {
       packageRoot: extractedRoot,
     });
+    const patched = restoreCliPublishedBinContract(strippedDeferredVoiceDeps);
 
     fs.writeFileSync(pkgJsonPath, `${JSON.stringify(patched, null, 2)}\n`, 'utf8');
 

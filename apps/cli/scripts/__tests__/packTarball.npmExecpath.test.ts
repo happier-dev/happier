@@ -60,6 +60,105 @@ describe('packTarball (npmExecpath)', () => {
     );
   });
 
+  it('uses node + npm-cli.js on Windows when npm_execpath points to a non-npm runner', () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+    const nodeExecPath = 'C:\\Program Files\\nodejs\\node.exe';
+    const npmCliPath = 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
+
+    packTarball({
+      packageRoot,
+      destDir,
+      npmExecpath: '/somewhere/yarn.js',
+      platform: 'win32',
+      processExecPath: nodeExecPath,
+      spawnSync: spawn,
+      existsSync: (targetPath) => {
+        const normalized = String(targetPath).replaceAll('\\', '/').toLowerCase();
+        const normalizedNpmCli = npmCliPath.replaceAll('\\', '/').toLowerCase();
+        return normalized === normalizedNpmCli || normalized.endsWith(`/${tarballName}`) || normalized.endsWith('/dist');
+      },
+      cpSync: () => undefined,
+      rmSync: () => undefined,
+      env: {},
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      nodeExecPath,
+      [npmCliPath, 'pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
+      expect.any(Object),
+    );
+  });
+
+  it('falls back to npm.cmd on Windows when npm-cli.js cannot be resolved from node.exe', () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+
+    packTarball({
+      packageRoot,
+      destDir,
+      npmExecpath: '/somewhere/yarn.js',
+      platform: 'win32',
+      processExecPath: 'C:\\Program Files\\nodejs\\node.exe',
+      spawnSync: spawn,
+      existsSync: (targetPath) => {
+        const normalized = String(targetPath).replaceAll('\\', '/').toLowerCase();
+        return normalized.endsWith(`/${tarballName}`) || normalized.endsWith('/dist');
+      },
+      cpSync: () => undefined,
+      rmSync: () => undefined,
+      env: {},
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      'npm.cmd',
+      ['pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
+      expect.any(Object),
+    );
+  });
+
+  it('uses node + npm-cli.js on Windows when npm_execpath is missing', () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+    const nodeExecPath = 'C:\\Program Files\\nodejs\\node.exe';
+    const npmCliPath = 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
+
+    packTarball({
+      packageRoot,
+      destDir,
+      npmExecpath: '',
+      platform: 'win32',
+      processExecPath: nodeExecPath,
+      spawnSync: spawn,
+      existsSync: (targetPath) => {
+        const normalized = String(targetPath).replaceAll('\\', '/').toLowerCase();
+        const normalizedNpmCli = npmCliPath.replaceAll('\\', '/').toLowerCase();
+        return normalized === normalizedNpmCli || normalized.endsWith(`/${tarballName}`) || normalized.endsWith('/dist');
+      },
+      cpSync: () => undefined,
+      rmSync: () => undefined,
+      env: {},
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      nodeExecPath,
+      [npmCliPath, 'pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
+      expect.any(Object),
+    );
+  });
+
   it('parses npm pack --json output even when prepack logs are mixed into stdout', () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
     const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
@@ -93,5 +192,34 @@ describe('packTarball (npmExecpath)', () => {
 
     expect(result.tarballName).toBe(tarballName);
     expect(result.tarballPath).toContain(join(destDir, tarballName));
+  });
+
+  it('applies a bounded timeout to npm pack invocations to prevent indefinite hangs', () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+
+    packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: spawn,
+      existsSync: () => true,
+      cpSync: () => undefined,
+      rmSync: () => undefined,
+      env: {
+        HAPPIER_CLI_PACK_TARBALL_TIMEOUT_MS: '123456',
+      },
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Array),
+      expect.objectContaining({
+        timeout: 123_456,
+      }),
+    );
   });
 });

@@ -1,6 +1,11 @@
 import { Dirent, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
+type CopyMissingEntryOptions = {
+  mergeExistingDirectoryContents?: boolean;
+  pruneNestedNodeModules?: boolean;
+};
+
 function isTransientSyncDirName(name: string): boolean {
   return name.startsWith('dist.__sync_tmp__.') || name.startsWith('dist.__sync_backup__.');
 }
@@ -32,15 +37,19 @@ function isDirectoryEntry(path: string): boolean {
   }
 }
 
-function copyMissingEntry(destPath: string, sourcePath: string): void {
+function copyMissingEntry(destPath: string, sourcePath: string, options: CopyMissingEntryOptions = {}): void {
+  const mergeExistingDirectoryContents = options.mergeExistingDirectoryContents ?? true;
+  const pruneNestedNodeModules = options.pruneNestedNodeModules ?? false;
   if (isTransientSyncDirName(basename(sourcePath))) return;
 
   if (existsSync(destPath)) {
     if (!isDirectoryEntry(sourcePath) || !isDirectoryEntry(destPath)) return;
+    if (!mergeExistingDirectoryContents) return;
 
     for (const entry of listNodeModulesEntries(sourcePath)) {
       if (entry.name.startsWith('.')) continue;
-      copyMissingEntry(resolve(destPath, entry.name), resolve(sourcePath, entry.name));
+      if (pruneNestedNodeModules && entry.name === 'node_modules') continue;
+      copyMissingEntry(resolve(destPath, entry.name), resolve(sourcePath, entry.name), options);
     }
     return;
   }
@@ -50,7 +59,8 @@ function copyMissingEntry(destPath: string, sourcePath: string): void {
     mkdirSync(destPath, { recursive: true });
     for (const entry of listNodeModulesEntries(sourcePath)) {
       if (entry.name.startsWith('.')) continue;
-      copyMissingEntry(resolve(destPath, entry.name), resolve(sourcePath, entry.name));
+      if (pruneNestedNodeModules && entry.name === 'node_modules') continue;
+      copyMissingEntry(resolve(destPath, entry.name), resolve(sourcePath, entry.name), options);
     }
     return;
   }
@@ -62,8 +72,19 @@ function copyMissingEntry(destPath: string, sourcePath: string): void {
   }
 }
 
-function ensureCopiedDirectory(destPath: string, sourcePath: string): void {
-  copyMissingEntry(destPath, sourcePath);
+function ensureCopiedDirectory(destPath: string, sourcePath: string, options: CopyMissingEntryOptions = {}): void {
+  copyMissingEntry(destPath, sourcePath, options);
+}
+
+function ensureCopiedDirectoryFromCandidates(
+  destPath: string,
+  sourceCandidates: ReadonlyArray<string>,
+  options: CopyMissingEntryOptions = {},
+): void {
+  for (const sourcePath of sourceCandidates) {
+    if (!existsSync(sourcePath)) continue;
+    ensureCopiedDirectory(destPath, sourcePath, options);
+  }
 }
 
 function ensureCopiedNodeModulesEntries(sourceNodeModulesDir: string, destNodeModulesDir: string, skipNames: ReadonlySet<string> = new Set()): void {
@@ -78,6 +99,7 @@ function ensureCopiedNodeModulesEntries(sourceNodeModulesDir: string, destNodeMo
 }
 
 function ensureCopiedTextFile(destPath: string, sourcePath: string): void {
+  if (existsSync(destPath)) return;
   mkdirSync(dirname(destPath), { recursive: true });
   try {
     writeFileSync(destPath, readFileSync(sourcePath));
@@ -98,7 +120,15 @@ function listScopedPackageEntries(scopeDir: string): Dirent[] {
   return listNodeModulesEntries(scopeDir).filter((entry) => !entry.name.startsWith('.'));
 }
 
-function collectExternalRuntimeDepNamesFromPackageJson(packageJsonPath: string): ReadonlyArray<{ name: string; optional: boolean }> {
+type RuntimeDependencyCollectionOptions = {
+  includeOptionalDependencies?: boolean;
+  includePeerDependencies?: boolean;
+};
+
+function collectExternalRuntimeDepNamesFromPackageJson(
+  packageJsonPath: string,
+  options: RuntimeDependencyCollectionOptions = {},
+): ReadonlyArray<{ name: string; optional: boolean }> {
   let pkg: any;
   try {
     pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
@@ -106,17 +136,27 @@ function collectExternalRuntimeDepNamesFromPackageJson(packageJsonPath: string):
     return [];
   }
 
+  const includeOptionalDependencies = options.includeOptionalDependencies ?? true;
+  const includePeerDependencies = options.includePeerDependencies ?? true;
   const deps = pkg?.dependencies ?? {};
   const optionalDeps = pkg?.optionalDependencies ?? {};
+  const peerDeps = pkg?.peerDependencies ?? {};
 
   const required = Object.keys(deps)
     .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
     .map((name) => ({ name, optional: false }));
-  const optional = Object.keys(optionalDeps)
-    .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
-    .map((name) => ({ name, optional: true }));
+  const optional = includeOptionalDependencies
+    ? Object.keys(optionalDeps)
+        .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
+        .map((name) => ({ name, optional: true }))
+    : [];
+  const peer = includePeerDependencies
+    ? Object.keys(peerDeps)
+        .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
+        .map((name) => ({ name, optional: true }))
+    : [];
 
-  return [...required, ...optional];
+  return [...required, ...optional, ...peer];
 }
 
 function readPackageNameFromPackageJson(packageJsonPath: string): string | null {
@@ -126,53 +166,6 @@ function readPackageNameFromPackageJson(packageJsonPath: string): string | null 
   } catch {
     return null;
   }
-}
-
-type WorkspacePackageDescriptor = Readonly<{
-  packageJsonPath: string;
-  packageName: string;
-  workspaceDir: string;
-}>;
-
-function appendWorkspacePackageDescriptorsFromDir(
-  out: WorkspacePackageDescriptor[],
-  dir: string,
-  opts?: { skipPrivateTemplateDirs?: boolean },
-): void {
-  let entries: Dirent[] = [];
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-    if (opts?.skipPrivateTemplateDirs === true && entry.name.startsWith('_')) continue;
-
-    const workspaceDir = resolve(dir, entry.name);
-    const packageJsonPath = resolve(workspaceDir, 'package.json');
-    const packageName = readPackageNameFromPackageJson(packageJsonPath);
-    if (!packageName?.startsWith('@happier-dev/')) continue;
-
-    out.push({
-      packageJsonPath,
-      packageName,
-      workspaceDir,
-    });
-  }
-}
-
-function collectWorkspacePackageDescriptors(rootDir: string): WorkspacePackageDescriptor[] {
-  const descriptors: WorkspacePackageDescriptor[] = [];
-  appendWorkspacePackageDescriptorsFromDir(descriptors, resolve(rootDir, 'packages'));
-  appendWorkspacePackageDescriptorsFromDir(descriptors, resolve(rootDir, 'packages', 'plugins'), {
-    skipPrivateTemplateDirs: true,
-  });
-  appendWorkspacePackageDescriptorsFromDir(descriptors, resolve(rootDir, 'packages', 'extensions'), {
-    skipPrivateTemplateDirs: true,
-  });
-  return descriptors;
 }
 
 function ensureWorkspacePackageRuntimeDependencyFallbacks(
@@ -189,12 +182,7 @@ function ensureWorkspacePackageRuntimeDependencyFallbacks(
       resolve(cliNodeModulesDir, ...dep.name.split('/')),
       resolve(rootNodeModulesDir, ...dep.name.split('/')),
     ];
-
-    for (const sourcePath of sourceCandidates) {
-      if (!existsSync(sourcePath)) continue;
-      ensureCopiedDirectory(snapshotDepPath, sourcePath);
-      break;
-    }
+    ensureCopiedDirectoryFromCandidates(snapshotDepPath, sourceCandidates);
   }
 }
 
@@ -246,21 +234,65 @@ function ensureRootNodeModulesFallback(snapshotDistDir: string, rootDir: string)
 }
 
 function ensureWorkspacePackageManifests(snapshotNodeModulesDir: string, rootDir: string): void {
-  for (const descriptor of collectWorkspacePackageDescriptors(rootDir)) {
-    const scopePackageName = descriptor.packageName.slice('@happier-dev/'.length).trim();
+  const packagesDir = resolve(rootDir, 'packages');
+  let entries: Dirent[] = [];
+  try {
+    entries = readdirSync(packagesDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+
+    const packageJsonPath = resolve(packagesDir, entry.name, 'package.json');
+    let packageName = '';
+    try {
+      const raw = readFileSync(packageJsonPath, 'utf8');
+      const parsed = JSON.parse(raw) as { name?: unknown };
+      packageName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+    } catch {
+      continue;
+    }
+
+    if (!packageName.startsWith('@happier-dev/')) continue;
+
+    const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
     if (!scopePackageName) continue;
 
     const snapshotPackageJsonPath = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName, 'package.json');
-    ensureCopiedTextFile(snapshotPackageJsonPath, descriptor.packageJsonPath);
+    ensureCopiedTextFile(snapshotPackageJsonPath, packageJsonPath);
   }
 }
 
 function ensureWorkspacePackageDistTrees(snapshotNodeModulesDir: string, rootDir: string): void {
-  for (const descriptor of collectWorkspacePackageDescriptors(rootDir)) {
-    const scopePackageName = descriptor.packageName.slice('@happier-dev/'.length).trim();
+  const packagesDir = resolve(rootDir, 'packages');
+  let entries: Dirent[] = [];
+  try {
+    entries = readdirSync(packagesDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+
+    const packageJsonPath = resolve(packagesDir, entry.name, 'package.json');
+    let packageName = '';
+    try {
+      const raw = readFileSync(packageJsonPath, 'utf8');
+      const parsed = JSON.parse(raw) as { name?: unknown };
+      packageName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+    } catch {
+      continue;
+    }
+
+    if (!packageName.startsWith('@happier-dev/')) continue;
+
+    const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
     if (!scopePackageName) continue;
 
-    const sourceDistDir = resolve(descriptor.workspaceDir, 'dist');
+    const sourceDistDir = resolve(packagesDir, entry.name, 'dist');
     const snapshotPackageDir = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName);
     const snapshotDistDir = resolve(snapshotPackageDir, 'dist');
     if (!existsSync(sourceDistDir)) continue;
@@ -280,8 +312,30 @@ function ensureWorkspacePackageDistTrees(snapshotNodeModulesDir: string, rootDir
 }
 
 function ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir: string, rootDir: string): void {
-  for (const descriptor of collectWorkspacePackageDescriptors(rootDir)) {
-    const scopePackageName = descriptor.packageName.slice('@happier-dev/'.length).trim();
+  const packagesDir = resolve(rootDir, 'packages');
+  let entries: Dirent[] = [];
+  try {
+    entries = readdirSync(packagesDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+
+    const packageJsonPath = resolve(packagesDir, entry.name, 'package.json');
+    let packageName = '';
+    try {
+      const raw = readFileSync(packageJsonPath, 'utf8');
+      const parsed = JSON.parse(raw) as { name?: unknown };
+      packageName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
+    } catch {
+      continue;
+    }
+
+    if (!packageName.startsWith('@happier-dev/')) continue;
+
+    const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
     if (!scopePackageName) continue;
 
     const sourceNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', scopePackageName, 'node_modules');
@@ -289,11 +343,16 @@ function ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir: st
     if (existsSync(sourceNodeModulesDir)) {
       ensureCopiedDirectory(snapshotPackageNodeModulesDir, sourceNodeModulesDir);
     }
-    ensureWorkspacePackageRuntimeDependencyFallbacks(snapshotPackageNodeModulesDir, rootDir, descriptor.packageJsonPath);
+    ensureWorkspacePackageRuntimeDependencyFallbacks(snapshotPackageNodeModulesDir, rootDir, packageJsonPath);
   }
 }
 
-function ensureExternalPackageRuntimeDependencyTree(packageDir: string, rootDir: string, visited: Set<string>): void {
+function ensureExternalPackageRuntimeDependencyTree(
+  packageDir: string,
+  rootDir: string,
+  visited: Set<string>,
+  options: CopyMissingEntryOptions & RuntimeDependencyCollectionOptions = {},
+): void {
   const packageJsonPath = resolve(packageDir, 'package.json');
   if (!existsSync(packageJsonPath) || visited.has(packageJsonPath)) return;
   visited.add(packageJsonPath);
@@ -301,7 +360,7 @@ function ensureExternalPackageRuntimeDependencyTree(packageDir: string, rootDir:
   const rootNodeModulesDir = resolve(rootDir, 'node_modules');
   const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
 
-  for (const dep of collectExternalRuntimeDepNamesFromPackageJson(packageJsonPath)) {
+  for (const dep of collectExternalRuntimeDepNamesFromPackageJson(packageJsonPath, options)) {
     const destDepPath = resolve(packageDir, 'node_modules', ...dep.name.split('/'));
     const sourceCandidates = [
       resolve(cliNodeModulesDir, ...dep.name.split('/')),
@@ -309,20 +368,20 @@ function ensureExternalPackageRuntimeDependencyTree(packageDir: string, rootDir:
     ];
 
     if (!existsSync(destDepPath)) {
-      for (const sourcePath of sourceCandidates) {
-        if (!existsSync(sourcePath)) continue;
-        ensureCopiedDirectory(destDepPath, sourcePath);
-        break;
-      }
+      ensureCopiedDirectoryFromCandidates(destDepPath, sourceCandidates, options);
     }
 
     if (isDirectoryEntry(destDepPath)) {
-      ensureExternalPackageRuntimeDependencyTree(destDepPath, rootDir, visited);
+      ensureExternalPackageRuntimeDependencyTree(destDepPath, rootDir, visited, options);
     }
   }
 }
 
-function ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir: string, rootDir: string): void {
+function ensureExternalPackageRuntimeDependencyTrees(
+  snapshotNodeModulesDir: string,
+  rootDir: string,
+  options: CopyMissingEntryOptions & RuntimeDependencyCollectionOptions = {},
+): void {
   const visited = new Set<string>();
 
   for (const entry of listNodeModulesEntries(snapshotNodeModulesDir)) {
@@ -333,12 +392,12 @@ function ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir: str
     if (entry.name.startsWith('@')) {
       for (const scopedEntry of listScopedPackageEntries(packagePath)) {
         if (scopedEntry.name.startsWith('.')) continue;
-        ensureExternalPackageRuntimeDependencyTree(resolve(packagePath, scopedEntry.name), rootDir, visited);
+        ensureExternalPackageRuntimeDependencyTree(resolve(packagePath, scopedEntry.name), rootDir, visited, options);
       }
       continue;
     }
 
-    ensureExternalPackageRuntimeDependencyTree(packagePath, rootDir, visited);
+    ensureExternalPackageRuntimeDependencyTree(packagePath, rootDir, visited, options);
   }
 }
 
@@ -347,29 +406,69 @@ function ensurePackageRuntimeDependenciesFromPackageJson(params: {
   destNodeModulesDir: string;
   rootDir: string;
   visited: Set<string>;
+  mergeExistingDirectoryContents?: boolean;
+  traverseExistingDependencyTrees?: boolean;
+  includeOptionalDependencies?: boolean;
+  includePeerDependencies?: boolean;
+  remainingTraversalDepth?: number;
 }): void {
   const packageName = readPackageNameFromPackageJson(params.packageJsonPath);
+  const mergeExistingDirectoryContents = params.mergeExistingDirectoryContents ?? true;
+  const traverseExistingDependencyTrees = params.traverseExistingDependencyTrees ?? true;
+  const includeOptionalDependencies = params.includeOptionalDependencies ?? true;
+  const includePeerDependencies = params.includePeerDependencies ?? true;
+  const remainingTraversalDepth = params.remainingTraversalDepth;
+  if (params.visited.has(params.packageJsonPath)) {
+    return;
+  }
+  params.visited.add(params.packageJsonPath);
 
-  for (const dep of collectExternalRuntimeDepNamesFromPackageJson(params.packageJsonPath)) {
+  for (const dep of collectExternalRuntimeDepNamesFromPackageJson(params.packageJsonPath, {
+    includeOptionalDependencies,
+    includePeerDependencies,
+  })) {
     const destDepPath = resolve(params.destNodeModulesDir, ...dep.name.split('/'));
-    const sourceCandidates = [
-      ...(packageName
-        ? [resolve(params.rootDir, 'apps', 'cli', 'node_modules', ...packageName.split('/'), 'node_modules', ...dep.name.split('/'))]
-        : []),
-      resolve(params.rootDir, 'apps', 'cli', 'node_modules', ...dep.name.split('/')),
-      resolve(params.rootDir, 'node_modules', ...dep.name.split('/')),
-    ];
+    const existedBefore = existsSync(destDepPath);
+    const packageLocalSourceCandidate = packageName
+      ? resolve(params.rootDir, 'apps', 'cli', 'node_modules', ...packageName.split('/'), 'node_modules', ...dep.name.split('/'))
+      : null;
+    const sourceCandidates = (
+      mergeExistingDirectoryContents
+        ? [packageLocalSourceCandidate, resolve(params.rootDir, 'apps', 'cli', 'node_modules', ...dep.name.split('/')), resolve(params.rootDir, 'node_modules', ...dep.name.split('/'))]
+        : [resolve(params.rootDir, 'apps', 'cli', 'node_modules', ...dep.name.split('/')), resolve(params.rootDir, 'node_modules', ...dep.name.split('/')), packageLocalSourceCandidate]
+    ).filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0);
 
-    if (!existsSync(destDepPath)) {
-      for (const sourcePath of sourceCandidates) {
-        if (!existsSync(sourcePath)) continue;
-        ensureCopiedDirectory(destDepPath, sourcePath);
-        break;
-      }
-    }
+    ensureCopiedDirectoryFromCandidates(destDepPath, sourceCandidates, {
+      mergeExistingDirectoryContents,
+      pruneNestedNodeModules: !mergeExistingDirectoryContents,
+    });
 
     if (isDirectoryEntry(destDepPath)) {
-      ensureExternalPackageRuntimeDependencyTree(destDepPath, params.rootDir, params.visited);
+      if (traverseExistingDependencyTrees) {
+        ensureExternalPackageRuntimeDependencyTree(destDepPath, params.rootDir, params.visited, { mergeExistingDirectoryContents });
+        continue;
+      }
+
+      if (typeof remainingTraversalDepth === 'number' && remainingTraversalDepth <= 0) {
+        continue;
+      }
+
+      const nestedNodeModulesDir = resolve(destDepPath, 'node_modules');
+      if (existsSync(nestedNodeModulesDir)) {
+        continue;
+      }
+      ensurePackageRuntimeDependenciesFromPackageJson({
+        packageJsonPath: resolve(destDepPath, 'package.json'),
+        destNodeModulesDir: nestedNodeModulesDir,
+        rootDir: params.rootDir,
+        visited: params.visited,
+        mergeExistingDirectoryContents,
+        traverseExistingDependencyTrees: false,
+        includeOptionalDependencies,
+        includePeerDependencies,
+        remainingTraversalDepth:
+          typeof remainingTraversalDepth === 'number' ? remainingTraversalDepth - 1 : remainingTraversalDepth,
+      });
     }
   }
 }
@@ -377,17 +476,30 @@ function ensurePackageRuntimeDependenciesFromPackageJson(params: {
 export function ensureCliPackSnapshotRuntimeDependencies(params: {
   snapshotDir: string;
   rootDir: string;
+  mergeExistingDirectories?: boolean;
+  hydrationScope?: 'full' | 'bundled-workspaces-only';
 }): void {
   const snapshotNodeModulesDir = resolve(params.snapshotDir, 'node_modules');
   mkdirSync(snapshotNodeModulesDir, { recursive: true });
+  const mergeExistingDirectoryContents = params.mergeExistingDirectories ?? true;
+  const hydrationScope = params.hydrationScope ?? 'full';
+  const hydrateRootRuntimeGraph = hydrationScope === 'full';
+  const fastModeTraversalDepth = mergeExistingDirectoryContents ? undefined : 1;
 
   const visited = new Set<string>();
-  ensurePackageRuntimeDependenciesFromPackageJson({
-    packageJsonPath: resolve(params.snapshotDir, 'package.json'),
-    destNodeModulesDir: snapshotNodeModulesDir,
-    rootDir: params.rootDir,
-    visited,
-  });
+  if (hydrateRootRuntimeGraph) {
+    ensurePackageRuntimeDependenciesFromPackageJson({
+      packageJsonPath: resolve(params.snapshotDir, 'package.json'),
+      destNodeModulesDir: snapshotNodeModulesDir,
+      rootDir: params.rootDir,
+      visited,
+      mergeExistingDirectoryContents,
+      traverseExistingDependencyTrees: mergeExistingDirectoryContents,
+      includeOptionalDependencies: mergeExistingDirectoryContents,
+      includePeerDependencies: true,
+      remainingTraversalDepth: fastModeTraversalDepth,
+    });
+  }
 
   const bundledScopeDir = resolve(snapshotNodeModulesDir, '@happier-dev');
   for (const entry of listScopedPackageEntries(bundledScopeDir)) {
@@ -397,10 +509,17 @@ export function ensureCliPackSnapshotRuntimeDependencies(params: {
       destNodeModulesDir: resolve(packageDir, 'node_modules'),
       rootDir: params.rootDir,
       visited,
+      mergeExistingDirectoryContents,
+      traverseExistingDependencyTrees: mergeExistingDirectoryContents,
+      includeOptionalDependencies: mergeExistingDirectoryContents,
+      includePeerDependencies: true,
+      remainingTraversalDepth: fastModeTraversalDepth,
     });
   }
 
-  ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
+  if (mergeExistingDirectoryContents && hydrateRootRuntimeGraph) {
+    ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir, { mergeExistingDirectoryContents });
+  }
 }
 
 export function ensureCliDistSnapshotNodeModules(params: {

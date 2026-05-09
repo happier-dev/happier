@@ -10,16 +10,47 @@ import { resolveCliPackageRoot, syncPackageDist } from './syncPackageDist.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const MAX_CAPTURED_OUTPUT_CHARS = 4000;
+const DEFAULT_PACK_TARBALL_TIMEOUT_MS = 600_000;
 
-function resolveNpmInvocation(npmExecpath = process.env.npm_execpath) {
+function resolvePackTarballTimeoutMs(env, explicitTimeoutMs) {
+  if (typeof explicitTimeoutMs === 'number' && Number.isFinite(explicitTimeoutMs)) {
+    return Math.min(1_800_000, Math.max(30_000, Math.trunc(explicitTimeoutMs)));
+  }
+  const raw = String(env?.HAPPIER_CLI_PACK_TARBALL_TIMEOUT_MS ?? '').trim();
+  if (!raw) return DEFAULT_PACK_TARBALL_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_PACK_TARBALL_TIMEOUT_MS;
+  return Math.min(1_800_000, Math.max(30_000, parsed));
+}
+
+function resolveNpmInvocation(
+  npmExecpath = process.env.npm_execpath,
+  platform = process.platform,
+  processExecPath = process.execPath,
+  exists = fs.existsSync,
+) {
+  const npmCommand = platform === 'win32' ? 'npm.cmd' : 'npm';
+  const nodeExecPath = String(processExecPath ?? '').trim();
+  const useWin32Path = platform === 'win32' && /\\/.test(nodeExecPath);
+  const platformPath = useWin32Path ? path.win32 : path;
+  const npmCliFromNode =
+    nodeExecPath
+      ? platformPath.join(platformPath.dirname(nodeExecPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+      : '';
   const npmExecpathValue = String(npmExecpath ?? '').trim();
   if (npmExecpathValue) {
     // Yarn classic sets `npm_execpath` to its own CLI entrypoint. That breaks `npm pack --json`
     // parsing and can cause the CLI smoke lane to fail by "packing" with yarn instead of npm.
     // Only respect `npm_execpath` when it points at npm's canonical JS entrypoint.
     if (path.basename(npmExecpathValue).toLowerCase() !== 'npm-cli.js') {
+      if (platform === 'win32' && npmCliFromNode && exists(npmCliFromNode)) {
+        return {
+          command: nodeExecPath,
+          args: [npmCliFromNode],
+        };
+      }
       return {
-        command: 'npm',
+        command: npmCommand,
         args: [],
       };
     }
@@ -29,8 +60,15 @@ function resolveNpmInvocation(npmExecpath = process.env.npm_execpath) {
     };
   }
 
+  if (platform === 'win32' && npmCliFromNode && exists(npmCliFromNode)) {
+    return {
+      command: nodeExecPath,
+      args: [npmCliFromNode],
+    };
+  }
+
   return {
-    command: 'npm',
+    command: npmCommand,
     args: [],
   };
 }
@@ -103,7 +141,9 @@ function resolveNpmCacheDir({ destDir, env }) {
 export function packTarball(options = {}) {
   const packageRoot = resolve(String(options.packageRoot ?? resolveCliPackageRoot()));
   const spawn = options.spawnSync ?? spawnSync;
-  const npmInvocation = options.npmInvocation ?? resolveNpmInvocation(options.npmExecpath);
+  const exists = options.existsSync ?? fs.existsSync;
+  const npmInvocation = options.npmInvocation ??
+    resolveNpmInvocation(options.npmExecpath, options.platform, options.processExecPath, exists);
   const destDirRaw = String(options.destDir ?? '').trim();
   const destDir = destDirRaw ? resolve(destDirRaw) : packageRoot;
 
@@ -111,12 +151,13 @@ export function packTarball(options = {}) {
     packageRoot,
     distDir: options.distDir,
     packageDistDir: options.packageDistDir,
-    existsSync: options.existsSync,
+    existsSync: exists,
     cpSync: options.cpSync,
     rmSync: options.rmSync,
   });
 
   const env = { ...process.env, ...(options.env ?? {}) };
+  const timeoutMs = resolvePackTarballTimeoutMs(env, options.timeoutMs);
   const npmCacheDir = String(options.npmCacheDir ?? '').trim() || resolveNpmCacheDir({ destDir, env });
   if (!String(env.npm_config_cache ?? '').trim()) {
     env.npm_config_cache = npmCacheDir;
@@ -131,6 +172,7 @@ export function packTarball(options = {}) {
     env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: timeoutMs,
   });
 
   if (typeof result.status === 'number' && result.status !== 0) {
@@ -146,7 +188,7 @@ export function packTarball(options = {}) {
   }
 
   const tarballPath = resolve(destDir, tarballName);
-  if (!fs.existsSync(tarballPath)) {
+  if (!exists(tarballPath)) {
     throw new Error(`[pack-tarball] missing tarball output: ${tarballPath}`);
   }
 

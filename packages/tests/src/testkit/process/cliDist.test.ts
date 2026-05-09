@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cp, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 
 import { ensureCliDistBuilt, ensureCliDistSnapshotEntrypoint, ensureCliSharedDepsBuilt, withCliDistBuildLock } from './cliDist';
@@ -607,6 +607,113 @@ describe('ensureCliDistBuilt', () => {
     expect(readFileSync(snapshotProtocolInternalPath, 'utf8')).toContain('workspace-transfer-stream');
   });
 
+  it('repairs missing runtime dependency files before returning a reusable ready shared snapshot', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const bundledAgentsPackageJsonPath = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'agents',
+      'package.json',
+    );
+    const workspaceAgentsPackageJsonPath = join(repoRoot, 'packages', 'agents', 'package.json');
+    const bundledAgentsZodDir = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'agents',
+      'node_modules',
+      'zod',
+    );
+    const snapshotRuntimeClosureFilePath = join(
+      snapshotDir,
+      'node_modules',
+      '@happier-dev',
+      'agents',
+      'node_modules',
+      'zod',
+      'v4',
+      'locales',
+      'ru.js',
+    );
+
+    const agentsPackageJson = JSON.stringify(
+      {
+        name: '@happier-dev/agents',
+        dependencies: {
+          zod: '4.3.6',
+        },
+      },
+      null,
+      2,
+    );
+    await writeFile(workspaceAgentsPackageJsonPath, agentsPackageJson, 'utf8');
+    await writeFile(bundledAgentsPackageJsonPath, agentsPackageJson, 'utf8');
+    await mkdir(join(bundledAgentsZodDir, 'v4', 'locales'), { recursive: true });
+    await writeFile(
+      join(bundledAgentsZodDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: 'zod',
+          version: '4.3.6',
+          main: 'index.js',
+          exports: {
+            '.': './index.js',
+            './v4': './v4/index.js',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(join(bundledAgentsZodDir, 'index.js'), 'export const z = true;\n', 'utf8');
+    await writeFile(join(bundledAgentsZodDir, 'v4', 'index.js'), 'export const v4 = true;\n', 'utf8');
+    await writeFile(join(bundledAgentsZodDir, 'v4', 'locales', 'ru.js'), 'export const locale = "ru";\n', 'utf8');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await writeFile(snapshotEntrypoint, 'export const snapshot = "ready";\n', 'utf8');
+    await cp(join(repoRoot, 'apps', 'cli', 'node_modules'), join(snapshotDir, 'node_modules'), { recursive: true });
+    rmSync(snapshotRuntimeClosureFilePath, { force: true });
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+
+    const freshSnapshotTime = new Date('2031-03-09T01:05:00.000Z');
+    touchTree(snapshotDistDir, freshSnapshotTime);
+    touchTree(join(snapshotDir, 'node_modules'), freshSnapshotTime);
+
+    await withCliDistBuildLock(
+      async () => {
+        const entrypoint = await ensureCliDistSnapshotEntrypoint(
+          { testDir: join(repoRoot, '.project'), env: process.env },
+          {
+            repoRoot,
+            snapshotDir,
+            timeoutMs: 250,
+            runCommand: async () => {
+              throw new Error('reusable ready snapshot repair should not need a live CLI rebuild');
+            },
+          },
+        );
+
+        expect(entrypoint).toBe(snapshotEntrypoint);
+      },
+      {
+        lockPath: `${snapshotDir}.lock`,
+        timeoutMs: 10_000,
+        staleAfterMs: 10_000,
+      },
+    );
+
+    expect(readFileSync(snapshotRuntimeClosureFilePath, 'utf8')).toContain('locale = "ru"');
+  });
+
   it('preserves the original stale ready snapshot when replacement materialization hits ENOENT', async () => {
     const repoRoot = await createRepoRoot();
     const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
@@ -797,6 +904,98 @@ describe('ensureCliDistBuilt', () => {
 
     expect(rebuildCalls).toBe(0);
     expect(existsSync(join(snapshotDir, 'dist', 'index.mjs'))).toBe(true);
+  });
+
+  it('repairs missing bundled runtime dependency files even when snapshot dist and ready marker already exist', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotReadyMarkerPath = join(snapshotDir, '.cli-dist-snapshot.ready.json');
+
+    const bundledAgentsPackageJsonPath = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'agents',
+      'package.json',
+    );
+    const bundledAgentsZodDir = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'agents',
+      'node_modules',
+      'zod',
+    );
+
+    await mkdir(bundledAgentsZodDir, { recursive: true });
+    await writeFile(
+      bundledAgentsPackageJsonPath,
+      JSON.stringify(
+        {
+          name: '@happier-dev/agents',
+          dependencies: {
+            zod: '4.3.6',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(
+      join(bundledAgentsZodDir, 'package.json'),
+      JSON.stringify({
+        name: 'zod',
+        version: '4.3.6',
+        main: 'index.js',
+      }),
+      'utf8',
+    );
+    await writeFile(join(bundledAgentsZodDir, 'index.js'), 'export const live = "source-zod";\n', 'utf8');
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await writeFile(join(snapshotDistDir, 'index.mjs'), 'export const ok = true;\n', 'utf8');
+    await mkdir(join(snapshotDir, 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod'), { recursive: true });
+    await writeFile(
+      join(snapshotDir, 'node_modules', '@happier-dev', 'agents', 'node_modules', 'zod', 'package.json'),
+      JSON.stringify({
+        name: 'zod',
+        version: '4.3.6',
+        main: 'index.js',
+      }),
+      'utf8',
+    );
+    await writeFile(snapshotReadyMarkerPath, JSON.stringify({ v: 1 }), 'utf8');
+
+    const snapshotEntrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        runCommand: async () => {
+          throw new Error('unexpected dist rebuild');
+        },
+      },
+    );
+
+    expect(snapshotEntrypoint.endsWith(`${join('dist', 'index.mjs')}`)).toBe(true);
+    const resolvedSnapshotDir = dirname(dirname(snapshotEntrypoint));
+    const repairedIndexFilePath = join(
+      resolvedSnapshotDir,
+      'node_modules',
+      '@happier-dev',
+      'agents',
+      'node_modules',
+      'zod',
+      'index.js',
+    );
+    expect(existsSync(repairedIndexFilePath)).toBe(true);
+    await expect(readFile(repairedIndexFilePath, 'utf8')).resolves.toContain('source-zod');
   });
 
   it('rebuilds when a vendored runtime dependency is missing from bundled shared deps', async () => {

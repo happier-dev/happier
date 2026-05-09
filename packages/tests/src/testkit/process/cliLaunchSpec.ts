@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { repoRootDir } from '../paths';
 import { ensureCliDistSnapshotEntrypoint, ensureCliSharedDepsBuilt } from './cliDist';
 import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules';
-import { resolveTsxImportHookPath } from './tsxImportHook';
+import { resolveTsxImportHookSpecifier } from './tsxImportHook';
 
 export type CliTestLaunchSpec = Readonly<{
   command: string;
@@ -67,16 +67,18 @@ function ensureCliSourceSnapshot(
         : 'auto';
 
   const snapshotNodeModulesDir = resolve(snapshotDir, 'node_modules');
-  if (
-    snapshotNodeModulesMode === 'copy'
-    && existsSync(snapshotNodeModulesDir)
-    && lstatSync(snapshotNodeModulesDir).isSymbolicLink()
-  ) {
-    rmSync(snapshotNodeModulesDir, { recursive: true, force: true });
-  }
-
   const ensureSymlinkNodeModules = (): void => {
-    if (existsSync(snapshotNodeModulesDir)) return;
+    if (existsSync(snapshotNodeModulesDir)) {
+      try {
+        const stat = lstatSync(snapshotNodeModulesDir);
+        if (snapshotNodeModulesMode !== 'symlink' || stat.isSymbolicLink()) {
+          return;
+        }
+        rmSync(snapshotNodeModulesDir, { recursive: true, force: true });
+      } catch {
+        return;
+      }
+    }
     const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
     const rootNodeModulesDir = resolve(rootDir, 'node_modules');
     const source = existsSync(cliNodeModulesDir) ? cliNodeModulesDir : rootNodeModulesDir;
@@ -94,10 +96,16 @@ function ensureCliSourceSnapshot(
     ensureSymlinkNodeModules();
   }
 
-  if (
-    snapshotNodeModulesMode !== 'symlink'
-    && (!existsSync(snapshotNodeModulesDir) || !lstatSync(snapshotNodeModulesDir).isSymbolicLink())
-  ) {
+  const snapshotNodeModulesIsSymlink = (() => {
+    if (!existsSync(snapshotNodeModulesDir)) return false;
+    try {
+      return lstatSync(snapshotNodeModulesDir).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!snapshotNodeModulesIsSymlink && snapshotNodeModulesMode !== 'symlink') {
     ensureCliDistSnapshotNodeModules({
       snapshotDir,
       snapshotDistDir: resolve(snapshotDir, 'dist'),
@@ -119,12 +127,11 @@ async function resolveCliSourceLaunchSpec(
   rootDir: string,
   options: CliLaunchOptions,
 ): Promise<CliTestLaunchSpec> {
-  const skipSharedDepsBuild = shouldSkipCliSharedDepsBuild(params.env);
-  if (!skipSharedDepsBuild) {
+  if (!shouldSkipCliSharedDepsBuild(params.env)) {
     await ensureCliSharedDepsBuilt(params, {
       repoRoot: rootDir,
       runCommand: options.runCommand,
-      skipSourceFreshnessCheck: options.skipSourceFreshnessCheck ?? true,
+      skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
       timeoutMs: options.timeoutMs,
       pollIntervalMs: options.pollIntervalMs,
       staleAfterMs: options.staleAfterMs,
@@ -138,14 +145,14 @@ async function resolveCliSourceLaunchSpec(
     throw new Error(`CLI source entrypoint missing for test launch: ${sourceEntrypoint}`);
   }
 
-  const tsxHookPath = resolveTsxImportHookPath();
-  if (!tsxHookPath) {
+  const tsxHookSpecifier = resolveTsxImportHookSpecifier();
+  if (!tsxHookSpecifier) {
     throw new Error('tsx import hook is required for CLI source entrypoint mode but could not be resolved');
   }
 
   return {
     command: process.execPath,
-    args: ['--preserve-symlinks', '--preserve-symlinks-main', '--import', tsxHookPath, sourceEntrypoint],
+    args: ['--preserve-symlinks', '--preserve-symlinks-main', '--import', tsxHookSpecifier, sourceEntrypoint],
     cwd: snapshotDir,
     env: {
       TSX_TSCONFIG_PATH: resolveCliTsconfigPath(snapshotDir),

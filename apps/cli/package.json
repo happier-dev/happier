@@ -4,6 +4,7 @@
   "description": "Mobile and Web client for Claude Code and Codex",
   "bin": {
     "happier": "./bin/happier.mjs",
+    "happier-dev": "./bin/happier-dev.mjs",
     "happier-mcp": "./bin/happier-mcp.mjs"
   },
   "author": "Leeroy Brun <leeroy.brun@gmail.com>",
@@ -208,7 +209,7 @@
     "dotenv": "^16.6.1",
     "eslint": "^9",
     "eslint-config-prettier": "^10",
-    "pkgroll": "^2.14.2",
+    "pkgroll": "^2.27.0",
     "release-it": "^19.0.6",
     "shx": "^0.3.3",
     "ts-node": "^10",
