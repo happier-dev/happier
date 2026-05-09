@@ -12,7 +12,7 @@ import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { t } from '@/text';
-import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import { createBackdropNativeStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import {
     OverlayMotionFrame,
     resolveOverlayMotionPreset,
@@ -235,15 +235,9 @@ export function BaseModal({
             position: 'fixed',
             inset: 0,
             zIndex: baseZ,
-            transition: [
-                `background-color ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
-                `backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
-                `-webkit-backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
-            ].join(', '),
-            ...createBackdropWebStyle({
-                backgroundColor: visible ? (theme.colors.overlay.scrimWizard ?? theme.colors.overlay.scrim) : 'transparent',
-                blurPx: visible ? 2 : 0,
-            }),
+            transition: `background-color ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+            // Full-screen backdrop blur is disproportionately expensive on desktop Chrome.
+            backgroundColor: visible ? (theme.colors.overlay.scrimWizard ?? theme.colors.overlay.scrim) : 'transparent',
         };
 
         const contentStyle: React.CSSProperties = {

@@ -79,18 +79,19 @@ describe('BaseModal (web)', () => {
         expect(screen.findAllByType('DialogOverlay' as any).length).toBe(0);
     });
 
-    it('uses the themed blurred modal backdrop on web', async () => {
+    it('uses the themed modal scrim on web without backdrop blur', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
 
         const overlay = screen.findAllByType('DialogOverlay' as any)?.[0];
         expect(overlay?.props.style).toMatchObject({
-            WebkitBackdropFilter: 'blur(2px)',
-            backdropFilter: 'blur(2px)',
-            backgroundColor: 'rgba(255, 255, 255, 0.52)',
+            backgroundColor: 'rgba(24, 23, 28, 0.2)',
         });
         expect(overlay?.props.style.opacity).toBeUndefined();
         expect(overlay?.props.style.transition).not.toContain('opacity');
+        expect(overlay?.props.style.transition).not.toContain('backdrop-filter');
+        expect(overlay?.props.style.WebkitBackdropFilter).toBeUndefined();
+        expect(overlay?.props.style.backdropFilter).toBeUndefined();
     });
 
     it('keeps the web modal mounted until the shared exit animation finishes', async () => {

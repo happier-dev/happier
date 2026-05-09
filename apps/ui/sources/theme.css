@@ -57,6 +57,13 @@
         height: auto !important;
         min-height: 0 !important;
         max-height: min(820px, calc(100vh - 96px)) !important;
+        /*
+        Expo Router / Vaul uses a large filtered shadow here by default. On desktop
+        Chrome this keeps the modal on an expensive compositing path while scrolling.
+        */
+        filter: none !important;
+        box-shadow: 0 22px 48px rgba(0, 0, 0, 0.28) !important;
+        will-change: auto !important;
     }
 }
 
@@ -73,9 +80,7 @@
    Expo Router owns this element outside BaseModal, but it exposes a CSS variable
    for the overlay color and stable Vaul data attributes for the backdrop node. */
 [data-vaul-overlay] {
-    --expo-router-modal-overlay-background: var(--colors-overlay-scrim-wizard, rgba(255, 255, 255, 0.52));
-    -webkit-backdrop-filter: blur(2px);
-    backdrop-filter: blur(2px);
+    --expo-router-modal-overlay-background: var(--colors-overlay-scrim-wizard, rgba(24, 23, 28, 0.2));
 }
 
 /* Ensure scrollbars are visible on hover for macOS */

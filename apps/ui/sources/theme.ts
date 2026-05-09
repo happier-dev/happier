@@ -76,7 +76,7 @@ export const lightTheme = {
             scrimSoft: 'rgba(0, 0, 0, 0.18)',
             scrim: 'rgba(0, 0, 0, 0.45)',
             scrimStrong: 'rgba(0, 0, 0, 0.6)',
-            scrimWizard: 'rgba(255, 255, 255, 0.52)',
+            scrimWizard: 'rgba(24, 23, 28, 0.2)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
         },
