@@ -261,11 +261,14 @@ vi.mock('./actionBarLogic', () => ({
     shouldShowPathAndResumeRow: () => false,
 }));
 
-vi.mock('./inputMaxHeight', () => ({
-    computeAgentInputDefaultMaxHeight: () => 200,
-    computeAgentInputKeyboardOpenPanelMaxHeight: () => undefined,
-    computeAgentInputKeyboardOpenVariableSectionMaxHeight: () => 200,
-}));
+vi.mock('./inputMaxHeight', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./inputMaxHeight')>();
+    return {
+        ...actual,
+        computeAgentInputDefaultMaxHeight: () => 200,
+        computeMeasuredPanelInputMaxHeight: () => 200,
+    };
+});
 
 vi.mock('./contextWarning', () => ({
     getContextWarning: () => null,

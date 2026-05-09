@@ -60,6 +60,28 @@ const { fromModuleMock, trackingState, fontAwesomeFontMock, ioniconsFontMock, ma
 }));
 
 vi.mock('react-native-quick-base64', () => ({}));
+vi.mock('@react-native-masked-view/masked-view', () => ({
+    __esModule: true,
+    default: (props: any) => React.createElement('MaskedView', props, props.children),
+    MaskedView: (props: any) => React.createElement('MaskedView', props, props.children),
+}));
+vi.mock('react-native-view-shot', () => ({
+    __esModule: true,
+    default: (props: any) => React.createElement('ViewShot', props, props.children),
+    ViewShot: (props: any) => React.createElement('ViewShot', props, props.children),
+    captureRef: vi.fn(async () => ''),
+    releaseCapture: vi.fn(),
+}));
+vi.mock('expo-video', () => ({
+    __esModule: true,
+    Video: (props: any) => React.createElement('Video', props, props.children),
+    VideoView: (props: any) => React.createElement('VideoView', props, props.children),
+    useVideoPlayer: () => null,
+}));
+vi.mock('expo-blur', () => ({
+    __esModule: true,
+    BlurView: (props: any) => React.createElement('BlurView', props, props.children),
+}));
 
 vi.mock('@/config', () => ({
     config: {

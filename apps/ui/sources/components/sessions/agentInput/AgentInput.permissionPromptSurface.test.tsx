@@ -241,11 +241,14 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => false,
 }));
 
-vi.mock('./inputMaxHeight', () => ({
-    computeAgentInputDefaultMaxHeight: () => 100,
-    computeAgentInputKeyboardOpenPanelMaxHeight: () => undefined,
-    computeAgentInputKeyboardOpenVariableSectionMaxHeight: () => 100,
-}));
+vi.mock('./inputMaxHeight', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./inputMaxHeight')>();
+    return {
+        ...actual,
+        computeAgentInputDefaultMaxHeight: () => 100,
+        computeMeasuredPanelInputMaxHeight: () => 100,
+    };
+});
 
 vi.mock('./contextWarning', () => ({
     getContextWarning: () => null,

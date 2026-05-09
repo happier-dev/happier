@@ -22,6 +22,21 @@ const IGNORED_UNTRANSLATED_KEYS = new Set([
     'setupOnboarding.handoffPlatformPosixLabel',
     'setupOnboarding.handoffPlatformMacosLabel',
     'setupOnboarding.handoffPlatformLinuxLabel',
+    'connectedServices.detail.prompts.accessTokenPlaceholder',
+    'connectedServices.serviceNames.github',
+    'deps.installable.githubCli.title',
+    'newSession.githubCliBanner.title',
+    'files.markdown',
+    'settingsSession.sessionCreation.modalModeSimpleTitle',
+    'settingsSession.sessionCreation.wizardPresentationAutoTitle',
+    'settingsSession.promptPersonalization.title',
+    'settingsSession.promptPersonalization.footer',
+    'settingsSession.promptPersonalization.askAgentToRenameSessionsTitle',
+    'settingsSession.promptPersonalization.askAgentToRenameSessionsEnabledSubtitle',
+    'settingsSession.promptPersonalization.askAgentToRenameSessionsDisabledSubtitle',
+    'settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsTitle',
+    'settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsEnabledSubtitle',
+    'settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsDisabledSubtitle',
 ]);
 
 // This test is a drift-stopper: it fails if we introduce any *new* untranslated English strings outside

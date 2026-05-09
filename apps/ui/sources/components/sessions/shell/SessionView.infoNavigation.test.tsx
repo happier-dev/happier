@@ -138,9 +138,16 @@ installSessionShellCommonModuleMocks({
     },
 });
 
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', () => ({
-    resolveServerIdForSessionIdFromLocalCache: (sessionId: string) => resolveServerIdForSessionIdFromLocalCacheSpy(sessionId),
-}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache', async (importOriginal) => {
+    const actual = await importOriginal<
+        typeof import('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache')
+    >();
+    return {
+        ...actual,
+        resolveServerIdForSessionIdFromLocalCache: (sessionId: string) =>
+            resolveServerIdForSessionIdFromLocalCacheSpy(sessionId),
+    };
+});
 
 vi.mock('react-native-reanimated', () => ({ __esModule: true, default: {} }));
 vi.mock('react-native-reanimated/lib/module', () => ({ __esModule: true, default: {} }));
