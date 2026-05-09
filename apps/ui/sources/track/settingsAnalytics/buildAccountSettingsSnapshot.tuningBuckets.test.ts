@@ -100,8 +100,8 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__filesDiffTokenizationMaxLineLength).toBe('large');
         expect(snapshot.properties.acct_setting__filesCodeViewJsonInferenceMaxBytes).toBe('large');
         expect(snapshot.properties.acct_setting__filesImagePreviewCacheMaxEntries).toBe('large');
-        expect(snapshot.properties.acct_setting__filesImagePreviewCacheMaxTotalBytes).toBe('large');
-        expect(snapshot.properties.acct_setting__filesImagePreviewMaxBytes).toBe('large');
+        expect(snapshot.properties.acct_setting__filesImagePreviewCacheMaxTotalBytes).toBe('small');
+        expect(snapshot.properties.acct_setting__filesImagePreviewMaxBytes).toBe('medium');
         expect(snapshot.properties.acct_setting__filesEditorChangeDebounceMs).toBe('small');
         expect(snapshot.properties.acct_setting__filesEditorMaxFileBytes).toBe('large');
         expect(snapshot.properties.acct_setting__filesEditorBridgeMaxChunkBytes).toBe('large');
