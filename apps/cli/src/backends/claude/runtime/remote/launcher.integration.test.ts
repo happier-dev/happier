@@ -1605,6 +1605,63 @@ function createRemoteHarness(options?: {
     expect(stopStaticControl).toHaveBeenCalledTimes(1);
   }, 30_000);
 
+  it('starts the static remote-control surface when only a tmux target is available', async () => {
+    const stdinIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    const stdoutIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    const stopStaticControl = vi.fn(async () => undefined);
+    const startRemoteModeStaticControl = vi.fn((params: unknown) => {
+      void params;
+      return { stop: stopStaticControl };
+    });
+
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: true });
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+
+    vi.doMock('@/ui/remoteControl/remoteModeControl', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/ui/remoteControl/remoteModeControl')>();
+      return {
+        ...actual,
+        startRemoteModeStaticControl,
+      };
+    });
+
+    try {
+      const { session, switchHandlerReady } = createRemoteHarness({
+        sessionId: 'sess_0',
+        startedBy: 'daemon',
+        terminalRuntime: { tmuxTarget: 'happy:session-from-target-only' },
+      });
+
+      mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+        const dispatchOpts = opts as RemoteDispatchMockOptions;
+        await waitForAbort(dispatchOpts.signal);
+      });
+
+      const { launchClaudeRemoteSession: claudeRemoteLauncher } = await import('./launcher');
+      const launcherPromise = claudeRemoteLauncher(session);
+
+      await vi.waitFor(() => {
+        expect(startRemoteModeStaticControl).toHaveBeenCalledTimes(1);
+      });
+
+      const switchHandler = await switchHandlerReady;
+      expect(await switchHandler({ to: 'local' })).toBe(true);
+      await expect(launcherPromise).resolves.toBe('switch');
+      expect(stopStaticControl).toHaveBeenCalledTimes(1);
+    } finally {
+      if (stdinIsTTY) {
+        Object.defineProperty(process.stdin, 'isTTY', stdinIsTTY);
+      } else {
+        delete (process.stdin as { isTTY?: unknown }).isTTY;
+      }
+      if (stdoutIsTTY) {
+        Object.defineProperty(process.stdout, 'isTTY', stdoutIsTTY);
+      } else {
+        delete (process.stdout as { isTTY?: unknown }).isTTY;
+      }
+    }
+  }, 30_000);
+
   it('respects switch RPC params and is idempotent', async () => {
     const { session, switchHandlerReady } = createRemoteHarness();
 

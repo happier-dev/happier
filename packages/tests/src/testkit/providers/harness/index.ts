@@ -69,6 +69,7 @@ import {
 } from './tokenLedger';
 import {
   extractFatalAgentErrorMessage,
+  formatFatalProviderAssistantError,
   isSkippableProviderUnavailabilityError,
   readFatalProviderErrorFromCliLogs,
   resolveTaskCompleteBaselineAtStepStart,
@@ -117,6 +118,7 @@ export {
 
 export {
   extractFatalAgentErrorMessage,
+  formatFatalProviderAssistantError,
   isSkippableProviderUnavailabilityError,
   readFatalProviderErrorFromCliLogs,
   resolveCliDistPreflightAllowRebuild,
@@ -987,7 +989,14 @@ async function runOneScenario(params: {
             }
             const fatal = extractFatalAgentErrorMessage(decodedMessages);
             if (fatal) {
-              throw new Error(`Fatal provider assistant error (${provider.id}.${scenario.id}): ${fatal}`);
+              throw new Error(
+                formatFatalProviderAssistantError({
+                  providerId: provider.id,
+                  scenarioId: scenario.id,
+                  fatal,
+                  env: process.env,
+                }),
+              );
             }
           }
         }

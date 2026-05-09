@@ -2137,8 +2137,10 @@ await server.connect(new StdioServerTransport());
   // --------------------
   execute_trace_ok: (provider) => {
     if (isOpenCodeFamilyProvider(provider) || provider.id === 'kilo') {
+      const isOpenCodeFamily = isOpenCodeFamilyProvider(provider);
       const pid = acpProviderId(provider);
       const expectedRawToolNames = ['execute', 'bash', 'shell', 'execute_command', 'exec_command'];
+      const executeTraceOkTokenFile = '.happier-execute-trace-ok-token.txt';
       const maxTraceEvents = isOpenCodeFamilyProvider(provider)
         ? { toolCalls: 2, toolResults: 2 }
         : { toolCalls: 1, toolResults: 1 };
@@ -2147,20 +2149,35 @@ await server.connect(new StdioServerTransport());
         title: 'execute: echo TRACE_OK',
         tier: 'smoke',
         yolo: true,
+        setup: isOpenCodeFamily
+          ? async ({ workspaceDir }) => {
+              const token = `TRACE_OK_${randomUUID()}`;
+              await writeFile(join(workspaceDir, executeTraceOkTokenFile), `${token}\n`, 'utf8');
+            }
+          : undefined,
         // OpenCode may emit an additional `change_title` tool-call/tool-result alongside the single Bash call.
         maxTraceEvents,
-        prompt: () =>
-          [
+        prompt: ({ workspaceDir }) => {
+          const command = isOpenCodeFamily
+            ? `cat ${JSON.stringify(join(workspaceDir, executeTraceOkTokenFile))} && echo TRACE_OK`
+            : 'echo TRACE_OK';
+          return [
             'Run exactly one tool call:',
-            '- Use the execute tool to run: echo TRACE_OK',
+            `- Use the execute tool to run: ${command}`,
             '- Then reply DONE.',
-          ].join('\n'),
+          ].join('\n');
+        },
         // OpenCode currently surfaces execute calls as the canonical tool `Bash`, with `_happier.rawToolName="execute"`.
         requiredFixtureKeys: [`acp/${pid}/tool-call/Bash`, `acp/${pid}/tool-result/Bash`],
         requiredTraceSubstrings: ['TRACE_OK'],
-        verify: async ({ fixtures }) => {
+        verify: async ({ fixtures, workspaceDir }) => {
           const examples = fixtures?.examples;
           if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
+          const expectedWorkspaceToken = isOpenCodeFamily
+            ? (
+                await readFile(join(workspaceDir, executeTraceOkTokenFile), 'utf8').catch(() => '')
+              ).trim()
+            : '';
 
           const calls = (examples[`acp/${pid}/tool-call/Bash`] ?? []) as any[];
           if (!Array.isArray(calls) || calls.length === 0) throw new Error('Missing execute tool-call fixtures');
@@ -2176,12 +2193,21 @@ await server.connect(new StdioServerTransport());
 
           const results = (examples[`acp/${pid}/tool-result/Bash`] ?? []) as any[];
           if (!Array.isArray(results) || results.length === 0) throw new Error('Missing execute tool-result fixtures');
+          const collectStdout = (entry: any): string | null => {
+            const out = entry?.payload?.output;
+            return typeof out === 'string' ? out : typeof out?.stdout === 'string' ? out.stdout : null;
+          };
           const hasOk = results.some((e) => {
-            const out = e?.payload?.output;
-            const stdout = typeof out === 'string' ? out : typeof out?.stdout === 'string' ? out.stdout : null;
+            const stdout = collectStdout(e);
             return hasStringSubstring(stdout, 'TRACE_OK');
           });
           if (!hasOk) throw new Error('execute tool-result did not include TRACE_OK in output');
+          if (expectedWorkspaceToken.length > 0) {
+            const hasWorkspaceToken = results.some((e) => hasStringSubstring(collectStdout(e), expectedWorkspaceToken));
+            if (!hasWorkspaceToken) {
+              throw new Error('execute tool-result did not include workspace token in output');
+            }
+          }
           const hasExit0 = results.some((e) => {
             const out = e?.payload?.output;
             const exit =
@@ -2211,7 +2237,9 @@ await server.connect(new StdioServerTransport());
       title: 'execute: echo CODEX_TRACE_OK',
       tier: 'smoke',
       yolo: true,
-      maxTraceEvents: { toolCalls: 1, toolResults: 1 },
+      // Codex ACP can emit up to two pre-execute helper calls before the terminal execute/Bash call.
+      // Keep this bounded to preserve drift signal while avoiding stale one-call assumptions.
+      maxTraceEvents: { toolCalls: 3, toolResults: 3 },
       requiredFixtureKeys: [],
       prompt: () =>
         [

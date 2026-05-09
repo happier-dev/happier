@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { encodeBase64 } from './messageCrypto';
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 const CLI_HOME_DIR_MODE = 0o700;
 const CLI_HOME_FILE_MODE = 0o600;
@@ -11,9 +12,17 @@ const CLI_HOME_FILE_MODE = 0o600;
 function deriveServerIdFromUrl(url: string): string {
   // Mirror apps/cli/src/configuration.ts deriveServerIdFromUrl for env-overridden servers.
   // Deterministic, filesystem-safe id for ad-hoc server URLs.
+  const comparableKey = (() => {
+    try {
+      return createServerUrlComparableKey(url);
+    } catch {
+      return '';
+    }
+  })();
+  const value = comparableKey || url;
   let h = 2166136261;
-  for (let i = 0; i < url.length; i += 1) {
-    h ^= url.charCodeAt(i);
+  for (let i = 0; i < value.length; i += 1) {
+    h ^= value.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
   return `env_${(h >>> 0).toString(16)}`;

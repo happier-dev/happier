@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { ProviderUnderTest } from '../../src/testkit/providers/types';
 import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
@@ -32,5 +35,21 @@ describe('scenarioCatalog (opencode_server)', () => {
     const scenario = scenarioCatalog.task_subagent_reply(opencodeServerProvider() as any);
     expect(scenario.id).toBe('task_subagent_reply');
     expect(scenario.postSatisfy?.waitForAcpSidechainFromToolName).toBe('Task');
+  });
+
+  it('seeds a workspace token and prompts execute_trace_ok with a real cat command', async () => {
+    const scenario = scenarioCatalog.execute_trace_ok(opencodeServerProvider());
+    expect(typeof scenario.setup).toBe('function');
+    expect(typeof scenario.prompt).toBe('function');
+
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'opencode-server-execute-trace-ok-'));
+    await scenario.setup?.({ workspaceDir, cliHome: workspaceDir });
+
+    const tokenFile = join(workspaceDir, '.happier-execute-trace-ok-token.txt');
+    const token = (await readFile(tokenFile, 'utf8')).trim();
+    expect(token.startsWith('TRACE_OK_')).toBe(true);
+
+    const prompt = scenario.prompt?.({ workspaceDir }) ?? '';
+    expect(prompt).toContain(`cat ${JSON.stringify(tokenFile)} && echo TRACE_OK`);
   });
 });

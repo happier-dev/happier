@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { maybeUpdateCodexSessionIdMetadata, publishCodexSessionIdMetadata } from '@/backends/codex/identity/codexSessionIdMetadata';
 
-const DEFAULT_CODEX_HOME_PATH = resolve(join(homedir(), '.codex'));
+const DEFAULT_CODEX_HOME_PATH = resolve(join('/tmp', 'happier-codex-home', '.codex'));
 
 describe('maybeUpdateCodexSessionIdMetadata', () => {
   it('no-ops when thread id is missing', () => {
@@ -81,6 +80,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
     maybeUpdateCodexSessionIdMetadata({
       getCodexThreadId: () => 'thread-app-server',
       backendMode: 'appServer',
+      codexHome: DEFAULT_CODEX_HOME_PATH,
       updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata) => {
         updates.push(updater(createTestMetadata({ path: '/tmp' })));
       },
@@ -127,6 +127,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
     maybeUpdateCodexSessionIdMetadata({
       getCodexThreadId: () => 'thread-1',
       backendMode: 'mcp',
+      codexHome: DEFAULT_CODEX_HOME_PATH,
       updateHappySessionMetadata: apply,
       lastPublished,
     } as any);
@@ -134,6 +135,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
     maybeUpdateCodexSessionIdMetadata({
       getCodexThreadId: () => 'thread-1',
       backendMode: 'appServer',
+      codexHome: DEFAULT_CODEX_HOME_PATH,
       updateHappySessionMetadata: apply,
       lastPublished,
     } as any);
@@ -216,8 +218,8 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       lastPublished,
     } as any);
 
-    expect(updates[0]?.directSessionV1).toBeTruthy();
-    expect(updates[1]?.directSessionV1).toBeUndefined();
+    expect(updates[0]?.externalSessionV1).toBeTruthy();
+    expect(updates[1]?.externalSessionV1).toBeUndefined();
   });
 
   it('republishes metadata when the exact codex source identity changes for the same thread id', () => {
@@ -341,7 +343,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
             },
           },
         },
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'codex',
           machineId: 'machine-1',
@@ -433,7 +435,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata) => {
         updates.push(updater({
           ...createTestMetadata({ machineId: 'machine-1', path: '/repo', codexSessionId: 'thread-direct' }),
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'codex',
             machineId: 'machine-1',
@@ -446,7 +448,7 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       lastPublished,
     } as any);
 
-    expect(updates[0]).not.toHaveProperty('directSessionV1');
+    expect(updates[0]).not.toHaveProperty('externalSessionV1');
   });
 
   it('does not mark thread id as published when the metadata update fails', async () => {

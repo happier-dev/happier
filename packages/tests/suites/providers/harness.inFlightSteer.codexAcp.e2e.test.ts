@@ -12,6 +12,7 @@ describe('providers harness: in-flight steer (codex ACP)', () => {
       const envVars = [
         'HAPPIER_E2E_PROVIDER_CODEX_ACP_STUB',
         'HAPPIER_E2E_PROVIDER_OPENCODE',
+        'HAPPIER_E2E_PROVIDER_OPENCODE_SERVER',
         'HAPPIER_E2E_PROVIDER_CLAUDE',
         'HAPPIER_E2E_PROVIDER_CODEX',
         'HAPPIER_E2E_PROVIDER_KILO',
@@ -29,6 +30,7 @@ describe('providers harness: in-flight steer (codex ACP)', () => {
       try {
         process.env.HAPPIER_E2E_PROVIDER_CODEX_ACP_STUB = '0';
         process.env.HAPPIER_E2E_PROVIDER_OPENCODE = '0';
+        process.env.HAPPIER_E2E_PROVIDER_OPENCODE_SERVER = '0';
         process.env.HAPPIER_E2E_PROVIDER_CLAUDE = '0';
         process.env.HAPPIER_E2E_PROVIDER_CODEX = '1';
         process.env.HAPPIER_E2E_PROVIDER_KILO = '0';

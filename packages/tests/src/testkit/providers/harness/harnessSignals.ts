@@ -191,6 +191,32 @@ export function extractFatalAgentErrorMessage(messages: unknown[]): string | nul
   return null;
 }
 
+function isOpenCodeTokenRefresh401(fatal: string): boolean {
+  const lower = fatal.toLowerCase();
+  return lower.includes('token refresh failed') && lower.includes('401');
+}
+
+function hasNonEmptyEnvValue(value: string | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function formatFatalProviderAssistantError(params: {
+  providerId: string;
+  scenarioId: string;
+  fatal: string;
+  env: NodeJS.ProcessEnv;
+}): string {
+  const base = `Fatal provider assistant error (${params.providerId}.${params.scenarioId}): ${params.fatal}`;
+  const isOpenCodeProvider = params.providerId === 'opencode' || params.providerId === 'opencode_server';
+  const isEnvAuth = hasNonEmptyEnvValue(params.env.OPENAI_API_KEY);
+
+  if (isOpenCodeProvider && !isEnvAuth && isOpenCodeTokenRefresh401(params.fatal)) {
+    return `${base} | Auth prerequisite: host OpenCode OAuth credentials failed to refresh (401). Re-run \`opencode auth login\` (or set \`OPENAI_API_KEY\` for env-auth mode) and rerun provider smoke.`;
+  }
+
+  return base;
+}
+
 export async function readFatalProviderErrorFromCliLogs(params: {
   cliHome: string;
   extraLogPaths?: string[];

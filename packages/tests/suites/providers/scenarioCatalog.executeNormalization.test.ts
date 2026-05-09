@@ -32,6 +32,11 @@ function acpProvider(id: string): ProviderUnderTest {
 }
 
 describe('scenarioCatalog: execute normalization', () => {
+  it('allows codex execute_trace_ok to include optional pre-execute helper tool calls', () => {
+    const scenario = scenarioCatalog.execute_trace_ok(acpProvider('codex'));
+    expect(scenario.maxTraceEvents).toEqual({ toolCalls: 3, toolResults: 3 });
+  });
+
   it('accepts opencode execute traces when rawToolName is bash', async () => {
     const scenario = scenarioCatalog.execute_trace_ok(acpProvider('opencode'));
     expect(typeof scenario.verify).toBe('function');
