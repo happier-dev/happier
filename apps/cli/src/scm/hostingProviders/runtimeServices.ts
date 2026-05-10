@@ -43,6 +43,14 @@ type ScmHostingProviderRuntimeRegistryInput = Readonly<{
     hookHandlersByHookId: ResolvedExecutablePluginRuntimeRegistry['hookHandlersByHookId'];
 }>;
 
+type ScmHostingProviderRuntimeTokenMaterializationRequest = Parameters<
+    NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingTokenMaterialization']>
+>[0];
+
+type ScmHostingProviderRuntimeBasicAuthMaterializationRequest = Parameters<
+    NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingBasicAuthMaterialization']>
+>[0];
+
 type ConnectedServicesCredentialApi = Pick<
     Readonly<{
         getConnectedServiceCredentialPlain(input: Readonly<{
@@ -63,8 +71,14 @@ type ConnectedServicesCredentialApi = Pick<
 const DEFAULT_CONNECTED_SERVICE_PROFILE_ID = 'default';
 
 function normalizeUrlSafety(
-    provider: ScmHostingProviderDescriptor,
-): ScmHostingProviderDescriptor['urlSafety'] {
+    provider: Readonly<{
+        urlSafety?: Readonly<{
+            allowedSchemes?: readonly string[];
+            allowedBaseUrls?: readonly string[];
+            allowedOrigins?: readonly string[];
+        }>;
+    }>,
+): NonNullable<ScmHostingProviderDescriptor['urlSafety']> {
     return {
         allowedSchemes: provider.urlSafety?.allowedSchemes ?? ['https:'],
         allowedBaseUrls: provider.urlSafety?.allowedBaseUrls ?? [],
@@ -189,7 +203,8 @@ export function createHostScmHostingProviderRegistry(
 ): ResolvedScmHostingProviderRegistry {
     const providers: ScmHostingProviderDescriptor[] = (input.contributes.scmHostingProviders ?? [])
         .map((provider) => {
-            const { urlSafety: _urlSafety, ...definition } = provider.definition;
+            const { urlSafety: sourceUrlSafety, ...definition } = provider.definition;
+            void sourceUrlSafety;
             return Object.freeze({
                 ...definition,
                 pluginId: provider.pluginId,
@@ -222,8 +237,10 @@ export function createHostScmHostingProviderRuntimeServices(
         hookHandlersByHookId: input.hookHandlersByHookId,
     };
 
-    return Object.freeze({
-        async resolveScmHostingTokenMaterialization(request) {
+    const services: ScmHostingProviderRuntimeServices = {
+        async resolveScmHostingTokenMaterialization(
+            request: ScmHostingProviderRuntimeTokenMaterializationRequest,
+        ) {
             const serviceId = await resolveScmHostingTokenServiceId(request, authMaterializationRegistry);
             if (!serviceId) {
                 return await resolveScmHostingTokenMaterialization({ ...request, records: [] }, authMaterializationRegistry);
@@ -246,7 +263,9 @@ export function createHostScmHostingProviderRuntimeServices(
                 profileKey: `${result.serviceId}:${result.profileId}`,
             };
         },
-        async resolveScmHostingBasicAuthMaterialization(request) {
+        async resolveScmHostingBasicAuthMaterialization(
+            request: ScmHostingProviderRuntimeBasicAuthMaterializationRequest,
+        ) {
             const serviceId = await resolveScmHostingBasicAuthServiceId(request, authMaterializationRegistry);
             if (!serviceId) {
                 return await resolveScmHostingBasicAuthMaterialization({ ...request, records: [] }, authMaterializationRegistry);
@@ -273,5 +292,6 @@ export function createHostScmHostingProviderRuntimeServices(
         resolveInstallableCommand: resolveHostingInstallableCommand,
         runCommand: runHostingCommand,
         resolveScmHostingProviderRegistry,
-    });
+    };
+    return Object.freeze(services);
 }

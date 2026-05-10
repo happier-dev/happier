@@ -166,7 +166,7 @@ async function writeScmBackendPlugin(params: Readonly<{
                 apiVersion: 1,
                 capabilities: params.registerAction ? ['scmBackends', 'actions'] : ['scmBackends'],
             },
-            permissions: params.registerAction ? [{ capability: 'actions.register' }] : [],
+            capabilities: { permissions: params.registerAction ? [{ capability: 'actions.register' }] : [] },
             targets: {
                 daemon: { entry: './daemon.mjs' },
             },
