@@ -6,6 +6,7 @@
     "local-memory-search",
     "acp-backends",
     "start-a-session",
+    "new-session-shortcuts",
     "model-and-engine-selection",
     "device-linking-and-restore",
     "session-read-state",

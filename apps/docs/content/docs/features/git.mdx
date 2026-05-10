@@ -607,14 +607,8 @@ From the branch menu you can:
 - switch to another branch
 - create a new branch
 - publish the current branch when it has no upstream yet
-
-### Publish branch
-
-When the current branch has no upstream tracking branch, Happier shows **Publish** instead of a normal push action.
-
-Publishing sets the upstream and pushes the branch in one step, similar to desktop Git clients.
-
-You can trigger this from the branch menu and, when relevant, from the remote-actions area that would otherwise offer push/pull.
+- checkout a pull request or merge request into the current worktree when supported
+- open a pull request or merge request in a separate worktree-backed session when supported
 
 ### Branch switching with uncommitted changes
 
@@ -675,6 +669,95 @@ Transient stashes are internal safety rails for branch switching. If the carry-o
 
 If Git reports a conflict while restoring, Happier keeps the stash instead of silently dropping it.
 
+## Pull requests and merge requests
+
+Happier can surface pull request / merge request state for the current branch when the connected machine can detect a hosting provider from the repository remotes.
+
+It can show:
+
+- an existing pull request or merge request for the current branch
+- the target repository and branch direction
+- whether the branch is ready to open a request
+- blocked reasons and the next safe action when a request cannot be opened yet
+
+### Provider support
+
+| Provider | Intended support |
+| --- | --- |
+| GitHub | Remote detection, compare URLs, connected-account or CLI-backed read/write, repository publishing, PR checkout, and PR worktree preparation when enabled in the build. |
+| GitLab | Remote detection, compare URLs, optional authenticated `glab` read/write/checkout, and MR worktree preparation when enabled in the build. |
+| Bitbucket | Remote detection and compare URLs. Authenticated Bitbucket PR creation is not currently part of the user-facing flow. |
+| Unknown remotes | Safe unsupported state with no write actions. |
+
+GitHub Enterprise-style remotes can be detected. Connected-account REST operations are designed for GitHub.com; enterprise/self-hosted cases usually depend on CLI auth or compare URLs.
+
+GitLab self-managed remotes keep their detected base URL. When `glab` is used, Happier checks authentication for the detected host when possible.
+
+### Opening or reusing a request
+
+When the current branch is ready, Happier can open or reuse a pull request / merge request from the repository surface.
+
+Authentication order depends on the provider integration available on the connected machine:
+
+- **GitHub**: connected GitHub account first when available, then authenticated `gh`, then no-auth compare URL.
+- **GitLab**: authenticated `glab`, then no-auth compare URL.
+- **Bitbucket**: no-auth compare URL.
+
+If Happier cannot create a request directly, it opens the provider's compare page so you can finish in the browser.
+
+### Default branch guard
+
+If the current branch is the repository's default branch, Happier avoids opening a request directly from that branch when the backend policy requires a feature branch.
+
+Instead, the UI should offer the safe next step:
+
+- create a feature branch first, or
+- when local commits and capabilities allow it, create the feature branch and continue the pull-request flow as one guided action
+
+This keeps the user in Happier instead of blocking them with an instruction to go to the terminal.
+
+### Dirty and unpublished branches
+
+Happier does not silently create a pull request from a dirty unpublished branch.
+
+If the branch has uncommitted work or no published upstream, commit and publish the branch first. Where supported, a stacked action can combine steps such as commit, push, and create request when repository state allows it.
+
+### Checkout a PR or MR
+
+The branch menu can checkout a pull request or merge request into the current worktree when the backend exposes checkout support.
+
+Accepted references can include:
+
+- `42`
+- `#42`
+- a GitHub pull request URL
+- a GitLab merge request URL
+- `gh pr checkout 42`
+- `glab mr checkout 17`
+- a branch name when the text is not a URL or numeric request id
+
+Local checkout uses the existing Git protections for dirty worktrees and conflicts. Happier does not discard local changes to make checkout succeed.
+
+### Open a PR or MR in a worktree
+
+When supported, you can open a pull request or merge request in a separate worktree-backed session.
+
+Happier resolves the request through the hosting-provider adapter, prepares the checkout through the existing worktree/source-controller path, and opens a new session at that worktree path.
+
+Use this when:
+
+- you want to review a request without disturbing your current branch
+- you want to test someone else's branch in isolation
+- you want to keep your current worktree clean while opening an external PR/MR
+
+## Lock recovery
+
+If Git reports a stale `index.lock` during branch checkout, Happier can offer a focused recovery prompt when the connected machine exposes that recovery action.
+
+When you confirm, Happier asks Git for the exact lock path and removes only that validated `index.lock` file inside the repository's Git directory. It then retries the failed checkout once.
+
+Happier does not run `git clean`, `git reset`, or broader repository cleanup as part of lock recovery.
+
 ## Turn, session, selected, and repository views
 
 Changed-files view supports multiple scopes:
@@ -708,12 +791,15 @@ If you prefer the older focused-screen behavior, switch to **Settings → Sessio
 
 SCM operations are intentionally conservative:
 
+- Git initialization and hosted repository publishing require explicit user action
 - publish/push/pull are blocked when the repository state says the operation is unsafe
 - pull uses **fast-forward only**
 - pull and revert require a clean worktree
 - push/pull/revert are blocked when `HEAD` is detached
 - push is blocked when the local branch is behind upstream
 - push/pull/revert are blocked while conflicts are present
+- pull request / merge request external URLs should be opened only when they match the detected provider origin
+- stale Git lock recovery removes only a validated `index.lock` path inside the repository's Git directory
 - destructive history-editing actions (reset/rebase/cherry-pick/drop) are not exposed in the app UI
 
 For file operations:
@@ -730,4 +816,10 @@ For file operations:
 - Line-level staging is for text diffs. Binary/conflict cases fall back to file-level actions.
 - Session attribution is best-effort and not a replacement for repository truth.
 - The commit-message generator requires daemon support for execution runs.
+- GitHub repository publishing is the first hosted repository publishing target; GitLab and Bitbucket repository publishing are not currently part of the user-facing flow.
+- GitHub source-control REST operations require a build with GitHub connected-account support. Otherwise, GitHub workflows depend on authenticated `gh` or compare URLs.
+- GitLab merge-request workflows depend on authenticated `glab` or compare URLs; GitLab connected accounts are not currently documented as a user-facing auth path.
+- Bitbucket support is detection/compare-url only.
+- Cross-repository/fork request creation and dependent stacked PR chains are not currently exposed in the app.
+- PR body generation from turn-level change evidence is not currently automatic.
 - Git write operations remain experimental while we continue hardening.
