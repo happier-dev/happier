@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
-import { fingerprintWorkspaceManifest } from '@/scm/sourceController/workspaceExportPackaging/fingerprintWorkspaceManifest';
+import { fingerprintWorkspaceManifest } from '@/scm/workspace/workspaceExportPackaging/fingerprintWorkspaceManifest';
 import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 import { createWorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';

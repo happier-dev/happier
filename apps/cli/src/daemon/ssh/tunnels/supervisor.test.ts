@@ -113,6 +113,42 @@ describe('createSshTunnelSupervisor', () => {
     expect(second.tunnelKey).toBe(first.tunnelKey);
   });
 
+  it('reuses an existing tunnel when forwarded URL reaches an authenticated server', async () => {
+    const mod = await loadModule();
+    expect(mod?.createSshTunnelSupervisor).toEqual(expect.any(Function));
+
+    const close = vi.fn();
+    const openForward = vi.fn(async () => ({
+      localPort: 49152,
+      remoteHost: '127.0.0.1',
+      remotePort: 8787,
+      controlPath: '/tmp/control.sock',
+      close,
+    }));
+    const probeUrl = vi
+      .fn()
+      .mockResolvedValueOnce({ state: 'healthy', checkedAt: '2026-05-06T00:00:00.000Z' })
+      .mockResolvedValueOnce({ state: 'auth_required', checkedAt: '2026-05-06T00:00:01.000Z' })
+      .mockResolvedValueOnce({ state: 'healthy', checkedAt: '2026-05-06T00:00:02.000Z' });
+    const supervisor = mod!.createSshTunnelSupervisor({
+      registry: createRegistry(),
+      openForward,
+      allocateLocalPort: async () => 49152,
+      isLocalPortAvailable: async () => true,
+      probeUrl,
+      nowMs: () => 0,
+      nextLeaseId: () => 'lease-1',
+    });
+
+    const first = await supervisor.ensureTunnel(createRequest());
+    const second = await supervisor.ensureTunnel(createRequest());
+
+    expect(openForward).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
+    expect(second.tunnelKey).toBe(first.tunnelKey);
+    expect(second.status).toBe('needs-auth');
+  });
+
   it('recreates a stale active tunnel when forwarded URL health fails', async () => {
     const mod = await loadModule();
     expect(mod?.createSshTunnelSupervisor).toEqual(expect.any(Function));
@@ -154,6 +190,37 @@ describe('createSshTunnelSupervisor', () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(openForward).toHaveBeenCalledTimes(2);
     expect(recreated.localPort).toBe(49153);
+  });
+
+  it('rejects a newly opened tunnel when forwarded URL health is unusable', async () => {
+    const mod = await loadModule();
+    expect(mod?.createSshTunnelSupervisor).toEqual(expect.any(Function));
+
+    const close = vi.fn();
+    const supervisor = mod!.createSshTunnelSupervisor({
+      registry: createRegistry(),
+      openForward: vi.fn(async () => ({
+        localPort: 49152,
+        remoteHost: '127.0.0.1',
+        remotePort: 8787,
+        controlPath: '/tmp/control.sock',
+        close,
+      })),
+      allocateLocalPort: async () => 49152,
+      isLocalPortAvailable: async () => true,
+      probeUrl: async () => ({
+        state: 'remote_runtime_unavailable',
+        checkedAt: '2026-05-06T00:00:00.000Z',
+      }),
+      nowMs: () => 0,
+    });
+
+    await expect(supervisor.ensureTunnel(createRequest())).rejects.toMatchObject({
+      errorCode: 'ssh_tunnel_unavailable',
+      health: expect.objectContaining({ state: 'remote_runtime_unavailable' }),
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(await supervisor.listTunnels()).toEqual([]);
   });
 
   it('stops an idle tunnel after the final lease is released', async () => {
@@ -245,6 +312,45 @@ describe('createSshTunnelSupervisor', () => {
     ]);
   });
 
+  it('does not adopt advisory registry entries still owned by a live daemon process', async () => {
+    const mod = await loadModule();
+    expect(mod?.createSshTunnelSupervisor).toEqual(expect.any(Function));
+
+    const liveOwnedEntry: SshTunnelRegistryEntry = {
+      tunnelKey: 'ssh-tunnel:live-owned',
+      controlPath: '/tmp/live-owned.sock',
+      localPort: 49152,
+      remoteHost: '127.0.0.1',
+      remotePort: 8787,
+      ownerPid: 123,
+      createdAt: '2026-05-06T00:00:00.000Z',
+      lastProbeAt: '2026-05-06T00:00:00.000Z',
+      purpose: 'remote-host-access',
+      remoteHostId: 'remote-1',
+      httpBaseUrl: 'http://127.0.0.1:49152',
+    };
+    const registry = createRegistry([liveOwnedEntry]);
+    const supervisor = mod!.createSshTunnelSupervisor({
+      registry,
+      openForward: vi.fn(),
+      allocateLocalPort: async () => 49154,
+      isLocalPortAvailable: async () => true,
+      probeUrl: async () => ({
+        state: 'healthy',
+        checkedAt: '2026-05-06T00:00:00.000Z',
+      }),
+      isProcessAlive: (pid: number) => pid === liveOwnedEntry.ownerPid,
+      controlPathExists: async () => true,
+      ownerPid: 456,
+      nowMs: () => 0,
+    });
+
+    await supervisor.adoptPersistedTunnels();
+
+    expect(await supervisor.listTunnels()).toEqual([]);
+    expect(registry.write).toHaveBeenLastCalledWith([liveOwnedEntry]);
+  });
+
   it('closes adopted restart entries through their persisted control path on stop', async () => {
     const mod = await loadModule();
     expect(mod?.createSshTunnelSupervisor).toEqual(expect.any(Function));
@@ -302,6 +408,7 @@ describe('createSshTunnelSupervisor', () => {
     });
 
     await expect(supervisor.ensureTunnel(createRequest())).rejects.toMatchObject({
+      message: 'SSH tunnel failed: Host key verification failed.',
       errorCode: 'ssh_tunnel_host_key_untrusted',
       health: expect.objectContaining({ state: 'host_key_untrusted' }),
     });

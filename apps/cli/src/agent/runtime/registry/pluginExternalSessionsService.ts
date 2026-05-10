@@ -1,8 +1,8 @@
 import {
-    DirectSessionsProviderIdSchema,
-    DirectSessionsSourceSchema,
-    type DirectSessionsProviderId,
-    type DirectSessionsSource,
+    ExternalSessionsProviderIdSchema,
+    ExternalSessionsSourceSchema,
+    type ExternalSessionsProviderId,
+    type ExternalSessionsSource,
     type ExternalSessionTakeoverInputV1,
     type ExternalSessionTakeoverResultV1,
 } from '@happier-dev/protocol';
@@ -16,7 +16,7 @@ import type {
     PluginContextV1,
 } from '@happier-dev/plugin-sdk';
 
-import type { DirectSessionProviderOps } from '@/session/external/providerOps';
+import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
 import {
     resolveDefaultCandidatesLimit,
     resolveDefaultMaxBytes,
@@ -24,13 +24,13 @@ import {
 } from '@/session/actions/externalSessions/actionConfiguration';
 
 type ProviderOpsResolver = (
-    providerId: DirectSessionsProviderId,
-) => DirectSessionProviderOps | null | Promise<DirectSessionProviderOps | null>;
+    providerId: ExternalSessionsProviderId,
+) => ExternalSessionProviderOps | null | Promise<ExternalSessionProviderOps | null>;
 
 type PluginExternalSessionsAttachHandler = (
     params: ExternalSessionAttachParamsV1 & Readonly<{
-        providerId: DirectSessionsProviderId;
-        source: DirectSessionsSource;
+        providerId: ExternalSessionsProviderId;
+        source: ExternalSessionsSource;
     }>,
 ) => Promise<ExternalSessionAttachResultV1>;
 
@@ -57,16 +57,16 @@ function normalizeBoundedInteger(
     return Math.max(min, Math.min(max, Math.trunc(value)));
 }
 
-function normalizeProviderId(raw: string | undefined, fallback: string): DirectSessionsProviderId {
-    const parsed = DirectSessionsProviderIdSchema.safeParse(raw && raw.trim().length > 0 ? raw : fallback);
+function normalizeProviderId(raw: string | undefined, fallback: string): ExternalSessionsProviderId {
+    const parsed = ExternalSessionsProviderIdSchema.safeParse(raw && raw.trim().length > 0 ? raw : fallback);
     if (!parsed.success) {
         throw new Error('invalid_provider');
     }
     return parsed.data;
 }
 
-function normalizeSource(raw: unknown): DirectSessionsSource {
-    const parsed = DirectSessionsSourceSchema.safeParse(raw);
+function normalizeSource(raw: unknown): ExternalSessionsSource {
+    const parsed = ExternalSessionsSourceSchema.safeParse(raw);
     if (!parsed.success) {
         throw new Error('invalid_source');
     }
@@ -74,10 +74,10 @@ function normalizeSource(raw: unknown): DirectSessionsSource {
 }
 
 async function resolveValidatedProviderOps(params: Readonly<{
-    providerId: DirectSessionsProviderId;
-    source: DirectSessionsSource;
+    providerId: ExternalSessionsProviderId;
+    source: ExternalSessionsSource;
     resolveProviderOps: ProviderOpsResolver;
-}>): Promise<Readonly<{ ops: DirectSessionProviderOps; source: DirectSessionsSource }>> {
+}>): Promise<Readonly<{ ops: ExternalSessionProviderOps; source: ExternalSessionsSource }>> {
     const ops = await params.resolveProviderOps(params.providerId);
     if (!ops) {
         throw new Error('provider_unavailable');

@@ -28,6 +28,18 @@ describe('SpawnDaemonSessionRequestSchema', () => {
     expect(parsed.approvedNewDirectoryCreation).toBe(true);
   });
 
+  it('preserves account settings version hints in the canonical spawn request', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      accountSettingsVersionHint: 14,
+    });
+
+    expect(parsed.accountSettingsVersionHint).toBe(14);
+    expect(pickDefinedSpawnSessionOptions(parsed)).toEqual(expect.objectContaining({
+      accountSettingsVersionHint: 14,
+    }));
+  });
+
   it('rejects unknown legacy built-in agent field when backendTarget is missing', () => {
     expect(() =>
       SpawnDaemonSessionRequestSchema.parse({

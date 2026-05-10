@@ -92,6 +92,7 @@ export async function resolveEffectiveCodingPromptPlan(
       delivery: toolDelivery,
       sessionId,
       directory,
+      settings,
       memoryRecallGuidance: {
         enabled: memoryRecallGuidanceEnabled,
         machineId: args.memoryMachineId ?? null,

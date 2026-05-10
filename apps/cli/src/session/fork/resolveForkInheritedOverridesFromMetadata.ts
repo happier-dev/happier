@@ -4,7 +4,12 @@ import {
   AcpSessionModeOverrideV1Schema,
   ModelOverrideV1Schema,
 } from '@happier-dev/protocol';
-import { resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
+import {
+  readAcpSessionModeIntentFromMetadata,
+  resolveMetadataStringOverrideV1,
+  resolvePermissionIntentFromSessionMetadata,
+} from '@happier-dev/agents';
+import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 
 type ForkInheritedSpawnOverrides = {
   permissionMode?: PermissionMode;
@@ -25,6 +30,7 @@ type ForkInheritedMetadataOverrides = Pick<
   | 'sessionConfigOptionsV1'
   | 'sessionModeOverrideV1'
   | 'sessionConfigOptionOverridesV1'
+  | 'summary'
   | 'acpSessionModesV1'
   | 'acpSessionModelsV1'
   | 'acpConfigOptionsV1'
@@ -38,6 +44,23 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function readSummaryTitle(metadata: Record<string, unknown> | null | undefined): {
+  value: string;
+  updatedAt?: number;
+} | null {
+  const summary = metadata?.summary;
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return null;
+  const record = summary as Record<string, unknown>;
+  const value = typeof record.text === 'string' ? record.text.trim() : '';
+  if (!value) return null;
+  return {
+    value,
+    ...(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt)
+      ? { updatedAt: record.updatedAt }
+      : {}),
+  };
 }
 
 function cloneSessionModesState(
@@ -149,6 +172,33 @@ function cloneSessionConfigOptionsState(
   };
 }
 
+function readAcpConfigOptionOverrides(metadata: Record<string, unknown> | null | undefined): Array<{
+  configId: string;
+  value: string | number | boolean | null;
+  updatedAt: number;
+}> {
+  const roots = [
+    AcpConfigOptionOverridesV1Schema.safeParse(metadata?.sessionConfigOptionOverridesV1),
+    AcpConfigOptionOverridesV1Schema.safeParse(metadata?.acpConfigOptionOverridesV1),
+  ].filter((parsed) => parsed.success);
+  const latestByConfigId = new Map<string, { configId: string; value: string | number | boolean | null; updatedAt: number }>();
+  for (const root of roots) {
+    if (!root.success) continue;
+    for (const [configIdRaw, entry] of Object.entries(root.data.overrides)) {
+      const configId = configIdRaw.trim();
+      if (!configId) continue;
+      const current = latestByConfigId.get(configId);
+      if (current && entry.updatedAt <= current.updatedAt) continue;
+      latestByConfigId.set(configId, {
+        configId,
+        value: entry.value,
+        updatedAt: entry.updatedAt,
+      });
+    }
+  }
+  return Array.from(latestByConfigId.values());
+}
+
 export function resolveForkInheritedOverridesFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
 ): {
@@ -158,12 +208,29 @@ export function resolveForkInheritedOverridesFromMetadata(
   const spawn: ForkInheritedSpawnOverrides = {};
   const metadataOverrides: ForkInheritedMetadataOverrides = {};
 
+  const displayTitle = readSummaryTitle(metadata);
+  if (displayTitle?.value) {
+    Object.assign(
+      metadataOverrides,
+      applySessionStateFieldMetadataPatch(metadataOverrides, 'display.title', {
+        title: displayTitle.value,
+        updatedAt: displayTitle.updatedAt ?? Date.now(),
+      }),
+    );
+  }
+
   const permission = resolvePermissionIntentFromSessionMetadata(metadata);
   if (permission && isPermissionMode(permission.intent)) {
     spawn.permissionMode = permission.intent;
     spawn.permissionModeUpdatedAt = permission.updatedAt;
-    metadataOverrides.permissionMode = permission.intent;
-    metadataOverrides.permissionModeUpdatedAt = permission.updatedAt;
+    Object.assign(
+      metadataOverrides,
+      applySessionStateFieldMetadataPatch(metadataOverrides, 'intent.permissionMode', {
+        v: 1,
+        permissionMode: permission.intent,
+        updatedAt: permission.updatedAt,
+      }),
+    );
   }
 
   const model = resolveMetadataStringOverrideV1(metadata, 'modelOverrideV1', 'modelId');
@@ -174,7 +241,14 @@ export function resolveForkInheritedOverridesFromMetadata(
 
   const modelOverrideRaw = ModelOverrideV1Schema.safeParse(metadata?.modelOverrideV1);
   if (modelOverrideRaw.success) {
-    metadataOverrides.modelOverrideV1 = modelOverrideRaw.data;
+    Object.assign(
+      metadataOverrides,
+      applySessionStateFieldMetadataPatch(metadataOverrides, 'intent.model', {
+        v: 1,
+        modelId: modelOverrideRaw.data.modelId,
+        updatedAt: modelOverrideRaw.data.updatedAt,
+      }),
+    );
   }
 
   const sessionModes = cloneSessionModesState(metadata?.sessionModesV1);
@@ -192,18 +266,32 @@ export function resolveForkInheritedOverridesFromMetadata(
     metadataOverrides.sessionConfigOptionsV1 = configOptions;
   }
 
-  const sessionModeOverrideRaw = AcpSessionModeOverrideV1Schema.safeParse(metadata?.sessionModeOverrideV1);
-  if (sessionModeOverrideRaw.success) {
-    metadataOverrides.sessionModeOverrideV1 = sessionModeOverrideRaw.data;
-    if (isNonEmptyString(sessionModeOverrideRaw.data.modeId)) {
-      spawn.agentModeId = sessionModeOverrideRaw.data.modeId;
-      spawn.agentModeUpdatedAt = sessionModeOverrideRaw.data.updatedAt;
+  const sessionModeOverride = readAcpSessionModeIntentFromMetadata((metadata ?? {}) as Metadata);
+  if (sessionModeOverride) {
+    Object.assign(
+      metadataOverrides,
+      applySessionStateFieldMetadataPatch(metadataOverrides, 'intent.acpSessionMode', {
+        v: 1,
+        modeId: sessionModeOverride.modeId,
+        updatedAt: sessionModeOverride.updatedAt,
+      }),
+    );
+    if (isNonEmptyString(sessionModeOverride.modeId)) {
+      spawn.agentModeId = sessionModeOverride.modeId;
+      spawn.agentModeUpdatedAt = sessionModeOverride.updatedAt;
     }
   }
 
-  const sessionConfigOverridesRaw = AcpConfigOptionOverridesV1Schema.safeParse(metadata?.sessionConfigOptionOverridesV1);
-  if (sessionConfigOverridesRaw.success) {
-    metadataOverrides.sessionConfigOptionOverridesV1 = sessionConfigOverridesRaw.data;
+  for (const entry of readAcpConfigOptionOverrides(metadata)) {
+    Object.assign(
+      metadataOverrides,
+      applySessionStateFieldMetadataPatch(metadataOverrides, 'intent.acpConfigOption', {
+        v: 1,
+        configId: entry.configId,
+        value: entry.value,
+        updatedAt: entry.updatedAt,
+      }),
+    );
   }
 
   const acpSessionModes = cloneSessionModesState(metadata?.acpSessionModesV1);
@@ -219,20 +307,6 @@ export function resolveForkInheritedOverridesFromMetadata(
   const acpConfigOptions = cloneSessionConfigOptionsState(metadata?.acpConfigOptionsV1);
   if (acpConfigOptions) {
     metadataOverrides.acpConfigOptionsV1 = acpConfigOptions;
-  }
-
-  const acpModeOverrideRaw = AcpSessionModeOverrideV1Schema.safeParse(metadata?.acpSessionModeOverrideV1);
-  if (acpModeOverrideRaw.success) {
-    metadataOverrides.acpSessionModeOverrideV1 = acpModeOverrideRaw.data;
-    if (!spawn.agentModeId && isNonEmptyString(acpModeOverrideRaw.data.modeId)) {
-      spawn.agentModeId = acpModeOverrideRaw.data.modeId;
-      spawn.agentModeUpdatedAt = acpModeOverrideRaw.data.updatedAt;
-    }
-  }
-
-  const acpConfigOverridesRaw = AcpConfigOptionOverridesV1Schema.safeParse(metadata?.acpConfigOptionOverridesV1);
-  if (acpConfigOverridesRaw.success) {
-    metadataOverrides.acpConfigOptionOverridesV1 = acpConfigOverridesRaw.data;
   }
 
   return { spawn, metadata: metadataOverrides };

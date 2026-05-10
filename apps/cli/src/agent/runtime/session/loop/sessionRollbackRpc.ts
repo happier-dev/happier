@@ -6,6 +6,9 @@ import { dispatchActionFromRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import {
   RPC_ERROR_CODES,
   RPC_ERROR_MESSAGES,
+  CheckpointCodeRollbackActionRequestSchema,
+  type CheckpointCodeRollbackRequest,
+  type CheckpointCodeRollbackResult,
   SessionRollbackRpcParamsSchema,
   type SessionRollbackRpcParams,
   type SessionRollbackRpcResult,
@@ -14,6 +17,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 export type SessionRollbackRuntimeFacet = Readonly<{
   rollbackConversation: (request: SessionRollbackRpcParams) => Promise<SessionRollbackRpcResult>;
+  checkpointCodeRollback?: (request: CheckpointCodeRollbackRequest) => Promise<CheckpointCodeRollbackResult>;
 }>;
 
 export function resolveSessionRollbackRuntimeFacet(runtime: unknown): SessionRollbackRuntimeFacet | null {
@@ -22,7 +26,12 @@ export function resolveSessionRollbackRuntimeFacet(runtime: unknown): SessionRol
   }
   const candidate = runtime as Partial<SessionRollbackRuntimeFacet>;
   return typeof candidate.rollbackConversation === 'function'
-    ? { rollbackConversation: candidate.rollbackConversation.bind(runtime) }
+    ? {
+        rollbackConversation: candidate.rollbackConversation.bind(runtime),
+        ...(typeof candidate.checkpointCodeRollback === 'function'
+          ? { checkpointCodeRollback: candidate.checkpointCodeRollback.bind(runtime) }
+          : {}),
+      }
     : null;
 }
 
@@ -60,5 +69,47 @@ export function registerSessionRollbackRpcHandler(
       } satisfies SessionRollbackRpcResult;
     }
     return dispatched.result as SessionRollbackRpcResult;
+  });
+
+  rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK, async (raw: unknown) => {
+    const parsed = CheckpointCodeRollbackActionRequestSchema.safeParse(raw);
+    if (!parsed.success) {
+      return {
+        status: 'unavailable',
+        changedPaths: [],
+        skippedPaths: [],
+        receipts: ['checkpoint.rollback_aborted'],
+        diagnostics: ['invalid_request'],
+      } satisfies CheckpointCodeRollbackResult;
+    }
+    const dispatched = await dispatchActionFromRpc({
+      actionId: 'session.checkpoint_code_rollback',
+      input: parsed.data,
+      executor: createSessionLifecycleRpcActionExecutor({
+        'session.checkpoint_code_rollback': async (request: unknown) => {
+          const runtimeFacet = resolveRuntimeFacet();
+          if (!runtimeFacet?.checkpointCodeRollback) {
+            return {
+              status: 'unavailable',
+              changedPaths: [],
+              skippedPaths: [],
+              receipts: ['checkpoint.rollback_aborted'],
+              diagnostics: [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE],
+            } satisfies CheckpointCodeRollbackResult;
+          }
+          return await runtimeFacet.checkpointCodeRollback(request as CheckpointCodeRollbackRequest);
+        },
+      }),
+    });
+    if (!dispatched.ok) {
+      return {
+        status: 'unavailable',
+        changedPaths: [],
+        skippedPaths: [],
+        receipts: ['checkpoint.rollback_aborted'],
+        diagnostics: [dispatched.errorCode, dispatched.error],
+      } satisfies CheckpointCodeRollbackResult;
+    }
+    return dispatched.result as CheckpointCodeRollbackResult;
   });
 }

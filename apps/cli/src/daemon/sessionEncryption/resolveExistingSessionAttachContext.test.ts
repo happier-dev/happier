@@ -71,7 +71,7 @@ describe('resolveExistingSessionAttachContext', () => {
         id: 'sess_direct_claude',
         encryptionMode: 'plain',
         metadata: JSON.stringify({
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'claude',
             remoteSessionId: 'sess-direct-1',

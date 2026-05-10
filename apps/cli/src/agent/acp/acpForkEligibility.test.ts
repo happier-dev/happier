@@ -78,12 +78,12 @@ describe('isAcpForkEligibleForProvider', () => {
     ).toBe(true);
   });
 
-  it('preserves nested directSessionV1.codexBackendMode ACP compatibility for codex', () => {
+  it('preserves nested externalSessionV1.codexBackendMode ACP compatibility for codex', () => {
     expect(
       isAcpForkEligibleForProvider({
         providerId: 'codex',
         metadata: {
-          directSessionV1: {
+          externalSessionV1: {
             codexBackendMode: 'acp',
           },
           codexSessionId: 'codex_parent',

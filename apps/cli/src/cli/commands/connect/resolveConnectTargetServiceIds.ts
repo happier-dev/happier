@@ -1,6 +1,7 @@
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
   ConnectedServiceIdSchema,
+  ConnectedAccountDescriptorSchema,
   getConnectedAccountDescriptorsForTarget,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
@@ -35,12 +36,23 @@ export function resolveConnectTargetServiceIds(targetId: string): ConnectedServi
 
 export function resolveConnectTargetServiceIdsFromRegistry(
   targetId: string,
-  registry: Pick<ResolvedContributionRegistry, 'catalogEntriesById' | 'providerDefinitionsById'>,
+  registry: Pick<ResolvedContributionRegistry, 'catalogEntriesById' | 'providerDefinitionsById' | 'connectedAccountDescriptors'>,
 ): ConnectedServiceId[] {
   const normalized = String(targetId ?? '').trim().toLowerCase();
   if (!normalized) return [];
 
-  const descriptorServiceIds = getConnectedAccountDescriptorsForTarget(normalized).map((descriptor) => descriptor.id);
+  const pluginDescriptorServiceIds = (registry.connectedAccountDescriptors ?? [])
+    .map((contribution) => ConnectedAccountDescriptorSchema.safeParse(contribution.definition))
+    .filter((result): result is Extract<typeof result, { success: true }> => result.success)
+    .flatMap((result) =>
+      result.data.connectModes.some((mode) => mode.targetId.toLowerCase() === normalized)
+        ? [result.data.id]
+        : [],
+    );
+  const descriptorServiceIds = [
+    ...getConnectedAccountDescriptorsForTarget(normalized).map((descriptor) => descriptor.id),
+    ...pluginDescriptorServiceIds,
+  ];
   const catalogEntry = registry.catalogEntriesById[normalized];
   if (!catalogEntry?.getCloudConnectTarget) return descriptorServiceIds;
 

@@ -55,7 +55,7 @@ describe('createBuiltInEntry', () => {
       },
       executionSurfaces: {
         terminalRuntime: null,
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
       },

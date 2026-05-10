@@ -26,9 +26,16 @@ function createHarness() {
   let runtimeHandler: RuntimeTurnMessageHandler | null = null;
 
   const session = {
+    sessionId: 'session-1',
     updateMetadata: vi.fn(async (updater: (metadata: RuntimePublicationMetadata) => RuntimePublicationMetadata) => {
       void updater(createRuntimePublicationMetadata());
     }),
+  };
+  const sessionState = {
+    writeHappierField: vi.fn(async (): Promise<
+      | { ok: true; version: number }
+      | { ok: false; reason: 'unknown_error' }
+    > => ({ ok: true, version: 1 })),
   };
   const runtime = {
     subscribeRuntimeMessages: vi.fn((handler: RuntimeTurnMessageHandler) => {
@@ -43,6 +50,7 @@ function createHarness() {
 
   return {
     session,
+    sessionState,
     runtime,
     emit(message: unknown) {
       runtimeHandler?.(message);
@@ -55,6 +63,7 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
     const harness = createHarness();
     const unsubscribe = subscribeSessionRuntimePublicationToMetadata({
       session: harness.session,
+      sessionState: harness.sessionState,
       runtime: harness.runtime as never,
     });
 
@@ -102,20 +111,25 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
     });
     unsubscribe();
 
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      fieldId: 'identity.runtimeDescriptor',
+      value: {
+        v: 1,
+        providerId: 'acme.provider',
+        provider: {
+          backendMode: 'native',
+        },
+      },
+      reason: 'reconciliation',
+      metadataReason: 'runtime-identity-publication',
+    });
+
     const updates = harness.session.updateMetadata.mock.calls.map(([updater]) =>
       updater(createRuntimePublicationMetadata()),
     );
 
     expect(updates).toEqual([
-      createRuntimePublicationMetadata({
-        runtimeDescriptorV1: {
-          v: 1,
-          providerId: 'acme.provider',
-          provider: {
-            backendMode: 'native',
-          },
-        },
-      }),
       createRuntimePublicationMetadata({
         agentRuntimeCapabilitiesV1: {
           executionRun: {
@@ -139,6 +153,7 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
     const harness = createHarness();
     subscribeSessionRuntimePublicationToMetadata({
       session: harness.session,
+      sessionState: harness.sessionState,
       runtime: harness.runtime as never,
     });
 
@@ -147,6 +162,69 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
       name: 'runtime.descriptor',
       payload: {
         providerId: 'missing-version',
+      },
+    });
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      fieldId: 'identity.runtimeDescriptor',
+      value: null,
+      reason: 'reconciliation',
+      metadataReason: 'runtime-identity-publication',
+    });
+    expect(harness.session.updateMetadata).not.toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it('retries an unchanged runtime descriptor after a failed session-state write', async () => {
+    const harness = createHarness();
+    harness.sessionState.writeHappierField
+      .mockResolvedValueOnce({ ok: false as const, reason: 'unknown_error' })
+      .mockResolvedValueOnce({ ok: true as const, version: 2 });
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+    });
+
+    const descriptor = {
+      v: 1,
+      providerId: 'codex',
+      provider: {
+        backendMode: 'appServer',
+        vendorSessionId: 'thread-1',
+      },
+    };
+    harness.emit({
+      type: 'event',
+      name: 'runtime.descriptor',
+      payload: descriptor,
+    });
+    await Promise.resolve();
+    harness.emit({
+      type: 'event',
+      name: 'runtime.descriptor',
+      payload: descriptor,
+    });
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledTimes(2);
+  });
+
+  it('publishes legacy runtime facets through metadata while runtime identity stays session-state routed', () => {
+    const harness = createHarness();
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+    });
+
+    harness.emit({
+      type: 'event',
+      name: 'runtime.facets',
+      payload: {
+        v: 1,
+        transcriptSource: {
+          supported: true,
+        },
       },
     });
 
@@ -159,18 +237,25 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
             backendMode: 'appServer',
           },
         },
-        agentRuntimeDescriptorV1: {
+      })),
+    );
+
+    expect(updates).toEqual([
+      createRuntimePublicationMetadata({
+        runtimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
           provider: {
             backendMode: 'appServer',
           },
         },
-      })),
-    );
-
-    expect(updates).toEqual([
-      createRuntimePublicationMetadata(),
+        agentRuntimeFacetsV1: {
+          v: 1,
+          transcriptSource: {
+            supported: true,
+          },
+        },
+      }),
     ]);
   });
 
@@ -178,6 +263,7 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
     const harness = createHarness();
     subscribeSessionRuntimePublicationToMetadata({
       session: harness.session,
+      sessionState: harness.sessionState,
       runtime: harness.runtime as never,
     });
 

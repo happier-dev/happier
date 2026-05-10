@@ -100,6 +100,7 @@ export abstract class BasePermissionHandler {
     private readonly requestStore: AgentStateRequestStore;
     private readonly requestCoordinator: PermissionRequestCoordinator<PermissionResult>;
     private readonly onAbortRequested: (() => void | Promise<void>) | null;
+    private readonly getAccountSettingsSnapshotFn: () => AccountSettings | null;
     private readonly toolTrace: { protocol: ToolTraceProtocol; provider: string } | null;
     private readonly triggerAbortCallbackOnAbortDecision: boolean;
 
@@ -124,11 +125,12 @@ export abstract class BasePermissionHandler {
         }
     ) {
         this.session = session;
+        this.getAccountSettingsSnapshotFn = typeof opts?.getAccountSettings === 'function' ? opts.getAccountSettings : (() => null);
         this.requestStore = new AgentStateRequestStore({
             session,
             logPrefix: this.getLogPrefix(),
             pushSender: opts?.pushSender ?? null,
-            getAccountSettings: typeof opts?.getAccountSettings === 'function' ? opts.getAccountSettings : (() => null),
+            getAccountSettings: this.getAccountSettingsSnapshotFn,
             getAccountSettingsSecretsReadKeys:
                 typeof opts?.getAccountSettingsSecretsReadKeys === 'function'
                     ? opts.getAccountSettingsSecretsReadKeys
@@ -149,6 +151,15 @@ export abstract class BasePermissionHandler {
                 : null;
         this.setupRpcHandler();
         this.seedAllowedToolsFromAgentState();
+    }
+
+    protected getAccountSettingsSnapshot(): AccountSettings | null {
+        try {
+            return this.getAccountSettingsSnapshotFn();
+        } catch (error) {
+            logger.debug(`${this.getLogPrefix()} Failed to read account settings`, error);
+            return null;
+        }
     }
 
     /**

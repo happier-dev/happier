@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createDirectSessionTranscriptProviderOps } from './providerOps';
+import { createExternalSessionTranscriptProviderOps } from './providerOps';
 
-describe('createDirectSessionTranscriptProviderOps', () => {
+describe('createExternalSessionTranscriptProviderOps', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -22,7 +22,7 @@ describe('createDirectSessionTranscriptProviderOps', () => {
       return () => {};
     });
 
-    const ops = createDirectSessionTranscriptProviderOps<string>({
+    const ops = createExternalSessionTranscriptProviderOps<string>({
       pageOlder: async () => ({
         items: ['older-1'],
         nextCursor: 'older-cursor-1',
@@ -112,7 +112,7 @@ describe('createDirectSessionTranscriptProviderOps', () => {
       };
     });
 
-    const ops = createDirectSessionTranscriptProviderOps<string>({
+    const ops = createExternalSessionTranscriptProviderOps<string>({
       pageOlder: async () => ({
         items: [],
         nextCursor: null,

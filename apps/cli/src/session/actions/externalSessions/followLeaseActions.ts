@@ -1,29 +1,29 @@
 import {
-    DirectSessionAttachRequestSchema,
-    DirectSessionDetachRequestSchema,
-    DirectSessionFollowPolicySetRequestSchema,
-    type DirectSessionAttachResponse,
-    type DirectSessionDetachResponse,
-    type DirectSessionFollowPolicySetResponse,
+    ExternalSessionAttachRequestSchema,
+    ExternalSessionDetachRequestSchema,
+    ExternalSessionFollowPolicySetRequestSchema,
+    type ExternalSessionAttachResponse,
+    type ExternalSessionDetachResponse,
+    type ExternalSessionFollowPolicySetResponse,
 } from '@happier-dev/protocol';
 
-import { createManagedDirectSessionFollowLease } from '@/api/session/external/backgroundFollow/createManagedDirectSessionFollowLease';
-import { updateSessionMetadataWithDirectSessionFollowPolicy } from '@/api/session/external/backgroundFollow/directSessionBackgroundFollowMetadata';
+import { createManagedExternalSessionFollowLease } from '@/api/session/external/backgroundFollow/createManagedExternalSessionFollowLease';
+import { updateSessionMetadataWithExternalSessionFollowPolicy } from '@/api/session/external/backgroundFollow/externalSessionBackgroundFollowMetadata';
 import { validateDirectMachineSource } from '@/api/session/external/security/validateDirectMachineSource';
 import { readCredentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 
-import { resolveDirectSessionAttachLeaseTtlMs } from './actionConfiguration';
+import { resolveExternalSessionAttachLeaseTtlMs } from './actionConfiguration';
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
-import { getDirectSessionProviderOps } from './providerOpsResolution';
-import { directSessionsError, internalErrorResponse } from './responseErrors';
+import { getExternalSessionProviderOps } from './providerOpsResolution';
+import { externalSessionsError, internalErrorResponse } from './responseErrors';
 
 export async function executeExternalSessionAttachAction(
     raw: unknown,
     context: ExternalSessionActionContext,
-): Promise<DirectSessionAttachResponse> {
-    const parsed = DirectSessionAttachRequestSchema.safeParse(raw);
-    if (!parsed.success) return directSessionsError('invalid_request') satisfies DirectSessionAttachResponse;
+): Promise<ExternalSessionAttachResponse> {
+    const parsed = ExternalSessionAttachRequestSchema.safeParse(raw);
+    if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionAttachResponse;
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
@@ -32,20 +32,20 @@ export async function executeExternalSessionAttachAction(
             env: process.env,
         });
     } catch (error) {
-        return internalErrorResponse('direct_session_attach.validate_source', error, 'direct_session_attach_failed') satisfies DirectSessionAttachResponse;
+        return internalErrorResponse('external_session_attach.validate_source', error, 'external_session_attach_failed') satisfies ExternalSessionAttachResponse;
     }
     if (!validatedSource.ok) {
-        return directSessionsError('invalid_request', validatedSource.error) satisfies DirectSessionAttachResponse;
+        return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionAttachResponse;
     }
     try {
-        const providerOps = await getDirectSessionProviderOps(parsed.data.providerId);
+        const providerOps = await getExternalSessionProviderOps(parsed.data.providerId);
         const attached = await context.followLeaseManager.attach({
             sessionId: parsed.data.sessionId,
             leaseId: parsed.data.leaseId,
-            ttlMs: resolveDirectSessionAttachLeaseTtlMs(parsed.data.ttlMs),
+            ttlMs: resolveExternalSessionAttachLeaseTtlMs(parsed.data.ttlMs),
             acquireFollowLease: providerOps.acquireFollowLease
                 ? async () => {
-                    return createManagedDirectSessionFollowLease({
+                    return createManagedExternalSessionFollowLease({
                         sessionId: parsed.data.sessionId,
                         reason: 'attached_view',
                         acquireProviderFollowLease: () => providerOps.acquireFollowLease!({
@@ -53,7 +53,7 @@ export async function executeExternalSessionAttachAction(
                             remoteSessionId: parsed.data.remoteSessionId,
                             reason: 'attached_view',
                         }),
-                        emitDirectSessionTranscriptUpdate: context.emitDirectSessionTranscriptUpdate,
+                        emitExternalSessionTranscriptUpdate: context.emitExternalSessionTranscriptUpdate,
                         shouldProcessBackgroundFollowEffects: () => false,
                     });
                 }
@@ -64,18 +64,18 @@ export async function executeExternalSessionAttachAction(
             leaseId: attached.leaseId,
             expiresAtMs: attached.expiresAtMs,
             renewed: attached.renewed,
-        } satisfies DirectSessionAttachResponse;
+        } satisfies ExternalSessionAttachResponse;
     } catch (error) {
-        return internalErrorResponse('direct_session_attach', error, 'direct_session_attach_failed') satisfies DirectSessionAttachResponse;
+        return internalErrorResponse('external_session_attach', error, 'external_session_attach_failed') satisfies ExternalSessionAttachResponse;
     }
 }
 
 export async function executeExternalSessionDetachAction(
     raw: unknown,
     context: ExternalSessionActionContext,
-): Promise<DirectSessionDetachResponse> {
-    const parsed = DirectSessionDetachRequestSchema.safeParse(raw);
-    if (!parsed.success) return directSessionsError('invalid_request') satisfies DirectSessionDetachResponse;
+): Promise<ExternalSessionDetachResponse> {
+    const parsed = ExternalSessionDetachRequestSchema.safeParse(raw);
+    if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionDetachResponse;
     const detached = await context.followLeaseManager.detach({
         sessionId: parsed.data.sessionId,
         leaseId: parsed.data.leaseId,
@@ -83,15 +83,15 @@ export async function executeExternalSessionDetachAction(
     return {
         ok: true,
         detached: detached.detached,
-    } satisfies DirectSessionDetachResponse;
+    } satisfies ExternalSessionDetachResponse;
 }
 
 export async function executeExternalSessionFollowPolicySetAction(
     raw: unknown,
     context: ExternalSessionActionContext,
-): Promise<DirectSessionFollowPolicySetResponse> {
-    const parsed = DirectSessionFollowPolicySetRequestSchema.safeParse(raw);
-    if (!parsed.success) return directSessionsError('invalid_request') satisfies DirectSessionFollowPolicySetResponse;
+): Promise<ExternalSessionFollowPolicySetResponse> {
+    const parsed = ExternalSessionFollowPolicySetRequestSchema.safeParse(raw);
+    if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionFollowPolicySetResponse;
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
@@ -101,33 +101,33 @@ export async function executeExternalSessionFollowPolicySetAction(
         });
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_follow_policy_set.validate_source',
+            'external_session_follow_policy_set.validate_source',
             error,
             'follow_policy_set_failed',
-        ) satisfies DirectSessionFollowPolicySetResponse;
+        ) satisfies ExternalSessionFollowPolicySetResponse;
     }
     if (!validatedSource.ok) {
-        return directSessionsError('invalid_request', validatedSource.error) satisfies DirectSessionFollowPolicySetResponse;
+        return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionFollowPolicySetResponse;
     }
 
-    let providerOps: Awaited<ReturnType<typeof getDirectSessionProviderOps>>;
+    let providerOps: Awaited<ReturnType<typeof getExternalSessionProviderOps>>;
     try {
-        providerOps = await getDirectSessionProviderOps(parsed.data.providerId);
+        providerOps = await getExternalSessionProviderOps(parsed.data.providerId);
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_follow_policy_set.provider_ops',
+            'external_session_follow_policy_set.provider_ops',
             error,
             'follow_policy_set_failed',
-        ) satisfies DirectSessionFollowPolicySetResponse;
+        ) satisfies ExternalSessionFollowPolicySetResponse;
     }
 
     if (parsed.data.enabled && !providerOps.acquireFollowLease) {
-        return directSessionsError('provider_unavailable', 'background_follow_not_supported') satisfies DirectSessionFollowPolicySetResponse;
+        return externalSessionsError('provider_unavailable', 'background_follow_not_supported') satisfies ExternalSessionFollowPolicySetResponse;
     }
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
-        return directSessionsError('provider_unavailable', 'not_authenticated') satisfies DirectSessionFollowPolicySetResponse;
+        return externalSessionsError('provider_unavailable', 'not_authenticated') satisfies ExternalSessionFollowPolicySetResponse;
     }
 
     try {
@@ -136,12 +136,12 @@ export async function executeExternalSessionFollowPolicySetAction(
             sessionId: parsed.data.sessionId,
         }).catch(() => null);
         const updatedAtMs = Date.now();
-        const persistFollowPolicy = async (): Promise<DirectSessionFollowPolicySetResponse | null> => {
+        const persistFollowPolicy = async (): Promise<ExternalSessionFollowPolicySetResponse | null> => {
             if (!rawSession) {
                 return null;
             }
             try {
-                await updateSessionMetadataWithDirectSessionFollowPolicy({
+                await updateSessionMetadataWithExternalSessionFollowPolicy({
                     token: credentials.token,
                     credentials,
                     sessionId: parsed.data.sessionId,
@@ -152,10 +152,10 @@ export async function executeExternalSessionFollowPolicySetAction(
                 return null;
             } catch (error) {
                 return internalErrorResponse(
-                    'direct_session_follow_policy_set.persist',
+                    'external_session_follow_policy_set.persist',
                     error,
                     'follow_policy_persist_failed',
-                ) satisfies DirectSessionFollowPolicySetResponse;
+                ) satisfies ExternalSessionFollowPolicySetResponse;
             }
         };
 
@@ -170,7 +170,7 @@ export async function executeExternalSessionFollowPolicySetAction(
             sessionId: parsed.data.sessionId,
             enabled: parsed.data.enabled,
             acquireFollowLease: parsed.data.enabled && providerOps.acquireFollowLease
-                ? async () => createManagedDirectSessionFollowLease({
+                ? async () => createManagedExternalSessionFollowLease({
                     sessionId: parsed.data.sessionId,
                     reason: 'background_follow',
                     acquireProviderFollowLease: () => providerOps.acquireFollowLease!({
@@ -178,7 +178,7 @@ export async function executeExternalSessionFollowPolicySetAction(
                         remoteSessionId: parsed.data.remoteSessionId,
                         reason: 'background_follow',
                     }),
-                    emitDirectSessionTranscriptUpdate: context.emitDirectSessionTranscriptUpdate,
+                    emitExternalSessionTranscriptUpdate: context.emitExternalSessionTranscriptUpdate,
                     shouldProcessBackgroundFollowEffects: () =>
                         context.followLeaseManager.isBackgroundFollowEnabled(parsed.data.sessionId)
                         && context.followLeaseManager.countActiveLeases(parsed.data.sessionId) === 0,
@@ -203,12 +203,12 @@ export async function executeExternalSessionFollowPolicySetAction(
             leaseActive: context.followLeaseManager.hasBackgroundFollowLease(parsed.data.sessionId)
                 || context.followLeaseManager.countActiveLeases(parsed.data.sessionId) > 0,
             updatedAtMs,
-        } satisfies DirectSessionFollowPolicySetResponse;
+        } satisfies ExternalSessionFollowPolicySetResponse;
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_follow_policy_set',
+            'external_session_follow_policy_set',
             error,
             'follow_policy_set_failed',
-        ) satisfies DirectSessionFollowPolicySetResponse;
+        ) satisfies ExternalSessionFollowPolicySetResponse;
     }
 }

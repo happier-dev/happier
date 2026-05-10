@@ -152,7 +152,7 @@ describe('runBackendSessionCliCommand', () => {
     expect(runSessionCommandSpy).toHaveBeenCalled();
   });
 
-  it('forces a fresh blocking account settings bootstrap for daemon-started sessions', async () => {
+  it('ignores obsolete child account settings version hints for daemon-started sessions', async () => {
     const credentials = { token: 'x' } as any;
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
@@ -169,7 +169,7 @@ describe('runBackendSessionCliCommand', () => {
     runSessionCommandSpy.mockResolvedValue(undefined);
 
     await runBackendSessionCliCommand({
-      context: { args: ['codex', '--started-by', 'daemon'], terminalRuntime: null } as any,
+      context: { args: ['codex', '--started-by', 'daemon', '--account-settings-version-hint', '9'], terminalRuntime: null } as any,
       backendIdForSessionRuntime: 'codex',
       agentIdForAccountSettings: 'codex' as any,
     });
@@ -179,6 +179,11 @@ describe('runBackendSessionCliCommand', () => {
       expect.objectContaining({
         mode: 'blocking',
         refresh: 'force',
+      }),
+    );
+    expect(bootstrapSpy).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        minSettingsVersion: expect.any(Number),
       }),
     );
   });

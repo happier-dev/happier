@@ -40,6 +40,8 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
 import { subscribeSessionRuntimePublicationToMetadata } from '@/agent/runtime/identity/metadata/subscription';
+import { createCliRuntimeSessionStateBridge } from '@/agent/runtime/state/bridge';
+import { observeCanonicalSessionStateMetadata } from '@/agent/runtime/state/observeCanonicalSessionStateMetadata';
 import { runSessionLoopLifecycle, type SessionLoopLifecycleDeps } from '@/agent/runtime/session/loop/lifecycle';
 import {
   registerSessionRollbackRpcHandler,
@@ -53,6 +55,8 @@ import {
 import { createSwapAwareRpcHandlerRegistrar } from '@/agent/runtime/session/loop/createSwapAwareRpcHandlerRegistrar';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { TerminalRemoteSessionMode } from './runTerminalRemoteSessionModeLoop';
+import type { SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
+import type { MetadataUpdatePort, SessionStateFacet, SessionStateSyncEngine } from '@happier-dev/agents';
 
 export type HostSessionRuntimeHookRuntime = Readonly<{
   sendPromptWithMeta?: (params: { text: string; localId?: string | null }) => Promise<void>;
@@ -76,6 +80,7 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   getPermissionMode: () => PermissionMode;
   setThinking: (value: boolean) => void;
   memoryRecallGuidanceEnabled: boolean;
+  sessionState?: SessionStateSyncEngine;
 }>;
 
 export type HostSessionRuntimeInitialModelSelection = Readonly<{
@@ -165,6 +170,27 @@ function createCurrentSessionClient(
   });
 }
 
+function createActiveSessionStateMetadataPort(
+  session: Pick<ApiSessionClient, 'updateMetadata'>,
+): MetadataUpdatePort {
+  return {
+    update: async (_sessionId, updater) => {
+      try {
+        await session.updateMetadata((metadata) => updater(metadata) as typeof metadata);
+        return { ok: true, version: 0 };
+      } catch (error) {
+        const code = typeof (error as { code?: unknown } | null)?.code === 'string'
+          ? (error as { code: string }).code
+          : 'unknown_error';
+        if (code === 'unsupported' || code === 'conflict' || code === 'forbidden' || code === 'unknown_error') {
+          return { ok: false, reason: code };
+        }
+        return { ok: false, reason: 'unknown_error' };
+      }
+    },
+  };
+}
+
 export type HostSessionKeepAliveMode = 'terminal' | 'remote';
 type PermissionToolTrace = Readonly<{
   protocol: ToolTraceProtocol;
@@ -251,6 +277,10 @@ export type HostSessionRuntimeConfig = {
   }) => PermissionToolTrace | null;
   sessionRollbackRpc?: Readonly<{
     resolveRuntimeFacet?: (runtime: HostSessionRuntimeHookRuntime | null) => SessionRollbackRuntimeFacet | null;
+  }>;
+  sessionState?: Readonly<{
+    facet?: SessionStateFacet | null;
+    capabilities?: SessionStateCapabilitiesV1;
   }>;
   startupBootstrap?: Readonly<{
     shouldCreate?: (params: { opts: HostSessionRuntimeRunOptions }) => boolean;
@@ -496,6 +526,17 @@ export async function runHostSessionRuntime(
     : { happierMcpServer: { stop: () => undefined }, mcpServers: {} };
   const memoryRecallGuidanceEnabled = await resolveCliMemoryRecallGuidanceEnabled();
   const messageBuffer = new MessageBuffer();
+  const sessionStateBridge = createCliRuntimeSessionStateBridge({
+    credentials: runtimeOpts.credentials,
+    session: currentLifecycleSession,
+    facet: config.sessionState?.facet ?? null,
+    capabilities: config.sessionState?.capabilities ?? config.sessionState?.facet?.capabilities ?? {},
+    metadataPort: createActiveSessionStateMetadataPort(currentLifecycleSession),
+  });
+  const sessionStateMetadataObserver = observeCanonicalSessionStateMetadata({
+    session: currentLifecycleSession,
+    sessionState: sessionStateBridge.engine,
+  });
   const sessionRuntimeParams: HostSessionRuntimeFactoryParams = {
     directory: runtimeDirectory,
     metadata: runtimeMetadata,
@@ -511,6 +552,7 @@ export async function runHostSessionRuntime(
       runtimeState.thinking = value;
     },
     memoryRecallGuidanceEnabled,
+    sessionState: sessionStateBridge.engine,
   };
   let createdRuntime: SharedHostSessionRuntimeFactoryResult<HostSessionRuntimeHookRuntime>;
   if (config.createSessionRuntime) {
@@ -523,11 +565,17 @@ export async function runHostSessionRuntime(
   runtimeForSessionRollback = nativeRuntime;
   const unsubscribeRuntimePublication = subscribeSessionRuntimePublicationToMetadata({
     session: currentLifecycleSession,
+    sessionState: sessionStateBridge.engine,
     runtime,
   });
   if (nativeRuntime) {
     await config.lifecycleHooks?.onRuntimeCreated?.({ session, runtime: nativeRuntime });
   }
+  const originalOnAfterStart = config.onAfterStart;
+  config.onAfterStart = async (params) => {
+    await originalOnAfterStart?.(params);
+    await sessionStateMetadataObserver.mirrorCurrentDisplayTitle('reconciliation');
+  };
 
   try {
     await runSessionLoopLifecycleFn({
@@ -578,6 +626,8 @@ export async function runHostSessionRuntime(
       })(),
     });
   } finally {
+    config.onAfterStart = originalOnAfterStart;
+    sessionStateMetadataObserver.dispose();
     unsubscribeRuntimePublication();
     if (!startupCoordinatorStart) {
       await startupBootstrapCleanup?.();

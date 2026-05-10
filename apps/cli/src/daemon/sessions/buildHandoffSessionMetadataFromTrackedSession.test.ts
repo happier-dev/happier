@@ -92,7 +92,7 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
                     machineId: 'machine-session-handoff',
                     path: '/repo-source-current',
                     homeDir: '/Users/target',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'opencode',
                         machineId: 'machine-session-handoff',

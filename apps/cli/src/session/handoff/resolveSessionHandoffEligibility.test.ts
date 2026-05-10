@@ -29,7 +29,7 @@ describe('resolveSessionHandoffEligibility', () => {
           flavor: 'opencode',
           machineId: 'machine_source',
           opencodeSessionId: 'sess_2',
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'opencode',
             machineId: 'machine_source',
@@ -53,7 +53,7 @@ describe('resolveSessionHandoffEligibility', () => {
       resolveSessionHandoffEligibility({
         metadata: {
           machineId: 'machine_source',
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'opencode',
             machineId: 'machine_source',
@@ -83,7 +83,7 @@ describe('resolveSessionHandoffEligibility', () => {
       resolveSessionHandoffEligibility({
         metadata: {
           machineId: 'machine_source',
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'opencode',
             machineId: 'machine_source',
@@ -127,7 +127,7 @@ describe('resolveSessionHandoffEligibility', () => {
           flavor: 'pi',
           machineId: 'machine_source',
           piSessionId: 'sess_pi',
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'claude',
           },

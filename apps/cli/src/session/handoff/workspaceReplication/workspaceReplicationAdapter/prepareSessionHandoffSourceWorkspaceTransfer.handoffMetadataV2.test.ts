@@ -1,12 +1,25 @@
+import { execFile as execFileCallback } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
 import type { SessionHandoffWorkspaceTransfer } from '@happier-dev/protocol';
 
 import { prepareSessionHandoffSourceWorkspaceTransfer } from './adapter';
+
+const execFile = promisify(execFileCallback);
+
+async function runGit(cwd: string, args: readonly string[]): Promise<void> {
+  await execFile('git', [...args], { cwd });
+}
+
+async function configureGitRepo(cwd: string): Promise<void> {
+  await runGit(cwd, ['config', 'user.email', 'test@example.com']);
+  await runGit(cwd, ['config', 'user.name', 'Happier Test']);
+}
 
 describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () => {
   it('includes sourceRootPath + manifest transfer publication when workspace transfer is enabled (server_routed_stream)', async () => {
@@ -38,6 +51,41 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
       expect(result.handoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates).toBeUndefined();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('keeps workspace integration metadata internal so prepareStartedState owns the protocol wire key', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-source-transfer-'));
+    const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-handoff-source-root-'));
+    try {
+      await runGit(sourceRootPath, ['init']);
+      await configureGitRepo(sourceRootPath);
+      await runGit(sourceRootPath, ['branch', '-M', 'main']);
+      await writeFile(join(sourceRootPath, 'README.md'), 'hello\n');
+      await runGit(sourceRootPath, ['add', 'README.md']);
+      await runGit(sourceRootPath, ['commit', '-m', 'initial']);
+
+      const workspaceTransfer: SessionHandoffWorkspaceTransfer = {
+        enabled: true,
+        strategy: 'transfer_snapshot',
+        conflictPolicy: 'replace_existing',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      };
+
+      const result = await prepareSessionHandoffSourceWorkspaceTransfer({
+        handoffId: 'handoff_1',
+        activeServerDir,
+        negotiatedTransportStrategy: 'server_routed_stream',
+        workspaceTransfer,
+        sourceRootPath,
+      });
+
+      expect(result.workspaceReplicationMetadata?.workspaceIntegrationMetadata).toEqual(expect.any(Object));
+      expect(result.handoffMetadataV2).not.toHaveProperty('workspaceReplicationSourceControllerMetadata');
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+      await rm(sourceRootPath, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 

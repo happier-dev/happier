@@ -1,8 +1,8 @@
-import type { DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
 
 export type LocalHostedDirectTranscriptBinding = Readonly<{
-    providerId: DirectSessionsProviderId;
-    source: DirectSessionsSource;
+    providerId: ExternalSessionsProviderId;
+    source: ExternalSessionsSource;
     remoteSessionId: string;
     env?: NodeJS.ProcessEnv;
 }>;

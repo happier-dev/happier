@@ -16,7 +16,7 @@ function createSourceOffer(input: Readonly<{
   digest: string;
   sizeBytes: number;
   relativePath: string;
-  sourceControllerMetadata?: Readonly<Record<string, unknown>>;
+  workspaceIntegrationMetadata?: Readonly<Record<string, unknown>>;
 }>){
   return {
     offerId: 'offer_123',
@@ -41,7 +41,7 @@ function createSourceOffer(input: Readonly<{
         sizeBytes: input.sizeBytes,
       },
     ],
-    ...(input.sourceControllerMetadata ? { sourceControllerMetadata: input.sourceControllerMetadata } : {}),
+    ...(input.workspaceIntegrationMetadata ? { workspaceIntegrationMetadata: input.workspaceIntegrationMetadata } : {}),
   };
 }
 
@@ -100,7 +100,7 @@ describe('applyWorkspaceReplicationPlan', () => {
           digest,
           sizeBytes: payload.byteLength,
           relativePath: 'README.md',
-          sourceControllerMetadata: {
+          workspaceIntegrationMetadata: {
             nestedRepositories: [],
             supportsSafeReplace: true,
           },

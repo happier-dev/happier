@@ -7,6 +7,7 @@ import type {
   ScmStatusSnapshotRequest,
   ScmStatusSnapshotResponse,
   TurnChangeSet,
+  ChangeEvidenceSource,
 } from '@happier-dev/protocol';
 import { ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol';
 
@@ -26,6 +27,13 @@ type ScmSnapshotEntry = Readonly<{
   pendingStatus?: unknown;
   includeStatus?: unknown;
 }>;
+
+const AGENT_REPORTED_TURN_SOURCES = new Set<ChangeEvidenceSource>([
+  'provider_native',
+  'provider_tool',
+  'canonical_diff_tool',
+  'canonical_patch_tool',
+]);
 
 function isScmSnapshotEntry(value: unknown): value is ScmSnapshotEntry {
   if (!value || typeof value !== 'object') return false;
@@ -91,9 +99,19 @@ function buildMetadataFromTurnChangeSet(input: ExecutionRunScmDiffSummaryInputV1
     sourceKey: buildTurnCheckpointSourceKey(input),
     ...(input.turnId ? { turnId: input.turnId } : { turnId: turnChangeSet.turnId }),
     ...(input.checkpointReceiptId ? { checkpointReceiptId: input.checkpointReceiptId } : {}),
+    ...(input.turnEvidenceMode ? { turnEvidenceMode: input.turnEvidenceMode } : {}),
     ...(checkpoint?.contentConfidence ? { contentConfidence: checkpoint.contentConfidence } : {}),
     ...(checkpoint?.attributionScope ? { attributionScope: checkpoint.attributionScope } : {}),
   };
+}
+
+function acceptsTurnEvidenceSource(
+  mode: ExecutionRunScmDiffSummaryInputV1['turnEvidenceMode'] | undefined,
+  source: ChangeEvidenceSource,
+): boolean {
+  if (mode === 'agent_reported') return AGENT_REPORTED_TURN_SOURCES.has(source);
+  if (mode === 'checkpoint') return source === 'scm_checkpoint';
+  return true;
 }
 
 function loadTurnCheckpointContext(input: ExecutionRunScmDiffSummaryInputV1): Readonly<{
@@ -123,15 +141,17 @@ function loadTurnCheckpointContext(input: ExecutionRunScmDiffSummaryInputV1): Re
     }
   }
 
-  const allFiles = turnChangeSet.files.map((file) => ({
-    path: file.filePath,
-    changeKind: file.changeKind,
-    source: file.source,
-    confidence: file.confidence,
-    description: file.description,
-    unifiedDiff: file.unifiedDiff,
-    binary: file.binary,
-  }));
+  const allFiles = turnChangeSet.files
+    .filter((file) => acceptsTurnEvidenceSource(input.turnEvidenceMode, file.source))
+    .map((file) => ({
+      path: file.filePath,
+      changeKind: file.changeKind,
+      source: file.source,
+      confidence: file.confidence,
+      description: file.description,
+      unifiedDiff: file.unifiedDiff,
+      binary: file.binary,
+    }));
 
   const bounded = selectBoundedFiles(
     allFiles,

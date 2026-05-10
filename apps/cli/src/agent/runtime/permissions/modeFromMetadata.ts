@@ -1,10 +1,9 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import { isPermissionMode } from '@/api/types';
 import {
-  LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
+  readAcpSessionModeIntentFromMetadata,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
-  SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
 
 function metadataHasConcreteDefaultSessionMode(metadata: Metadata | null | undefined): boolean {
@@ -38,9 +37,10 @@ export function resolvePermissionIntentFromMetadataSnapshot(opts: {
 export function resolveSessionModeOverrideFromMetadataSnapshot(opts: {
   metadata: Metadata | null | undefined;
 }): { modeId: string; updatedAt: number } | null {
-  const resolved =
-    resolveMetadataStringOverrideV1(opts.metadata ?? null, SESSION_MODE_OVERRIDE_KEY, 'modeId') ??
-    resolveMetadataStringOverrideV1(opts.metadata ?? null, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY, 'modeId');
+  const resolvedIntent = readAcpSessionModeIntentFromMetadata((opts.metadata ?? {}) as Metadata);
+  const resolved = resolvedIntent
+    ? { value: resolvedIntent.modeId ?? '', updatedAt: resolvedIntent.updatedAt }
+    : null;
   if (!resolved) return null;
   if (resolved.value === 'default' && !metadataHasConcreteDefaultSessionMode(opts.metadata)) {
     return { modeId: '', updatedAt: resolved.updatedAt };

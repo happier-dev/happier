@@ -52,8 +52,9 @@ function buildRuntimeCapabilities(
   includeExecutionRun: boolean,
 ): unknown {
   const backendCapabilities = resolution.backend?.capabilities;
+  const executionRunSupported = backendCapabilities?.executionRun?.supported !== false;
   return {
-    ...(includeExecutionRun ? { executionRun: { supported: true } } : {}),
+    ...(includeExecutionRun ? { executionRun: { supported: executionRunSupported } } : {}),
     ...(backendCapabilities && Object.keys(backendCapabilities).length > 0
       ? { backend: backendCapabilities }
       : {}),

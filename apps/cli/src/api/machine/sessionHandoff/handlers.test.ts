@@ -771,7 +771,7 @@ function createLoopbackMachineTransferChannels() {
         },
       }));
 
-      const { createScmSourceControllerWorkspaceExportArtifacts } = await import('@/scm/sourceController/workspaceExportArtifacts');
+      const { createScmWorkspaceIntegrationWorkspaceExportArtifacts } = await import('@/scm/workspace/workspaceExportArtifacts');
 
 	      const exportSessionBundle: ExportSessionBundle = async () => ({
 	        providerBundle: {
@@ -998,7 +998,7 @@ function createLoopbackMachineTransferChannels() {
         },
         runtimeLocalMetadata: {
           claudeSessionId: 'sess-handoff-direct',
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'claude',
             machineId: 'machine_target',
@@ -1062,7 +1062,7 @@ function createLoopbackMachineTransferChannels() {
         homeDir: '/Users/target',
         portableMetadataVersion: 'v2',
         claudeSessionId: 'sess-handoff-direct',
-	        directSessionV1: expect.objectContaining({
+	        externalSessionV1: expect.objectContaining({
 	          remoteSessionId: 'sess-handoff-direct',
 	        }),
 	      }),
@@ -3436,7 +3436,7 @@ function createLoopbackMachineTransferChannels() {
 	            ],
 	            fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
 	          },
-	          sourceControllerMetadata: {
+	          workspaceIntegrationMetadata: {
 	            scmBackendId: 'git',
 	          },
 	        },
@@ -3603,7 +3603,7 @@ function createLoopbackMachineTransferChannels() {
 	              ],
 	              fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
 	            },
-	            sourceControllerMetadata: {
+	            workspaceIntegrationMetadata: {
 	              scmBackendId: 'git',
 	            },
 	          },
@@ -3781,7 +3781,7 @@ function createLoopbackMachineTransferChannels() {
               entries: [],
               fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
             },
-            sourceControllerMetadata: {
+            workspaceIntegrationMetadata: {
               scmBackendId: 'git',
             },
           },
@@ -3941,7 +3941,7 @@ function createLoopbackMachineTransferChannels() {
               entries: [],
               fingerprint: 'sha256:6586b45e062c5c7104d24f2da5812c0d824533c575715c87e0377fc2e0c959cc',
             },
-            sourceControllerMetadata: {
+            workspaceIntegrationMetadata: {
               scmBackendId: 'git',
             },
           },
@@ -4650,7 +4650,7 @@ function createLoopbackMachineTransferChannels() {
               ],
               fingerprint: workspaceManifestFingerprint,
             },
-            sourceControllerMetadata: {
+            workspaceIntegrationMetadata: {
               scmBackendId: 'git',
             },
           },

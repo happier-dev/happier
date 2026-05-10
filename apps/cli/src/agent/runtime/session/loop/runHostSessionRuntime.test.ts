@@ -4,6 +4,7 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { runHostSessionRuntime, type HostSessionRuntimeConfig, type HostSessionRuntimeRunOptions } from './runHostSessionRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 
 function createSessionFixture(sessionId: string) {
   const handlers = new Map<string, (payload?: unknown) => unknown>();
@@ -354,6 +355,124 @@ describe('runHostSessionRuntime', () => {
 
     expect(runSessionLoopLifecycleFn).toHaveBeenCalledTimes(1);
     expect((runSessionLoopLifecycleFn.mock.calls[0]?.[0] as { session: unknown } | undefined)?.session).not.toBe(harness.session);
+  });
+
+  it('provides the host-owned session-state engine to runtime factories', async () => {
+    const harness = createHarness();
+    const createSessionRuntime = vi.fn(() => ({
+      operations: harness.runtime,
+      nativeRuntime: harness.runtime,
+    }));
+    harness.config.createSessionRuntime = createSessionRuntime;
+    harness.config.sessionState = {
+      facet: {
+        capabilities: {
+          display: {
+            title: {
+              supported: true,
+              happierToProvider: { supported: true, transport: 'runtime-hook' },
+              providerToHappier: { supported: true, source: 'snapshot' },
+            },
+          },
+        },
+        applyHappierField: vi.fn(async () => undefined),
+        readField: vi.fn(async () => null),
+      },
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(createSessionRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      sessionState: expect.objectContaining({
+        applyHappierField: expect.any(Function),
+        writeHappierField: expect.any(Function),
+        readProviderField: expect.any(Function),
+      }),
+    }));
+  });
+
+  it('observes canonical display.title metadata updates through the host session-state engine', async () => {
+    const harness = createHarness();
+    let metadata: Record<string, unknown> = { path: '/tmp/workspace', permissionMode: 'default' };
+    const metadataUpdateResolvers: Array<(value: boolean) => void> = [];
+    const applied: string[] = [];
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata = vi.fn(async (updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
+      metadata = updater(metadata);
+    });
+    harness.session.waitForMetadataUpdate = vi.fn(() => new Promise<boolean>((resolve) => {
+      metadataUpdateResolvers.push(resolve);
+    }));
+    harness.config.sessionState = {
+      facet: {
+        capabilities: {
+          display: {
+            title: {
+              supported: true,
+              happierToProvider: { supported: true, transport: 'runtime-hook' },
+              providerToHappier: { supported: true, source: 'snapshot' },
+            },
+          },
+        },
+        applyHappierField: vi.fn(async (_ctx, field, value) => {
+          applied.push(`${field}:${String(value)}`);
+        }),
+        readField: vi.fn(async () => null),
+      },
+    };
+    harness.deps.runSessionLoopLifecycleFn = vi.fn(async () => {
+      await harness.session.updateMetadata((current: Record<string, unknown>) => ({
+        ...current,
+        summary: { text: 'Host bridge title', updatedAt: 123 },
+      }));
+      metadataUpdateResolvers.shift()?.(true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(applied).toEqual(['display.title:Host bridge title']);
+  });
+
+  it('mirrors a fork-inherited display.title to the provider after the new runtime starts', async () => {
+    const harness = createHarness();
+    const applied: string[] = [];
+    const forkOverrides = resolveForkInheritedOverridesFromMetadata({
+      summary: { text: 'Pre-existing title', updatedAt: 123 },
+    });
+    harness.session.getMetadataSnapshot = () => ({
+      path: '/tmp/workspace',
+      permissionMode: 'default',
+      ...forkOverrides.metadata,
+    });
+    harness.config.sessionState = {
+      facet: {
+        capabilities: {
+          display: {
+            title: {
+              supported: true,
+              happierToProvider: { supported: true, transport: 'runtime-hook' },
+              providerToHappier: { supported: true, source: 'snapshot' },
+            },
+          },
+        },
+        applyHappierField: vi.fn(async (_ctx, field, value) => {
+          applied.push(`${field}:${String(value)}`);
+        }),
+        readField: vi.fn(async () => null),
+      },
+    };
+    harness.deps.runSessionLoopLifecycleFn = vi.fn(async (params: {
+      config: { onAfterStart?: () => Promise<void> | void };
+      runtime: { startOrLoadSession: (options?: unknown) => Promise<unknown> };
+    }) => {
+      await params.runtime.startOrLoadSession({});
+      await params.config.onAfterStart?.();
+    });
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(applied).toEqual(['display.title:Pre-existing title']);
   });
 
   it('keeps provider startup bootstrap inside the shared session loop instead of early-returning', async () => {

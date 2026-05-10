@@ -1,13 +1,14 @@
 import {
     ExternalSessionTakeoverInputV1Schema,
+    removeLinkedExternalSessionMetadataV1,
     type ExternalSessionTakeoverErrorCodeV1,
     type ExternalSessionTakeoverResultV1,
 } from '@happier-dev/protocol/sessions';
 
-import { importDirectSessionTranscript } from '@/api/session/external/import/importDirectSessionTranscript';
+import { importExternalSessionTranscript } from '@/api/session/external/import/importExternalSessionTranscript';
 import { validateDirectMachineSource } from '@/api/session/external/security/validateDirectMachineSource';
-import { findTrustedDirectSessionOwner } from '@/api/session/external/takeover/findTrustedDirectSessionOwner';
-import { loadLinkedDirectSession } from '@/api/session/external/takeover/loadLinkedDirectSession';
+import { findTrustedExternalSessionOwner } from '@/api/session/external/takeover/findTrustedExternalSessionOwner';
+import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import { resolveDirectTakeoverSpawnOptions } from '@/api/session/external/takeover/resolveDirectTakeoverSpawnOptions';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
 import { readCredentials } from '@/persistence';
@@ -15,9 +16,9 @@ import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSession
 
 import type { ExternalSessionActionContext, ExternalSessionTakeoverActionInput } from './externalSessionActionContext';
 import { isPidAlive } from './processLiveness';
-import { logDirectSessionsInternalError } from './responseErrors';
+import { logExternalSessionsInternalError } from './responseErrors';
 
-function mapLinkedDirectSessionErrorToExternalTakeoverError(
+function mapLinkedExternalSessionErrorToExternalTakeoverError(
     errorCode: 'invalid_request' | 'provider_unavailable',
     error: string,
 ): ExternalSessionTakeoverResultV1 {
@@ -56,13 +57,13 @@ export async function executeExternalSessionTakeoverAction(
         return { ok: false, errorCode: 'takeover_not_available', error: 'not_authenticated' };
     }
 
-    const linked = await loadLinkedDirectSession({
+    const linked = await loadLinkedExternalSession({
         credentials,
         sessionId: actionInput.linkedSessionId,
         machineId,
     });
     if (!linked.ok) {
-        return mapLinkedDirectSessionErrorToExternalTakeoverError(linked.errorCode, linked.error);
+        return mapLinkedExternalSessionErrorToExternalTakeoverError(linked.errorCode, linked.error);
     }
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
@@ -72,8 +73,8 @@ export async function executeExternalSessionTakeoverAction(
             env: process.env,
         });
     } catch (error) {
-        logDirectSessionsInternalError('external_session_takeover.validate_source', error);
-        return { ok: false, errorCode: 'invalid_external_source', error: 'direct_session_takeover_failed' };
+        logExternalSessionsInternalError('external_session_takeover.validate_source', error);
+        return { ok: false, errorCode: 'invalid_external_source', error: 'external_session_takeover_failed' };
     }
     if (!validatedSource.ok) {
         return { ok: false, errorCode: 'invalid_external_source', error: validatedSource.error };
@@ -84,7 +85,7 @@ export async function executeExternalSessionTakeoverAction(
     };
 
     const markers = await listSessionMarkers().catch(() => []);
-    const trustedOwner = findTrustedDirectSessionOwner({
+    const trustedOwner = findTrustedExternalSessionOwner({
         markers,
         providerId: validatedLinkedSession.providerId,
         remoteSessionId: validatedLinkedSession.remoteSessionId,
@@ -122,19 +123,19 @@ export async function executeExternalSessionTakeoverAction(
         sessionId: actionInput.linkedSessionId,
     });
     if (!spawnOptions) {
-        return { ok: false, errorCode: 'takeover_not_available', error: 'direct_session_directory_unavailable' };
+        return { ok: false, errorCode: 'takeover_not_available', error: 'external_session_directory_unavailable' };
     }
 
     if (actionInput.storageMode === 'persisted') {
         try {
-            await importDirectSessionTranscript({
+            await importExternalSessionTranscript({
                 linked: validatedLinkedSession,
                 credentials,
                 sessionId: actionInput.linkedSessionId,
             });
         } catch (error) {
-            logDirectSessionsInternalError('external_session_takeover.import_transcript', error);
-            return { ok: false, errorCode: 'transcript_import_failed', error: 'direct_session_import_failed' };
+            logExternalSessionsInternalError('external_session_takeover.import_transcript', error);
+            return { ok: false, errorCode: 'transcript_import_failed', error: 'external_session_import_failed' };
         }
     }
 
@@ -158,8 +159,7 @@ export async function executeExternalSessionTakeoverAction(
                 sessionId: actionInput.linkedSessionId,
                 rawSession: linked.session.rawSession,
                 updater: (current) => {
-                    const next: Record<string, unknown> = { ...current };
-                    delete next.directSessionV1;
+                    const next = removeLinkedExternalSessionMetadataV1(current);
                     if (typeof next.path !== 'string' || !next.path.trim()) {
                         next.path = spawnOptions.directory;
                     }
@@ -174,8 +174,8 @@ export async function executeExternalSessionTakeoverAction(
                 },
             });
         } catch (error) {
-            logDirectSessionsInternalError('external_session_takeover.persist_metadata', error);
-            return { ok: false, errorCode: 'transcript_import_failed', error: 'direct_session_persist_failed' };
+            logExternalSessionsInternalError('external_session_takeover.persist_metadata', error);
+            return { ok: false, errorCode: 'transcript_import_failed', error: 'external_session_persist_failed' };
         }
     }
 

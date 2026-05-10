@@ -1,4 +1,5 @@
 import type { AgentId, VendorResumeIdField } from '@happier-dev/agents';
+import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 
 import type { SessionClientPort } from '../../../../api/session/sessionClientPort';
 import { findHappyProcessByPid } from '../../../../daemon/doctor';
@@ -32,12 +33,14 @@ async function refreshTrackedSessionMarkerProviderSessionId(params: Readonly<{
 
   const snapshot = params.session.getMetadataSnapshot();
   const metadata = isRecord(snapshot) ? snapshot : {};
-  const nextMetadata: Record<string, unknown> = {
+  const nextMetadata = applySessionStateFieldMetadataPatch({
     ...(isRecord(currentMarker?.metadata) ? currentMarker.metadata : {}),
     ...metadata,
     flavor: params.agentId,
-    [params.vendorResumeIdField]: params.providerSessionId,
-  };
+  }, 'identity.vendorSessionId', {
+    metadataKey: params.vendorResumeIdField,
+    value: params.providerSessionId,
+  }) as Record<string, unknown>;
   const liveProcess =
     !currentMarker?.processCommandHash || !currentMarker?.processCommand
       ? await findHappyProcessByPid(pid).catch(() => null)
@@ -74,6 +77,7 @@ export function createProviderSessionIdentityPublisher(params: Readonly<{
 
   return (nextSessionId: string | null): void => {
     publishProviderSessionId({
+      sessionId: params.session.sessionId,
       getSessionId: () => nextSessionId,
       updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
       lastPublished: params.lastPublished,

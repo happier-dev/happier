@@ -74,6 +74,24 @@ function normalizeVoiceAgentModelId(value: unknown): string {
   return trimmed === 'default' ? '' : trimmed;
 }
 
+function readScmDiffSummaryCachedOutput(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Readonly<Record<string, unknown>>;
+  if (record.intent !== 'scm_diff_summary') return null;
+  const intentInput = record.intentInput;
+  if (!intentInput || typeof intentInput !== 'object' || Array.isArray(intentInput)) return null;
+  const inputRecord = intentInput as Readonly<Record<string, unknown>>;
+  const cachePolicy = inputRecord.cachePolicy;
+  if (cachePolicy && typeof cachePolicy === 'object' && !Array.isArray(cachePolicy)) {
+    const cachePolicyRecord = cachePolicy as Readonly<Record<string, unknown>>;
+    if (cachePolicyRecord.mode === 'bypass') return null;
+  }
+  const cachedOutput = inputRecord.cachedOutput;
+  if (!cachedOutput || typeof cachedOutput !== 'object' || Array.isArray(cachedOutput)) return null;
+  const output = cachedOutput as Record<string, unknown>;
+  return typeof output.success === 'boolean' ? output : null;
+}
+
 type ExecuteBoundedRun = (args: {
   runId: string;
   callId: string;
@@ -139,9 +157,13 @@ export async function startExecutionRun(args: Readonly<{
     return 0;
   })();
 
-  if (args.budgetRegistry && !args.budgetRegistry.tryAcquireExecutionRun(runId, args.params.intent)) {
-    const err: any = new Error('Execution run budget exceeded');
-    err.code = 'execution_run_budget_exceeded';
+  const acquiredBudget = args.params.intent === 'scm_commit_message'
+    ? args.budgetRegistry?.tryAcquireOneShotTask(runId, 'scm_commit_message') ?? true
+    : args.budgetRegistry?.tryAcquireExecutionRun(runId, args.params.intent) ?? true;
+  if (!acquiredBudget) {
+    const err = Object.assign(new Error('Execution run budget exceeded'), {
+      code: 'execution_run_budget_exceeded',
+    });
     throw err;
   }
 
@@ -215,6 +237,26 @@ export async function startExecutionRun(args: Readonly<{
       },
       id: randomUUID(),
     });
+  }
+
+  const cachedScmDiffSummaryOutput = readScmDiffSummaryCachedOutput(args.params);
+  if (cachedScmDiffSummaryOutput) {
+    const finishedAtMs = args.getNowMs();
+    const status = cachedScmDiffSummaryOutput.success === true ? 'succeeded' : 'failed';
+    args.finishRun(
+      runId,
+      {
+        status,
+        summary: status === 'succeeded' ? 'Diff summary restored from cache.' : 'Cached diff summary failure restored.',
+        finishedAtMs,
+        ...(status === 'failed'
+          ? { error: { code: 'cached_diff_summary_failed', message: 'Cached diff summary failure restored.' } }
+          : {}),
+      },
+      { output: cachedScmDiffSummaryOutput, meta: { cache: 'hit' } },
+      { kind: 'scm_diff_summary.v1', payload: cachedScmDiffSummaryOutput },
+    );
+    return { runId, callId, sidechainId };
   }
 
   let backendBeforeControllerRegistration: ExecutionRunHostRuntime | null = null;

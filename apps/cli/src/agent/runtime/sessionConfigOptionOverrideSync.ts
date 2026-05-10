@@ -1,20 +1,22 @@
 import type { Metadata } from '@/api/types';
 import {
+  readAcpConfigOptionIntentFromMetadata,
   LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
   readMetadataAliasValue,
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents';
 
-type ConfigOptionValueId = string;
+type ConfigOptionValueId = string | number | boolean | null;
 
-function normalizeValueId(raw: unknown): ConfigOptionValueId | null {
+function normalizeValueId(raw: unknown): ConfigOptionValueId | undefined {
+  if (raw === null) return null;
   if (typeof raw === 'string') {
     const trimmed = raw.trim();
-    return trimmed.length > 0 ? trimmed : null;
+    return trimmed.length > 0 ? trimmed : undefined;
   }
-  if (typeof raw === 'boolean') return raw ? 'true' : 'false';
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
-  return null;
+  if (typeof raw === 'boolean') return raw;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  return undefined;
 }
 
 export function resolveSessionConfigOptionOverridesFromMetadataSnapshot(opts: Readonly<{
@@ -38,10 +40,11 @@ export function resolveSessionConfigOptionOverridesFromMetadataSnapshot(opts: Re
     const updatedAt = typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt) ? entry.updatedAt : null;
     if (updatedAt === null) continue;
 
-    const valueId = normalizeValueId(entry.value);
-    if (!valueId) continue;
+    const intent = readAcpConfigOptionIntentFromMetadata((opts.metadata ?? {}) as Metadata, configId);
+    const valueId = normalizeValueId(intent?.value ?? entry.value);
+    if (valueId === undefined) continue;
 
-    out.push({ configId, valueId, updatedAt });
+    out.push({ configId, valueId, updatedAt: intent?.updatedAt ?? updatedAt });
   }
 
   out.sort((a, b) => (a.updatedAt - b.updatedAt) || a.configId.localeCompare(b.configId));

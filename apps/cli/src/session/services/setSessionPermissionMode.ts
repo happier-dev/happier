@@ -1,24 +1,25 @@
-import { computeNextPermissionIntentMetadata, type PermissionIntent } from '@happier-dev/agents';
+import type { PermissionIntent } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
 
-import { updateSessionMetadataForTarget } from './updateSessionMetadataForTarget';
+import { updateSessionStateFieldForTarget } from './updateSessionStateFieldForTarget';
 
 export async function setSessionPermissionMode(params: Readonly<{
   credentials: Credentials;
   idOrPrefix: string;
   permissionMode: PermissionIntent;
   updatedAt?: number;
-}>): ReturnType<typeof updateSessionMetadataForTarget> {
+}>): ReturnType<typeof updateSessionStateFieldForTarget> {
   const updatedAt = params.updatedAt ?? Date.now();
-  return await updateSessionMetadataForTarget({
+  return await updateSessionStateFieldForTarget({
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
-    updater: (metadata) =>
-      computeNextPermissionIntentMetadata({
-        metadata,
-        permissionMode: params.permissionMode,
-        permissionModeUpdatedAt: updatedAt,
-      }),
+    fieldId: 'intent.permissionMode',
+    value: {
+      v: 1,
+      permissionMode: params.permissionMode,
+      updatedAt,
+    },
+    metadataReason: 'cli-session-permission-mode-set',
   });
 }

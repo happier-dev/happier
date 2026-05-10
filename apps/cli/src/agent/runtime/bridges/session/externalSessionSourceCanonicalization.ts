@@ -1,6 +1,6 @@
 import type {
-  DirectSessionsProviderId,
-  DirectSessionsSource,
+  ExternalSessionsProviderId,
+  ExternalSessionsSource,
   RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 
@@ -9,37 +9,37 @@ import {
   type SessionRuntimeIdentityFallbackResult,
 } from '@/agent/runtime/identity';
 import type {
-  DirectSessionLinkIdentity,
-  DirectSessionProviderOps,
+  ExternalSessionLinkIdentity,
+  ExternalSessionProviderOps,
 } from '@/session/external/providerOps';
 import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 
-export type CanonicalizedDirectSessionSourceResult = Readonly<{
+export type CanonicalizedExternalSessionSourceResult = Readonly<{
   remoteSessionId: string;
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   runtimeIdentity: SessionRuntimeIdentityFallbackResult;
 }>;
 
-type DirectSessionCanonicalizationDeps = Readonly<{
-  resolveDirectSessionProviderOps?: (
-    providerId: DirectSessionsProviderId,
-  ) => Promise<DirectSessionProviderOps | null>;
+type ExternalSessionCanonicalizationDeps = Readonly<{
+  resolveExternalSessionProviderOps?: (
+    providerId: ExternalSessionsProviderId,
+  ) => Promise<ExternalSessionProviderOps | null>;
 }>;
 
-async function resolveDirectSessionProviderOps(
-  providerId: DirectSessionsProviderId,
-): Promise<DirectSessionProviderOps | null> {
-  return (await resolveBackendExecutionSurfaces(providerId)).directSessions;
+async function resolveExternalSessionProviderOps(
+  providerId: ExternalSessionsProviderId,
+): Promise<ExternalSessionProviderOps | null> {
+  return (await resolveBackendExecutionSurfaces(providerId)).externalSessions;
 }
 
-export async function resolveDirectSessionLinkIdentity(params: Readonly<{
-  providerId: DirectSessionsProviderId;
+export async function resolveExternalSessionLinkIdentity(params: Readonly<{
+  providerId: ExternalSessionsProviderId;
   remoteSessionId: string;
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   metadata?: Record<string, unknown>;
-}>, deps: DirectSessionCanonicalizationDeps = {}): Promise<DirectSessionLinkIdentity> {
-  const resolveOps = deps.resolveDirectSessionProviderOps ?? resolveDirectSessionProviderOps;
+}>, deps: ExternalSessionCanonicalizationDeps = {}): Promise<ExternalSessionLinkIdentity> {
+  const resolveOps = deps.resolveExternalSessionProviderOps ?? resolveExternalSessionProviderOps;
   const providerOps = await resolveOps(params.providerId);
   if (!providerOps?.resolveLinkIdentity) {
     return {
@@ -56,20 +56,20 @@ export async function resolveDirectSessionLinkIdentity(params: Readonly<{
   });
 }
 
-export async function canonicalizeLinkedDirectSessionSource(params: Readonly<{
-  providerId: DirectSessionsProviderId;
+export async function canonicalizeLinkedExternalSessionSource(params: Readonly<{
+  providerId: ExternalSessionsProviderId;
   metadata: Record<string, unknown>;
   remoteSessionId: string;
-  source: DirectSessionsSource;
-}>, deps: DirectSessionCanonicalizationDeps = {}): Promise<CanonicalizedDirectSessionSourceResult> {
-  const resolveOps = deps.resolveDirectSessionProviderOps ?? resolveDirectSessionProviderOps;
+  source: ExternalSessionsSource;
+}>, deps: ExternalSessionCanonicalizationDeps = {}): Promise<CanonicalizedExternalSessionSourceResult> {
+  const resolveOps = deps.resolveExternalSessionProviderOps ?? resolveExternalSessionProviderOps;
   const providerOps = await resolveOps(params.providerId);
   const runtimeIdentity = resolveSessionRuntimeIdentityFallback({
     metadata: params.metadata,
     providerDefaults: {
       providerId: params.providerId,
-      directSessionSource: params.source,
-      directSessionRemoteSessionId: params.remoteSessionId,
+      externalSessionSource: params.source,
+      externalSessionRemoteSessionId: params.remoteSessionId,
     },
   });
 

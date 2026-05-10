@@ -639,7 +639,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
                     }),
                     runtimeLocalMetadata: expect.objectContaining({
                         claudeSessionId: 'sess-handoff-direct',
-                        directSessionV1: expect.objectContaining({
+                        externalSessionV1: expect.objectContaining({
                             remoteSessionId: 'sess-handoff-direct',
                             machineId: 'machine-session-handoff',
                             source: expect.objectContaining({
@@ -750,7 +750,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
                     }),
                     runtimeLocalMetadata: expect.objectContaining({
                         claudeSessionId: 'sess-handoff-direct-fallback',
-                        directSessionV1: expect.objectContaining({
+                        externalSessionV1: expect.objectContaining({
                             remoteSessionId: 'sess-handoff-direct-fallback',
                         }),
                     }),

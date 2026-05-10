@@ -136,6 +136,10 @@ export function parseSessionStartArgs(args: string[]): ParsedSessionStartArgs {
         process.exit(1);
       }
       modelUpdatedAt = Math.floor(parsedAt);
+    } else if (arg === '--account-settings-version-hint') {
+      if (i + 1 < args.length && !args[i + 1]?.startsWith('-')) {
+        i += 1;
+      }
     } else if (arg === '--yolo') {
       permissionMode = 'yolo';
     }

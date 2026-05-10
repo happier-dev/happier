@@ -1,4 +1,5 @@
 import type { Metadata } from '@/api/types';
+import { buildSessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 import {
     readOpenCodeSessionAffinityFromMetadata,
     readOpenCodeSessionRuntimeHandleFromMetadata,
@@ -36,9 +37,15 @@ export function applyOpenCodeSessionAffinityMetadata(
 ): Partial<Metadata> {
     const nextVendorSessionId = typeof params.vendorSessionId === 'string' ? params.vendorSessionId.trim() : '';
     const nextServerBaseUrl = params.serverBaseUrlExplicit ? params.serverBaseUrl : null;
+    const vendorSessionMetadata = nextVendorSessionId
+        ? buildSessionStateFieldMetadataPatch('identity.vendorSessionId', {
+            metadataKey: 'opencodeSessionId',
+            value: nextVendorSessionId,
+        })
+        : {};
 
     return {
-        ...(nextVendorSessionId ? { opencodeSessionId: nextVendorSessionId } : {}),
+        ...vendorSessionMetadata,
         ...(params.backendMode ? { opencodeBackendMode: params.backendMode } : {}),
         ...(nextServerBaseUrl ? { opencodeServerBaseUrl: nextServerBaseUrl } : {}),
         ...(nextServerBaseUrl ? { opencodeServerBaseUrlExplicit: true } : {}),

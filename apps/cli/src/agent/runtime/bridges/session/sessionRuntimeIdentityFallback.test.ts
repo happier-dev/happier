@@ -9,7 +9,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
       metadata: {
         flavor: 'claude',
         codexSessionId: 'legacy-session',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'codex',
           remoteSessionId: 'legacy-session',
@@ -38,7 +38,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
       metadata: {
         flavor: 'claude',
         claudeSessionId: 'claude-session-1',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           remoteSessionId: 'claude-session-1',
@@ -73,7 +73,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
     const result = resolveSessionRuntimeIdentityFallback({
       metadata: {
         machineId: 'machine-source',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'opencode',
           machineId: 'machine-source',
@@ -86,6 +86,25 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
 
     expect(result.providerId).toBe('opencode');
     expect(result.vendorSessionId).toBe('direct-runtime-session');
+    expect(result.sourceTier).toBe('legacy_session_metadata');
+  });
+
+  it('reads provider identity from legacy directSessionV1 metadata', () => {
+    const result = resolveSessionRuntimeIdentityFallback({
+      metadata: {
+        directSessionV1: {
+          v: 1,
+          providerId: 'opencode',
+          machineId: 'machine-source',
+          remoteSessionId: 'legacy-direct-runtime-session',
+          source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
+          linkedAtMs: 1,
+        },
+      },
+    });
+
+    expect(result.providerId).toBe('opencode');
+    expect(result.vendorSessionId).toBe('legacy-direct-runtime-session');
     expect(result.sourceTier).toBe('legacy_session_metadata');
   });
 });

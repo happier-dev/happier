@@ -11,10 +11,10 @@ import {
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from '@/cloud/loopbackPort';
 import { configuration } from '@/configuration';
 
-import { deriveSshTunnelKey } from './deriveSshTunnelKey';
-import { createSshTunnelSetupError } from './errorMapping';
-import { probeSshTunnelUrl } from './probeSshTunnel';
-import { createSshTunnelRegistry } from './sshTunnelRegistry';
+import { deriveSshTunnelKey } from './deriveKey';
+import { createSshTunnelHealthError, createSshTunnelSetupError } from './errorMapping';
+import { probeSshTunnelUrl } from './probe';
+import { createSshTunnelRegistry } from './registry';
 import type {
   SshTunnelCloseForward,
   SshTunnelEnsureRequest,
@@ -30,7 +30,6 @@ import type {
 } from './types';
 
 const DEFAULT_IDLE_TTL_MS = 5 * 60_000;
-const DEFAULT_CONTROL_DIR = '/tmp/happier-ssh-control';
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 
@@ -165,6 +164,10 @@ function healthToStatus(health: SshTunnelHealth): SshTunnelStatus {
   return 'unavailable';
 }
 
+function isReusableTunnelHealth(health: SshTunnelHealth): boolean {
+  return health.state === 'healthy' || health.state === 'auth_required';
+}
+
 function createActiveFromRegistryEntry(entry: SshTunnelRegistryEntry): ActiveTunnel {
   return {
     tunnelKey: entry.tunnelKey,
@@ -267,7 +270,7 @@ export function createSshTunnelSupervisor(deps: SshTunnelSupervisorDeps = {}): S
       const health = await (deps.probeUrl ?? probeSshTunnelUrl)(existing.httpBaseUrl);
       existing.lastProbeAt = health.checkedAt;
       existing.status = healthToStatus(health);
-      if (health.state === 'healthy') {
+      if (isReusableTunnelHealth(health)) {
         return existing;
       }
       await stopTunnel(tunnelKey);
@@ -289,7 +292,7 @@ export function createSshTunnelSupervisor(deps: SshTunnelSupervisorDeps = {}): S
         localPort,
         remoteHost: request.remoteHost,
         remotePort: request.remotePort,
-        controlDir: deps.controlDir ?? DEFAULT_CONTROL_DIR,
+        ...(deps.controlDir ? { controlDir: deps.controlDir } : {}),
         connectTimeoutSec: 10,
         serverAliveIntervalSec: 15,
         serverAliveCountMax: 2,
@@ -298,6 +301,10 @@ export function createSshTunnelSupervisor(deps: SshTunnelSupervisorDeps = {}): S
       throw createSshTunnelSetupError(error, nowIso(deps));
     }
     const health = await (deps.probeUrl ?? probeSshTunnelUrl)(toHttpBaseUrl(handle.localPort));
+    if (!isReusableTunnelHealth(health)) {
+      await handle.close();
+      throw createSshTunnelHealthError(health);
+    }
     const createdAt = nowIso(deps);
     const tunnel: ActiveTunnel = {
       tunnelKey,
@@ -383,19 +390,25 @@ export function createSshTunnelSupervisor(deps: SshTunnelSupervisorDeps = {}): S
     },
     async adoptPersistedTunnels(): Promise<void> {
       const entries = await registry.read();
+      const retained: SshTunnelRegistryEntry[] = [];
       const adopted: SshTunnelRegistryEntry[] = [];
       for (const entry of entries) {
+        const ownerPid = deps.ownerPid ?? process.pid;
+        if (entry.ownerPid !== ownerPid && deps.isProcessAlive?.(entry.ownerPid)) {
+          retained.push(entry);
+          continue;
+        }
         const hasControlPath = deps.controlPathExists
           ? await deps.controlPathExists(entry.controlPath)
           : existsSync(entry.controlPath);
         if (!hasControlPath) continue;
         const health = await (deps.probeUrl ?? probeSshTunnelUrl)(entry.httpBaseUrl);
-        if (health.state !== 'healthy') continue;
+        if (!isReusableTunnelHealth(health)) continue;
         const tunnel = createActiveFromRegistryEntry({ ...entry, lastProbeAt: health.checkedAt });
         active.set(entry.tunnelKey, tunnel);
         adopted.push(entryFromActive(tunnel));
       }
-      await registry.write(adopted);
+      await registry.write([...retained, ...adopted]);
     },
   };
 }

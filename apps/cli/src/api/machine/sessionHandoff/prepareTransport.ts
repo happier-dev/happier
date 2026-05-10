@@ -467,7 +467,7 @@ export async function resolvePrepareWorkspaceReplicationMetadata(params: Readonl
     sourceRootPath,
     manifest,
     ...(params.handoffMetadataV2?.workspaceReplicationSourceControllerMetadata
-      ? { sourceControllerMetadata: params.handoffMetadataV2.workspaceReplicationSourceControllerMetadata }
+      ? { workspaceIntegrationMetadata: params.handoffMetadataV2.workspaceReplicationSourceControllerMetadata }
       : {}),
   };
 }

@@ -24,6 +24,7 @@ import {
   SHARED_PROVIDER_ENFORCED_SAFE_TOOL_CALL_ID_SEGMENTS,
   SHARED_PROVIDER_ENFORCED_SAFE_TOOL_NAME_SEGMENTS,
 } from '../permissionTaxonomy';
+import { shouldDenyAgentSessionTitleToolCall } from '../codingPromptTitlePermission';
 
 export type { PermissionResult, PendingRequest };
 
@@ -108,6 +109,13 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   }
 
   getImmediateDecision(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+    if (shouldDenyAgentSessionTitleToolCall({
+      settings: this.getAccountSettingsSnapshot(),
+      toolName,
+      input,
+    })) {
+      return { decision: 'denied' };
+    }
     if (!this.isAlwaysAutoApprove(toolName, toolCallId)) {
       return null;
     }

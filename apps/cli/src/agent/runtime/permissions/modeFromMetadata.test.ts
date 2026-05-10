@@ -49,6 +49,18 @@ describe('resolveSessionModeOverrideFromMetadataSnapshot', () => {
       .toEqual({ modeId: 'plan', updatedAt: 14 });
   });
 
+  it('uses the newest session-mode override alias instead of canonical-first state', () => {
+    const fn = (permissionModeFromMetadata as any).resolveSessionModeOverrideFromMetadataSnapshot;
+    expect(typeof fn).toBe('function');
+
+    expect(fn({
+      metadata: {
+        sessionModeOverrideV1: { v: 1, updatedAt: 14, modeId: 'build' },
+        acpSessionModeOverrideV1: { v: 1, updatedAt: 20, modeId: 'plan' },
+      } as any,
+    })).toEqual({ modeId: 'plan', updatedAt: 20 });
+  });
+
   it('normalizes modeId="default" to an empty string when the provider has no real default option', () => {
     const fn = (permissionModeFromMetadata as any).resolveSessionModeOverrideFromMetadataSnapshot;
     expect(typeof fn).toBe('function');

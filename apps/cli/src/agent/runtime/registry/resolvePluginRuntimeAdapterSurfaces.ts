@@ -5,7 +5,7 @@ import type { PluginCompatibilityDiagnostic } from '../../../plugins/validation/
 import { buildBackendRuntimeAdapterDispatchKey } from '../../../plugins/manifest/adapters';
 import type {
     AnyTerminalRuntimeOps,
-    DirectSessionProviderOps,
+    ExternalSessionProviderOps,
     ProviderAttachOps,
     SessionHandoffProviderOps,
 } from '../../../backends/types';
@@ -82,13 +82,13 @@ export function resolveBackendExecutionSurfacesFromHandlers(
     handlerByAdapterId: ReadonlyMap<string, PluginHookHandler>,
 ): BackendExecutionSurfaces {
     const terminalRuntime = resolveTerminalRuntimeOps(handlerByAdapterId);
-    const directSessions = resolveDirectSessionProviderOps(handlerByAdapterId);
+    const externalSessions = resolveExternalSessionProviderOps(handlerByAdapterId);
     const attach = resolveProviderAttachOps(handlerByAdapterId);
     const sessionHandoff = resolveSessionHandoffProviderOps(handlerByAdapterId);
 
     return {
         terminalRuntime,
-        directSessions,
+        externalSessions,
         attach,
         sessionHandoff,
     };
@@ -153,38 +153,38 @@ function resolveTerminalRuntimeOps(
     };
 }
 
-function resolveDirectSessionProviderOps(
+function resolveExternalSessionProviderOps(
     handlerByAdapterId: ReadonlyMap<string, PluginHookHandler>,
-): DirectSessionProviderOps | null {
+): ExternalSessionProviderOps | null {
     const validateSource = readRuntimeAdapterHandler(
         handlerByAdapterId,
-        'directSessions',
-        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.directSessions.validateSource,
+        'externalSessions',
+        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.externalSessions.validateSource,
     );
     const listCandidates = readRuntimeAdapterHandler(
         handlerByAdapterId,
-        'directSessions',
-        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.directSessions.listCandidates,
+        'externalSessions',
+        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.externalSessions.listCandidates,
     );
     const getActivity = readRuntimeAdapterHandler(
         handlerByAdapterId,
-        'directSessions',
-        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.directSessions.getActivity,
+        'externalSessions',
+        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.externalSessions.getActivity,
     );
     const pageTranscript = readRuntimeAdapterHandler(
         handlerByAdapterId,
-        'directSessions',
-        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.directSessions.pageTranscript,
+        'externalSessions',
+        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.externalSessions.pageTranscript,
     );
     const readAfterTranscript = readRuntimeAdapterHandler(
         handlerByAdapterId,
-        'directSessions',
-        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.directSessions.readAfterTranscript,
+        'externalSessions',
+        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.externalSessions.readAfterTranscript,
     );
     const resolveTakeoverSpawnOptions = readRuntimeAdapterHandler(
         handlerByAdapterId,
-        'directSessions',
-        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.directSessions.resolveTakeoverSpawnOptions,
+        'externalSessions',
+        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.externalSessions.resolveTakeoverSpawnOptions,
     );
 
     if (
@@ -200,40 +200,40 @@ function resolveDirectSessionProviderOps(
 
     const acquireFollowLease = readRuntimeAdapterHandler(
         handlerByAdapterId,
-        'directSessions',
-        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.directSessions.acquireFollowLease,
+        'externalSessions',
+        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.externalSessions.acquireFollowLease,
     );
     const canonicalizeLinkedSession = readRuntimeAdapterHandler(
         handlerByAdapterId,
-        'directSessions',
-        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.directSessions.canonicalizeLinkedSession,
+        'externalSessions',
+        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.externalSessions.canonicalizeLinkedSession,
     );
     const resolveLinkIdentity = readRuntimeAdapterHandler(
         handlerByAdapterId,
-        'directSessions',
-        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.directSessions.resolveLinkIdentity,
+        'externalSessions',
+        BACKEND_RUNTIME_ADAPTER_OPERATION_CATALOG_V1.externalSessions.resolveLinkIdentity,
     );
 
     return {
-        validateSource: validateSource as DirectSessionProviderOps['validateSource'],
-        listCandidates: listCandidates as DirectSessionProviderOps['listCandidates'],
-        getActivity: getActivity as DirectSessionProviderOps['getActivity'],
-        pageTranscript: pageTranscript as DirectSessionProviderOps['pageTranscript'],
-        readAfterTranscript: readAfterTranscript as DirectSessionProviderOps['readAfterTranscript'],
-        resolveTakeoverSpawnOptions: resolveTakeoverSpawnOptions as DirectSessionProviderOps['resolveTakeoverSpawnOptions'],
+        validateSource: validateSource as ExternalSessionProviderOps['validateSource'],
+        listCandidates: listCandidates as ExternalSessionProviderOps['listCandidates'],
+        getActivity: getActivity as ExternalSessionProviderOps['getActivity'],
+        pageTranscript: pageTranscript as ExternalSessionProviderOps['pageTranscript'],
+        readAfterTranscript: readAfterTranscript as ExternalSessionProviderOps['readAfterTranscript'],
+        resolveTakeoverSpawnOptions: resolveTakeoverSpawnOptions as ExternalSessionProviderOps['resolveTakeoverSpawnOptions'],
         ...(acquireFollowLease
             ? {
-                acquireFollowLease: acquireFollowLease as DirectSessionProviderOps['acquireFollowLease'],
+                acquireFollowLease: acquireFollowLease as ExternalSessionProviderOps['acquireFollowLease'],
             }
             : {}),
         ...(canonicalizeLinkedSession
             ? {
-                canonicalizeLinkedSession: canonicalizeLinkedSession as DirectSessionProviderOps['canonicalizeLinkedSession'],
+                canonicalizeLinkedSession: canonicalizeLinkedSession as ExternalSessionProviderOps['canonicalizeLinkedSession'],
             }
             : {}),
         ...(resolveLinkIdentity
             ? {
-                resolveLinkIdentity: resolveLinkIdentity as DirectSessionProviderOps['resolveLinkIdentity'],
+                resolveLinkIdentity: resolveLinkIdentity as ExternalSessionProviderOps['resolveLinkIdentity'],
             }
             : {}),
     };

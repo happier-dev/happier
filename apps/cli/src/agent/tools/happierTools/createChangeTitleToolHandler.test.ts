@@ -67,4 +67,25 @@ describe('createChangeTitleToolHandler', () => {
         });
         expect(afterCommit).toHaveBeenCalledTimes(1);
     });
+
+    it('does not call afterCommit when the action already wrote metadata', async () => {
+        const afterCommit = vi.fn();
+        const execute = vi.fn<Execute>(async () => ({
+            ok: true as const,
+            result: { ok: true, sessionId: 'sess_1', title: 'New title', metadataUpdated: true },
+        }));
+        const handler = createChangeTitleToolHandler({
+            surface: 'session_agent',
+            executor: {
+                execute,
+            },
+            afterCommit,
+        });
+
+        await expect(handler('sess_1', 'New title')).resolves.toEqual({
+            success: true,
+            title: 'New title',
+        });
+        expect(afterCommit).not.toHaveBeenCalled();
+    });
 });

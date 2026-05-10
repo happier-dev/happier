@@ -50,7 +50,7 @@ import { configuration } from '@/configuration';
 import type {
   AccountPetCreateRequestV1,
   AccountPetCreateResponseV1,
-  DirectSessionTranscriptDeltaEphemeral,
+  ExternalSessionTranscriptDeltaEphemeral,
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
   TransferEndpointCandidate,
@@ -141,7 +141,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   filesystemAccessPolicy?: FilesystemAccessPolicy;
   getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
   extraTransferRelayV2DownloadOwners?: readonly TransferRelayV2DownloadSessionOwner[];
-  emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+  emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptDeltaEphemeral) => void;
   createAccountPet?: (request: AccountPetCreateRequestV1) => Promise<AccountPetCreateResponseV1>;
 }>;
 
@@ -262,7 +262,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     rpcHandlerManager,
     spawnSession,
     stopSession,
-    emitDirectSessionTranscriptUpdate: params.deps?.emitDirectSessionTranscriptUpdate,
+    emitExternalSessionTranscriptUpdate: params.deps?.emitExternalSessionTranscriptUpdate,
   });
   if (handlers.directTransferImport) {
     registerMachineDirectTransferImportRpcHandlers({

@@ -37,7 +37,7 @@ describe('createCatalogRuntimeCore', () => {
       provider: { id: 'qwen', source: 'built_in' },
       executionSurfaces: {
         terminalRuntime: null,
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
       },

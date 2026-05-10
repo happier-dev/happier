@@ -66,7 +66,7 @@ const {
       };
       return {
         terminalRuntime: null,
-        directSessions: null,
+        externalSessions: null,
         attach,
         sessionHandoff: null,
       };
@@ -83,7 +83,7 @@ const {
           };
       return {
         terminalRuntime,
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
       };
@@ -91,7 +91,7 @@ const {
 
     return {
       terminalRuntime: null,
-      directSessions: null,
+      externalSessions: null,
       attach: null,
       sessionHandoff: null,
     };
@@ -284,7 +284,7 @@ describe('happier attach', () => {
     resolveBackendExecutionSurfaces.mockImplementation((backendId) => backendId === 'plugin-review-bot'
       ? {
           terminalRuntime: null,
-          directSessions: null,
+          externalSessions: null,
           attach: {
             evaluateEligibility: async ({ metadata }) => ({
               eligible: true,

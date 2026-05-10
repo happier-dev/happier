@@ -2,9 +2,9 @@ export type { WorkspaceManifest, WorkspaceManifestEntry } from '@happier-dev/pro
 
 export {
     compareWorkspaceManifests,
-} from '@/scm/sourceController/workspaceExportPackaging/compareWorkspaceManifests';
+} from '@/scm/workspace/workspaceExportPackaging/compareWorkspaceManifests';
 
 export type {
     WorkspaceManifestComparison,
     WorkspaceManifestEntryChange,
-} from '@/scm/sourceController/workspaceExportPackaging/compareWorkspaceManifests';
+} from '@/scm/workspace/workspaceExportPackaging/compareWorkspaceManifests';

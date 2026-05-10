@@ -33,6 +33,22 @@ function createPromptDocArtifactRecord(params: Readonly<{
   };
 }
 
+type DataKeyCredentials = Credentials & {
+  encryption: Extract<Credentials['encryption'], { type: 'dataKey' }>;
+};
+
+function createCredentials(): DataKeyCredentials {
+  const machineKey = new Uint8Array(32).fill(9);
+  return {
+    token: 'token',
+    encryption: {
+      type: 'dataKey',
+      machineKey,
+      publicKey: deriveBoxPublicKeyFromSeed(machineKey),
+    },
+  };
+}
+
 describe('resolveEffectiveCodingPromptText', () => {
   it('decrypts referenced prompt docs and caches artifact bodies across calls', async () => {
     const machineKey = new Uint8Array(32).fill(9);
@@ -205,5 +221,58 @@ describe('resolveEffectiveCodingPromptText', () => {
     expect(out).not.toContain('You are an AI assistant');
     expect(out).toContain('Tool execution ordering');
     expect(out).toContain('Happier tools are available through the CLI bridge');
+  });
+
+  it('omits shell-bridge title guidance when coding prompt title updates are disabled', async () => {
+    const credentials = createCredentials();
+
+    const out = await resolveEffectiveCodingPromptText({
+      credentials,
+      settings: {
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'disabled',
+          responseOptions: 'agent',
+        },
+      },
+      profileId: null,
+      executionRunsFeatureEnabled: false,
+      toolDelivery: 'shell_bridge',
+      toolDeliverySessionId: 's1',
+      toolDeliveryDirectory: '/tmp/worktree',
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    expect(out).toContain('Happier tools are available through the CLI bridge');
+    expect(out).toContain('when you need to discover the available built-in Happier tools');
+    expect(out).toContain('plugin-action-or-tool-id');
+    expect(out).not.toContain('change_title');
+    expect(out).not.toContain('rename the session');
+    expect(out).not.toContain('# Session title');
+  });
+
+  it('applies prompt personalization settings to the effective coding prompt', async () => {
+    const credentials = createCredentials();
+
+    const out = await resolveEffectiveCodingPromptText({
+      credentials,
+      settings: {
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'disabled',
+          responseOptions: 'disabled',
+        },
+      },
+      profileId: null,
+      executionRunsFeatureEnabled: false,
+      fetchPromptArtifactRecord: async () => null,
+    });
+
+    expect(out).toContain('# Attachments');
+    expect(out).not.toContain('# Session title');
+    expect(out).not.toContain('change_title');
+    expect(out).not.toContain('# Options');
+    expect(out).not.toContain('# Plan mode with options');
+    expect(out).not.toContain('<options>');
   });
 });

@@ -25,6 +25,8 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import { bindPluginDaemonConnectionStateSource } from '@/agent/runtime/registry/pluginConnectionStateSource';
 import type { Credentials } from '@/persistence';
 import { configuration } from '@/configuration';
+import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/accountSettingsVersion';
+import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import type { FeaturesResponse, PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol';
@@ -33,6 +35,28 @@ import {
   type StartPeerMediationLoopbackInput,
   type StartedPeerMediationLoopback,
 } from '../peer/mediation/rpc/startLoopback';
+
+function readAccountSettingsChangedHintVersion(update: unknown): number | null {
+  if (!update || typeof update !== 'object') return null;
+  const body = (update as { body?: unknown }).body;
+  if (!body || typeof body !== 'object') return null;
+  if ((body as { t?: unknown }).t !== 'account-settings-changed') return null;
+  return normalizeAccountSettingsVersionHint((body as { settingsVersion?: unknown }).settingsVersion);
+}
+
+async function refreshDaemonAccountSettingsForHint(params: Readonly<{
+  credentials: Credentials;
+  settingsVersion: number | null;
+}>): Promise<boolean> {
+  const requiresConservativeRefresh = params.settingsVersion === null;
+  await refreshAccountSettingsForMinimumVersion({
+    credentials: params.credentials,
+    minSettingsVersion: params.settingsVersion,
+    mode: 'blocking',
+    ...(requiresConservativeRefresh ? { forceRefresh: true } : {}),
+  });
+  return true;
+}
 
 type ConnectedServiceRefreshLoopHandle = Readonly<{
   stop: () => void;
@@ -399,7 +423,7 @@ export async function bootstrapMachineSyncRuntime(
           : {}),
       },
       {
-        emitDirectSessionTranscriptUpdate: (payload) => connectedApiMachine.emitDirectSessionTranscriptUpdate(payload),
+        emitExternalSessionTranscriptUpdate: (payload) => connectedApiMachine.emitExternalSessionTranscriptUpdate(payload),
       },
     );
 
@@ -415,6 +439,26 @@ export async function bootstrapMachineSyncRuntime(
     });
     if (peerMediationLoopback) {
       stopPeerMediationLoopbackServer = peerMediationLoopback.stop;
+    }
+
+    if (params.credentials) {
+      const credentials = params.credentials;
+      connectedApiMachine.onUpdate((update) => {
+        const settingsVersion = readAccountSettingsChangedHintVersion(update);
+        if (settingsVersion === null) return false;
+
+        void refreshDaemonAccountSettingsForHint({ credentials, settingsVersion }).catch((error) => {
+          logger.warn('[DAEMON RUN] Failed to refresh account settings from live hint', error);
+        });
+        return true;
+      });
+
+      connectedApiMachine.onAccountSettingsVersionHint(async (hint) => {
+        await refreshDaemonAccountSettingsForHint({
+          credentials,
+          settingsVersion: hint.settingsVersion,
+        });
+      });
     }
 
     connectedApiMachine.onUpdate((update) => {

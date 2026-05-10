@@ -73,7 +73,7 @@ function mockRuntimeCore(runtime: ReturnType<typeof createExecutionRunHostRuntim
     },
     executionSurfaces: {
       terminalRuntime: null,
-      directSessions: null,
+      externalSessions: null,
       attach: null,
       sessionHandoff: null,
     },
@@ -254,7 +254,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
       },
       executionSurfaces: {
         terminalRuntime: null,
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
       },

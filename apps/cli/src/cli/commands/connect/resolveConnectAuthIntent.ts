@@ -1,5 +1,6 @@
 import {
   getConnectedAccountConnectModesForTarget,
+  type ConnectedAccountDescriptor,
   type ConnectedServiceId,
   type ConnectedAccountTokenKind,
 } from '@happier-dev/protocol';
@@ -13,8 +14,11 @@ export type ConnectAuthIntent =
 export function resolveConnectAuthIntent(params: Readonly<{
   targetId: string;
   options: ConnectParsedOptions;
+  descriptors?: readonly ConnectedAccountDescriptor[];
 }>): ConnectAuthIntent {
-  const connectModes = getConnectedAccountConnectModesForTarget(params.targetId);
+  const connectModes = params.descriptors
+    ? getConnectedAccountConnectModesForTargetFromDescriptors(params.targetId, params.descriptors)
+    : getConnectedAccountConnectModesForTarget(params.targetId);
   if (connectModes.length === 0) {
     throw new Error(`Unsupported connect target: ${params.targetId}`);
   }
@@ -60,4 +64,17 @@ export function resolveConnectAuthIntent(params: Readonly<{
     throw new Error(`Connect target ${params.targetId} is missing token setup metadata`);
   }
   return { kind: 'token', serviceId: selected.descriptor.id, tokenKind: selected.mode.tokenKind };
+}
+
+function getConnectedAccountConnectModesForTargetFromDescriptors(
+  targetId: string,
+  descriptors: readonly ConnectedAccountDescriptor[],
+) {
+  const normalized = String(targetId ?? '').trim().toLowerCase();
+  if (!normalized) return [];
+  return descriptors.flatMap((descriptor) =>
+    descriptor.connectModes
+      .filter((mode) => mode.targetId.toLowerCase() === normalized)
+      .map((mode) => ({ descriptor, mode })),
+  );
 }

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
 import {
-  DirectSessionsSourceSchema,
+  ExternalSessionsSourceSchema,
   type MachineTransferReceiveEnvelope,
   type MachineTransferSendEnvelope,
   MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,

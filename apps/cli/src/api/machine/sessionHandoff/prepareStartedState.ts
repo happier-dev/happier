@@ -207,8 +207,8 @@ export async function prepareStartedState(input: Readonly<{
               : (workspaceTransferEnabled
                   ? { workspaceReplicationManifestTransferPublication: { transferId: buildSessionHandoffWorkspaceManifestTransferId({ handoffId: callInput.handoffId }) } }
                   : {})),
-            ...(workspaceReplicationMetadata?.sourceControllerMetadata
-              ? { workspaceReplicationSourceControllerMetadata: workspaceReplicationMetadata.sourceControllerMetadata }
+            ...(workspaceReplicationMetadata?.workspaceIntegrationMetadata
+              ? { workspaceReplicationSourceControllerMetadata: workspaceReplicationMetadata.workspaceIntegrationMetadata }
               : {}),
           }
         : undefined;

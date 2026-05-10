@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR } from '@happier-dev/protocol';
 
 import { resolveConnectAuthIntent } from './resolveConnectAuthIntent';
 
@@ -201,6 +202,7 @@ describe('resolveConnectAuthIntent', () => {
   it('defaults Bitbucket to API token input', () => {
     const res = resolveConnectAuthIntent({
       targetId: 'bitbucket',
+      descriptors: [BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR],
       options: {
         profileId: 'default',
         paste: false,
@@ -220,6 +222,7 @@ describe('resolveConnectAuthIntent', () => {
   it('accepts explicit Bitbucket token flag', () => {
     const res = resolveConnectAuthIntent({
       targetId: 'bitbucket',
+      descriptors: [BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR],
       options: {
         profileId: 'default',
         paste: false,

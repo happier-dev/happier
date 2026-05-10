@@ -18,6 +18,7 @@ import {
   type TerminalAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createTerminalAttachPlan } from '@/terminal/attachment/terminalAttachPlan';
+import { createTmuxSingleWindowAttachPlan } from '@/terminal/attachment/tmuxSingleWindowAttachPlan';
 import { isTmuxAvailable, normalizeExitCode } from '@/integrations/tmux';
 import { focusWindowsTerminalWindow } from '@/terminal/attachment/windowsTerminalAttach';
 import { focusWindowsConsoleWindow } from '@/terminal/attachment/windowsConsoleAttach';
@@ -44,6 +45,8 @@ function spawnTmux(params: {
     child.once('exit', (code) => resolve(normalizeExitCode(code)));
   });
 }
+
+type SpawnTmuxFn = typeof spawnTmux;
 
 type AttachCommandDeps = Readonly<{
   readCredentialsFn?: () => Promise<Credentials | null>;
@@ -101,12 +104,17 @@ type ResolvedAttachContext = Readonly<{
   rawSession: RawSessionRecord;
 }>;
 
-async function defaultRunTmuxAttach(params: {
+export async function runTmuxAttach(params: {
   sessionId: string;
   terminal: NonNullable<TerminalAttachmentInfo['terminal']>;
   refreshRemoteControl?: boolean;
 }, deps?: Readonly<{
   isTmuxAvailableFn?: typeof isTmuxAvailable;
+  spawnTmuxFn?: SpawnTmuxFn;
+  insideTmux?: boolean;
+  currentTmuxSocketPath?: string | null;
+  processId?: number;
+  nowMs?: number;
 }>): Promise<number> {
   const isTmuxAvailableFn = deps?.isTmuxAvailableFn ?? isTmuxAvailable;
   if (!(await isTmuxAvailableFn())) {
@@ -114,10 +122,16 @@ async function defaultRunTmuxAttach(params: {
     return 1;
   }
 
+  const insideTmux = deps?.insideTmux ?? Boolean(process.env.TMUX);
+  const currentTmuxSocketPath = deps && Object.prototype.hasOwnProperty.call(deps, 'currentTmuxSocketPath')
+    ? deps.currentTmuxSocketPath
+    : typeof process.env.TMUX === 'string'
+      ? process.env.TMUX.split(',')[0]?.trim() || null
+      : null;
   const plan = createTerminalAttachPlan({
     terminal: params.terminal,
-    insideTmux: Boolean(process.env.TMUX),
-    currentTmuxSocketPath: typeof process.env.TMUX === 'string' ? process.env.TMUX.split(',')[0]?.trim() || null : null,
+    insideTmux,
+    currentTmuxSocketPath,
   });
 
   if (plan.type === 'not-attachable') {
@@ -134,8 +148,9 @@ async function defaultRunTmuxAttach(params: {
     delete env.TMUX;
     delete env.TMUX_PANE;
   }
+  const spawnTmuxFn = deps?.spawnTmuxFn ?? spawnTmux;
 
-  const selectExit = await spawnTmux({
+  const selectExit = await spawnTmuxFn({
     args: plan.selectWindowArgs,
     env,
     stdio: 'ignore',
@@ -147,7 +162,7 @@ async function defaultRunTmuxAttach(params: {
   }
 
   if (params.refreshRemoteControl === true) {
-    await spawnTmux({
+    await spawnTmuxFn({
       args: ['send-keys', '-t', plan.target, 'C-l'],
       env,
       stdio: 'ignore',
@@ -156,11 +171,31 @@ async function defaultRunTmuxAttach(params: {
 
   if (!plan.shouldAttach) return 0;
 
-  return await spawnTmux({
-    args: plan.attachSessionArgs,
-    env,
-    stdio: 'inherit',
+  const singleWindowAttachPlan = createTmuxSingleWindowAttachPlan({
+    sessionId: params.sessionId,
+    target: plan.target,
+    processId: deps?.processId,
+    nowMs: deps?.nowMs,
   });
+
+  const createExit = await spawnTmuxFn({ args: singleWindowAttachPlan.createSessionArgs, env, stdio: 'ignore' });
+  if (createExit !== 0) return createExit;
+
+  const linkExit = await spawnTmuxFn({ args: singleWindowAttachPlan.linkWindowArgs, env, stdio: 'ignore' });
+  if (linkExit !== 0) {
+    await spawnTmuxFn({ args: singleWindowAttachPlan.cleanupSessionArgs, env, stdio: 'ignore' });
+    return linkExit;
+  }
+
+  const killPlaceholderExit = await spawnTmuxFn({ args: singleWindowAttachPlan.killPlaceholderWindowArgs, env, stdio: 'ignore' });
+  if (killPlaceholderExit !== 0) {
+    await spawnTmuxFn({ args: singleWindowAttachPlan.cleanupSessionArgs, env, stdio: 'ignore' });
+    return killPlaceholderExit;
+  }
+
+  const attachExit = await spawnTmuxFn({ args: singleWindowAttachPlan.attachSessionArgs, env, stdio: 'inherit' });
+  await spawnTmuxFn({ args: singleWindowAttachPlan.cleanupSessionArgs, env, stdio: 'ignore' });
+  return attachExit;
 }
 
 async function defaultRunWindowsTerminalAttach(params: {
@@ -283,7 +318,7 @@ export async function handleAttachCommand(
   const readTerminalAttachmentInfoFn = deps.readTerminalAttachmentInfoFn ?? readTerminalAttachmentInfo;
   const readSettingsFn = deps.readSettingsFn ?? readSettings;
   const fetchSessionsPageFn = deps.fetchSessionsPageFn ?? fetchSessionsPage;
-  const runTmuxAttachFn = deps.runTmuxAttachFn ?? (async (params) => await defaultRunTmuxAttach(params, {
+  const runTmuxAttachFn = deps.runTmuxAttachFn ?? (async (params) => await runTmuxAttach(params, {
     isTmuxAvailableFn: deps.isTmuxAvailableFn,
   }));
   const runWindowsTerminalAttachFn = deps.runWindowsTerminalAttachFn ?? defaultRunWindowsTerminalAttach;

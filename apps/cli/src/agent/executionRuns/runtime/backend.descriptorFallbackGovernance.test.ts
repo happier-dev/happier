@@ -92,7 +92,7 @@ describe('createExecutionRunBackend (descriptor fallback governance)', () => {
             },
             executionSurfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },

@@ -20,6 +20,7 @@ const hoisted = vi.hoisted(() => {
   const resolveSpawnBackendIdentity = vi.fn();
   const getVendorResumeSupport = vi.fn(async () => vendorResumeSupport);
   const requireCatalogEntry = vi.fn();
+  const refreshAccountSettingsForMinimumVersion = vi.fn();
   const ensureSessionDirectory = vi.fn<() => Promise<MockEnsureSessionDirectoryResult>>(async () => ({
     ok: false,
     response: {
@@ -34,6 +35,7 @@ const hoisted = vi.hoisted(() => {
     resolveSpawnBackendIdentity,
     getVendorResumeSupport,
     requireCatalogEntry,
+    refreshAccountSettingsForMinimumVersion,
     ensureSessionDirectory,
   };
 });
@@ -47,8 +49,13 @@ vi.mock('@/backends/catalog', () => ({
 
 vi.mock('@/configuration', () => ({
   configuration: {
+    happyHomeDir: '/tmp/happier-home',
     activeServerDir: '/tmp/happier-home/servers/active',
   },
+}));
+
+vi.mock('@/settings/accountSettings/refreshAccountSettingsForMinimumVersion', () => ({
+  refreshAccountSettingsForMinimumVersion: hoisted.refreshAccountSettingsForMinimumVersion,
 }));
 
 vi.mock('@/agent/runtime/daemonInitialPrompt', () => ({
@@ -161,6 +168,7 @@ describe('executeSpawnSessionRequest', () => {
     hoisted.resolveSpawnBackendIdentity.mockReset();
     hoisted.getVendorResumeSupport.mockClear();
     hoisted.requireCatalogEntry.mockReset();
+    hoisted.refreshAccountSettingsForMinimumVersion.mockReset();
     hoisted.ensureSessionDirectory.mockClear();
     hoisted.getVendorResumeSupport.mockResolvedValue(hoisted.vendorResumeSupport);
     hoisted.resolveSpawnBackendIdentity.mockResolvedValue({
@@ -174,6 +182,60 @@ describe('executeSpawnSessionRequest', () => {
       sessionAttachPayload: null,
       catalogAgentId: 'codex',
     });
+    hoisted.refreshAccountSettingsForMinimumVersion.mockResolvedValue(null);
+  });
+
+  it('uses account settings version hints only for daemon freshness refresh', async () => {
+    hoisted.requireCatalogEntry.mockReturnValue({});
+    hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
+      ok: true,
+      normalizedExistingSessionId: '',
+      effectiveResume: '',
+      effectiveBackendTargetV2: {
+        sourceKind: 'built_in',
+        backendId: 'codex',
+      },
+      sessionAttachPayload: null,
+      catalogAgentId: 'codex',
+    });
+    hoisted.refreshAccountSettingsForMinimumVersion.mockResolvedValueOnce(null);
+    hoisted.ensureSessionDirectory.mockImplementationOnce(
+      async () => ({ ok: true, directoryCreated: false }),
+    );
+    const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
+    const { routeSpawnModeAndWaitForWebhook } = await import('../spawn/routeSpawnModeAndWaitForWebhook');
+    const { resolveSpawnChildEnvironment } = await import('../spawn/resolveSpawnChildEnvironment');
+    vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
+      ok: true,
+      cleanupOnFailure: null,
+      cleanupOnExit: null,
+      expandedEnvironmentVariables: {},
+      extraEnvForChild: {},
+    });
+    vi.mocked(routeSpawnModeAndWaitForWebhook).mockResolvedValueOnce({
+      type: 'success',
+      sessionId: 'session-1',
+    });
+    const result = await executeSpawnSessionRequest({
+      ...createParams(),
+      options: {
+        ...createParams().options,
+        resume: undefined,
+        accountSettingsVersionHint: 42,
+      },
+    });
+
+    expect(result).toEqual({
+      type: 'success',
+      sessionId: 'session-1',
+    });
+    expect(hoisted.ensureSessionDirectory).toHaveBeenCalled();
+    expect(hoisted.refreshAccountSettingsForMinimumVersion).toHaveBeenCalledWith(expect.objectContaining({
+      minSettingsVersion: 42,
+    }));
+    expect(routeSpawnModeAndWaitForWebhook).toHaveBeenCalledWith(expect.not.objectContaining({
+      accountSettingsVersionHint: expect.any(Number),
+    }));
   });
 
   it('canonicalizes legacy runtime descriptors before backend-owned vendor resume hooks read spawn runtime selection', async () => {

@@ -19,11 +19,24 @@ vi.mock('socket.io-client', () => ({
   io: mockIo,
 }));
 
+type ReviewStartRpcPayload = Readonly<{
+  intent: string;
+  backendTarget: unknown;
+  intentInput?: Readonly<{
+    engineId?: string;
+    instructions?: string;
+    engines?: Readonly<{
+      coderabbit?: unknown;
+    }>;
+  }>;
+}>;
+
 describe('happier session review start (integration)', () => {
   const envKeys = ['HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_DIR', 'HAPPIER_ACTIONS_SETTINGS_V1'] as const;
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
+  let decryptedRpcCalls: ReviewStartRpcPayload[] = [];
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-review-start-');
@@ -94,6 +107,7 @@ describe('happier session review start (integration)', () => {
     reloadConfiguration();
 
     mockIo.mockReset();
+    decryptedRpcCalls = [];
 
     const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
 
@@ -103,7 +117,8 @@ describe('happier session review start (integration)', () => {
         const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
         if (event !== SOCKET_RPC_EVENTS.CALL) return;
         const decodedParams = decodeBase64(String(data.params ?? ''), 'base64');
-        const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
+        const decrypted = decrypt(dek, 'dataKey', decodedParams) as ReviewStartRpcPayload;
+        decryptedRpcCalls.push(decrypted);
         expect(decrypted.intent).toBe('review');
         expect(decrypted.backendTarget).toEqual({ kind: 'builtInAgent', agentId: decrypted.intentInput?.engineId });
 
@@ -172,6 +187,51 @@ describe('happier session review start (integration)', () => {
       expect(parsed.data?.results?.length).toBe(2);
       expect(parsed.data?.results?.[0]?.key).toBe('claude');
       expect(parsed.data?.results?.[1]?.key).toBe('codex');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('does not inject CodeRabbit-specific engine config from CLI flags', async () => {
+    const { handleSessionCommand } = await import('../handleSessionCommand');
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      const machineKeySeed = new Uint8Array(32).fill(8);
+      await handleSessionCommand(
+        [
+          'review',
+          'start',
+          'sess_integration_review_start_123',
+          '--engines',
+          'coderabbit',
+          '--instructions',
+          'Review.',
+          '--coderabbit-config',
+          '.coderabbit.yml',
+          '--json',
+        ],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+              machineKey: machineKeySeed,
+            },
+          }),
+        },
+      );
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(decryptedRpcCalls).toHaveLength(1);
+      expect(decryptedRpcCalls[0]?.intentInput).toMatchObject({
+        engineId: 'coderabbit',
+        instructions: 'Review.',
+      });
+      expect(decryptedRpcCalls[0]?.intentInput?.engines?.coderabbit).toBeUndefined();
     } finally {
       output.restore();
     }

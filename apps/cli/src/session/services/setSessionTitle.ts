@@ -1,34 +1,20 @@
 import type { Credentials } from '@/persistence';
 
-import { updateSessionMetadataForTarget } from './updateSessionMetadataForTarget';
-
-export function createSessionTitleMetadataUpdater(params: Readonly<{
-  title: string;
-  updatedAt?: number;
-}>): <TMetadata extends Record<string, unknown>>(metadata: TMetadata) => TMetadata & Readonly<{
-  summary: {
-    text: string;
-    updatedAt: number;
-  };
-}> {
-  const updatedAt = params.updatedAt ?? Date.now();
-  return <TMetadata extends Record<string, unknown>>(metadata: TMetadata) => ({
-    ...metadata,
-    summary: {
-      text: params.title,
-      updatedAt,
-    },
-  });
-}
+import { updateSessionStateFieldForTarget } from './updateSessionStateFieldForTarget';
 
 export async function setSessionTitle(params: Readonly<{
   credentials: Credentials;
   idOrPrefix: string;
   title: string;
-}>): ReturnType<typeof updateSessionMetadataForTarget> {
-  return await updateSessionMetadataForTarget({
+}>): ReturnType<typeof updateSessionStateFieldForTarget> {
+  return await updateSessionStateFieldForTarget({
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
-    updater: createSessionTitleMetadataUpdater({ title: params.title }),
+    fieldId: 'display.title',
+    value: {
+      title: params.title,
+      staleBehavior: 'bump-if-value-changed',
+    },
+    metadataReason: 'cli-session-title-set',
   });
 }

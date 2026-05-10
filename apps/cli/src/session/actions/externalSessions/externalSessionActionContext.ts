@@ -1,6 +1,6 @@
-import type { DirectSessionTranscriptDeltaEphemeral } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptDeltaEphemeral } from '@happier-dev/protocol';
 
-import { createDirectSessionFollowLeaseManager } from '@/api/session/external/leases/createDirectSessionFollowLeaseManager';
+import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 export type ExternalSessionTakeoverActionInput = Readonly<{
@@ -12,8 +12,8 @@ export type ExternalSessionTakeoverActionInput = Readonly<{
 }>;
 
 export type ExternalSessionActionContext = Readonly<{
-    followLeaseManager: ReturnType<typeof createDirectSessionFollowLeaseManager>;
-    emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+    followLeaseManager: ReturnType<typeof createExternalSessionFollowLeaseManager>;
+    emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptDeltaEphemeral) => void;
     spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
     stopSession?: (sessionId: string) => Promise<boolean>;
     takeoverReadiness: Readonly<{

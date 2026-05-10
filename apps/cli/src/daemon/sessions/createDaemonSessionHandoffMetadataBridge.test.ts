@@ -59,7 +59,7 @@ describe('createDaemonSessionHandoffMetadataBridge', () => {
                 }),
                 runtimeLocalMetadata: expect.objectContaining({
                     claudeSessionId: 'vendor-live-machine',
-                    directSessionV1: expect.objectContaining({
+                    externalSessionV1: expect.objectContaining({
                         machineId: 'machine-rotated',
                         remoteSessionId: 'vendor-live-machine',
                     }),

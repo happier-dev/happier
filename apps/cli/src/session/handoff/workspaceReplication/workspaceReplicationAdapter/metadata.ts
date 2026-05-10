@@ -1,7 +1,7 @@
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
-import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
-import type { ScmSourceControllerWorkspaceTransferMetadata } from '@/scm/sourceController/workspaceTransfer';
+import type { ScmWorkspaceIntegrationWorkspaceExportArtifacts } from '@/scm/workspace/workspaceExportArtifacts';
+import type { ScmWorkspaceIntegrationWorkspaceTransferMetadata } from '@/scm/workspace/workspaceTransfer';
 import {
     createWorkspaceReplicationSourceOfferFromManifest,
     type WorkspaceReplicationSourceOffer,
@@ -10,7 +10,7 @@ import {
 export type SessionHandoffWorkspaceReplicationMetadata = Readonly<{
     sourceRootPath: string;
     manifest: WorkspaceManifest;
-    sourceControllerMetadata?: ScmSourceControllerWorkspaceTransferMetadata;
+    workspaceIntegrationMetadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata;
 }>;
 
 function cloneWorkspaceManifest(manifest: WorkspaceManifest): WorkspaceManifest {
@@ -22,7 +22,7 @@ function cloneWorkspaceManifest(manifest: WorkspaceManifest): WorkspaceManifest 
 
 export function createSessionHandoffWorkspaceReplicationMetadata(input: Readonly<{
     sourceRootPath: string;
-    workspaceExportArtifacts?: ScmSourceControllerWorkspaceExportArtifacts;
+    workspaceExportArtifacts?: ScmWorkspaceIntegrationWorkspaceExportArtifacts;
 }>): SessionHandoffWorkspaceReplicationMetadata | undefined {
     if (!input.workspaceExportArtifacts) {
         return undefined;
@@ -31,8 +31,8 @@ export function createSessionHandoffWorkspaceReplicationMetadata(input: Readonly
     return {
         sourceRootPath: input.sourceRootPath,
         manifest: cloneWorkspaceManifest(input.workspaceExportArtifacts.manifest),
-        ...(input.workspaceExportArtifacts.sourceControllerMetadata
-            ? { sourceControllerMetadata: input.workspaceExportArtifacts.sourceControllerMetadata }
+        ...(input.workspaceExportArtifacts.workspaceIntegrationMetadata
+            ? { workspaceIntegrationMetadata: input.workspaceExportArtifacts.workspaceIntegrationMetadata }
             : {}),
     };
 }
@@ -56,8 +56,8 @@ export async function buildSessionHandoffWorkspaceReplicationSourceOffer(input: 
         },
         mode: 'one_way_safe',
         manifest: input.metadata.manifest,
-        ...(input.metadata.sourceControllerMetadata
-            ? { sourceControllerMetadata: input.metadata.sourceControllerMetadata }
+        ...(input.metadata.workspaceIntegrationMetadata
+            ? { workspaceIntegrationMetadata: input.metadata.workspaceIntegrationMetadata }
             : {}),
     });
 }

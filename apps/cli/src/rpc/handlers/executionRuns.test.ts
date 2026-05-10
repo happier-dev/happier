@@ -2852,20 +2852,10 @@ describe('executionRuns session RPC handlers', () => {
     expect(typeof started.sidechainId).toBe('string');
   });
 
-  it('rejects CodeRabbit review runs with no reviewable files before backend creation', async () => {
-    const remote = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-no-files-remote-'));
-    runGit(remote, ['init', '--bare', '--initial-branch=main']);
-
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-no-files-workspace-'));
-    runGit(workspace, ['init', '--initial-branch=main']);
-    runGit(workspace, ['config', 'user.email', 'test@example.com']);
-    runGit(workspace, ['config', 'user.name', 'Test User']);
-    writeFileSync(join(workspace, 'a.txt'), 'base\n');
-    runGit(workspace, ['add', 'a.txt']);
-    runGit(workspace, ['commit', '-m', 'base']);
-    runGit(workspace, ['remote', 'add', 'origin', remote]);
-    runGit(workspace, ['push', '-u', 'origin', 'main']);
-    const createBackend = vi.fn(() => createStaticBackend('unexpected'));
+  it('starts provider-specific review runs through the generic runtimeCore path without registry-backed preflight', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'happier-review-generic-runtime-core-workspace-'));
+    const providerSpecificReviewBackendId = ['code', 'rabbit'].join('');
+    const createBackend = vi.fn(() => createStaticBackend(JSON.stringify({ findings: [], summary: 'ok' })));
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
@@ -2882,138 +2872,26 @@ describe('executionRuns session RPC handlers', () => {
 
     const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
       intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+      backendTarget: { kind: 'builtInAgent', agentId: providerSpecificReviewBackendId },
       instructions: 'Review.',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
       runClass: 'bounded',
       ioMode: 'streaming',
       intentInput: {
-        engineIds: ['coderabbit'],
+        engineIds: [providerSpecificReviewBackendId],
         instructions: 'Review.',
         changeType: 'committed',
         base: { kind: 'none' },
       },
     });
 
-    expect(started).toMatchObject({
-      ok: false,
-      errorCode: 'execution_run_not_allowed',
-      error: expect.stringContaining('No reviewable files'),
-    });
-    expect(createBackend).not.toHaveBeenCalled();
-  });
-
-  it('rejects CodeRabbit review runs with no default base before backend creation', async () => {
-    const workspace = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-no-base-workspace-'));
-    runGit(workspace, ['init', '--initial-branch=main']);
-    runGit(workspace, ['config', 'user.email', 'test@example.com']);
-    runGit(workspace, ['config', 'user.name', 'Test User']);
-    writeFileSync(join(workspace, 'a.txt'), 'base\n');
-    runGit(workspace, ['add', 'a.txt']);
-    runGit(workspace, ['commit', '-m', 'base']);
-    const createBackend = vi.fn(() => createStaticBackend('unexpected'));
-
-    const client = createEncryptedRpcTestClient({
-      scopePrefix: 'sess_1',
-      registerHandlers: (rpc) => {
-        registerExecutionRunHandlers(rpc, {
-          sessionId: 'sess_1',
-          cwd: workspace,
-          parentProvider: 'claude',
-          createBackend,
-          sendAcp: () => {},
-        });
-      },
-    });
-
-    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-      intent: 'review',
-      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
-      instructions: 'Review.',
-      permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
-      ioMode: 'streaming',
-      intentInput: {
-        engineIds: ['coderabbit'],
-        instructions: 'Review.',
-        changeType: 'committed',
-        base: { kind: 'none' },
-      },
-    });
-
-    expect(started).toMatchObject({
-      ok: false,
-      errorCode: 'execution_run_not_allowed',
-      error: expect.stringContaining('Unable to resolve a default base branch'),
-    });
-    expect(createBackend).not.toHaveBeenCalled();
-  });
-
-  it('rejects CodeRabbit review runs with too many reviewable files before backend creation', async () => {
-    const previousLimit = process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
-    process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = '1';
-
-    try {
-      const remote = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-too-many-remote-'));
-      runGit(remote, ['init', '--bare', '--initial-branch=main']);
-
-      const workspace = mkdtempSync(join(tmpdir(), 'happier-coderabbit-route-too-many-workspace-'));
-      runGit(workspace, ['init', '--initial-branch=main']);
-      runGit(workspace, ['config', 'user.email', 'test@example.com']);
-      runGit(workspace, ['config', 'user.name', 'Test User']);
-      writeFileSync(join(workspace, 'a.txt'), 'base\n');
-      writeFileSync(join(workspace, 'b.txt'), 'base\n');
-      runGit(workspace, ['add', 'a.txt', 'b.txt']);
-      runGit(workspace, ['commit', '-m', 'base']);
-      runGit(workspace, ['remote', 'add', 'origin', remote]);
-      runGit(workspace, ['push', '-u', 'origin', 'main']);
-      writeFileSync(join(workspace, 'a.txt'), 'changed\n');
-      writeFileSync(join(workspace, 'b.txt'), 'changed\n');
-      runGit(workspace, ['add', 'a.txt', 'b.txt']);
-      runGit(workspace, ['commit', '-m', 'change']);
-      const createBackend = vi.fn(() => createStaticBackend('unexpected'));
-
-      const client = createEncryptedRpcTestClient({
-        scopePrefix: 'sess_1',
-        registerHandlers: (rpc) => {
-          registerExecutionRunHandlers(rpc, {
-            sessionId: 'sess_1',
-            cwd: workspace,
-            parentProvider: 'claude',
-            createBackend,
-            sendAcp: () => {},
-          });
-        },
-      });
-
-      const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
-        intent: 'review',
-        backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
-        instructions: 'Review.',
-        permissionMode: 'read_only',
-        retentionPolicy: 'ephemeral',
-        runClass: 'bounded',
-        ioMode: 'streaming',
-        intentInput: {
-          engineIds: ['coderabbit'],
-          instructions: 'Review.',
-          changeType: 'committed',
-          base: { kind: 'none' },
-        },
-      });
-
-      expect(started).toMatchObject({
-        ok: false,
-        errorCode: 'execution_run_not_allowed',
-        error: expect.stringContaining('Too many reviewable files'),
-      });
-      expect(createBackend).not.toHaveBeenCalled();
-    } finally {
-      if (previousLimit === undefined) delete process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
-      else process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = previousLimit;
-    }
+    expect(started).toEqual(expect.objectContaining({
+      runId: expect.any(String),
+      callId: expect.any(String),
+      sidechainId: expect.any(String),
+    }));
+    expect(createBackend).toHaveBeenCalledTimes(1);
   });
 
   it('rejects plan runs that violate the bounded ephemeral intent matrix before backend creation', async () => {

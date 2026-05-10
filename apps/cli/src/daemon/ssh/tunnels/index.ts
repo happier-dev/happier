@@ -1,6 +1,6 @@
-export { deriveSshTunnelKey } from './deriveSshTunnelKey';
-export { probeSshTunnelUrl, type ProbeSshTunnelDeps } from './probeSshTunnel';
-export { createSshTunnelRegistry } from './sshTunnelRegistry';
+export { deriveSshTunnelKey } from './deriveKey';
+export { probeSshTunnelUrl, type ProbeSshTunnelDeps } from './probe';
+export { createSshTunnelRegistry } from './registry';
 export { createSshTunnelSupervisor, type SshTunnelSupervisorDeps } from './supervisor';
 export { createSshTunnelSetupError, toSshTunnelErrorResponse, SshTunnelSetupError } from './errorMapping';
 export type {

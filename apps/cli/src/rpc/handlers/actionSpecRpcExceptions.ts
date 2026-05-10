@@ -45,7 +45,7 @@ export const ACTION_SPEC_RPC_EXCEPTIONS = Object.freeze([
         reason: 'custom_result_envelope',
         ownerPacket: 'A.12.0-addendum-rpc-action-registrar',
         rationale: 'Direct-session takeover preserves shipped direct-session request parsing and response envelopes that differ from generic ActionSpec result unwrapping.',
-        abiProof: 'daemon.directSessions.takeover accepts { machineId, sessionId, forceStop? } and returns DirectSessionTakeoverResponse; daemon.directSessions.takeoverPersist accepts { machineId, sessionId, forceStop? } and returns DirectSessionTakeoverPersistResponse with converted persistence metadata. Generic ActionSpec input/result use linkedSessionId, targetRuntimeMode, storageMode, and ExternalSessionTakeoverResultV1.',
+        abiProof: 'Legacy direct-session takeover accepts { machineId, sessionId, forceStop? } and returns ExternalSessionTakeoverResponse; legacy direct-session takeoverPersist returns ExternalSessionTakeoverPersistResponse with converted persistence metadata. Generic ActionSpec input/result use linkedSessionId, targetRuntimeMode, storageMode, and ExternalSessionTakeoverResultV1.',
         retirement: 'Retire when direct-session takeover ABI is folded into generic ActionSpec RPC result unwrapping without changing wire compatibility.',
     },
     {
@@ -111,6 +111,14 @@ export const ACTION_SPEC_RPC_EXCEPTIONS = Object.freeze([
         ownerPacket: SCM_PULL_REQUEST_PACKET_OWNER,
         rationale: 'SCM pull-request RPC implementation is owned by the SCM pull-request packet chain during registrar convergence.',
         retirement: SCM_PULL_REQUEST_RETIREMENT,
+    },
+    {
+        method: RPC_METHODS.SCM_REPOSITORY_CLONE,
+        actionId: 'scm.repository.clone',
+        reason: 'packet_owned_coordination',
+        ownerPacket: SCM_REPOSITORY_PACKET_OWNER,
+        rationale: 'SCM repository RPC implementation is owned by the repository packet chain during registrar convergence.',
+        retirement: SCM_REPOSITORY_RETIREMENT,
     },
     {
         method: RPC_METHODS.SCM_REPOSITORY_INIT,

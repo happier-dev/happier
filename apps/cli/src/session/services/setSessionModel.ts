@@ -1,26 +1,23 @@
-import { computeNextMetadataStringOverrideV1 } from '@happier-dev/agents';
-
 import type { Credentials } from '@/persistence';
 
-import { updateSessionMetadataForTarget } from './updateSessionMetadataForTarget';
+import { updateSessionStateFieldForTarget } from './updateSessionStateFieldForTarget';
 
 export async function setSessionModel(params: Readonly<{
   credentials: Credentials;
   idOrPrefix: string;
   modelId: string;
   updatedAt?: number;
-}>): ReturnType<typeof updateSessionMetadataForTarget> {
+}>): ReturnType<typeof updateSessionStateFieldForTarget> {
   const updatedAt = params.updatedAt ?? Date.now();
-  return await updateSessionMetadataForTarget({
+  return await updateSessionStateFieldForTarget({
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
-    updater: (metadata) =>
-      computeNextMetadataStringOverrideV1({
-        metadata,
-        overrideKey: 'modelOverrideV1',
-        valueKey: 'modelId',
-        value: params.modelId,
-        updatedAt,
-      }),
+    fieldId: 'intent.model',
+    value: {
+      v: 1,
+      modelId: params.modelId || null,
+      updatedAt,
+    },
+    metadataReason: 'cli-session-model-set',
   });
 }

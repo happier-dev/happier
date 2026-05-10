@@ -1,5 +1,9 @@
 import type { ScmDiffFileRequest, ScmDiffFileResponse, ScmStatusSnapshotRequest, ScmStatusSnapshotResponse, ScmWorkingSnapshot } from '@happier-dev/protocol';
-import { ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol';
+import {
+  ExecutionRunScmCommitMessageScopeV1Schema,
+  ScmDiffFileResponseSchema,
+  ScmStatusSnapshotResponseSchema,
+} from '@happier-dev/protocol';
 
 import {
   createNonRepositoryScmSnapshotResponse,
@@ -55,15 +59,15 @@ export async function loadScmCommitMessageContext(params: Readonly<{
   }
 
   const maxFiles = Math.max(0, params.maxFiles);
-  const scopedKind = typeof (params.scope as any)?.kind === 'string' ? String((params.scope as any).kind) : null;
-  const scopeInclude = Array.isArray((params.scope as any)?.include) ? (params.scope as any).include : null;
+  const parsedScope = ExecutionRunScmCommitMessageScopeV1Schema.safeParse(params.scope);
+  const scopeInclude = parsedScope.success ? parsedScope.data.include ?? [] : [];
 
   const resolveCandidatePaths = (): string[] => {
-    if (scopedKind === 'paths' && Array.isArray(scopeInclude) && scopeInclude.length > 0) {
+    if (parsedScope.success && parsedScope.data.kind === 'paths' && scopeInclude.length > 0) {
       const seen = new Set<string>();
       const out: string[] = [];
       for (const value of scopeInclude) {
-        const path = typeof value === 'string' ? value.trim() : '';
+        const path = value.trim();
         if (!path || seen.has(path)) continue;
         seen.add(path);
         out.push(path);
@@ -93,9 +97,9 @@ export async function loadScmCommitMessageContext(params: Readonly<{
       runWithBackend: ({ context, selection }) => selection.backend.diffFile({ context, request: { path, area: 'both' } }),
     });
 
-    if (!diffRes || typeof diffRes !== 'object') continue;
-    if (!(diffRes as any).success) continue;
-    const diff = typeof (diffRes as any).diff === 'string' ? String((diffRes as any).diff) : '';
+    const parsedDiff = ScmDiffFileResponseSchema.safeParse(diffRes);
+    if (!parsedDiff.success || !parsedDiff.data.success) continue;
+    const diff = parsedDiff.data.diff ?? '';
     if (!diff) continue;
 
     const slice = diff.length > remaining ? diff.slice(0, remaining) : diff;

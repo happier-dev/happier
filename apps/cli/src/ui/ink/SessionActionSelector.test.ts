@@ -20,6 +20,10 @@ type SelectorModule = typeof import('./SessionActionSelector') & {
     disabled?: boolean;
     isSelected: boolean;
   }>) => string;
+  resolveSessionActionSelectorEnterResult?: (
+    row: SessionActionSelectorRow | null | undefined,
+    actionVerb: string,
+  ) => Readonly<{ type: 'selected'; sessionId: string } | { type: 'blocked'; message: string } | { type: 'none' }>;
 };
 
 const rows: SessionActionSelectorRow[] = [
@@ -78,5 +82,18 @@ describe('SessionActionSelector model helpers', () => {
     expect(typeof mod.resolveSessionActionSelectorIndicator).toBe('function');
     expect(mod.resolveSessionActionSelectorIndicator?.({ isSelected: true, disabled: true })).toBe('› ');
     expect(mod.resolveSessionActionSelectorIndicator?.({ isSelected: false, disabled: true })).toBe('  ');
+  });
+
+  it('turns Enter on a disabled selected row into visible feedback instead of a no-op', async () => {
+    const mod = await import('./SessionActionSelector') as SelectorModule;
+
+    expect(typeof mod.resolveSessionActionSelectorEnterResult).toBe('function');
+    expect(mod.resolveSessionActionSelectorEnterResult?.({
+      ...rows[2],
+      disabledReason: 'This session cannot be attached from here.',
+    }, 'attach')).toEqual({
+      type: 'blocked',
+      message: 'This session cannot be attached from here.',
+    });
   });
 });

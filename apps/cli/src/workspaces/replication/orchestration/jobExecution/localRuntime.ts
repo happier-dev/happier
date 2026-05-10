@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { inferWorkspaceManifestSafeFilterPolicyFromEntries } from '@/scm/sourceController/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import { inferWorkspaceManifestSafeFilterPolicyFromEntries } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 import { applyWorkspaceReplicationPlan } from '@/workspaces/replication/apply/applyWorkspaceReplicationPlan';
 import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
 import type { WorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
@@ -15,9 +15,9 @@ import type { WorkspaceReplicationDirectionScope } from '@/workspaces/replicatio
 import { assertWorkspaceReplicationJobNotCancelled } from '@/workspaces/replication/safety/assertWorkspaceReplicationJobNotCancelled';
 import { scanWorkspaceManifestIntoCas } from '@/workspaces/replication/scan/scanWorkspaceManifestIntoCas';
 import type {
-    ScmSourceControllerWorkspaceTransferConflictPolicy,
-    ScmSourceControllerWorkspaceTransferStrategy,
-} from '@/scm/sourceController/workspaceTransfer';
+    ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy,
+    ScmWorkspaceIntegrationWorkspaceTransferStrategy,
+} from '@/scm/workspace/workspaceTransfer';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import { buildWorkspaceReplicationBlobPacks } from '@/workspaces/replication/transport/blobPacks';
 import type { WorkspaceReplicationSourceOffer } from '@/workspaces/replication/transport/createWorkspaceReplicationSourceOffer';
@@ -70,8 +70,8 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
     }>) => Promise<void>;
     apply: Readonly<{
         targetPath: string;
-        strategy: ScmSourceControllerWorkspaceTransferStrategy;
-        conflictPolicy: ScmSourceControllerWorkspaceTransferConflictPolicy;
+        strategy: ScmWorkspaceIntegrationWorkspaceTransferStrategy;
+        conflictPolicy: ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy;
         registry?: ScmBackendRegistry;
     }>;
 }>): Promise<Awaited<ReturnType<typeof executeWorkspaceReplicationJob>>> {

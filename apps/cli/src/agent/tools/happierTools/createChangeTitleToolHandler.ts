@@ -46,6 +46,9 @@ export function createChangeTitleToolHandler(params: Readonly<{
             : 'action_failed';
         return { success: false, error };
       }
+      if ((res.result as any).metadataUpdated === true) {
+        return { success: true, title };
+      }
     }
 
     try {

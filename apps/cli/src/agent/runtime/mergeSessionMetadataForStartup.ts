@@ -1,14 +1,23 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import {
+    clearSessionStateFieldFromMetadata,
     computeMonotonicUpdatedAt,
-    SESSION_MODE_OVERRIDE_KEY,
+    readAcpSessionModeIntentFromMetadata,
+    readModelIntentFromMetadata,
+    readPermissionModeIntentFromMetadata,
 } from '@happier-dev/agents';
+import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 import {
-    buildModelOverrideV1,
     readSessionMcpSelectionV1FromMetadata,
+    AcpConfigOptionOverridesV1Schema,
     type SessionAttachMetadataIdentityPolicy,
 } from '@happier-dev/protocol';
-import { buildSessionModeOverrideV1 } from './compat/sessionMetadataOverrides';
+
+type AcpConfigOptionOverrideUpdate = Readonly<{
+    configId: string;
+    value: string | number | boolean | null;
+    updatedAt: number;
+}>;
 
 export type PermissionModeOverride = {
     mode: PermissionMode;
@@ -23,6 +32,47 @@ function shouldPreserveCurrentIdentityOnAttach(
     return policy !== 'replace_with_runtime_identity';
 }
 
+function readAcpConfigOptionUpdates(metadata: Metadata): AcpConfigOptionOverrideUpdate[] {
+    const record = metadata as Record<string, unknown>;
+    const roots = [
+        AcpConfigOptionOverridesV1Schema.safeParse(record.sessionConfigOptionOverridesV1),
+        AcpConfigOptionOverridesV1Schema.safeParse(record.acpConfigOptionOverridesV1),
+    ].filter((parsed) => parsed.success);
+
+    const updatesByConfigId = new Map<string, AcpConfigOptionOverrideUpdate>();
+    for (const root of roots) {
+        if (!root.success) continue;
+        for (const [configId, entry] of Object.entries(root.data.overrides)) {
+            const normalizedConfigId = configId.trim();
+            if (!normalizedConfigId) continue;
+            const current = updatesByConfigId.get(normalizedConfigId);
+            if (current && entry.updatedAt < current.updatedAt) continue;
+            updatesByConfigId.set(normalizedConfigId, {
+            configId: normalizedConfigId,
+            value: entry.value,
+            updatedAt: entry.updatedAt,
+            });
+        }
+    }
+    return Array.from(updatesByConfigId.values());
+}
+
+function replayAcpConfigOptionUpdates(
+    metadata: Metadata,
+    updates: readonly AcpConfigOptionOverrideUpdate[],
+): Metadata {
+    let nextMetadata = clearSessionStateFieldFromMetadata(metadata, 'intent.acpConfigOption') as Metadata;
+    for (const update of updates) {
+        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.acpConfigOption', {
+            v: 1,
+            configId: update.configId,
+            value: update.value,
+            updatedAt: update.updatedAt,
+        }) as Metadata;
+    }
+    return nextMetadata;
+}
+
 function resolvePermissionModeForStartup(opts: {
     current: Metadata;
     next: Metadata;
@@ -30,11 +80,13 @@ function resolvePermissionModeForStartup(opts: {
     override?: PermissionModeOverride | null;
     mode: StartupMergeMode;
 }): { mode: PermissionMode; updatedAt: number | null } | null {
-    const currentMode = opts.current.permissionMode;
-    const currentAt = typeof opts.current.permissionModeUpdatedAt === 'number' ? opts.current.permissionModeUpdatedAt : null;
+    const currentIntent = readPermissionModeIntentFromMetadata(opts.current);
+    const currentMode = currentIntent?.permissionMode as PermissionMode | undefined;
+    const currentAt = typeof opts.current.permissionModeUpdatedAt === 'number' ? currentIntent?.updatedAt ?? null : null;
 
-    const nextMode = opts.next.permissionMode;
-    const nextAt = typeof opts.next.permissionModeUpdatedAt === 'number' ? opts.next.permissionModeUpdatedAt : null;
+    const nextIntent = readPermissionModeIntentFromMetadata(opts.next);
+    const nextMode = nextIntent?.permissionMode as PermissionMode | undefined;
+    const nextAt = typeof opts.next.permissionModeUpdatedAt === 'number' ? nextIntent?.updatedAt ?? null : null;
 
     let mode: PermissionMode | null = null;
     let updatedAt: number | null = null;
@@ -61,13 +113,11 @@ function resolvePermissionModeForStartup(opts: {
     if (override) {
         const overrideAt = typeof override.updatedAt === 'number' ? override.updatedAt : opts.nowMs;
         const baselineAt = updatedAt ?? 0;
-        const nextAt = computeMonotonicUpdatedAt({
-            previousUpdatedAt: baselineAt,
-            desiredUpdatedAt: overrideAt,
-            previousValue: mode ?? '',
-            desiredValue: override.mode,
-            policy: 'force_update',
-        });
+        const nextAt = overrideAt > baselineAt
+            ? overrideAt
+            : override.mode === mode
+                ? null
+                : baselineAt + 1;
         if (nextAt === null) {
             if (!mode) return null;
             return { mode, updatedAt };
@@ -85,12 +135,12 @@ function resolvePermissionModeForStartup(opts: {
 }
 
 export type SessionModeOverride = {
-    modeId: string;
+    modeId: string | null;
     updatedAt?: number | null;
 };
 
 export type ModelOverride = {
-    modelId: string;
+    modelId: string | null;
     updatedAt?: number | null;
 };
 
@@ -117,13 +167,9 @@ function resolveSessionModeOverrideForStartup(opts: {
     nowMs: number;
     override?: SessionModeOverride | null;
     mode: StartupMergeMode;
-}): { modeId: string; updatedAt: number } | null {
-    const currentOverride = (opts.current as any)[SESSION_MODE_OVERRIDE_KEY] as
-        | { v: 1; updatedAt: number; modeId: string }
-        | undefined;
-    const nextOverride = (opts.next as any)[SESSION_MODE_OVERRIDE_KEY] as
-        | { v: 1; updatedAt: number; modeId: string }
-        | undefined;
+}): { modeId: string | null; updatedAt: number } | null {
+    const currentOverride = readAcpSessionModeIntentFromMetadata(opts.current);
+    const nextOverride = readAcpSessionModeIntentFromMetadata(opts.next);
 
     let modeId: string | null = null;
     let updatedAt: number | null = null;
@@ -131,17 +177,17 @@ function resolveSessionModeOverrideForStartup(opts: {
     if (opts.mode === 'attach') {
         // Attach safety:
         // - Never seed override from "next" metadata (derived from local process defaults).
-        if (currentOverride?.modeId) {
+        if (currentOverride) {
             modeId = currentOverride.modeId;
-            updatedAt = typeof currentOverride.updatedAt === 'number' ? currentOverride.updatedAt : null;
+            updatedAt = currentOverride.updatedAt;
         }
     } else {
-        if (currentOverride?.modeId) {
+        if (currentOverride) {
             modeId = currentOverride.modeId;
-            updatedAt = typeof currentOverride.updatedAt === 'number' ? currentOverride.updatedAt : null;
-        } else if (nextOverride?.modeId) {
+            updatedAt = currentOverride.updatedAt;
+        } else if (nextOverride) {
             modeId = nextOverride.modeId;
-            updatedAt = typeof nextOverride.updatedAt === 'number' ? nextOverride.updatedAt : null;
+            updatedAt = nextOverride.updatedAt;
         }
     }
 
@@ -169,7 +215,26 @@ function resolveSessionModeOverrideForStartup(opts: {
                 return null;
             }
             return { modeId: normalized, updatedAt: nextAt };
+        } else if (override.modeId === null) {
+            const baselineAt = updatedAt ?? 0;
+            const overrideAt = typeof override.updatedAt === 'number' ? override.updatedAt : opts.nowMs;
+            const nextAt = computeMonotonicUpdatedAt({
+                previousUpdatedAt: baselineAt,
+                desiredUpdatedAt: overrideAt,
+                previousValue: modeId ?? '',
+                desiredValue: '',
+                policy: 'force_update',
+            });
+            if (nextAt === null) {
+                if (typeof updatedAt === 'number') return { modeId, updatedAt };
+                return null;
+            }
+            return { modeId: null, updatedAt: nextAt };
         }
+    }
+
+    if (modeId === null) {
+        return typeof updatedAt === 'number' ? { modeId, updatedAt } : null;
     }
 
     if (!modeId) return null;
@@ -190,13 +255,9 @@ function resolveModelOverrideForStartup(opts: {
     nowMs: number;
     override?: ModelOverride | null;
     mode: StartupMergeMode;
-}): { modelId: string; updatedAt: number } | null {
-    const currentOverride = (opts.current as any).modelOverrideV1 as
-        | { v: 1; updatedAt: number; modelId: string }
-        | undefined;
-    const nextOverride = (opts.next as any).modelOverrideV1 as
-        | { v: 1; updatedAt: number; modelId: string }
-        | undefined;
+}): { modelId: string | null; updatedAt: number } | null {
+    const currentOverride = readModelIntentFromMetadata(opts.current);
+    const nextOverride = readModelIntentFromMetadata(opts.next);
 
     let modelId: string | null = null;
     let updatedAt: number | null = null;
@@ -204,17 +265,17 @@ function resolveModelOverrideForStartup(opts: {
     if (opts.mode === 'attach') {
         // Attach safety:
         // - Never seed override from "next" metadata (derived from local process defaults).
-        if (currentOverride?.modelId) {
+        if (currentOverride) {
             modelId = currentOverride.modelId;
-            updatedAt = typeof currentOverride.updatedAt === 'number' ? currentOverride.updatedAt : null;
+            updatedAt = currentOverride.updatedAt;
         }
     } else {
-        if (currentOverride?.modelId) {
+        if (currentOverride) {
             modelId = currentOverride.modelId;
-            updatedAt = typeof currentOverride.updatedAt === 'number' ? currentOverride.updatedAt : null;
-        } else if (nextOverride?.modelId) {
+            updatedAt = currentOverride.updatedAt;
+        } else if (nextOverride) {
             modelId = nextOverride.modelId;
-            updatedAt = typeof nextOverride.updatedAt === 'number' ? nextOverride.updatedAt : null;
+            updatedAt = nextOverride.updatedAt;
         }
     }
 
@@ -242,7 +303,26 @@ function resolveModelOverrideForStartup(opts: {
                 return null;
             }
             return { modelId: normalized, updatedAt: nextAt };
+        } else if (override.modelId === null) {
+            const baselineAt = updatedAt ?? 0;
+            const overrideAt = typeof override.updatedAt === 'number' ? override.updatedAt : opts.nowMs;
+            const nextAt = computeMonotonicUpdatedAt({
+                previousUpdatedAt: baselineAt,
+                desiredUpdatedAt: overrideAt,
+                previousValue: modelId ?? '',
+                desiredValue: '',
+                policy: 'force_update',
+            });
+            if (nextAt === null) {
+                if (typeof updatedAt === 'number') return { modelId, updatedAt };
+                return null;
+            }
+            return { modelId: null, updatedAt: nextAt };
         }
+    }
+
+    if (modelId === null) {
+        return typeof updatedAt === 'number' ? { modelId, updatedAt } : null;
     }
 
     if (!modelId) return null;
@@ -276,7 +356,7 @@ export function mergeSessionMetadataForStartup(opts: {
     mode?: StartupMergeMode;
 }): Metadata {
     const mode: StartupMergeMode = opts.mode ?? 'start';
-    const merged: Metadata = {
+    let merged: Metadata = {
         ...opts.current,
         ...opts.next,
         lifecycleState: 'running',
@@ -305,7 +385,7 @@ export function mergeSessionMetadataForStartup(opts: {
             for (const key of stableKeys) {
                 const value = opts.current[key];
                 if (value !== undefined && value !== null) {
-                    (merged as any)[key] = value;
+                (merged as Record<string, unknown>)[key] = value;
                 }
             }
         }
@@ -316,7 +396,7 @@ export function mergeSessionMetadataForStartup(opts: {
 
         for (const key of opts.metadataKeysToUnsetOnAttach ?? []) {
             if (typeof key !== 'string' || !key.trim()) continue;
-            delete (merged as any)[key];
+            delete (merged as Record<string, unknown>)[key];
         }
     }
 
@@ -328,16 +408,17 @@ export function mergeSessionMetadataForStartup(opts: {
         mode,
     });
     if (perm) {
-        merged.permissionMode = perm.mode;
-        if (typeof perm.updatedAt === 'number') {
-            merged.permissionModeUpdatedAt = perm.updatedAt;
-        } else {
-            delete (merged as any).permissionModeUpdatedAt;
-        }
+        const permissionBase = { ...merged };
+        delete (permissionBase as Record<string, unknown>).permissionMode;
+        delete (permissionBase as Record<string, unknown>).permissionModeUpdatedAt;
+        merged = applySessionStateFieldMetadataPatch(permissionBase, 'intent.permissionMode', {
+            v: 1,
+            permissionMode: perm.mode,
+            updatedAt: perm.updatedAt,
+        }) as Metadata;
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived permissionMode fields.
-        delete (merged as any).permissionMode;
-        delete (merged as any).permissionModeUpdatedAt;
+        merged = clearSessionStateFieldFromMetadata(merged, 'intent.permissionMode') as Metadata;
     }
 
     const sessionMode = resolveSessionModeOverrideForStartup({
@@ -348,13 +429,15 @@ export function mergeSessionMetadataForStartup(opts: {
         mode,
     });
     if (sessionMode) {
-        const builtOverride = buildSessionModeOverrideV1({ updatedAt: sessionMode.updatedAt, modeId: sessionMode.modeId });
-        (merged as any)[SESSION_MODE_OVERRIDE_KEY] = builtOverride;
-        delete (merged as any).acpSessionModeOverrideV1;
+        const sessionModeBase = clearSessionStateFieldFromMetadata(merged, 'intent.acpSessionMode');
+        merged = applySessionStateFieldMetadataPatch(sessionModeBase, 'intent.acpSessionMode', {
+            v: 1,
+            modeId: sessionMode.modeId,
+            updatedAt: sessionMode.updatedAt,
+        }) as Metadata;
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived override fields.
-        delete (merged as any)[SESSION_MODE_OVERRIDE_KEY];
-        delete (merged as any).acpSessionModeOverrideV1;
+        merged = clearSessionStateFieldFromMetadata(merged, 'intent.acpSessionMode') as Metadata;
     }
 
     const model = resolveModelOverrideForStartup({
@@ -365,10 +448,25 @@ export function mergeSessionMetadataForStartup(opts: {
         mode,
     });
     if (model) {
-        (merged as any).modelOverrideV1 = buildModelOverrideV1({ updatedAt: model.updatedAt, modelId: model.modelId });
+        merged = applySessionStateFieldMetadataPatch(merged, 'intent.model', {
+            v: 1,
+            modelId: model.modelId,
+            updatedAt: model.updatedAt,
+        }) as Metadata;
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived override fields.
-        delete (merged as any).modelOverrideV1;
+        merged = clearSessionStateFieldFromMetadata(merged, 'intent.model') as Metadata;
+    }
+
+    const acpConfigOptionUpdates = [
+        ...readAcpConfigOptionUpdates(opts.current),
+        ...(mode === 'attach' ? [] : readAcpConfigOptionUpdates(opts.next)),
+    ];
+    if (acpConfigOptionUpdates.length > 0) {
+        merged = replayAcpConfigOptionUpdates(merged, acpConfigOptionUpdates);
+    } else if (mode === 'attach') {
+        // Attach safety: explicitly remove any next-derived config option overrides.
+        merged = clearSessionStateFieldFromMetadata(merged, 'intent.acpConfigOption') as Metadata;
     }
 
     const mcpSelection = resolveSessionMcpSelectionForStartup({
@@ -379,7 +477,7 @@ export function mergeSessionMetadataForStartup(opts: {
     if (mcpSelection) {
         Object.assign(merged, mcpSelection);
     } else if (mode === 'attach') {
-        delete (merged as any).mcpSelectionV1;
+        delete (merged as Record<string, unknown>).mcpSelectionV1;
     }
 
     return merged;

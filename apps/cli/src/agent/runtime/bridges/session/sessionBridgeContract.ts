@@ -1,7 +1,7 @@
 import type {
   BridgeLifecycleHookEventIdV1,
-  DirectSessionsProviderId,
-  DirectSessionsSource,
+  ExternalSessionsProviderId,
+  ExternalSessionsSource,
   BackendTargetRefV2Input,
   HookScopeV1,
   RuntimeDescriptorV1,
@@ -17,9 +17,9 @@ import type {
 } from '@/session/replay/resolveContinueWithReplayBackendTarget';
 import type { SessionHandoffEligibility } from '@/session/handoff/resolveSessionHandoffEligibility';
 import type {
-  CanonicalizedDirectSessionSourceResult,
-} from './directSessionSourceCanonicalization';
-import type { DirectSessionLinkIdentity } from '@/session/external/providerOps';
+  CanonicalizedExternalSessionSourceResult,
+} from './externalSessionSourceCanonicalization';
+import type { ExternalSessionLinkIdentity } from '@/session/external/providerOps';
 import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 
 /**
@@ -48,19 +48,19 @@ export interface SessionHostBridgeContract {
   resolveSessionForkBackendTarget(
     params: Parameters<(typeof import('@/session/fork/backendTarget'))['resolveSessionForkBackendTarget']>[0],
   ): Promise<SessionForkBackendTargetResolution>;
-  resolveDirectSessionLinkIdentity(params: Readonly<{
-    providerId: DirectSessionsProviderId;
+  resolveExternalSessionLinkIdentity(params: Readonly<{
+    providerId: ExternalSessionsProviderId;
     remoteSessionId: string;
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     runtimeDescriptor?: RuntimeDescriptorV1 | null;
     metadata?: Record<string, unknown>;
-  }>): Promise<DirectSessionLinkIdentity>;
-  canonicalizeLinkedDirectSessionSource(params: Readonly<{
-    providerId: DirectSessionsProviderId;
+  }>): Promise<ExternalSessionLinkIdentity>;
+  canonicalizeLinkedExternalSessionSource(params: Readonly<{
+    providerId: ExternalSessionsProviderId;
     metadata: Record<string, unknown>;
     remoteSessionId: string;
-    source: DirectSessionsSource;
-  }>): Promise<CanonicalizedDirectSessionSourceResult>;
+    source: ExternalSessionsSource;
+  }>): Promise<CanonicalizedExternalSessionSourceResult>;
   emitLifecycleHookEvent(params: Readonly<{
     happyHomeDir: string;
     eventId: BridgeLifecycleHookEventIdV1;

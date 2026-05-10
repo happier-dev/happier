@@ -3,14 +3,16 @@ import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSession
 
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
 
+export type UpdateSessionMetadataForTargetResult =
+  | Readonly<{ ok: true; sessionId: string; metadata: Record<string, unknown>; version: number }>
+  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported' | 'conflict' | 'forbidden' | 'unknown_error'; candidates?: string[] }>;
+
 export async function updateSessionMetadataForTarget(params: Readonly<{
   credentials: Credentials;
   idOrPrefix: string;
   updater: Parameters<typeof updateSessionMetadataWithRetry>[0]['updater'];
-}>): Promise<
-  | Readonly<{ ok: true; sessionId: string; metadata: Record<string, unknown>; version: number }>
-  | Readonly<{ ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] }>
-> {
+  maxAttempts?: number;
+}>): Promise<UpdateSessionMetadataForTargetResult> {
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
@@ -29,6 +31,7 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
     sessionId: sessionTarget.sessionId,
     rawSession: sessionTarget.rawSession,
     updater: params.updater,
+    ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
   });
 
   return {

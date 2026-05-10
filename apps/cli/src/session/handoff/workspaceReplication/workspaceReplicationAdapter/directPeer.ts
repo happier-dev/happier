@@ -4,7 +4,7 @@ import { configuration } from '@/configuration';
 import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/directPeerTransport';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import { createBufferTransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
-import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
+import type { WorkspaceExportBlobProvider } from '@/scm/workspace/workspaceExportStaging/stageWorkspaceEntries';
 import { countWorkspaceReplicationBlobPacks } from '@/workspaces/replication/transport/blobPacks';
 import {
   assertSafeWorkspaceReplicationPackId,

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 async function loadModule() {
-  return await import('./sshTunnelRegistry').catch(() => null);
+    return await import('./registry').catch(() => null);
 }
 
 const registryEntry = {

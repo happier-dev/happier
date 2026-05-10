@@ -1,5 +1,5 @@
 import type { MachineTransferChannel } from '@/machines/transfer/serverRoutedTransport';
-import { normalizeWorkspacePath } from '@/scm/sourceController/workspaceExportPackaging/normalizeWorkspacePath';
+import { normalizeWorkspacePath } from '@/scm/workspace/workspaceExportPackaging/normalizeWorkspacePath';
 import { buildSessionHandoffWorkspaceBlobPackTransferId } from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 import { createWorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
 import type { WorkspaceReplicationJobRecord } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';

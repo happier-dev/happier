@@ -2,7 +2,7 @@ import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/regi
 import type { ExecutionRunBackendIsolation } from '@/agent/executionRuns/registry/executionRunBackendTypes';
 import type {
     AnyTerminalRuntimeOps,
-    DirectSessionProviderOps,
+    ExternalSessionProviderOps,
     ProviderAttachOps,
     SessionHandoffProviderOps,
 } from '@/backends/types';
@@ -19,7 +19,7 @@ import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecy
 
 export type BackendExecutionSurfaces = Readonly<{
     terminalRuntime: AnyTerminalRuntimeOps | null;
-    directSessions: DirectSessionProviderOps | null;
+    externalSessions: ExternalSessionProviderOps | null;
     attach: ProviderAttachOps | null;
     sessionHandoff: SessionHandoffProviderOps | null;
 }>;
@@ -110,7 +110,7 @@ export type ResolvedCliEngineRegistry = Readonly<{
 export function createEmptyBackendExecutionSurfaces(): BackendExecutionSurfaces {
     return {
         terminalRuntime: null,
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
     };

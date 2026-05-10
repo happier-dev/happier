@@ -29,6 +29,7 @@ import { shouldResolveConnectedServiceAuthForSpawn } from '../connectedServices/
 import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
+import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 
 type SpawnCredentials = NonNullable<Parameters<typeof resolveSpawnBackendIdentity>[0]['credentials']>;
 type SpawnApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
@@ -54,14 +55,36 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     processEnv?: NodeJS.ProcessEnv;
 }>;
 
+async function refreshAccountSettingsForSpawn(
+    params: Pick<ExecuteSpawnSessionRequestParams, 'credentials' | 'options'>,
+): Promise<void> {
+    const accountSettingsVersionHint = params.options.accountSettingsVersionHint;
+    if (typeof accountSettingsVersionHint !== 'number') return;
+
+    try {
+        await refreshAccountSettingsForMinimumVersion({
+            credentials: params.credentials,
+            minSettingsVersion: accountSettingsVersionHint,
+            mode: 'blocking',
+        });
+    } catch (error) {
+        logger.warn('[DAEMON RUN] Account settings freshness refresh failed before spawn; continuing with last available settings', error);
+    }
+}
+
 export async function executeSpawnSessionRequest(
     params: ExecuteSpawnSessionRequestParams,
 ): Promise<SpawnSessionResult> {
     const { options } = params;
 
     try {
+        await refreshAccountSettingsForSpawn(params);
+
         const prepared = await prepareExecuteSpawnSessionRequest({
-            request: params,
+            request: {
+                ...params,
+                options,
+            },
             validateEnvVarRecordStrict,
         });
         if ('type' in prepared) {

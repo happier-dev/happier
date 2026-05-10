@@ -79,7 +79,10 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
   it('routes non-hosted remote starts to a regular background process with daemon metadata args', async () => {
     const { routeSpawnModeAndWaitForWebhook } = await import('./routeSpawnModeAndWaitForWebhook');
 
-    await expect(routeSpawnModeAndWaitForWebhook(createParams())).resolves.toEqual(successResult);
+    await expect(routeSpawnModeAndWaitForWebhook({
+      ...createParams(),
+      accountSettingsVersionHint: 14,
+    } as Parameters<typeof routeSpawnModeAndWaitForWebhook>[0] & { accountSettingsVersionHint: number })).resolves.toEqual(successResult);
 
     expect(mocks.spawnRegularProcessAndWaitForWebhook).toHaveBeenCalledTimes(1);
     expect(mocks.spawnRegularProcessAndWaitForWebhook).toHaveBeenCalledWith(expect.objectContaining({

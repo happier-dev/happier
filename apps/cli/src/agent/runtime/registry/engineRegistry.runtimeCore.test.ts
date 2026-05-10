@@ -141,6 +141,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             }>;
         }>;
         mcp?: Readonly<{
+            list?: unknown;
             resolveForSession?: unknown;
         }>;
         actions?: Readonly<{
@@ -411,6 +412,25 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolveMergedContributionRegistryMock.mockResolvedValue(registry);
         return registry;
     }
+
+    it('does not resolve unknown execution-run backends through legacy descriptor fallback', async () => {
+        resolveMergedContributionRegistryMock.mockResolvedValue({
+            providers: [],
+            backends: [],
+            actions: [],
+            hookRegistrations: [],
+            runtimeCoreHooksByBackendId: new Map(),
+            catalogEntriesById: {},
+            providerDefinitionsById: new Map(),
+            backendDefinitionsById: new Map(),
+            pluginDiagnosticsByPluginId: {},
+        });
+
+        await expect(resolveBackendEngineAdapterResolution(['code', 'rabbit'].join('')))
+            .resolves
+            .toBeNull();
+        expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
+    });
 
     function seedPluginRegistryWithoutRuntimeCore(): void {
         const registry = {
@@ -769,7 +789,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 }),
                 executionSurfaces: {
                     terminalRuntime: null,
-                    directSessions: null,
+                    externalSessions: null,
                     attach: null,
                     sessionHandoff: null,
                 },
@@ -823,7 +843,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -960,7 +980,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1051,7 +1071,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1204,7 +1224,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1248,7 +1268,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1315,7 +1335,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1363,7 +1383,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1392,7 +1412,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1457,7 +1477,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1511,7 +1531,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1530,10 +1550,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         process.env.HAPPIER_EXTENSION_ARTIFACTS_ENABLED = '1';
         process.env.HAPPIER_EXTENSION_TELEMETRY_ENABLED = '1';
 
+        const metadataUpdates: unknown[] = [];
         const fakeSession = {
             sendUserTextMessage: vi.fn(),
             updateMetadata: vi.fn(async (handler: (metadata: Record<string, unknown>) => unknown) => {
-                handler({ existing: true });
+                metadataUpdates.push(handler({
+                    existing: true,
+                    summary: { text: 'keep title', updatedAt: 1 },
+                    permissionMode: 'ask',
+                    permissionModeUpdatedAt: 2,
+                }));
             }),
             updateAgentState: vi.fn(async (handler: (agentState: Record<string, unknown>) => unknown) => {
                 handler({ existing: true });
@@ -1633,6 +1659,12 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             })).resolves.toEqual(expect.any(Object));
 
             expect(fakeSession.updateMetadata).toHaveBeenCalledTimes(1);
+            expect(metadataUpdates[0]).toEqual({
+                hello: 'world',
+                summary: { text: 'keep title', updatedAt: 1 },
+                permissionMode: 'ask',
+                permissionModeUpdatedAt: 2,
+            });
             expect(fakeSession.updateAgentState).toHaveBeenCalledTimes(1);
             expect(fakePermissionHandler.handleToolCall).toHaveBeenCalledTimes(1);
             expect(fakeTranscriptSession.sendAgentMessageCommitted).toHaveBeenCalledTimes(1);
@@ -1666,7 +1698,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -1700,6 +1732,15 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 }],
             ]),
             mcpServers: [
+                {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        id: 'acme.sample.mcp',
+                        name: 'sample-mcp',
+                        title: 'Sample MCP',
+                        transport: { kind: 'hosted' },
+                    },
+                },
                 {
                     pluginId: 'acme.other',
                     registration: {
@@ -1785,11 +1826,30 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             profileId: 'default',
         });
 
+        const listMcpServers = context.mcp?.list as
+            | (() => Promise<readonly unknown[]>)
+            | undefined;
+        await expect(listMcpServers?.()).resolves.toEqual([
+            {
+                id: 'acme.sample.mcp',
+                name: 'sample-mcp',
+                title: 'Sample MCP',
+                transport: { kind: 'hosted' },
+            },
+        ]);
+
         const resolveMcpForSession = context.mcp?.resolveForSession as
-            | ((input: Readonly<{ sessionId: string; directory: string }>) => Promise<readonly unknown[]>)
+            | ((input: Readonly<{
+                sessionId: string;
+                accountId?: string;
+                workspaceId?: string;
+                directory: string;
+            }>) => Promise<readonly unknown[]>)
             | undefined;
         await expect(resolveMcpForSession?.({
             sessionId: 'session-1',
+            accountId: 'account-1',
+            workspaceId: 'workspace-1',
             directory: '/tmp/project',
         })).resolves.toEqual([]);
     });
@@ -1890,7 +1950,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: { launch: vi.fn(async () => ({ marker: 'should-not-be-used' })) },
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },
@@ -2104,7 +2164,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
             surfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },

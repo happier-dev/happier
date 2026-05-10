@@ -131,7 +131,7 @@ export function createSessionClientCommitQueueRuntime(
         timer.unref?.();
     };
 
-    const commitDirectSessionMessage = async (params: CommitSessionMessageParams): Promise<void> => {
+    const commitExternalSessionMessage = async (params: CommitSessionMessageParams): Promise<void> => {
         const localId = params.localId;
         if (!deps.getSocket().connected) {
             if (params.requireCommit) {
@@ -237,7 +237,7 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         if (deps.transcriptStorage === 'direct') {
-            await commitDirectSessionMessage(params);
+            await commitExternalSessionMessage(params);
             return;
         }
 

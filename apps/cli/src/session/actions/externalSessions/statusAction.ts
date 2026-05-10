@@ -1,27 +1,27 @@
 import {
-    DirectSessionStatusGetRequestSchema,
-    type DirectSessionStatusGetResponse,
+    ExternalSessionStatusGetRequestSchema,
+    type ExternalSessionStatusGetResponse,
 } from '@happier-dev/protocol';
 
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
-import { findTrustedDirectSessionOwner } from '@/api/session/external/takeover/findTrustedDirectSessionOwner';
-import { loadLinkedDirectSession } from '@/api/session/external/takeover/loadLinkedDirectSession';
+import { findTrustedExternalSessionOwner } from '@/api/session/external/takeover/findTrustedExternalSessionOwner';
+import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import { resolveDirectTakeoverSpawnOptions } from '@/api/session/external/takeover/resolveDirectTakeoverSpawnOptions';
 import { validateDirectMachineSource } from '@/api/session/external/security/validateDirectMachineSource';
 import { readCredentials } from '@/persistence';
 
 import { resolveRecentActivityWindowMs } from './actionConfiguration';
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
-import { getDirectSessionProviderOps } from './providerOpsResolution';
+import { getExternalSessionProviderOps } from './providerOpsResolution';
 import { isPidAlive } from './processLiveness';
-import { directSessionsError, internalErrorResponse } from './responseErrors';
+import { externalSessionsError, internalErrorResponse } from './responseErrors';
 
 export async function executeExternalSessionStatusGetAction(
     raw: unknown,
     context: ExternalSessionActionContext,
-): Promise<DirectSessionStatusGetResponse> {
-    const parsed = DirectSessionStatusGetRequestSchema.safeParse(raw);
-    if (!parsed.success) return directSessionsError('invalid_request') satisfies DirectSessionStatusGetResponse;
+): Promise<ExternalSessionStatusGetResponse> {
+    const parsed = ExternalSessionStatusGetRequestSchema.safeParse(raw);
+    if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionStatusGetResponse;
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
@@ -31,13 +31,13 @@ export async function executeExternalSessionStatusGetAction(
         });
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_status_get.validate_source',
+            'external_session_status_get.validate_source',
             error,
-            'direct_session_status_get_failed',
-        ) satisfies DirectSessionStatusGetResponse;
+            'external_session_status_get_failed',
+        ) satisfies ExternalSessionStatusGetResponse;
     }
     if (!validatedSource.ok) {
-        return directSessionsError('invalid_request', validatedSource.error) satisfies DirectSessionStatusGetResponse;
+        return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionStatusGetResponse;
     }
     const nowMs = Date.now();
     const recentWindowMs = resolveRecentActivityWindowMs();
@@ -53,7 +53,7 @@ export async function executeExternalSessionStatusGetAction(
     runnerActive = liveMarkers.some((m) => m.happySessionId === parsed.data.sessionId);
 
     if (!runnerActive) {
-        const owner = findTrustedDirectSessionOwner({
+        const owner = findTrustedExternalSessionOwner({
             markers: liveMarkers,
             providerId: parsed.data.providerId,
             remoteSessionId: parsed.data.remoteSessionId,
@@ -66,7 +66,7 @@ export async function executeExternalSessionStatusGetAction(
     }
 
     try {
-        const res = await (await getDirectSessionProviderOps(parsed.data.providerId)).getActivity({
+        const res = await (await getExternalSessionProviderOps(parsed.data.providerId)).getActivity({
             source: validatedSource.source,
             remoteSessionId: parsed.data.remoteSessionId,
         });
@@ -94,7 +94,7 @@ export async function executeExternalSessionStatusGetAction(
             if (!credentials) {
                 canTakeOverPersist = false;
             } else {
-                const linked = await loadLinkedDirectSession({
+                const linked = await loadLinkedExternalSession({
                     credentials,
                     sessionId: parsed.data.sessionId,
                     machineId: parsed.data.machineId,
@@ -125,5 +125,5 @@ export async function executeExternalSessionStatusGetAction(
         canForceStop,
         trustedPid,
         ...(lastKnownActivityAtMs !== undefined ? { lastKnownActivityAtMs } : {}),
-    } satisfies DirectSessionStatusGetResponse;
+    } satisfies ExternalSessionStatusGetResponse;
 }

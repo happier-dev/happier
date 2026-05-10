@@ -42,13 +42,27 @@ function classifyOpenSshSetupFailure(message: string): Readonly<{
 export function createSshTunnelSetupError(error: unknown, checkedAt: string): SshTunnelSetupError {
   const message = error instanceof Error ? error.message : 'SSH tunnel unavailable';
   const classification = classifyOpenSshSetupFailure(message);
-  return new SshTunnelSetupError(classification.errorCode, {
+  return new SshTunnelSetupError(message, {
     errorCode: classification.errorCode,
     health: {
       state: classification.state,
       checkedAt,
       ...(message ? { detail: message } : {}),
     },
+  });
+}
+
+export function createSshTunnelHealthError(health: SshTunnelHealth): SshTunnelSetupError {
+  const errorCode: SshTunnelErrorCode = health.state === 'auth_required'
+    ? 'ssh_tunnel_auth_required'
+    : health.state === 'host_key_untrusted'
+      ? 'ssh_tunnel_host_key_untrusted'
+      : health.state === 'local_port_conflict'
+        ? 'ssh_tunnel_local_port_conflict'
+        : 'ssh_tunnel_unavailable';
+  return new SshTunnelSetupError(errorCode, {
+    errorCode,
+    health,
   });
 }
 

@@ -1,18 +1,18 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import { getDirectSessionProviderOps } from '@/backends/catalog';
+import { getExternalSessionProviderOps } from '@/backends/catalog';
 
-import type { DirectSessionFollowLease, DirectSessionProviderOps } from '@/session/external/providerOps';
+import type { ExternalSessionFollowLease, ExternalSessionProviderOps } from '@/session/external/providerOps';
 import type { LocalHostedDirectTranscriptBinding } from './directTranscriptBinding';
 
 function resolvePageMaxBytes(): number {
-    const raw = Number.parseInt(String(process.env.HAPPIER_DIRECT_SESSIONS_PAGE_MAX_BYTES ?? ''), 10);
+    const raw = Number.parseInt(String(process.env.HAPPIER_EXTERNAL_SESSIONS_PAGE_MAX_BYTES ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 512_000;
     return Math.max(1024, Math.min(10 * 1024 * 1024, configured));
 }
 
 function resolvePageMaxItems(): number {
-    const raw = Number.parseInt(String(process.env.HAPPIER_DIRECT_SESSIONS_PAGE_MAX_ITEMS ?? ''), 10);
+    const raw = Number.parseInt(String(process.env.HAPPIER_EXTERNAL_SESSIONS_PAGE_MAX_ITEMS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 200;
     return Math.max(1, Math.min(5000, configured));
 }
@@ -20,10 +20,10 @@ function resolvePageMaxItems(): number {
 async function replayTranscriptHistory(params: Readonly<{
     source: LocalHostedDirectTranscriptBinding['source'];
     remoteSessionId: string;
-    providerOps: DirectSessionProviderOps;
-    onItems: (items: readonly DirectTranscriptRawMessageV1[]) => Promise<void> | void;
+    providerOps: ExternalSessionProviderOps;
+    onItems: (items: readonly ExternalSessionTranscriptRawMessageV1[]) => Promise<void> | void;
 }>): Promise<string | null> {
-    const pages: DirectTranscriptRawMessageV1[][] = [];
+    const pages: ExternalSessionTranscriptRawMessageV1[][] = [];
     let tailCursor: string | null = null;
     let cursor: string | undefined;
 
@@ -57,10 +57,10 @@ async function replayTranscriptHistory(params: Readonly<{
 async function bridgeTranscriptHandoffGap(params: Readonly<{
     source: LocalHostedDirectTranscriptBinding['source'];
     remoteSessionId: string;
-    providerOps: DirectSessionProviderOps;
+    providerOps: ExternalSessionProviderOps;
     fromCursor: string | null;
     toCursor: string | null;
-    onItems: (items: readonly DirectTranscriptRawMessageV1[]) => Promise<void> | void;
+    onItems: (items: readonly ExternalSessionTranscriptRawMessageV1[]) => Promise<void> | void;
 }>): Promise<void> {
     if (!params.fromCursor || !params.toCursor || params.fromCursor === params.toCursor) {
         return;
@@ -94,19 +94,19 @@ async function bridgeTranscriptHandoffGap(params: Readonly<{
 
 export function createLocalHostedDirectTranscriptMirror(params: Readonly<{
     binding: LocalHostedDirectTranscriptBinding;
-    onItems: (items: readonly DirectTranscriptRawMessageV1[]) => Promise<void> | void;
-    getProviderOps?: (providerId: LocalHostedDirectTranscriptBinding['providerId']) => Promise<DirectSessionProviderOps>;
+    onItems: (items: readonly ExternalSessionTranscriptRawMessageV1[]) => Promise<void> | void;
+    getProviderOps?: (providerId: LocalHostedDirectTranscriptBinding['providerId']) => Promise<ExternalSessionProviderOps>;
 }>) {
     let startPromise: Promise<void> | null = null;
     let stopRequested = false;
     let released = false;
-    let followLease: DirectSessionFollowLease | null = null;
+    let followLease: ExternalSessionFollowLease | null = null;
     let unsubscribe: (() => void) | null = null;
     let deliveryChain: Promise<void> = Promise.resolve();
     let initialReplayComplete = false;
-    const bufferedFollowUpdates: DirectTranscriptRawMessageV1[][] = [];
+    const bufferedFollowUpdates: ExternalSessionTranscriptRawMessageV1[][] = [];
 
-    const deliverItems = async (items: readonly DirectTranscriptRawMessageV1[]): Promise<void> => {
+    const deliverItems = async (items: readonly ExternalSessionTranscriptRawMessageV1[]): Promise<void> => {
         if (items.length === 0 || stopRequested) return;
 
         const nextDelivery = deliveryChain.then(async () => {
@@ -136,7 +136,7 @@ export function createLocalHostedDirectTranscriptMirror(params: Readonly<{
     };
 
     const ensureStarted = async (): Promise<void> => {
-        const providerOps = await (params.getProviderOps ?? getDirectSessionProviderOps)(params.binding.providerId);
+        const providerOps = await (params.getProviderOps ?? getExternalSessionProviderOps)(params.binding.providerId);
         const validation = await providerOps.validateSource({
             source: params.binding.source,
             env: params.binding.env ?? process.env,

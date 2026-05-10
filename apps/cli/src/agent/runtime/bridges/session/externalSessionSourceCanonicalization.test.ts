@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { buildCodexRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol';
 
-import { canonicalizeLinkedDirectSessionSource } from './directSessionSourceCanonicalization';
+import { canonicalizeLinkedExternalSessionSource } from './externalSessionSourceCanonicalization';
 
-describe('canonicalizeLinkedDirectSessionSource', () => {
+describe('canonicalizeLinkedExternalSessionSource', () => {
   it('falls back to resolveLinkIdentity when canonicalizeLinkedSession is unavailable', async () => {
-    const canonicalized = await canonicalizeLinkedDirectSessionSource(
+    const canonicalized = await canonicalizeLinkedExternalSessionSource(
       {
         providerId: 'codex',
         metadata: {
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'codex',
             machineId: 'machine_1',
@@ -28,7 +28,7 @@ describe('canonicalizeLinkedDirectSessionSource', () => {
         source: { kind: 'codexHome', home: 'user' },
       },
       {
-        resolveDirectSessionProviderOps: async () => ({
+        resolveExternalSessionProviderOps: async () => ({
           validateSource: async ({ source }) => ({ ok: true, source }),
           listCandidates: async () => ({ candidates: [], nextCursor: null }),
           getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),

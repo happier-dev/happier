@@ -1,7 +1,7 @@
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
-import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
+import type { WorkspaceExportBlobProvider } from '@/scm/workspace/workspaceExportStaging/stageWorkspaceEntries';
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 import { createWorkspaceReplicationBlobPackPayloadSource } from '@/workspaces/replication/transport/blobPackPayloadSource';
 import { seedWorkspaceReplicationCasBlobsFromManifest } from '@/workspaces/replication/transport/seedWorkspaceReplicationCasBlobsFromManifest';

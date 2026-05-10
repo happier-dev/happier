@@ -31,7 +31,7 @@ describe('exportSessionHandoffProviderBundle', () => {
         }));
         resolveBackendExecutionSurfaces.mockResolvedValueOnce({
             terminalRuntime: null,
-            directSessions: null,
+            externalSessions: null,
             attach: null,
             sessionHandoff: {
                 exportBundle,

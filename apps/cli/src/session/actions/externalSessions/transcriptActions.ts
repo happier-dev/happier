@@ -1,21 +1,21 @@
 import {
-    DirectTranscriptPageRequestSchema,
-    DirectTranscriptReadAfterRequestSchema,
-    type DirectTranscriptPageResponse,
-    type DirectTranscriptReadAfterResponse,
+    ExternalSessionTranscriptPageRequestSchema,
+    ExternalSessionTranscriptReadAfterRequestSchema,
+    type ExternalSessionTranscriptPageResponse,
+    type ExternalSessionTranscriptReadAfterResponse,
 } from '@happier-dev/protocol';
 
 import { validateDirectMachineSource } from '@/api/session/external/security/validateDirectMachineSource';
 
 import { resolveDefaultMaxBytes, resolveDefaultMaxItems } from './actionConfiguration';
-import { getDirectSessionProviderOps } from './providerOpsResolution';
-import { directSessionsError, internalErrorResponse } from './responseErrors';
+import { getExternalSessionProviderOps } from './providerOpsResolution';
+import { externalSessionsError, internalErrorResponse } from './responseErrors';
 
 export async function executeExternalSessionTranscriptPageAction(
     raw: unknown,
-): Promise<DirectTranscriptPageResponse> {
-    const parsed = DirectTranscriptPageRequestSchema.safeParse(raw);
-    if (!parsed.success) return directSessionsError('invalid_request') satisfies DirectTranscriptPageResponse;
+): Promise<ExternalSessionTranscriptPageResponse> {
+    const parsed = ExternalSessionTranscriptPageRequestSchema.safeParse(raw);
+    if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionTranscriptPageResponse;
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
@@ -25,13 +25,13 @@ export async function executeExternalSessionTranscriptPageAction(
         });
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_transcript_page.validate_source',
+            'external_session_transcript_page.validate_source',
             error,
-            'direct_session_transcript_page_failed',
-        ) satisfies DirectTranscriptPageResponse;
+            'external_session_transcript_page_failed',
+        ) satisfies ExternalSessionTranscriptPageResponse;
     }
     if (!validatedSource.ok) {
-        return directSessionsError('invalid_request', validatedSource.error) satisfies DirectTranscriptPageResponse;
+        return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionTranscriptPageResponse;
     }
     const { providerId, remoteSessionId, direction, cursor } = parsed.data;
     const source = validatedSource.source;
@@ -39,7 +39,7 @@ export async function executeExternalSessionTranscriptPageAction(
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const res = await (await getDirectSessionProviderOps(providerId)).pageTranscript({
+        const res = await (await getExternalSessionProviderOps(providerId)).pageTranscript({
             source,
             remoteSessionId,
             direction,
@@ -54,21 +54,21 @@ export async function executeExternalSessionTranscriptPageAction(
             tailCursor: res.tailCursor,
             hasMore: res.hasMore,
             truncated: res.truncated,
-        } satisfies DirectTranscriptPageResponse;
+        } satisfies ExternalSessionTranscriptPageResponse;
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_transcript_page',
+            'external_session_transcript_page',
             error,
-            'direct_session_transcript_page_failed',
-        ) satisfies DirectTranscriptPageResponse;
+            'external_session_transcript_page_failed',
+        ) satisfies ExternalSessionTranscriptPageResponse;
     }
 }
 
 export async function executeExternalSessionTranscriptReadAfterAction(
     raw: unknown,
-): Promise<DirectTranscriptReadAfterResponse> {
-    const parsed = DirectTranscriptReadAfterRequestSchema.safeParse(raw);
-    if (!parsed.success) return directSessionsError('invalid_request') satisfies DirectTranscriptReadAfterResponse;
+): Promise<ExternalSessionTranscriptReadAfterResponse> {
+    const parsed = ExternalSessionTranscriptReadAfterRequestSchema.safeParse(raw);
+    if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionTranscriptReadAfterResponse;
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
@@ -78,13 +78,13 @@ export async function executeExternalSessionTranscriptReadAfterAction(
         });
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_transcript_read_after.validate_source',
+            'external_session_transcript_read_after.validate_source',
             error,
-            'direct_session_transcript_read_after_failed',
-        ) satisfies DirectTranscriptReadAfterResponse;
+            'external_session_transcript_read_after_failed',
+        ) satisfies ExternalSessionTranscriptReadAfterResponse;
     }
     if (!validatedSource.ok) {
-        return directSessionsError('invalid_request', validatedSource.error) satisfies DirectTranscriptReadAfterResponse;
+        return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionTranscriptReadAfterResponse;
     }
     const { providerId, remoteSessionId, cursor } = parsed.data;
     const source = validatedSource.source;
@@ -93,19 +93,19 @@ export async function executeExternalSessionTranscriptReadAfterAction(
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const res = await (await getDirectSessionProviderOps(providerId)).readAfterTranscript({
+        const res = await (await getExternalSessionProviderOps(providerId)).readAfterTranscript({
             source,
             remoteSessionId,
             cursor,
             maxBytes,
             maxItems,
         });
-        return { ok: true, items: res.items, nextCursor: res.nextCursor, truncated: res.truncated } satisfies DirectTranscriptReadAfterResponse;
+        return { ok: true, items: res.items, nextCursor: res.nextCursor, truncated: res.truncated } satisfies ExternalSessionTranscriptReadAfterResponse;
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_transcript_read_after',
+            'external_session_transcript_read_after',
             error,
-            'direct_session_transcript_read_after_failed',
-        ) satisfies DirectTranscriptReadAfterResponse;
+            'external_session_transcript_read_after_failed',
+        ) satisfies ExternalSessionTranscriptReadAfterResponse;
     }
 }

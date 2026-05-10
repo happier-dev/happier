@@ -3,7 +3,12 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { readCredentials } from '@/persistence';
 
-import { getAgentResumeConfig, inferAgentIdFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import {
+  getAgentResumeConfig,
+  inferAgentIdFromSessionMetadata,
+  resolveVendorResumeIdFromSessionMetadata,
+} from '@happier-dev/agents';
+import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -271,10 +276,10 @@ export function createOnHappySessionWebhook(params: Readonly<{
       const vendorResumeIdField = 'vendorResumeIdField' in resumeConfig ? resumeConfig.vendorResumeIdField ?? null : null;
       if (!vendorResumeIdField) return normalizedMetadata;
       if (resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata)) return normalizedMetadata;
-      return {
-        ...normalizedMetadata,
-        [vendorResumeIdField]: vendorResumeId,
-      };
+      return applySessionStateFieldMetadataPatch(normalizedMetadata, 'identity.vendorSessionId', {
+        metadataKey: vendorResumeIdField,
+        value: vendorResumeId,
+      }) as Metadata;
     };
 
     if (trackedForPid) {

@@ -1,24 +1,24 @@
 import {
-    DirectSessionLinkEnsureRequestSchema,
-    DirectSessionsCandidatesListRequestSchema,
+    ExternalSessionLinkEnsureRequestSchema,
+    ExternalSessionsCandidatesListRequestSchema,
     normalizeCodexBackendMode,
-    type DirectSessionLinkEnsureResponse,
-    type DirectSessionsCandidatesListResponse,
+    type ExternalSessionLinkEnsureResponse,
+    type ExternalSessionsCandidatesListResponse,
 } from '@happier-dev/protocol';
 
-import { ensureDirectSessionLink } from '@/api/session/external/linking/ensureDirectSessionLink';
+import { ensureExternalSessionLink } from '@/api/session/external/linking/ensureExternalSessionLink';
 import { validateDirectMachineSource } from '@/api/session/external/security/validateDirectMachineSource';
 import { readCredentials } from '@/persistence';
 
 import { resolveDefaultCandidatesLimit } from './actionConfiguration';
-import { getDirectSessionProviderOps } from './providerOpsResolution';
-import { directSessionsError, internalErrorResponse } from './responseErrors';
+import { getExternalSessionProviderOps } from './providerOpsResolution';
+import { externalSessionsError, internalErrorResponse } from './responseErrors';
 
 export async function executeExternalSessionCandidatesListAction(
     raw: unknown,
-): Promise<DirectSessionsCandidatesListResponse> {
-    const parsed = DirectSessionsCandidatesListRequestSchema.safeParse(raw);
-    if (!parsed.success) return directSessionsError('invalid_request') satisfies DirectSessionsCandidatesListResponse;
+): Promise<ExternalSessionsCandidatesListResponse> {
+    const parsed = ExternalSessionsCandidatesListRequestSchema.safeParse(raw);
+    if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionsCandidatesListResponse;
     try {
         const validatedSource = await validateDirectMachineSource({
             providerId: parsed.data.providerId,
@@ -26,27 +26,27 @@ export async function executeExternalSessionCandidatesListAction(
             env: process.env,
         });
         if (!validatedSource.ok) {
-            return directSessionsError('invalid_request', validatedSource.error) satisfies DirectSessionsCandidatesListResponse;
+            return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionsCandidatesListResponse;
         }
         const { providerId, cursor, searchTerm } = parsed.data;
         const source = validatedSource.source;
         const limit = parsed.data.limit ?? resolveDefaultCandidatesLimit();
-        const res = await (await getDirectSessionProviderOps(providerId)).listCandidates({ source, cursor, limit, searchTerm });
-        return { ok: true, candidates: res.candidates, nextCursor: res.nextCursor } satisfies DirectSessionsCandidatesListResponse;
+        const res = await (await getExternalSessionProviderOps(providerId)).listCandidates({ source, cursor, limit, searchTerm });
+        return { ok: true, candidates: res.candidates, nextCursor: res.nextCursor } satisfies ExternalSessionsCandidatesListResponse;
     } catch (error) {
         return internalErrorResponse(
-            'direct_sessions_candidates_list',
+            'external_sessions_candidates_list',
             error,
-            'direct_sessions_candidates_list_failed',
-        ) satisfies DirectSessionsCandidatesListResponse;
+            'external_sessions_candidates_list_failed',
+        ) satisfies ExternalSessionsCandidatesListResponse;
     }
 }
 
 export async function executeExternalSessionLinkEnsureAction(
     raw: unknown,
-): Promise<DirectSessionLinkEnsureResponse> {
-    const parsed = DirectSessionLinkEnsureRequestSchema.safeParse(raw);
-    if (!parsed.success) return directSessionsError('invalid_request') satisfies DirectSessionLinkEnsureResponse;
+): Promise<ExternalSessionLinkEnsureResponse> {
+    const parsed = ExternalSessionLinkEnsureRequestSchema.safeParse(raw);
+    if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionLinkEnsureResponse;
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
@@ -56,23 +56,23 @@ export async function executeExternalSessionLinkEnsureAction(
         });
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_link_ensure.validate_source',
+            'external_session_link_ensure.validate_source',
             error,
-            'direct_session_link_ensure_failed',
-        ) satisfies DirectSessionLinkEnsureResponse;
+            'external_session_link_ensure_failed',
+        ) satisfies ExternalSessionLinkEnsureResponse;
     }
     if (!validatedSource.ok) {
-        return directSessionsError('invalid_request', validatedSource.error) satisfies DirectSessionLinkEnsureResponse;
+        return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionLinkEnsureResponse;
     }
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
-        return directSessionsError('provider_unavailable', 'not_authenticated') satisfies DirectSessionLinkEnsureResponse;
+        return externalSessionsError('provider_unavailable', 'not_authenticated') satisfies ExternalSessionLinkEnsureResponse;
     }
 
     try {
         const codexBackendMode = normalizeCodexBackendMode(parsed.data.codexBackendMode) ?? undefined;
-        const res = await ensureDirectSessionLink({
+        const res = await ensureExternalSessionLink({
             credentials,
             machineId: parsed.data.machineId,
             providerId: parsed.data.providerId,
@@ -83,12 +83,12 @@ export async function executeExternalSessionLinkEnsureAction(
             directoryHint: parsed.data.directoryHint,
             source: validatedSource.source,
         });
-        return { ok: true, sessionId: res.sessionId, created: res.created } satisfies DirectSessionLinkEnsureResponse;
+        return { ok: true, sessionId: res.sessionId, created: res.created } satisfies ExternalSessionLinkEnsureResponse;
     } catch (error) {
         return internalErrorResponse(
-            'direct_session_link_ensure',
+            'external_session_link_ensure',
             error,
-            'direct_session_link_ensure_failed',
-        ) satisfies DirectSessionLinkEnsureResponse;
+            'external_session_link_ensure_failed',
+        ) satisfies ExternalSessionLinkEnsureResponse;
     }
 }

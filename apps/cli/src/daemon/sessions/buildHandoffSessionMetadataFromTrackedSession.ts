@@ -10,6 +10,11 @@ import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/co
 import type { TrackedSession } from '../types';
 import { buildClaudeRuntimeLocalHandoffMetadata } from '@/backends/claude/handoff/buildClaudeRuntimeLocalHandoffMetadata';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
+import {
+    getAgentResumeConfig,
+    isAgentId,
+} from '@happier-dev/agents';
+import { buildSessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 
 function asMetadataRecord(value: unknown): Metadata | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -111,7 +116,7 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
 
     const runtimeLocalMetadata: Partial<Pick<
         Metadata,
-        'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'directSessionV1'
+        'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'externalSessionV1'
     >> = {
         ...(pickSessionHandoffRuntimeLocalMetadata(metadata) ?? {}),
     };
@@ -128,27 +133,27 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
     const runtimeIdentity = resolveSessionRuntimeIdentityFallback({ metadata });
     const agentId = typeof runtimeIdentity.providerId === 'string' ? runtimeIdentity.providerId.trim() : '';
 
-    switch (agentId) {
-        case 'claude': {
-            Object.assign(runtimeLocalMetadata, buildClaudeRuntimeLocalHandoffMetadata({
+    if (isAgentId(agentId)) {
+        const vendorResumeIdField = getAgentResumeConfig(agentId).vendorResumeIdField;
+        if (vendorResumeIdField && !(runtimeLocalMetadata as Record<string, unknown>)[vendorResumeIdField]) {
+            Object.assign(
+                runtimeLocalMetadata,
+                buildSessionStateFieldMetadataPatch('identity.vendorSessionId', {
+                    metadataKey: vendorResumeIdField,
+                    value: vendorResumeId,
+                }),
+            );
+        }
+    }
+
+    if (agentId === 'claude') {
+        const claudeMetadata = buildClaudeRuntimeLocalHandoffMetadata({
                 metadata,
                 trackedSession: params.trackedSession,
                 vendorResumeId,
-            }));
-            break;
-        }
-        case 'codex':
-            if (!runtimeLocalMetadata.codexSessionId) {
-                runtimeLocalMetadata.codexSessionId = vendorResumeId;
-            }
-            break;
-        case 'opencode':
-            if (!runtimeLocalMetadata.opencodeSessionId) {
-                runtimeLocalMetadata.opencodeSessionId = vendorResumeId;
-            }
-            break;
-        default:
-            break;
+        });
+        const { claudeSessionId: _genericResumeMarker, ...claudeRuntimeLocalMetadata } = claudeMetadata;
+        Object.assign(runtimeLocalMetadata, claudeRuntimeLocalMetadata);
     }
 
     return createSessionHandoffMetadataSplit({

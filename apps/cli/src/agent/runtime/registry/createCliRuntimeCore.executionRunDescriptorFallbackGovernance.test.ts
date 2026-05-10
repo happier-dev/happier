@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -89,25 +91,10 @@ describe('createCliRuntimeCore execution-run descriptor fallback governance', ()
         expect(launch).not.toHaveBeenCalled();
     });
 
-    it('fails closed for review-engine execution runs when no bound runtimeCore exist in the shared registry layer', async () => {
-        const reviewId = 'review-runtime';
+    it('does not keep descriptor-backed execution-run creation in createCliRuntimeCore', () => {
+        const source = readFileSync(new URL('./createCliRuntimeCore.ts', import.meta.url), 'utf8');
 
-        const descriptorFactory = vi.fn(() => createStubRuntime());
-        getExecutionRunBackendDescriptorMock.mockReturnValue({ factory: descriptorFactory });
-
-        const launch = vi.fn(async () => createStubRuntime());
-
-        const { createMissingCliEngineAdapter } = await import('./createCliRuntimeCore');
-        const runtimeCore = createMissingCliEngineAdapter({
-            backend: createBuiltInBackendContribution(reviewId),
-        }).runtimeCore;
-
-        expect(() => runtimeCore.createExecutionRunBackend({
-            cwd: '/tmp',
-            backendId: reviewId,
-            permissionMode: 'read_only',
-        })).toThrow(/bound host runtimeCore/i);
-        expect(descriptorFactory).not.toHaveBeenCalled();
-        expect(launch).not.toHaveBeenCalled();
+        expect(source).not.toContain('executionRunBackendRegistry');
+        expect(source).not.toContain('createDescriptorBackend');
     });
 });

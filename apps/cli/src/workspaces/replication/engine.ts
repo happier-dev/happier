@@ -31,7 +31,7 @@ import { listWorkspaceReplicationJobs } from './engine/listWorkspaceReplicationJ
 import { executeWorkspaceReplicationJobWithLocalRuntime } from './orchestration/jobExecution/localRuntime';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import type { WorkspaceReplicationJobRecord } from './jobs/workspaceReplicationJobStore';
-import { inferWorkspaceManifestSafeFilterPolicyFromEntries } from '@/scm/sourceController/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import { inferWorkspaceManifestSafeFilterPolicyFromEntries } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 
 type ReadonlyWorkspaceManifest = Readonly<{
     entries: readonly WorkspaceManifest['entries'][number][];

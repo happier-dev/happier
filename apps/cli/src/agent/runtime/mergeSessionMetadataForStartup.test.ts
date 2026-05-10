@@ -141,7 +141,7 @@ describe('mergeSessionMetadataForStartup', () => {
         expect((merged as any).permissionModeUpdatedAt).toBeUndefined();
     });
 
-    it('preserves permissionMode when no override is provided', () => {
+    it('preserves permissionMode intent when no override is provided', () => {
         const nowMs = 50;
         const merged = mergeSessionMetadataForStartup({
             current: { permissionMode: 'ask', permissionModeUpdatedAt: 10 } as any,
@@ -149,7 +149,7 @@ describe('mergeSessionMetadataForStartup', () => {
             nowMs,
         });
 
-        expect(merged.permissionMode).toBe('ask');
+        expect(merged.permissionMode).toBe('default');
         expect(merged.permissionModeUpdatedAt).toBe(10);
     });
 
@@ -182,7 +182,7 @@ describe('mergeSessionMetadataForStartup', () => {
     it('ensures permissionModeUpdatedAt is monotonic when an override is provided with an older timestamp', () => {
         const nowMs = 50;
         const merged = mergeSessionMetadataForStartup({
-            current: { permissionMode: 'ask', permissionModeUpdatedAt: 100 } as any,
+            current: { permissionMode: 'read-only', permissionModeUpdatedAt: 100 } as any,
             next: {} as any,
             nowMs,
             permissionModeOverride: { mode: 'default', updatedAt: 1 },
@@ -205,6 +205,32 @@ describe('mergeSessionMetadataForStartup', () => {
         expect((merged as any).acpSessionModeOverrideV1).toBeUndefined();
     });
 
+    it('preserves legacy-only session-mode override metadata when attaching', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: { acpSessionModeOverrideV1: { v: 1, updatedAt: 77, modeId: 'plan' } } as any,
+            next: { hostPid: 2 } as any,
+            nowMs: 50,
+            mode: 'attach',
+        });
+
+        expect((merged as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 77, modeId: 'plan' });
+        expect((merged as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 77, modeId: 'plan' });
+    });
+
+    it('uses the newest session-mode override alias during startup merge', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                sessionModeOverrideV1: { v: 1, updatedAt: 100, modeId: 'build' },
+                acpSessionModeOverrideV1: { v: 1, updatedAt: 200, modeId: 'plan' },
+            } as any,
+            next: {} as any,
+            nowMs: 50,
+        });
+
+        expect((merged as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 200, modeId: 'plan' });
+        expect((merged as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 200, modeId: 'plan' });
+    });
+
     it('applies an explicit canonical session mode override with a monotonic updatedAt', () => {
         const nowMs = 50;
         const merged = mergeSessionMetadataForStartup({
@@ -216,7 +242,22 @@ describe('mergeSessionMetadataForStartup', () => {
         });
 
         expect((merged as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 101, modeId: 'plan' });
-        expect((merged as any).acpSessionModeOverrideV1).toBeUndefined();
+        expect((merged as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 101, modeId: 'plan' });
+    });
+
+    it('preserves a newer session-mode clear tombstone instead of resurrecting next metadata', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                sessionModeOverrideV1: { v: 1, updatedAt: 200, modeId: null },
+            } as any,
+            next: {
+                sessionModeOverrideV1: { v: 1, updatedAt: 100, modeId: 'plan' },
+            } as any,
+            nowMs: 50,
+        });
+
+        expect((merged as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 200, modeId: null });
+        expect((merged as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 200, modeId: null });
     });
 
     it('does not seed modelOverrideV1 from next metadata when attaching', () => {
@@ -241,6 +282,120 @@ describe('mergeSessionMetadataForStartup', () => {
         } as any);
 
         expect((merged as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 101, modelId: 'gpt-5-codex-high' });
+    });
+
+    it('preserves a newer model clear tombstone instead of resurrecting next metadata', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: { modelOverrideV1: { v: 1, updatedAt: 200, modelId: null } } as any,
+            next: { modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'gpt-5-codex-high' } } as any,
+            nowMs: 50,
+        });
+
+        expect((merged as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 200, modelId: null });
+    });
+
+    it('merges ACP config option overrides per entry through the session-state timestamp policy', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 100,
+                    overrides: {
+                        telemetry: { updatedAt: 100, value: true },
+                    },
+                },
+                acpConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 100,
+                    overrides: {
+                        telemetry: { updatedAt: 100, value: true },
+                    },
+                },
+            } as any,
+            next: {
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    overrides: {
+                        telemetry: { updatedAt: 10, value: false },
+                        reasoning: { updatedAt: 20, value: 'high' },
+                    },
+                },
+            } as any,
+            nowMs: 50,
+        } as any);
+
+        expect((merged as any).sessionConfigOptionOverridesV1).toEqual({
+            v: 1,
+            updatedAt: 100,
+            overrides: {
+                telemetry: { updatedAt: 100, value: true },
+                reasoning: { updatedAt: 20, value: 'high' },
+            },
+        });
+        expect((merged as any).acpConfigOptionOverridesV1).toEqual((merged as any).sessionConfigOptionOverridesV1);
+    });
+
+    it('uses the newest ACP config option override entry across canonical and legacy aliases', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 10,
+                    overrides: {
+                        effort: { updatedAt: 10, value: 'medium' },
+                    },
+                },
+                acpConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 30,
+                    overrides: {
+                        effort: { updatedAt: 30, value: 'high' },
+                    },
+                },
+            } as any,
+            next: {
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    overrides: {
+                        effort: { updatedAt: 20, value: 'low' },
+                        speed: { updatedAt: 20, value: 'fast' },
+                    },
+                },
+            } as any,
+            nowMs: 50,
+        } as any);
+
+        expect((merged as any).sessionConfigOptionOverridesV1).toEqual({
+            v: 1,
+            updatedAt: 30,
+            overrides: {
+                effort: { updatedAt: 30, value: 'high' },
+                speed: { updatedAt: 20, value: 'fast' },
+            },
+        });
+        expect((merged as any).acpConfigOptionOverridesV1).toEqual((merged as any).sessionConfigOptionOverridesV1);
+    });
+
+    it('does not seed ACP config option overrides from next metadata when attaching', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {} as any,
+            next: {
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    overrides: {
+                        telemetry: { updatedAt: 20, value: true },
+                    },
+                },
+            } as any,
+            nowMs: 50,
+            mode: 'attach',
+        } as any);
+
+        expect((merged as any).sessionConfigOptionOverridesV1).toBeUndefined();
+        expect((merged as any).acpConfigOptionOverridesV1).toBeUndefined();
     });
 
     it('does not seed mcpSelectionV1 from next metadata when attaching', () => {

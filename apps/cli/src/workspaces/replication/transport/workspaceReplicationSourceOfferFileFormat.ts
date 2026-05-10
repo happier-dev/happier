@@ -15,7 +15,7 @@ const WorkspaceReplicationSourceOfferHeaderSchema = z.object({
   directionId: z.string().min(1),
   sourceFingerprint: ReplicationManifestFingerprintSchema,
   manifestFingerprint: ReplicationManifestFingerprintSchema.optional(),
-  sourceControllerMetadata: z.record(z.string(), z.unknown()).optional(),
+  workspaceIntegrationMetadata: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
 async function readFilePrefixUtf8(filePath: string, maxBytes: number): Promise<string> {
@@ -110,7 +110,7 @@ export async function readWorkspaceReplicationSourceOfferFromFile(input: Readonl
         ...(parsedHeader.data.manifestFingerprint ? { fingerprint: parsedHeader.data.manifestFingerprint } : {}),
       },
       blobIndex: [...blobIndexByDigest.values()],
-      ...(parsedHeader.data.sourceControllerMetadata ? { sourceControllerMetadata: parsedHeader.data.sourceControllerMetadata } : {}),
+      ...(parsedHeader.data.workspaceIntegrationMetadata ? { workspaceIntegrationMetadata: parsedHeader.data.workspaceIntegrationMetadata } : {}),
     };
   } finally {
     rl.close();
@@ -128,7 +128,7 @@ export async function writeWorkspaceReplicationSourceOfferToFile(input: Readonly
     directionId: input.offer.directionId,
     sourceFingerprint: input.offer.sourceFingerprint,
     ...(input.offer.manifest.fingerprint ? { manifestFingerprint: input.offer.manifest.fingerprint } : {}),
-    ...(input.offer.sourceControllerMetadata ? { sourceControllerMetadata: input.offer.sourceControllerMetadata } : {}),
+    ...(input.offer.workspaceIntegrationMetadata ? { workspaceIntegrationMetadata: input.offer.workspaceIntegrationMetadata } : {}),
   };
 
   const file = await open(input.filePath, 'w', 0o600);

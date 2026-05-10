@@ -38,7 +38,7 @@ describe('terminal runtime requirement helpers', () => {
       terminalRuntime: {
         launch,
       },
-      directSessions: null,
+      externalSessions: null,
       attach: null,
       sessionHandoff: null,
     });
@@ -59,7 +59,7 @@ describe('terminal runtime requirement helpers', () => {
       terminalRuntime: {
         bindTranscript,
       },
-      directSessions: null,
+      externalSessions: null,
       attach: null,
       sessionHandoff: null,
     });

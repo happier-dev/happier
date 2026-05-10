@@ -1,4 +1,4 @@
-import { compareWorkspaceManifests } from '../../../scm/sourceController/workspaceExportPackaging/compareWorkspaceManifests';
+import { compareWorkspaceManifests } from '../../../scm/workspace/workspaceExportPackaging/compareWorkspaceManifests';
 import { normalizeSessionHandoffTargetPathForLocalMachine } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import {
   createSessionHandoffPrepareTargetJobStore,

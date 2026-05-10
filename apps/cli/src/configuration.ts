@@ -651,7 +651,7 @@ class Configuration {
     this.executionRunsMaxConcurrentPerSession =
       Number.isFinite(maxConcurrentRunsRaw) && maxConcurrentRunsRaw >= 1 ? maxConcurrentRunsRaw : null;
     const maxConcurrentOneShotTasksRaw = Number.parseInt(
-      String(process.env.HAPPIER_EPHEMERAL_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''),
+      String(process.env.HAPPIER_ONE_SHOT_TASKS_MAX_CONCURRENT_PER_SESSION ?? ''),
       10,
     );
     // Intentionally unlimited by default: one-shot tasks can be long-lived,

@@ -66,7 +66,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
                 },
                 runtimeLocalMetadata: {
                     claudeSessionId: 'sess-handoff-direct',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                         machineId: 'machine_target',
@@ -88,7 +88,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
             homeDir: '/Users/tester',
             flavor: 'claude',
             claudeSessionId: 'sess-handoff-direct',
-            directSessionV1: {
+            externalSessionV1: {
                 v: 1,
                 providerId: 'claude',
                 machineId: 'machine_target',
@@ -150,7 +150,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
                 },
                 runtimeLocalMetadata: {
                     claudeSessionId: 'sess-handoff-direct',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                         machineId: 'machine_target',
@@ -174,7 +174,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
             flavor: 'claude',
             portableMetadataVersion: 'v2',
             claudeSessionId: 'sess-handoff-direct',
-            directSessionV1: {
+            externalSessionV1: {
                 v: 1,
                 providerId: 'claude',
                 machineId: 'machine_target',

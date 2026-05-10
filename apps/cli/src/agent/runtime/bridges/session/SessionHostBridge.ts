@@ -1,11 +1,13 @@
 import type {
   BridgeLifecycleHookEventIdV1,
   BackendTargetRefV2Input,
-  DirectSessionsProviderId,
-  DirectSessionsSource,
+  ExternalSessionsProviderId,
+  ExternalSessionsSource,
   HookScopeV1,
   RuntimeDescriptorV1,
+  SessionStateCapabilitiesV1,
 } from '@happier-dev/protocol';
+import { SessionStateCapabilitiesV1Schema } from '@happier-dev/protocol';
 
 import {
   resolveBackendEngineAdapterResolution,
@@ -31,13 +33,13 @@ import {
   type SessionHandoffEligibility,
 } from '@/session/handoff/resolveSessionHandoffEligibility';
 import {
-  canonicalizeLinkedDirectSessionSource,
-  resolveDirectSessionLinkIdentity,
-  type CanonicalizedDirectSessionSourceResult,
-} from './directSessionSourceCanonicalization';
+  canonicalizeLinkedExternalSessionSource,
+  resolveExternalSessionLinkIdentity,
+  type CanonicalizedExternalSessionSourceResult,
+} from './externalSessionSourceCanonicalization';
 import { emitBridgeLifecycleHookEventBestEffort } from '@/agent/runtime/bridges/_shared/emitBridgeLifecycleHookEventBestEffort';
 import type { SessionHostBridgeContract } from './sessionBridgeContract';
-import type { DirectSessionLinkIdentity } from '@/session/external/providerOps';
+import type { ExternalSessionLinkIdentity } from '@/session/external/providerOps';
 import {
   isHostSessionRuntimePlan,
   runHostSessionRuntimePlan,
@@ -93,6 +95,21 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     return { ...record, providerMessageMetaEnricher: enricher };
   }
 
+  private resolveSessionStateCapabilities(resolution: Awaited<ReturnType<typeof resolveBackendEngineAdapterResolution>>): SessionStateCapabilitiesV1 {
+    const facetCapabilities = resolution?.engineAdapter.facets?.sessionState?.capabilities;
+    if (facetCapabilities) {
+      const parsed = SessionStateCapabilitiesV1Schema.safeParse(facetCapabilities);
+      return parsed.success ? parsed.data : {};
+    }
+    const backendCapabilities = resolution?.backend.capabilities as Readonly<Record<string, unknown>> | undefined;
+    const sessionCapabilities = backendCapabilities?.session;
+    const stateCapabilities = sessionCapabilities && typeof sessionCapabilities === 'object'
+      ? (sessionCapabilities as Readonly<Record<string, unknown>>).state
+      : undefined;
+    const parsed = SessionStateCapabilitiesV1Schema.safeParse(stateCapabilities);
+    return parsed.success ? parsed.data : {};
+  }
+
   async createSessionRuntime(backendId: string, params: unknown) {
     const resolution = await resolveBackendEngineAdapterResolution(
       backendId,
@@ -105,8 +122,21 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     const injectedParams = this.injectProviderMessageMetaEnricher(params, resolution.engineAdapter.messageMeta);
     const runtime = await resolution.engineAdapter.runtimeCore.createSessionRuntime(injectedParams);
     const canonicalRuntime = this.requireCanonicalSessionRuntime(runtime, backendId);
+    const sessionStateFacet = resolution.engineAdapter.facets?.sessionState;
+    const planWithSessionState = sessionStateFacet
+      ? {
+          ...canonicalRuntime,
+          config: {
+            ...canonicalRuntime.config,
+            sessionState: {
+              facet: sessionStateFacet,
+              capabilities: this.resolveSessionStateCapabilities(resolution),
+            },
+          },
+        }
+      : canonicalRuntime;
     return withHostSessionRuntimeIdentityPublication({
-      plan: canonicalRuntime,
+      plan: planWithSessionState,
       identity: buildRuntimePublicationFromEngineResolution(resolution, {
         descriptorSchemaId: 'happier.hostSessionRuntimeIdentity',
         includeExecutionRun: false,
@@ -145,23 +175,23 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     return await resolveSessionForkBackendTarget(params);
   }
 
-  async resolveDirectSessionLinkIdentity(params: Readonly<{
-    providerId: DirectSessionsProviderId;
+  async resolveExternalSessionLinkIdentity(params: Readonly<{
+    providerId: ExternalSessionsProviderId;
     remoteSessionId: string;
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     runtimeDescriptor?: RuntimeDescriptorV1 | null;
     metadata?: Record<string, unknown>;
-  }>): Promise<DirectSessionLinkIdentity> {
-    return await resolveDirectSessionLinkIdentity(params);
+  }>): Promise<ExternalSessionLinkIdentity> {
+    return await resolveExternalSessionLinkIdentity(params);
   }
 
-  async canonicalizeLinkedDirectSessionSource(params: Readonly<{
-    providerId: DirectSessionsProviderId;
+  async canonicalizeLinkedExternalSessionSource(params: Readonly<{
+    providerId: ExternalSessionsProviderId;
     metadata: Record<string, unknown>;
     remoteSessionId: string;
-    source: DirectSessionsSource;
-  }>): Promise<CanonicalizedDirectSessionSourceResult> {
-    return await canonicalizeLinkedDirectSessionSource(params);
+    source: ExternalSessionsSource;
+  }>): Promise<CanonicalizedExternalSessionSourceResult> {
+    return await canonicalizeLinkedExternalSessionSource(params);
   }
 
   async emitLifecycleHookEvent(params: Readonly<{

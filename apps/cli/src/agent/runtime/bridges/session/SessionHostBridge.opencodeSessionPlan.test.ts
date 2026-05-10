@@ -31,7 +31,7 @@ describe('SessionHostBridge (opencode session plan)', () => {
     });
     resolveBackendExecutionSurfacesMock.mockResolvedValue({
       terminalRuntime: null,
-      directSessions: null,
+      externalSessions: null,
       attach: null,
       sessionHandoff: null,
     });

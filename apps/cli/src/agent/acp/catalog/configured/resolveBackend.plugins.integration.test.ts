@@ -90,7 +90,7 @@ async function writePluginFixture(rootDir: string): Promise<void> {
               },
             },
             capabilities: {
-              directSessions: true,
+              externalSessions: true,
             },
             runtimeAdapters: [],
           },
@@ -117,7 +117,7 @@ async function writePluginFixture(rootDir: string): Promise<void> {
               },
             },
             capabilities: {
-              directSessions: true,
+              externalSessions: true,
             },
             runtimeAdapters: [],
           },

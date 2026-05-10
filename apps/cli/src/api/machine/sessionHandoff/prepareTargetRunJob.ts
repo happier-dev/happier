@@ -2,7 +2,7 @@ import os from 'node:os';
 
 import { configuration } from '@/configuration';
 import {
-  DirectSessionsSourceSchema,
+  ExternalSessionsSourceSchema,
   type RuntimeDescriptorV1,
   type SessionHandoffPrepareTargetRequest,
   type SessionHandoffPrepareTargetResultGetResponse,
@@ -427,7 +427,7 @@ export async function runSessionHandoffPrepareTargetJob(
             ? 'persisted'
             : 'direct',
       );
-      const directSource = DirectSessionsSourceSchema.parse(imported.directSource);
+      const directSource = ExternalSessionsSourceSchema.parse(imported.directSource);
       const readyForCutoverStatusBase: SessionHandoffStatus = {
         ...pendingStatus,
         status: 'ready_for_cutover',

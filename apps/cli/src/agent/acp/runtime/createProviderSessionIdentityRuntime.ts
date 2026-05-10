@@ -20,7 +20,7 @@ import {
 
 type CatalogProviderSessionIdentityPublication =
   | Readonly<{
-      sessionIdMetadataKey: keyof Metadata & string;
+      sessionIdMetadataKey: VendorResumeIdField;
       agentId?: never;
       vendorResumeIdField?: never;
     }>
@@ -73,6 +73,7 @@ export function createCatalogProviderSessionIdentityRuntime<TBackendOptions exte
       const updateSessionRuntimeIdentity = createSessionRuntimeIdentityMetadataUpdater(params.sessionIdMetadataKey);
       return (nextSessionId: string | null) => {
         updateSessionRuntimeIdentity({
+          sessionId: params.session.sessionId,
           getSessionId: () => nextSessionId,
           updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
           lastPublished: lastPublishedSessionId,

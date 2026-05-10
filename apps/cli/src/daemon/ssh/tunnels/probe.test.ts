@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 async function loadModule() {
-  return await import('./probeSshTunnel').catch(() => null);
+  return await import('./probe').catch(() => null);
 }
 
 describe('probeSshTunnel', () => {

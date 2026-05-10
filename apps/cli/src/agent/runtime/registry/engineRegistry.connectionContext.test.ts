@@ -185,7 +185,7 @@ async function capturePluginContext(params?: Parameters<typeof resolveCliEngineR
     resolvePluginRuntimeAdapterSurfacesMock.mockResolvedValue({
         surfaces: {
             terminalRuntime: null,
-            directSessions: null,
+            externalSessions: null,
             attach: null,
             sessionHandoff: null,
         },

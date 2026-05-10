@@ -46,6 +46,7 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
         updatedAt: 458,
         overrides: {
           speed: { updatedAt: 458, value: 'fast' },
+          sandbox: { updatedAt: 458, value: 'workspace-write' },
         },
       },
       acpSessionModesV1: {
@@ -85,8 +86,13 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
         v: 1,
         updatedAt: 458,
         overrides: {
+          speed: { updatedAt: 458, value: 'fast' },
           sandbox: { updatedAt: 458, value: 'workspace-write' },
         },
+      },
+      summary: {
+        text: 'Parent session title',
+        updatedAt: 464,
       },
     } as any);
 
@@ -141,6 +147,7 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
         updatedAt: 458,
         overrides: {
           speed: { updatedAt: 458, value: 'fast' },
+          sandbox: { updatedAt: 458, value: 'workspace-write' },
         },
       },
       acpSessionModesV1: {
@@ -180,8 +187,13 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
         v: 1,
         updatedAt: 458,
         overrides: {
+          speed: { updatedAt: 458, value: 'fast' },
           sandbox: { updatedAt: 458, value: 'workspace-write' },
         },
+      },
+      summary: {
+        text: 'Parent session title',
+        updatedAt: 464,
       },
     });
   });
@@ -219,8 +231,63 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
 
     expect(result.spawn).toEqual({});
     expect(result.metadata).toEqual({
-      sessionModeOverrideV1: { v: 1, updatedAt: 101, modeId: null },
+      sessionModeOverrideV1: { v: 1, updatedAt: 202, modeId: null },
       acpSessionModeOverrideV1: { v: 1, updatedAt: 202, modeId: null },
+    });
+  });
+
+  it('uses the newest ACP session-mode alias for both metadata and spawn inheritance', () => {
+    const result = resolveForkInheritedOverridesFromMetadata({
+      sessionModeOverrideV1: { v: 1, updatedAt: 100, modeId: 'build' },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 200, modeId: 'plan' },
+    } as any);
+
+    expect(result.spawn).toEqual({
+      agentModeId: 'plan',
+      agentModeUpdatedAt: 200,
+    });
+    expect(result.metadata).toEqual({
+      sessionModeOverrideV1: { v: 1, updatedAt: 200, modeId: 'plan' },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 200, modeId: 'plan' },
+    });
+  });
+
+  it('inherits ACP config-option overrides per newest alias entry', () => {
+    const result = resolveForkInheritedOverridesFromMetadata({
+      sessionConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 100,
+        overrides: {
+          effort: { updatedAt: 100, value: 'medium' },
+          speed: { updatedAt: 90, value: 'fast' },
+        },
+      },
+      acpConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 200,
+        overrides: {
+          effort: { updatedAt: 200, value: 'high' },
+        },
+      },
+    } as any);
+
+    expect(result.metadata).toEqual({
+      sessionConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 200,
+        overrides: {
+          effort: { updatedAt: 200, value: 'high' },
+          speed: { updatedAt: 90, value: 'fast' },
+        },
+      },
+      acpConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 200,
+        overrides: {
+          effort: { updatedAt: 200, value: 'high' },
+          speed: { updatedAt: 90, value: 'fast' },
+        },
+      },
     });
   });
 });

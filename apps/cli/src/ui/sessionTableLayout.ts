@@ -42,7 +42,7 @@ export type SessionSelectorColumnLayout = Readonly<{
 export function resolveSessionSelectorColumnLayout(termWidth: number): SessionSelectorColumnLayout | null {
   const indicatorWidth = 2;
   const agentWidth = 8;
-  const updatedWidth = 4;
+  const updatedWidth = 7;
   const idWidth = 9;
   const separatorWidth = 1;
   const fixedWidths = indicatorWidth + agentWidth + updatedWidth + idWidth;

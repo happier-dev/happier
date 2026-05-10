@@ -78,6 +78,34 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     expect(session.agentState.requests['fs-write-1']).toBeFalsy();
   });
 
+  it('denies session title tool calls when coding prompt title updates are disabled', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, {
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'disabled',
+          responseOptions: 'agent',
+        },
+      } as any),
+    });
+
+    await expect(handler.handleToolCall('title-1', 'mcp__happier__change_title', { title: 'Renamed' })).resolves.toEqual({
+      decision: 'denied',
+    });
+    await expect(handler.handleToolCall('title-2', 'happier_action_execute', { actionId: 'session.title.set' })).resolves.toEqual({
+      decision: 'denied',
+    });
+    expect(session.agentState.requests['title-1']).toBeFalsy();
+    expect(session.agentState.requests['title-2']).toBeFalsy();
+    expect(session.agentState.completedRequests['title-1']).toMatchObject({
+      tool: 'mcp__happier__change_title',
+      status: 'denied',
+      decision: 'denied',
+    });
+  });
+
   it('exposes immediate decisions for always-auto-approved tools', () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });

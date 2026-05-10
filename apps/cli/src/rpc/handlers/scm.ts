@@ -40,6 +40,12 @@ import type {
     ScmPullRequestOpenComposeResponse,
     ScmPullRequestOpenOrReuseRequest,
     ScmPullRequestOpenOrReuseResponse,
+    ScmHostingRepositoryDescribePublishTargetsRequest,
+    ScmHostingRepositoryDescribePublishTargetsResponse,
+    ScmHostingRepositoryPublishRequest,
+    ScmHostingRepositoryPublishResponse,
+    ScmRepositoryCloneInput,
+    ScmRepositoryCloneOutput,
     ScmRepositoryInitRequest,
     ScmRepositoryInitResponse,
     ScmRepositoryRemoveIndexLockRequest,
@@ -72,6 +78,9 @@ import {
     runScmRoute,
 } from '@/scm/rpc/dispatch';
 import {
+    runScmHostingRepositoryDescribePublishTargetsRoute,
+    runScmHostingRepositoryPublishRoute,
+    runScmRepositoryCloneRoute,
     runScmRepositoryInitRoute,
     runScmRepositoryRemoveIndexLockRoute,
 } from '@/scm/rpc/repositoryProvisioningDispatch';
@@ -475,6 +484,33 @@ export function registerScmHandlers(
         RPC_METHODS.SCM_REPOSITORY_INIT,
         async (request) =>
             runScmRepositoryInitRoute({
+                request,
+                ...routeBase,
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmRepositoryCloneInput, ScmRepositoryCloneOutput>(
+        RPC_METHODS.SCM_REPOSITORY_CLONE,
+        async (request) =>
+            runScmRepositoryCloneRoute({
+                request,
+                ...routeBase,
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse>(
+        RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS,
+        async (request) =>
+            runScmHostingRepositoryDescribePublishTargetsRoute({
+                request,
+                ...routeBase,
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse>(
+        RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH,
+        async (request) =>
+            runScmHostingRepositoryPublishRoute({
                 request,
                 ...routeBase,
             })

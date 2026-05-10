@@ -64,7 +64,7 @@ export async function importOpenCodeSessionBundle(params: Readonly<{
         const launch = requireProviderCliLaunchSpec('opencode', { processEnv: params.processEnv });
         await execFile(launch.command, [...launch.args, 'import', importPath]);
 
-        // Direct sessions currently only support OpenCode's server transport (`DirectSessionsSource.kind=opencodeServer`).
+        // Direct sessions currently only support OpenCode's server transport (`ExternalSessionsSource.kind=opencodeServer`).
         // If an exported bundle claims ACP affinity, treat it as a requested/preferred mode and normalize the imported
         // runtime envelope to server so downstream direct-session linking cannot end up in an impossible ACP state.
         const backendMode = params.bundle.affinity.backendMode === 'server'
@@ -83,7 +83,7 @@ export async function importOpenCodeSessionBundle(params: Readonly<{
                 directory: params.targetPath,
             },
             ...(backendMode ? {
-                agentRuntimeDescriptorV1: buildOpenCodeAgentRuntimeDescriptor({
+                runtimeDescriptorV1: buildOpenCodeAgentRuntimeDescriptor({
                     backendMode,
                     vendorSessionId: params.bundle.remoteSessionId,
                     ...(params.bundle.affinity.serverBaseUrlExplicit ? { serverBaseUrl: params.bundle.affinity.serverBaseUrl } : {}),

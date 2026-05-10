@@ -10,8 +10,8 @@ import {
 } from '@/daemon/connectedServices/descriptors/buildConnectedAccountCredentialRecord';
 import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
 import {
-  buildConnectedServiceCredentialRecord,
   CONNECTED_ACCOUNT_DESCRIPTORS,
+  ConnectedAccountDescriptorSchema,
   requireConnectedAccountDescriptor,
   sealConnectedServiceCredentialCiphertext,
   type ConnectedAccountDescriptor,
@@ -67,7 +67,7 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
       process.exit(1);
     }
 
-    await handleConnectVendor(visibleTarget, options);
+    await handleConnectVendor(visibleTarget, options, registry);
 }
 
 async function loadConnectTargetsWithRegistry(
@@ -75,12 +75,13 @@ async function loadConnectTargetsWithRegistry(
 ): Promise<Readonly<{ targets: CloudConnectTarget[]; registry: ResolvedContributionRegistry }>> {
   const targets: CloudConnectTarget[] = [];
   const registry = await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir });
+  const descriptors = resolveConnectDescriptorsFromRegistry(registry);
   for (const entry of Object.values(registry.catalogEntriesById)) {
     if (!entry.getCloudConnectTarget) continue;
     targets.push(await entry.getCloudConnectTarget());
   }
   const targetIds = new Set(targets.map((target) => target.id));
-  for (const descriptor of CONNECTED_ACCOUNT_DESCRIPTORS) {
+  for (const descriptor of descriptors) {
     for (const mode of descriptor.connectModes) {
       if (targetIds.has(mode.targetId)) continue;
       targets.push(createDescriptorOnlyConnectTarget(descriptor, mode.targetId));
@@ -92,6 +93,21 @@ async function loadConnectTargetsWithRegistry(
     targets: params.includeExperimental ? targets : targets.filter((t) => t.status === 'wired'),
     registry,
   };
+}
+
+function resolveConnectDescriptorsFromRegistry(
+  registry: Pick<ResolvedContributionRegistry, 'connectedAccountDescriptors'>,
+): readonly ConnectedAccountDescriptor[] {
+  const descriptorsById = new Map<string, ConnectedAccountDescriptor>();
+  for (const descriptor of CONNECTED_ACCOUNT_DESCRIPTORS) {
+    descriptorsById.set(descriptor.id, descriptor);
+  }
+  for (const contribution of registry.connectedAccountDescriptors ?? []) {
+    const parsed = ConnectedAccountDescriptorSchema.safeParse(contribution.definition);
+    if (!parsed.success) continue;
+    descriptorsById.set(parsed.data.id, parsed.data);
+  }
+  return [...descriptorsById.values()];
 }
 
 function createDescriptorOnlyConnectTarget(
@@ -194,7 +210,11 @@ function resolveMissingTokenError(tokenKind: ConnectedAccountTokenKind, missingV
         : 'Missing API key');
 }
 
-async function handleConnectVendor(target: CloudConnectTarget, options: ConnectParsedOptions): Promise<void> {
+async function handleConnectVendor(
+  target: CloudConnectTarget,
+  options: ConnectParsedOptions,
+  registry: ResolvedContributionRegistry,
+): Promise<void> {
     console.log(`\n${banner(`Connecting ${target.vendorDisplayName}`, { subtitle: 'Happier cloud' })}\n`);
 
     // Check if authenticated
@@ -212,9 +232,11 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
     let postConnectPayload: unknown | null = null;
 
     const record = await (async () => {
-      const authIntent = resolveConnectAuthIntent({ targetId: target.id, options });
+      const descriptors = resolveConnectDescriptorsFromRegistry(registry);
+      const authIntent = resolveConnectAuthIntent({ targetId: target.id, options, descriptors });
       const serviceId: ConnectedServiceId = authIntent.serviceId;
-      const descriptor = requireConnectedAccountDescriptor(serviceId);
+      const descriptor = descriptors.find((candidate) => candidate.id === serviceId)
+        ?? requireConnectedAccountDescriptor(serviceId);
       if (authIntent.kind === 'token') {
         if (!descriptor.tokenSetup) {
           throw new Error(`Connected account does not support token setup: ${serviceId}`);
@@ -235,6 +257,7 @@ async function handleConnectVendor(target: CloudConnectTarget, options: ConnectP
           token,
           providerAccountId: identity,
           providerEmail: identity,
+          descriptor,
         });
       }
 

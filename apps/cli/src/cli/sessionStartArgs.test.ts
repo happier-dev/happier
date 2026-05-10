@@ -88,6 +88,16 @@ describe('parseSessionStartArgs', () => {
     expect(parsed.modelUpdatedAt).toBe(123);
   });
 
+  it('ignores obsolete child account settings version hints', () => {
+    const parsed = parseWithTrap(['happier', '--account-settings-version-hint', '0']);
+    expect(parsed).not.toHaveProperty('accountSettingsVersionHint');
+  });
+
+  it('ignores malformed obsolete child account settings version hints', () => {
+    const trapped = withProcessTrap(() => parseSessionStartArgs(['happier', '--account-settings-version-hint', '-1']));
+    expect(trapped.error).toBeNull();
+  });
+
   it('treats --permission-mode plan as a deprecated alias for --agent-mode plan on OpenCode', () => {
     const parsed = parseSessionStartArgs(['happier', '--permission-mode', 'plan']);
     const resolved = applyDeprecatedSessionStartAliasesForAgent({

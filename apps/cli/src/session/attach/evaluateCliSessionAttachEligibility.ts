@@ -2,6 +2,7 @@ import {
   resolveAgentIdFromSessionMetadata,
   type AgentId,
 } from '@happier-dev/agents';
+import { compareMachineHosts } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
@@ -66,6 +67,12 @@ function readMachineId(metadata: Record<string, unknown> | null): string | null 
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+function readHost(metadata: Record<string, unknown> | null): string | null {
+  if (!metadata) return null;
+  const value = metadata.host;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
 function resolveAgentId(metadata: Record<string, unknown> | null): AgentId | null {
   return metadata ? resolveAgentIdFromSessionMetadata(metadata) : null;
 }
@@ -120,6 +127,15 @@ function buildTerminalAttachEligibility(params: Readonly<{
         metadata: params.metadata,
       };
     }
+    return {
+      eligible: true,
+      agentId: resolveAgentId(params.metadata),
+      attachStrategy: 'terminal_host',
+      attachScope: 'local',
+      terminal: metadataTerminal,
+      plan,
+      metadata: params.metadata,
+    };
   }
 
   return {
@@ -176,6 +192,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   }
 
   const sessionMachineId = readMachineId(metadata);
+  const sessionHost = readHost(metadata);
   const hasLocalTerminalEvidence = params.localAttachmentInfo !== null;
   const hasSyncedTerminalMetadata = asRecord(metadata?.terminal) !== null;
   const backendId = resolveCliSessionAttachBackendId(metadata);
@@ -221,6 +238,17 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   }
 
   const terminalRuntimeOps = backendExecutionSurfaces?.terminalRuntime ?? null;
+  const sameMachineIdentity = Boolean(sessionMachineId && params.currentMachineId && sessionMachineId === params.currentMachineId);
+  const sameHostAsCurrentMachine = compareMachineHosts(sessionHost, params.currentMachineHost ?? null);
+
+  if (hasLocalTerminalEvidence || (hasSyncedTerminalMetadata && sessionMachineId && (sameMachineIdentity || sameHostAsCurrentMachine))) {
+    return buildTerminalAttachEligibility({
+      metadata,
+      localAttachmentInfo: params.localAttachmentInfo,
+      insideTmux: params.insideTmux,
+      currentTmuxSocketPath: params.currentTmuxSocketPath ?? null,
+    });
+  }
 
   if (!params.currentMachineId && !params.localAttachmentInfo) {
     return {
@@ -248,24 +276,6 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
       reason: 'Session belongs to another machine and cannot be attached from this computer.',
       metadata,
     };
-  }
-
-  if (hasLocalTerminalEvidence) {
-    return buildTerminalAttachEligibility({
-      metadata,
-      localAttachmentInfo: params.localAttachmentInfo,
-      insideTmux: params.insideTmux,
-      currentTmuxSocketPath: params.currentTmuxSocketPath ?? null,
-    });
-  }
-
-  if (hasSyncedTerminalMetadata) {
-    return buildTerminalAttachEligibility({
-      metadata,
-      localAttachmentInfo: params.localAttachmentInfo,
-      insideTmux: params.insideTmux,
-      currentTmuxSocketPath: params.currentTmuxSocketPath ?? null,
-    });
   }
 
   if (!terminalRuntimeOps) {

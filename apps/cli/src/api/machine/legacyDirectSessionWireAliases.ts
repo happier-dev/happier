@@ -1,19 +1,19 @@
 import {
   type ActionExecuteResult,
-  DirectSessionTakeoverPersistRequestSchema,
-  DirectSessionTakeoverRequestSchema,
-  type DirectSessionTakeoverPersistResponse,
-  type DirectSessionTakeoverResponse,
+  ExternalSessionTakeoverPersistRequestSchema as DirectSessionTakeoverPersistRequestSchema,
+  ExternalSessionTakeoverRequestSchema as DirectSessionTakeoverRequestSchema,
+  type ExternalSessionTakeoverPersistResponse as DirectSessionTakeoverPersistResponse,
+  type ExternalSessionTakeoverResponse as DirectSessionTakeoverResponse,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
-  mapDirectSessionsTakeoverPersistToExternalSessionTakeoverInputV1,
-  mapDirectSessionsTakeoverToExternalSessionTakeoverInputV1,
+  mapExternalSessionsTakeoverPersistToExternalSessionTakeoverInputV1 as mapDirectSessionsTakeoverPersistToExternalSessionTakeoverInputV1,
+  mapExternalSessionsTakeoverToExternalSessionTakeoverInputV1 as mapDirectSessionsTakeoverToExternalSessionTakeoverInputV1,
 } from '@happier-dev/protocol/sessions';
 
 import {
-  directSessionsError,
-  mapActionFailureToDirectSessionsError,
+  externalSessionsError as directSessionsError,
+  mapActionFailureToExternalSessionsError as mapActionFailureToDirectSessionsError,
   mapExternalTakeoverResultToDirectTakeoverPersistResponse,
   mapExternalTakeoverResultToDirectTakeoverResponse,
   type ExternalSessionTakeoverActionInput,

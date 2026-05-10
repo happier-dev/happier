@@ -246,6 +246,64 @@ describe('CodexLikePermissionHandler', () => {
     );
   });
 
+  it('denies session_title_set when coding prompt title updates are disabled', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({
+      session: session as any,
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'disabled',
+          responseOptions: 'agent',
+        },
+      } as any),
+    });
+
+    const result = await handler.handleToolCall('tool-1', 'mcp__happier__session_title_set', { title: 'Renamed' });
+
+    expect(result.decision).toBe('denied');
+    expect(session.agentState.requests['tool-1']).toBeUndefined();
+    expect(session.agentState.completedRequests['tool-1']).toEqual(
+      expect.objectContaining({
+        tool: 'mcp__happier__session_title_set',
+        status: 'denied',
+        decision: 'denied',
+      }),
+    );
+  });
+
+  it('denies Happier shell-bridge title calls when coding prompt title updates are disabled', async () => {
+    const session = new FakeSession();
+    const handler = new CodexLikePermissionHandler({
+      session: session as any,
+      logPrefix: '[Test]',
+      getAccountSettings: () => ({
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'disabled',
+          responseOptions: 'agent',
+        },
+      } as any),
+    });
+
+    const result = await handler.handleToolCall('tool-1', 'Bash', {
+      command:
+        `happier tools call --session-id cmmfivqgm002d8o1ug15b02o1 --directory /tmp/workspace ` +
+        `--source happier --tool change_title --args-json '{"title":"Blocked"}' --json`,
+    });
+
+    expect(result.decision).toBe('denied');
+    expect(session.agentState.requests['tool-1']).toBeUndefined();
+    expect(session.agentState.completedRequests['tool-1']).toEqual(
+      expect.objectContaining({
+        tool: 'Bash',
+        status: 'denied',
+        decision: 'denied',
+      }),
+    );
+  });
+
   it('treats setPermissionMode without updatedAt as provisional when newer metadata exists', async () => {
     const session = new FakeSession();
     session.setMetadataSnapshot({ permissionMode: 'yolo', permissionModeUpdatedAt: 10 });

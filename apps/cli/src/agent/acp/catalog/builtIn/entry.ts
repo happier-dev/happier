@@ -7,7 +7,7 @@ import { createBuiltInCliDetect } from './detect';
 import { loadBuiltInRuntimeOwners } from './runtimeOwners';
 
 type BuiltInAcpEntryOverrides = Readonly<{
-  getDirectSessionProviderOps?: AgentCatalogEntry['getDirectSessionProviderOps'];
+  getExternalSessionProviderOps?: AgentCatalogEntry['getExternalSessionProviderOps'];
   getConnectedServicesMaterializer?: AgentCatalogEntry['getConnectedServicesMaterializer'];
   getProviderAttachOps?: AgentCatalogEntry['getProviderAttachOps'];
   getTerminalRuntimeOps?: AgentCatalogEntry['getTerminalRuntimeOps'];
@@ -51,8 +51,8 @@ export function createBuiltInEntry(
     },
     getCliDetect: async () => createBuiltInCliDetect(agentId),
     getCliAuthSpec: async () => createBuiltInCliAuthSpec(agentId),
-    ...(overrides.getDirectSessionProviderOps
-      ? { getDirectSessionProviderOps: overrides.getDirectSessionProviderOps }
+    ...(overrides.getExternalSessionProviderOps
+      ? { getExternalSessionProviderOps: overrides.getExternalSessionProviderOps }
       : {}),
     ...(overrides.getConnectedServicesMaterializer
       ? { getConnectedServicesMaterializer: overrides.getConnectedServicesMaterializer }

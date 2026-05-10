@@ -4,10 +4,9 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import { emitCanonicalTurnDiffTool } from '@/agent/runtime/emitCanonicalTurnDiffTool';
 import type { PromptLoopCheckpointLifecycle } from '@/agent/runtime/runPermissionModePromptLoop';
-import { defaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
-import { resolveScmSelection } from '@/scm/resolveScmSelection';
 import type { ScmBackendContext } from '@/scm/types';
 import { buildRepositoryCheckpointRefs, projectRepositoryCheckpointTurnChangeSet } from '@/scm/checkpoints';
+import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
 import type {
     RepositoryCheckpointAttributionScope,
     RepositoryCheckpointDiffBaseRefSource,
@@ -16,11 +15,6 @@ import type {
     RepositoryCheckpointRefs,
     RepositoryCheckpointTurnProjectionUnavailableReason,
 } from '@/scm/checkpoints';
-import {
-    aliasGitRepositoryCheckpoint,
-    captureGitRepositoryCheckpoint,
-    diffGitRepositoryCheckpoints,
-} from '@/scm/providers/git/checkpoints';
 import { logger } from '@/ui/logger';
 import { defaultWorktreeAttributionRegistry } from './worktreeAttributionRegistry';
 import type { WorktreeAttributionInterval, WorktreeAttributionRegistry } from './worktreeAttributionRegistry';
@@ -47,10 +41,9 @@ async function resolveGitCheckpointContext(input: Readonly<{
     runtimeDirectory: string;
     sessionId: string;
 }>): Promise<ActiveCheckpointBinding> {
-    const selection = await resolveScmSelection({
-        workingDirectory: input.runtimeDirectory,
+    const context = await resolveGitCheckpointBackendContext({
         cwd: input.runtimeDirectory,
-        registry: defaultScmBackendRegistry,
+        workingDirectory: input.runtimeDirectory,
     });
     const unavailableBinding = (reason: RepositoryCheckpointTurnProjectionUnavailableReason, message: string): ActiveCheckpointBinding => ({
         scopeId: buildScopeId({
@@ -67,23 +60,23 @@ async function resolveGitCheckpointContext(input: Readonly<{
         unavailableReason: reason,
         unavailableError: message,
     });
-    if (!selection) {
+    if (!context) {
         return unavailableBinding('not_repo', 'Repository checkpoint capture is unavailable outside a source-control repository.');
     }
-    if (selection.context.detection.mode !== '.git') {
+    if (context.detection.mode !== '.git') {
         return unavailableBinding('unsupported_scm', 'Repository checkpoint capture is currently available for Git repositories only.');
     }
-    if (!selection.context.detection.rootPath) {
+    if (!context.detection.rootPath) {
         return unavailableBinding('missing_repo_root', 'Repository checkpoint capture requires a resolved Git repository root.');
     }
     const scopeId = buildScopeId({
         sessionId: input.sessionId,
-        repoRoot: selection.context.detection.rootPath,
+        repoRoot: context.detection.rootPath,
     });
     return {
         scopeId,
-        context: selection.context,
-        repoRoot: selection.context.detection.rootPath,
+        context,
+        repoRoot: context.detection.rootPath,
         refs: buildRepositoryCheckpointRefs({
             scopeId,
         }),
@@ -225,7 +218,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
             bindingsByMessageId.set(messageId, binding);
             const messageStart = refs.messageStart;
             if (!messageStart || !binding.context) return;
-            const captured = await captureGitRepositoryCheckpoint({
+            const captured = await gitCheckpointAdapter.capture({
                 context: binding.context,
                 checkpointRef: messageStart,
             });
@@ -263,7 +256,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                 });
                 return;
             }
-            const aliased = await aliasGitRepositoryCheckpoint({
+            const aliased = await gitCheckpointAdapter.alias({
                 context: binding.context,
                 sourceRef: refs.messageStart,
                 targetRef: refs.turnStart,
@@ -321,7 +314,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     return;
                 }
                 if (!refs.turnFinal) return;
-                const finalized = await captureGitRepositoryCheckpoint({
+                const finalized = await gitCheckpointAdapter.capture({
                     context: binding.context,
                     checkpointRef: refs.turnFinal,
                 });
@@ -360,7 +353,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     });
                     return;
                 }
-                const diff = await diffGitRepositoryCheckpoints({
+                const diff = await gitCheckpointAdapter.diff({
                     context: binding.context,
                     baseRef,
                     finalRef: refs.turnFinal,

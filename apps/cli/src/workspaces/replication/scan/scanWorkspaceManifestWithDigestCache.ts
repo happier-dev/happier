@@ -2,8 +2,8 @@ import type { ScmBackendRegistry } from '@/scm/registry';
 import {
   scanWorkspaceManifest,
   type ScannedWorkspaceFile,
-} from '@/scm/sourceController/workspaceExportPackaging/scanWorkspaceManifest';
-import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/sourceController/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+} from '@/scm/workspace/workspaceExportPackaging/scanWorkspaceManifest';
+import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 
 import {
   createWorkspaceReplicationDigestCacheStore,

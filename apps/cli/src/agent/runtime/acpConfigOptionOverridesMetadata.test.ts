@@ -1,10 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeNextMetadataConfigOptionOverrideV1 } from '@happier-dev/agents';
+import { createSessionStateFieldMetadataUpdater } from '@happier-dev/agents/session/state/metadataPatch';
 
-describe('computeNextMetadataConfigOptionOverrideV1', () => {
+function writeAcpConfigOptionOverride(params: Readonly<{
+  metadata: Record<string, unknown>;
+  configId: string;
+  value: string | number | boolean | null;
+  updatedAt: number;
+}>): Record<string, unknown> {
+  return createSessionStateFieldMetadataUpdater('intent.acpConfigOption', {
+    v: 1,
+    configId: params.configId,
+    value: params.value,
+    updatedAt: params.updatedAt,
+  })(params.metadata);
+}
+
+describe('session-state ACP config option metadata binding', () => {
   it('stores a config option override when updatedAt is newer', () => {
-    const next = computeNextMetadataConfigOptionOverrideV1({
+    const next = writeAcpConfigOptionOverride({
       metadata: {},
       configId: 'telemetry',
       value: 'true',
@@ -45,7 +59,7 @@ describe('computeNextMetadataConfigOptionOverrideV1', () => {
       },
     };
 
-    const next = computeNextMetadataConfigOptionOverrideV1({
+    const next = writeAcpConfigOptionOverride({
       metadata: base,
       configId: 'telemetry',
       value: 'false',
@@ -57,14 +71,14 @@ describe('computeNextMetadataConfigOptionOverrideV1', () => {
   });
 
   it('adds a second configId override without deleting the first', () => {
-    const base = computeNextMetadataConfigOptionOverrideV1({
+    const base = writeAcpConfigOptionOverride({
       metadata: {},
       configId: 'telemetry',
       value: 'true',
       updatedAt: 10,
     });
 
-    const next = computeNextMetadataConfigOptionOverrideV1({
+    const next = writeAcpConfigOptionOverride({
       metadata: base,
       configId: 'mode',
       value: 'ask',
@@ -89,17 +103,21 @@ describe('computeNextMetadataConfigOptionOverrideV1', () => {
     });
   });
 
-  it('ignores non-string config option values', () => {
-    const base = { existing: true } as any;
-
-    const next = computeNextMetadataConfigOptionOverrideV1({
-      metadata: base,
+  it('stores typed config option values', () => {
+    const next = writeAcpConfigOptionOverride({
+      metadata: {},
       configId: 'telemetry',
-      // ACP spec uses string value IDs for config options.
-      value: true as any,
+      value: true,
       updatedAt: 10,
     });
 
-    expect(next).toEqual(base);
+    expect((next as any).sessionConfigOptionOverridesV1.overrides.telemetry).toEqual({
+      updatedAt: 10,
+      value: true,
+    });
+    expect((next as any).acpConfigOptionOverridesV1.overrides.telemetry).toEqual({
+      updatedAt: 10,
+      value: true,
+    });
   });
 });

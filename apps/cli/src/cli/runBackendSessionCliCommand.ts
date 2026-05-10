@@ -173,6 +173,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
         refresh: resolveSessionStartAccountSettingsRefreshMode({
           mode: accountSettingsBootstrapMode,
           refreshRequested: refreshSettings,
+          minSettingsVersion: null,
         }),
       });
       accountSettingsContext = await resolveSessionStartAccountSettingsContext({

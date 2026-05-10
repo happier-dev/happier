@@ -40,7 +40,7 @@ describe('importSessionHandoffProviderBundle', () => {
         }));
         resolveBackendExecutionSurfaces.mockResolvedValueOnce({
             terminalRuntime: null,
-            directSessions: null,
+            externalSessions: null,
             attach: null,
             sessionHandoff: {
                 exportBundle: vi.fn(),

@@ -96,8 +96,10 @@
     "@happier-dev/plugins-opencode",
     "@happier-dev/plugins-scm-azure-devops",
     "@happier-dev/plugins-scm-bitbucket",
+    "@happier-dev/plugins-scm-git",
     "@happier-dev/plugins-scm-github",
-    "@happier-dev/plugins-scm-gitlab"
+    "@happier-dev/plugins-scm-gitlab",
+    "@happier-dev/plugins-scm-sapling"
   ],
   "scripts": {
     "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit",
@@ -157,8 +159,10 @@
     "@happier-dev/plugins-opencode": "0.0.0",
     "@happier-dev/plugins-scm-azure-devops": "0.0.0",
     "@happier-dev/plugins-scm-bitbucket": "0.0.0",
+    "@happier-dev/plugins-scm-git": "0.0.0",
     "@happier-dev/plugins-scm-github": "0.0.0",
     "@happier-dev/plugins-scm-gitlab": "0.0.0",
+    "@happier-dev/plugins-scm-sapling": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
     "@happier-dev/transfers": "0.0.0",

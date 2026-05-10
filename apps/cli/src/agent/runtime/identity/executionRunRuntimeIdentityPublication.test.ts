@@ -5,7 +5,14 @@ import type {
   ExecutionRunHostRuntime,
   ExecutionRunHostRuntimeMessageHandler,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { withExecutionRunRuntimeIdentityPublication } from './executionRunRuntimeIdentityPublication';
+import {
+  createEmptyBackendExecutionSurfaces,
+  type EngineAdapterResolution,
+} from '@/agent/runtime/registry/engineRegistryTypes';
+import {
+  buildExecutionRunRuntimeIdentityPublication,
+  withExecutionRunRuntimeIdentityPublication,
+} from './executionRunRuntimeIdentityPublication';
 
 function createMinimalRuntime(): ExecutionRunHostRuntime {
   let handler: ExecutionRunHostRuntimeMessageHandler | null = null;
@@ -32,7 +39,67 @@ function createMinimalRuntime(): ExecutionRunHostRuntime {
   };
 }
 
+function createEngineResolution(
+  backendCapabilities: EngineAdapterResolution['backend']['capabilities'],
+): EngineAdapterResolution {
+  return {
+    backendId: 'acme.backend',
+    providerId: 'acme.provider',
+    provenance: 'external',
+    backend: {
+      id: 'acme.backend',
+      providerId: 'acme.provider',
+      provenance: 'external',
+      source: { kind: 'path' },
+      definition: {
+        kindVersion: 1,
+        id: 'acme.backend',
+        providerId: 'acme.provider',
+      },
+      runtimeKind: 'plugin',
+      capabilities: backendCapabilities,
+    },
+    provider: {
+      id: 'acme.provider',
+      provenance: 'external',
+      source: { kind: 'path' },
+      definition: {
+        kindVersion: 1,
+        id: 'acme.provider',
+        ownedBackendIds: ['acme.backend'],
+      },
+    },
+    engineAdapter: {
+      runtimeCore: {
+        createSessionRuntime() {
+          throw new Error('unused test runtime');
+        },
+        createExecutionRunBackend() {
+          return createMinimalRuntime();
+        },
+      },
+    },
+    executionSurfaces: createEmptyBackendExecutionSurfaces(),
+    diagnostics: [],
+  };
+}
+
 describe('withExecutionRunRuntimeIdentityPublication', () => {
+  it('derives top-level execution-run publication from nested backend capabilities', () => {
+    const identity = buildExecutionRunRuntimeIdentityPublication(
+      createEngineResolution({
+        executionRun: { supported: false },
+      }),
+    );
+
+    expect(identity.runtimeCapabilities).toEqual({
+      executionRun: { supported: false },
+      backend: {
+        executionRun: { supported: false },
+      },
+    });
+  });
+
   it('preserves optional ExecutionRunHostRuntime method presence', () => {
     const runtime = withExecutionRunRuntimeIdentityPublication({
       runtime: createMinimalRuntime(),

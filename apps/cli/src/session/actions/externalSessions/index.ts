@@ -25,10 +25,10 @@ export {
     executeExternalSessionTakeoverAction,
 } from './takeoverAction';
 export {
-    directSessionsError,
+    externalSessionsError,
     internalErrorResponse,
-    mapActionFailureToDirectSessionsError,
+    mapActionFailureToExternalSessionsError,
     mapExternalTakeoverResultToDirectTakeoverPersistResponse,
     mapExternalTakeoverResultToDirectTakeoverResponse,
-    type DirectSessionsErrorCode,
+    type ExternalSessionsErrorCode,
 } from './responseErrors';

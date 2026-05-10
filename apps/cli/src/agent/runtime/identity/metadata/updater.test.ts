@@ -128,4 +128,39 @@ describe('createSessionRuntimeIdentityMetadataUpdater', () => {
       createTestMetadata({ name: 'test', qwenSessionId: 'qwen-1' }),
     ]);
   });
+
+  it('uses the session-state vendor binding for provider-specific metadata keys', () => {
+    const updater = createSessionRuntimeIdentityMetadataUpdater('claudeSessionId');
+    const updates: Metadata[] = [];
+    const lastPublished = { value: null as string | null };
+
+    updater({
+      getSessionId: () => ' claude-1 ',
+      updateHappySessionMetadata: (fn) => {
+        updates.push(fn(createTestMetadata({ name: 'test' })));
+      },
+      lastPublished,
+    });
+
+    expect(updates).toEqual([
+      createTestMetadata({ name: 'test', claudeSessionId: 'claude-1' }),
+    ]);
+  });
+
+  it('passes the real happy session id into the session-state metadata port', () => {
+    const updater = createSessionRuntimeIdentityMetadataUpdater('claudeSessionId');
+    const updateSessionIds: string[] = [];
+    const lastPublished = { value: null as string | null };
+
+    updater({
+      sessionId: ' sess-happy-1 ',
+      getSessionId: () => 'claude-1',
+      updateHappySessionMetadata: (_fn, sessionId) => {
+        updateSessionIds.push(sessionId);
+      },
+      lastPublished,
+    });
+
+    expect(updateSessionIds).toEqual(['sess-happy-1']);
+  });
 });

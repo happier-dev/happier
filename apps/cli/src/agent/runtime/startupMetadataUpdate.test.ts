@@ -88,7 +88,7 @@ describe('startupMetadataUpdate', () => {
     });
 
     expect((updates[0] as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
-    expect((updates[0] as any).acpSessionModeOverrideV1).toBeUndefined();
+    expect((updates[0] as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
   });
 
   it('normalizes legacy session-mode metadata at the startup compat edge before applying updates', () => {
@@ -111,7 +111,7 @@ describe('startupMetadataUpdate', () => {
     });
 
     expect((updates[0] as any).sessionModeOverrideV1).toEqual({ v: 1, updatedAt: 77, modeId: 'plan' });
-    expect((updates[0] as any).acpSessionModeOverrideV1).toBeUndefined();
+    expect((updates[0] as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 77, modeId: 'plan' });
   });
 
   it('passes an explicit model override through to startup metadata merge', () => {

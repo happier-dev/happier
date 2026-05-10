@@ -94,6 +94,7 @@ export const SESSION_LIFECYCLE_RPC_SCOPES = Object.freeze([
     ...MACHINE_SESSION_LIFECYCLE_RPC_SCOPES,
     ...MACHINE_SESSION_STOP_RPC_SCOPES,
     { id: 'session.rollback', methods: [SESSION_RPC_METHODS.SESSION_ROLLBACK] },
+    { id: 'session.checkpoint_code_rollback', methods: [SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK] },
     ...SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
 ] satisfies readonly ActionSpecRpcRegistrationScope[]);
 

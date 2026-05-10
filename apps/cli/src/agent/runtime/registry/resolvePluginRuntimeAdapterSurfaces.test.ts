@@ -111,7 +111,7 @@ describe('resolvePluginRuntimeAdapterSurfaces', () => {
     expect('bindings' in result).toBe(false);
     expect(result.diagnostics).toEqual([]);
     await expect(result.surfaces.terminalRuntime?.launch?.({})).resolves.toBe('launched');
-    expect(result.surfaces.directSessions).toBeNull();
+    expect(result.surfaces.externalSessions).toBeNull();
     expect(result.surfaces.attach).toBeNull();
     expect(result.surfaces.sessionHandoff).toBeNull();
     expect(loadPluginDaemonModuleMock).toHaveBeenCalledWith({

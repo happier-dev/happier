@@ -3,6 +3,7 @@ import { buildHappierToolsShellBridgeCommand } from '@/agent/tools/happierTools/
 export function buildHappierToolsPromptAppendix(params: Readonly<{
   sessionId: string;
   directory: string;
+  sessionTitleUpdatesEnabled?: boolean;
   memoryRecallGuidance?: Readonly<{
     enabled?: boolean;
     machineId?: string | null;
@@ -101,8 +102,9 @@ If \`memory_search\` returns a hit that you need to verify, use \`${memoryWindow
 Do not use provider-native memory files or ad-hoc workspace search as a substitute for \`memory_search\`. If \`memory_search\` returns no hits, say that plainly.`
     : '';
 
-  return `Happier tools are available through the CLI bridge for this provider. They are not exposed as native tools in the provider tool inventory.
-
+  const titleGuidance = params.sessionTitleUpdatesEnabled === false
+    ? ''
+    : `
 Based on the user's message, use the Happier tools bridge to set or update a short descriptive session title.
 
 At the start of the session (and again if the task changes significantly), use the Happier tools bridge to rename the session before replying when that would help keep the session organized.
@@ -118,10 +120,18 @@ Do not inspect the workspace first and then rename the session afterward unless 
 Only after the rename command succeeds should you inspect the workspace, use provider-native tools, or provide the substantive answer.
 
 Do not merely describe the command or say that you plan to rename the session later; execute the CLI bridge command first when the title update is allowed.
+`;
+  const renameCommandGuidance = params.sessionTitleUpdatesEnabled === false
+    ? ''
+    : `
+Use \`${renameCommand}\` to rename the session.
+`;
+
+  return `Happier tools are available through the CLI bridge for this provider. They are not exposed as native tools in the provider tool inventory.
+${titleGuidance}
 
 Use \`${listCommand}\` when you need to discover the available built-in Happier tools and custom configured tools.
-
-Use \`${renameCommand}\` to rename the session.
+${renameCommandGuidance}
 
 If you just created or edited a plugin capability yourself and you already know its explicit action id or tool id, do not assume discovery surfaces have refreshed yet. In that case, execute it directly through \`${explicitPluginActionExecuteCommand}\` by replacing \`<plugin-action-or-tool-id>\` with the exact id.
 

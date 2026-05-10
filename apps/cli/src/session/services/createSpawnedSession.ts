@@ -7,6 +7,7 @@ import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSession
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { summarizeSessionRecord, type SessionSummary } from '@/cli/output/session/sessionSummary';
 import { delay } from '@/utils/time';
+import { updateSessionStateFieldForTarget } from './updateSessionStateFieldForTarget';
 
 type CreateSpawnedSessionParams = Readonly<{
   credentials: Credentials;
@@ -96,26 +97,41 @@ export async function createSpawnedSession(
 
   const normalizedTitle = typeof params.title === 'string' ? params.title.trim() : '';
   const normalizedTag = typeof params.tag === 'string' ? params.tag.trim() : '';
-  if (normalizedTitle || normalizedTag) {
+  if (normalizedTag) {
     await updateSessionMetadataWithRetry({
       token: params.credentials.token,
       credentials: params.credentials,
       sessionId,
       rawSession,
-      updater: (metadata) => ({
-        ...metadata,
-        ...(normalizedTag ? { tag: normalizedTag } : {}),
-        ...(normalizedTitle
-          ? {
-              summary: {
-                text: normalizedTitle,
-                updatedAt: Date.now(),
-              },
-            }
-          : {}),
-      }),
+      updater: (metadata) => {
+        return {
+          ...metadata,
+          tag: normalizedTag,
+        };
+      },
     });
+  }
 
+  if (normalizedTitle) {
+    const result = await updateSessionStateFieldForTarget({
+      credentials: params.credentials,
+      idOrPrefix: sessionId,
+      fieldId: 'display.title',
+      value: {
+        title: normalizedTitle,
+        staleBehavior: 'bump-if-value-changed',
+      },
+      metadataReason: 'spawned-session-title',
+    });
+    if (!result.ok) {
+      const error = new Error(`Failed to update spawned session title: ${result.code}`);
+      (error as { code?: string }).code = result.code;
+      (error as { details?: unknown }).details = { sessionId, stage: 'title_update' };
+      throw error;
+    }
+  }
+
+  if (normalizedTitle || normalizedTag) {
     rawSession = await waitForSpawnedSessionVisibility({
       token: params.credentials.token,
       sessionId,

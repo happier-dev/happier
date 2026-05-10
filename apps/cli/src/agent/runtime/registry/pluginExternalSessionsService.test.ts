@@ -1,16 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-    DirectSessionFollowLease,
-    DirectSessionProviderOps,
+    ExternalSessionFollowLease,
+    ExternalSessionProviderOps,
 } from '@/session/external/providerOps';
 
 import { createPluginExternalSessionsService } from './pluginExternalSessionsService';
 
 const source = Object.freeze({ kind: 'codexHome', home: 'user' } as const);
-type TranscriptUpdateListener = Parameters<NonNullable<DirectSessionFollowLease['subscribeToTranscriptUpdates']>>[0];
+type TranscriptUpdateListener = Parameters<NonNullable<ExternalSessionFollowLease['subscribeToTranscriptUpdates']>>[0];
 
-function createProviderOps(overrides: Partial<DirectSessionProviderOps> = {}): DirectSessionProviderOps {
+function createProviderOps(overrides: Partial<ExternalSessionProviderOps> = {}): ExternalSessionProviderOps {
     return {
         validateSource: vi.fn(async ({ source: inputSource }) => ({ ok: true as const, source: inputSource })),
         listCandidates: vi.fn(async () => ({

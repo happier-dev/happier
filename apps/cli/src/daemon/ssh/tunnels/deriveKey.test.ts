@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 async function loadModule() {
-  return await import('./deriveSshTunnelKey').catch(() => null);
+  return await import('./deriveKey').catch(() => null);
 }
 
 const baseRequest = {

@@ -1,5 +1,5 @@
 import type {
-  DirectSessionsSource,
+  ExternalSessionsSource,
   RuntimeDescriptorV1,
   SessionHandoffResumePlan,
   SessionHandoffCodexAffinity,
@@ -44,7 +44,7 @@ export type SessionHandoffProviderBundle = ClaudeSessionBundle | CodexSessionBun
 
 export type ImportedSessionHandoffBundle = Readonly<{
   remoteSessionId: string;
-  directSource: DirectSessionsSource;
+  directSource: ExternalSessionsSource;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
   resume: HandoffResumePlan;
 }>;

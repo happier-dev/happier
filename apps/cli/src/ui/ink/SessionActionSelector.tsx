@@ -69,6 +69,20 @@ export function resolveSessionActionSelectorIndicator(params: Readonly<{
   return params.isSelected ? '› ' : '  ';
 }
 
+export function resolveSessionActionSelectorEnterResult(
+  row: SessionActionSelectorRow | null | undefined,
+  actionVerb: string,
+): Readonly<{ type: 'selected'; sessionId: string } | { type: 'blocked'; message: string } | { type: 'none' }> {
+  if (!row) return { type: 'none' };
+  if (!row.disabled) return { type: 'selected', sessionId: row.sessionId };
+
+  const reason = row.disabledReason?.trim() || row.annotation?.trim();
+  return {
+    type: 'blocked',
+    message: reason || `This session cannot be ${actionVerb.trim() || 'selected'}ed.`,
+  };
+}
+
 function HeaderRow(props: Readonly<{
   layout: ReturnType<typeof resolveSessionSelectorColumnLayout>;
 }>): React.ReactElement | null {
@@ -115,7 +129,7 @@ function SelectorRow(props: Readonly<{
   const compactPath = compactHomePath(row.path) || row.path;
 
   if (!layout) {
-    const tone = isSelected ? 'cyan' : row.disabled ? 'gray' : undefined;
+    const tone = isSelected && row.disabled ? 'yellow' : isSelected ? 'cyan' : row.disabled ? 'gray' : undefined;
     return (
       <Box>
         <Text color={tone} dimColor={row.disabled}>
@@ -126,7 +140,7 @@ function SelectorRow(props: Readonly<{
     );
   }
 
-  const tone = isSelected ? 'cyan' : row.disabled ? 'gray' : undefined;
+  const tone = isSelected && row.disabled ? 'yellow' : isSelected ? 'cyan' : row.disabled ? 'gray' : undefined;
   return (
     <Box>
       <Box width={layout.indicatorWidth} flexShrink={0}>
@@ -159,14 +173,15 @@ function SelectorRow(props: Readonly<{
 
 function RowAnnotation(props: Readonly<{
   annotation: string;
+  isSelected?: boolean;
   layout: ReturnType<typeof resolveSessionSelectorColumnLayout>;
 }>): React.ReactElement {
-  const { annotation, layout } = props;
+  const { annotation, isSelected, layout } = props;
   const indentWidth = layout?.indicatorWidth ?? 2;
   return (
     <Box>
       <Box width={indentWidth} flexShrink={0}><Text> </Text></Box>
-      <Text color="gray">↳ {annotation}</Text>
+      <Text color={isSelected ? 'yellow' : 'gray'}>↳ {annotation}</Text>
     </Box>
   );
 }
@@ -191,25 +206,35 @@ export function SessionActionSelector(props: Readonly<{
   const initialRows = useMemo(() => props.rows.slice(0, 200), [props.rows]);
   const [rows, setRows] = useState<ReadonlyArray<SessionActionSelectorRow>>(initialRows);
   const [selectedIndex, setSelectedIndex] = useState<number>(() => resolveInitialSelectedIndex(initialRows));
+  const [blockedSelectionMessage, setBlockedSelectionMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setRows(initialRows);
     setSelectedIndex(resolveInitialSelectedIndex(initialRows));
+    setBlockedSelectionMessage(null);
   }, [initialRows]);
 
   useInput((input, key) => {
     if (rows.length === 0) return;
     if (key.upArrow) {
+      setBlockedSelectionMessage(null);
       setSelectedIndex((prev) => findNextSessionActionSelectorIndex(rows, prev, -1));
       return;
     }
     if (key.downArrow) {
+      setBlockedSelectionMessage(null);
       setSelectedIndex((prev) => findNextSessionActionSelectorIndex(rows, prev, 1));
       return;
     }
     if (key.return) {
-      const selected = rows[selectedIndex];
-      if (selected && !selected.disabled) props.onSelect(selected.sessionId);
+      const result = resolveSessionActionSelectorEnterResult(rows[selectedIndex], props.actionVerb);
+      if (result.type === 'selected') {
+        props.onSelect(result.sessionId);
+        return;
+      }
+      if (result.type === 'blocked') {
+        setBlockedSelectionMessage(result.message);
+      }
       return;
     }
     if ((input === 'p' || input === 'P') && props.onProbe) {
@@ -286,7 +311,7 @@ export function SessionActionSelector(props: Readonly<{
             <React.Fragment key={row.sessionId}>
               {showDivider ? <GroupDivider label={disabledGroupLabel} /> : null}
               <SelectorRow row={row} isSelected={isSelected} layout={layout} nowMs={nowMs} />
-              {annotation ? <RowAnnotation annotation={annotation} layout={layout} /> : null}
+              {annotation ? <RowAnnotation annotation={annotation} isSelected={isSelected} layout={layout} /> : null}
             </React.Fragment>
           );
         })}
@@ -302,6 +327,9 @@ export function SessionActionSelector(props: Readonly<{
           </Text>
         ) : null}
         {props.onProbe ? <Text dimColor>Press P to check remote reachability</Text> : null}
+        {blockedSelectionMessage ? (
+          <Text color="yellow">Cannot {props.actionVerb}: {blockedSelectionMessage}</Text>
+        ) : null}
         {selectedRowFullReason ? <Text dimColor>{selectedRowFullReason}</Text> : null}
         {props.footerHint ? <Text dimColor>{props.footerHint}</Text> : null}
       </Box>

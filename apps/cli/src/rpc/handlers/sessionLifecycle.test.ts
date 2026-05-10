@@ -32,6 +32,16 @@ const SESSION_LIFECYCLE_RPC_CASES = [
     [RPC_METHODS.SESSION_FORK, 'session.fork', { parentSessionId: 'session-1', forkPoint: { type: 'latest' } }],
     [RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, 'session.continue_with_replay', { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, replay: { seedDraft: 'continue' } }],
     [SESSION_RPC_METHODS.SESSION_ROLLBACK, 'session.rollback', { sessionId: 'session-1', targetMessageId: 'message-1' }],
+    [SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK, 'session.checkpoint_code_rollback', {
+        v: 1,
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        cwd: '/tmp/project',
+        codeMode: 'conversation_and_code_without_stash',
+        backupMode: 'happier_checkpoint_only',
+        expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
+        expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
+    }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_START, 'session.handoff', { sessionId: 'session-1', sourceMachineId: 'machine-1', targetMachineId: 'machine-2', preferredTransportStrategies: ['server_routed_stream'] }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET, 'session.handoff.prepare_target', { handoffId: 'handoff-1', sessionId: 'session-1', sourceMachineId: 'machine-1', targetMachineId: 'machine-2' }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET, 'session.handoff.prepare_target_result.get', { handoffId: 'handoff-1' }],
@@ -118,7 +128,7 @@ describe('session lifecycle RPC handlers', () => {
             readFile(new URL('../../api/machine/sessionHandoff/abort.ts', import.meta.url), 'utf8'),
             readFile(new URL('../../api/machine/sessionHandoff/statusGet.ts', import.meta.url), 'utf8'),
         ]);
-        const directLifecycleRegistration = /registerHandler\(RPC_METHODS\.(SPAWN_HAPPY_SESSION|STOP_SESSION|SESSION_FORK|SESSION_CONTINUE_WITH_REPLAY|SESSION_ROLLBACK|DAEMON_SESSION_HANDOFF_START|DAEMON_SESSION_HANDOFF_PREPARE_TARGET|DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET|DAEMON_SESSION_HANDOFF_COMMIT|DAEMON_SESSION_HANDOFF_ABORT|DAEMON_SESSION_HANDOFF_STATUS_GET)/;
+        const directLifecycleRegistration = /registerHandler\(RPC_METHODS\.(SPAWN_HAPPY_SESSION|STOP_SESSION|SESSION_FORK|SESSION_CONTINUE_WITH_REPLAY|SESSION_ROLLBACK|SESSION_CHECKPOINT_CODE_ROLLBACK|DAEMON_SESSION_HANDOFF_START|DAEMON_SESSION_HANDOFF_PREPARE_TARGET|DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET|DAEMON_SESSION_HANDOFF_COMMIT|DAEMON_SESSION_HANDOFF_ABORT|DAEMON_SESSION_HANDOFF_STATUS_GET)/;
 
         expect(sources.some((source) => directLifecycleRegistration.test(source))).toBe(false);
     });

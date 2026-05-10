@@ -1,11 +1,11 @@
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import type { ScmBackendRegistry } from '@/scm/registry';
-import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/sourceController/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 import type {
-    ScmSourceControllerWorkspaceTransferConflictPolicy,
-    ScmSourceControllerWorkspaceTransferStrategy,
-} from '@/scm/sourceController/workspaceTransfer';
+    ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy,
+    ScmWorkspaceIntegrationWorkspaceTransferStrategy,
+} from '@/scm/workspace/workspaceTransfer';
 
 import type { WorkspaceReplicationBaselineRecord } from './baseline/workspaceReplicationBaselineStore';
 import type { WorkspaceReplicationJobRecord } from './jobs/workspaceReplicationJobStore';
@@ -80,8 +80,8 @@ export type WorkspaceReplicationCreateSourceOfferInput = Readonly<{
 
 export type WorkspaceReplicationApplyInput = Readonly<{
     targetPath: string;
-    strategy: ScmSourceControllerWorkspaceTransferStrategy;
-    conflictPolicy: ScmSourceControllerWorkspaceTransferConflictPolicy;
+    strategy: ScmWorkspaceIntegrationWorkspaceTransferStrategy;
+    conflictPolicy: ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy;
     registry?: ScmBackendRegistry;
 }>;
 

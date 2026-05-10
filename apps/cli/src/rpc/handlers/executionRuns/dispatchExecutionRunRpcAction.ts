@@ -14,7 +14,6 @@ import {
   type ActionExecutorDeps,
 } from '@happier-dev/protocol';
 
-import { getExecutionRunBackendDescriptor } from '@/agent/executionRuns/registry/executionRunBackendRegistry';
 import {
   resolveExecutionRunIntentPolicy,
   resolveExecutionRunStartBoundedTimeoutMs,
@@ -126,18 +125,6 @@ function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams
     }
     const backendTarget = convertBackendTargetRefV2ToV1(parsed.data.backendTarget);
     const backendId = resolveExecutionRunRuntimeBackendId(backendTarget);
-    const backendStartPreflight = getExecutionRunBackendDescriptor(backendId)?.startPreflight;
-    if (backendStartPreflight) {
-      const preflight = await backendStartPreflight({
-        backendId,
-        intentInput: parsed.data.intentInput,
-        cwd: params.context.cwd,
-        env: process.env,
-      });
-      if (!preflight.ok) {
-        return preflight;
-      }
-    }
     if (intentPolicy.startPreflight) {
       const preflight = await intentPolicy.startPreflight({
         backendId,

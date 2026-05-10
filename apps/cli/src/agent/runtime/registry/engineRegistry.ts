@@ -1,5 +1,5 @@
 import {
-    DirectSessionsProviderIdSchema,
+    ExternalSessionsProviderIdSchema,
     accountSettingsParse,
     isFeatureId,
     type AccountSettings,
@@ -26,12 +26,16 @@ import {
     type EngineResolutionSelectedSource,
     type ResolvedCliEngineRegistry,
 } from './engineRegistryTypes';
-import { createDescriptorBackedCliEngineAdapter, createMissingCliEngineAdapter } from './createCliRuntimeCore';
+import { createMissingCliEngineAdapter } from './createCliRuntimeCore';
 import {
     readPluginDaemonConnectionStateSource,
     type PluginDaemonConnectionStateSource,
 } from './pluginConnectionStateSource';
 import { resolvePluginRuntimeAdapterSurfaces } from './resolvePluginRuntimeAdapterSurfaces';
+import {
+    AGENT_IDS,
+    getAgentResumeConfig,
+} from '@happier-dev/agents';
 import {
     defineAcpBackend,
     readAcpBackendSpec,
@@ -100,15 +104,79 @@ import {
     setActiveAccountSettingsSnapshot,
     subscribeActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import {
     createAccountSettingsService,
     createProjectsService,
     type WorkspaceRefScopeV1,
 } from '@/settings/accountSettings/workspaceRefsV1';
-import { getExecutionRunBackendDescriptor } from '@/agent/executionRuns/registry/executionRunBackendRegistry';
 
 const PLUGIN_CONTEXT_V1_BINDER = Symbol('happier.pluginContextV1.binder');
+
+const STATIC_VENDOR_SESSION_METADATA_KEYS = [
+    'claudeSessionId',
+    'codexSessionId',
+    'geminiSessionId',
+    'opencodeSessionId',
+    'auggieSessionId',
+    'qwenSessionId',
+    'kimiSessionId',
+    'kiloSessionId',
+    'piSessionId',
+    'copilotSessionId',
+] as const;
+
+const BASE_SESSION_STATE_METADATA_KEYS = [
+    'runtimeDescriptorV1',
+    'agentRuntimeDescriptorV1',
+    'permissionMode',
+    'permissionModeUpdatedAt',
+    'modelOverrideV1',
+    'sessionModeOverrideV1',
+    'acpSessionModeOverrideV1',
+    'sessionConfigOptionOverridesV1',
+    'acpConfigOptionOverridesV1',
+    'summary',
+    'readStateV1',
+    'externalSessionAttentionV1',
+] as const;
+
+function getSessionStateMetadataKeys(): ReadonlySet<string> {
+    const manifestVendorKeys: readonly string[] = Array.isArray(AGENT_IDS)
+        ? AGENT_IDS.flatMap((agentId) => {
+            const field = getAgentResumeConfig(agentId).vendorResumeIdField;
+            return typeof field === 'string' && field.length > 0 ? [field] : [];
+        })
+        : STATIC_VENDOR_SESSION_METADATA_KEYS;
+    return new Set<string>([
+        ...BASE_SESSION_STATE_METADATA_KEYS,
+        ...manifestVendorKeys,
+    ]);
+}
+
+function isMetadataRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function preserveSessionStateMetadataKeys(
+    current: unknown,
+    candidate: unknown,
+): Record<string, unknown> {
+    const currentRecord = isMetadataRecord(current) ? current : {};
+    const candidateRecord = isMetadataRecord(candidate) ? candidate : {};
+    const next: Record<string, unknown> = { ...candidateRecord };
+
+    for (const key of getSessionStateMetadataKeys()) {
+        if (Object.prototype.hasOwnProperty.call(currentRecord, key)) {
+            next[key] = currentRecord[key];
+        } else {
+            delete next[key];
+        }
+    }
+
+    return next;
+}
 
 const IDLE_DAEMON_CONNECTION_STATE: ConnectionStateV1 = Object.freeze({
     phase: 'idle',
@@ -333,6 +401,7 @@ function createPluginContextActionsService(): PluginContextV1['actions'] {
                 runStacked: createUnavailablePluginActionMethod('scm.pullRequest.runStacked'),
             }),
             repository: Object.freeze({
+                clone: createUnavailablePluginActionMethod('scm.repository.clone'),
                 init: createUnavailablePluginActionMethod('scm.repository.init'),
                 removeIndexLock: createUnavailablePluginActionMethod('scm.repository.removeIndexLock'),
             }),
@@ -621,6 +690,7 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
             settingsVersion: result.version,
             loadedAtMs: Date.now(),
             settingsSecretsReadKeys: previous?.settingsSecretsReadKeys ?? [],
+            scopeKey: resolveAccountSettingsScopeKey(credentials),
         });
         return settings;
     };
@@ -734,9 +804,14 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
         if (!isRecord(request) || typeof request.kind !== 'string') return;
         if (request.kind === 'set') {
             const next = isRecord(request.metadata) ? request.metadata : {};
-            await session.updateMetadata(() => next as any);
-        } else if (request.kind === 'update' && typeof request.handler === 'function') {
-            await session.updateMetadata(request.handler as any);
+            await session.updateMetadata((current) => preserveSessionStateMetadataKeys(current, next) as any);
+        } else if (request.kind === 'update') {
+            const handler = request.handler;
+            if (typeof handler !== 'function') return;
+            await session.updateMetadata((current) => {
+                const candidate = handler(current);
+                return preserveSessionStateMetadataKeys(current, candidate) as any;
+            });
         }
     };
 
@@ -939,9 +1014,12 @@ function createHostPluginContextV1(params?: ResolveEngineRegistryParams): Plugin
         // discovery uses dedicated registry queries.
         listSpecs: () => Object.freeze(
             (params?.runtimeRegistry?.mcpServers ?? [])
-                .filter((entry) => pluginId !== null && entry.pluginId === pluginId)
+                .filter((entry) => entry.pluginId === pluginId)
                 .map((entry) => entry.registration),
         ),
+        // RN-MCP-004: host-policy-backed per-session resolution is intentionally
+        // deferred; returning no resolved specs avoids fabricating scope policy.
+        resolveForSession: () => Object.freeze([]),
     });
 
     return Object.freeze({
@@ -1112,19 +1190,19 @@ function toEngineSelectedSource(
 
 async function resolveCatalogExecutionSurfacesForEntry(entry: ResolvedCatalogEntry): Promise<BackendExecutionSurfaces> {
     const hostEntry = readBuiltInHostCatalogEntry(entry.id);
-    const getDirectSessionProviderOps = entry.getDirectSessionProviderOps ?? hostEntry?.getDirectSessionProviderOps;
+    const getExternalSessionProviderOps = entry.getExternalSessionProviderOps ?? hostEntry?.getExternalSessionProviderOps;
     const getTerminalRuntimeOps = entry.getTerminalRuntimeOps ?? hostEntry?.getTerminalRuntimeOps;
     const getProviderAttachOps = entry.getProviderAttachOps ?? hostEntry?.getProviderAttachOps;
     const getSessionHandoffProviderOps = entry.getSessionHandoffProviderOps ?? hostEntry?.getSessionHandoffProviderOps;
 
-    const directSessions = DirectSessionsProviderIdSchema.safeParse(entry.id).success
-        && getDirectSessionProviderOps
-        ? await getDirectSessionProviderOps()
+    const externalSessions = ExternalSessionsProviderIdSchema.safeParse(entry.id).success
+        && getExternalSessionProviderOps
+        ? await getExternalSessionProviderOps()
         : null;
 
     return {
         terminalRuntime: getTerminalRuntimeOps ? await getTerminalRuntimeOps() : null,
-        directSessions,
+        externalSessions,
         attach: getProviderAttachOps ? await getProviderAttachOps() : null,
         sessionHandoff: getSessionHandoffProviderOps ? await getSessionHandoffProviderOps() : null,
     };
@@ -1303,57 +1381,6 @@ function createMissingProviderContribution(params: Readonly<{
     };
 }
 
-function createDescriptorBackedBackendContribution(backendId: string): ResolvedBackendContribution {
-    return {
-        id: backendId,
-        providerId: backendId,
-        provenance: 'first_party',
-        source: { kind: 'bundled' },
-        definition: {
-            kindVersion: 1,
-            id: backendId,
-            providerId: backendId,
-        },
-        runtimeKind: 'native',
-    };
-}
-
-function createDescriptorBackedProviderContribution(backendId: string): ResolvedProviderContribution {
-    return {
-        id: backendId,
-        provenance: 'first_party',
-        source: { kind: 'bundled' },
-        definition: {
-            kindVersion: 1,
-            id: backendId,
-            ownedBackendIds: Object.freeze([backendId]),
-        },
-    };
-}
-
-function resolveDescriptorBackedExecutionRunEngineResolution(
-    backendId: string,
-): EngineAdapterResolution | null {
-    if (!getExecutionRunBackendDescriptor(backendId)) {
-        return null;
-    }
-
-    const backend = createDescriptorBackedBackendContribution(backendId);
-    const provider = createDescriptorBackedProviderContribution(backendId);
-
-    return {
-        backendId,
-        providerId: provider.id,
-        provenance: backend.provenance,
-        selectedSource: undefined,
-        backend,
-        provider,
-        engineAdapter: createDescriptorBackedCliEngineAdapter({ backend }),
-        executionSurfaces: createEmptyBackendExecutionSurfaces(),
-        diagnostics: Object.freeze([]),
-    };
-}
-
 async function resolveEngineAdapterResolutionFromRegistry(params: Readonly<{
     backendId: string;
     contributions: ResolvedContributionRegistry;
@@ -1505,11 +1532,6 @@ export async function resolveCliEngineRegistry(
                 const hasExplicitRuntimeCore = backend
                     ? Boolean(resolveContributionRuntimeCoreGetter({ backend, catalogEntry }))
                     : false;
-                let descriptorResolution: EngineAdapterResolution | null | undefined;
-                const getDescriptorResolution = (): EngineAdapterResolution | null => {
-                    descriptorResolution ??= resolveDescriptorBackedExecutionRunEngineResolution(backendId);
-                    return descriptorResolution;
-                };
                 const requiresExecutablePluginRuntimeRegistry = Boolean(
                     backend
                     && (
@@ -1520,13 +1542,6 @@ export async function resolveCliEngineRegistry(
                     ),
                 );
 
-                if (!backend) {
-                    const descriptorBackedResolution = getDescriptorResolution();
-                    if (descriptorBackedResolution) {
-                        return descriptorBackedResolution;
-                    }
-                }
-
                 if (requiresExecutablePluginRuntimeRegistry) {
                     runtimeRegistry = await resolveRuntimeRegistry();
                     resolutionContributions = runtimeRegistry.contributes;
@@ -1536,7 +1551,7 @@ export async function resolveCliEngineRegistry(
                 const pluginContext = createHostPluginContextV1({ ...(params ?? {}), backendId, runtimeRegistry });
 
                 if (!backend) {
-                    return getDescriptorResolution();
+                    return null;
                 }
 
                 return await resolveEngineAdapterResolutionFromRegistry({

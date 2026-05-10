@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { createPromptProviderCatalog } from './promptProviderCatalog';
-import { createPromptRegistryCatalog } from './promptRegistryCatalog';
+import { createPromptProviderCatalog } from './providers';
+import { createPromptRegistryCatalog } from './registries';
 
 describe('prompt catalog contracts', () => {
   it('creates empty prompt provider and registry catalogs without scanning runtime sources', () => {

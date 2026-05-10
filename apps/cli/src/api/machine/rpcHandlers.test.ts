@@ -194,6 +194,38 @@ describe('registerMachineRpcHandlers', () => {
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ modelId: undefined, modelUpdatedAt: 123 }));
   });
 
+  it('forwards account settings version hints when spawning a session', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    await handler!({
+      directory: '/tmp',
+      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      accountSettingsVersionHint: 295,
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      accountSettingsVersionHint: 295,
+    }));
+  });
+
   it('normalizes whitespace-only modelId to undefined when resuming a session', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -6366,15 +6398,15 @@ describe('registerMachineRpcHandlers', () => {
       },
     });
 
-    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST)).toBe(true);
-    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_LINK_ENSURE)).toBe(true);
-    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_ATTACH)).toBe(true);
-    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_DETACH)).toBe(true);
-    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_STATUS_GET)).toBe(true);
-    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE)).toBe(true);
-    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER)).toBe(true);
-    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TAKEOVER)).toBe(true);
-    expect(registered.has((RPC_METHODS as any).DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_LINK_ENSURE)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_ATTACH)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_DETACH)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_STATUS_GET)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_TAKEOVER)).toBe(true);
+    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_TAKEOVER_PERSIST)).toBe(true);
   });
 
   it('drops stale direct transfer handlers when the machine rpc surface is re-registered without transfer capability', async () => {

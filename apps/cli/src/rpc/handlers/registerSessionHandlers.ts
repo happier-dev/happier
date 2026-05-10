@@ -104,6 +104,7 @@ export interface SpawnSessionOptions {
      */
     modelId?: string;
     modelUpdatedAt?: number;
+    accountSettingsVersionHint?: number;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     approvedNewDirectoryCreation?: boolean;
     backendTarget?: BackendTargetRefV2;

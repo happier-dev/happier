@@ -52,7 +52,7 @@ describe('createWorkspaceReplicationCasBackedImportArtifacts', () => {
               sizeBytes: payload.byteLength,
             },
           ],
-          sourceControllerMetadata: {
+          workspaceIntegrationMetadata: {
             nestedRepositories: ['vendor/tools'],
             supportsSafeReplace: true,
           },
@@ -72,7 +72,7 @@ describe('createWorkspaceReplicationCasBackedImportArtifacts', () => {
           ],
           fingerprint: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         },
-        sourceControllerMetadata: {
+        workspaceIntegrationMetadata: {
           nestedRepositories: ['vendor/tools'],
           supportsSafeReplace: true,
         },
@@ -83,7 +83,7 @@ describe('createWorkspaceReplicationCasBackedImportArtifacts', () => {
     }
   });
 
-  it('preserves a manifest-only source offer without source-controller metadata', async () => {
+  it('preserves a manifest-only source offer without workspace-integration metadata', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-replication-apply-bridge-'));
 
     try {

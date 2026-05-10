@@ -47,7 +47,7 @@ describe('SessionHostBridge execution surfaces', () => {
       terminalRuntime: {
         launch: vi.fn(),
       },
-      directSessions: null,
+      externalSessions: null,
       attach: null,
       sessionHandoff: null,
     };

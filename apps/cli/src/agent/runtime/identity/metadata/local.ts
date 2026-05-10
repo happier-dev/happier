@@ -4,7 +4,7 @@ type MetadataRecord = Record<string, unknown>;
 
 export type SessionRuntimeLocalMetadata = Readonly<Partial<Pick<
   Metadata,
-  'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'directSessionV1'
+  'claudeSessionId' | 'codexSessionId' | 'opencodeSessionId' | 'externalSessionV1'
 >>>;
 
 export function cloneSessionRuntimeLocalMetadata(
@@ -12,16 +12,16 @@ export function cloneSessionRuntimeLocalMetadata(
 ): SessionRuntimeLocalMetadata {
   return {
     ...runtimeLocalMetadata,
-    ...(runtimeLocalMetadata.directSessionV1
+    ...(runtimeLocalMetadata.externalSessionV1
       ? {
-          directSessionV1: {
-            ...runtimeLocalMetadata.directSessionV1,
+          externalSessionV1: {
+            ...runtimeLocalMetadata.externalSessionV1,
             source:
-              runtimeLocalMetadata.directSessionV1.source
-              && typeof runtimeLocalMetadata.directSessionV1.source === 'object'
-              && !Array.isArray(runtimeLocalMetadata.directSessionV1.source)
-                ? { ...runtimeLocalMetadata.directSessionV1.source }
-                : runtimeLocalMetadata.directSessionV1.source,
+              runtimeLocalMetadata.externalSessionV1.source
+              && typeof runtimeLocalMetadata.externalSessionV1.source === 'object'
+              && !Array.isArray(runtimeLocalMetadata.externalSessionV1.source)
+                ? { ...runtimeLocalMetadata.externalSessionV1.source }
+                : runtimeLocalMetadata.externalSessionV1.source,
           },
         }
       : {}),
@@ -39,8 +39,8 @@ export function pickSessionRuntimeLocalMetadata(
     ...(typeof metadata.claudeSessionId === 'string' ? { claudeSessionId: metadata.claudeSessionId } : {}),
     ...(typeof metadata.codexSessionId === 'string' ? { codexSessionId: metadata.codexSessionId } : {}),
     ...(typeof metadata.opencodeSessionId === 'string' ? { opencodeSessionId: metadata.opencodeSessionId } : {}),
-    ...(metadata.directSessionV1 && typeof metadata.directSessionV1 === 'object' && !Array.isArray(metadata.directSessionV1)
-      ? { directSessionV1: metadata.directSessionV1 as Metadata['directSessionV1'] }
+    ...(metadata.externalSessionV1 && typeof metadata.externalSessionV1 === 'object' && !Array.isArray(metadata.externalSessionV1)
+      ? { externalSessionV1: metadata.externalSessionV1 as Metadata['externalSessionV1'] }
       : {}),
   };
 

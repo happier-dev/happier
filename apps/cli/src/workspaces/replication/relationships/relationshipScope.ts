@@ -1,4 +1,4 @@
-import { normalizeWorkspacePath } from '@/scm/sourceController/workspaceExportPackaging/normalizeWorkspacePath';
+import { normalizeWorkspacePath } from '@/scm/workspace/workspaceExportPackaging/normalizeWorkspacePath';
 
 export const workspaceReplicationModes = ['one_way_safe', 'one_way_replica', 'two_way_safe'] as const;
 export type WorkspaceReplicationMode = (typeof workspaceReplicationModes)[number];

@@ -1,14 +1,14 @@
 import {
-  createScmSourceControllerWorkspaceExportArtifacts,
-  type ScmSourceControllerWorkspaceExportArtifacts,
-} from '@/scm/sourceController/workspaceExportArtifacts';
-import type { WorkspaceExportBlobProvider } from '@/scm/sourceController/workspaceExportStaging/stageWorkspaceEntries';
+  createScmWorkspaceIntegrationWorkspaceExportArtifacts,
+  type ScmWorkspaceIntegrationWorkspaceExportArtifacts,
+} from '@/scm/workspace/workspaceExportArtifacts';
+import type { WorkspaceExportBlobProvider } from '@/scm/workspace/workspaceExportStaging/stageWorkspaceEntries';
 
 import { createWorkspaceReplicationCasStore } from '../cas/workspaceReplicationCasStore';
 import type { WorkspaceReplicationSourceOffer } from '../transport/createWorkspaceReplicationSourceOffer';
 
 export type WorkspaceReplicationCasBackedImportArtifacts = Readonly<{
-  workspaceExportArtifacts: ScmSourceControllerWorkspaceExportArtifacts;
+  workspaceExportArtifacts: ScmWorkspaceIntegrationWorkspaceExportArtifacts;
   blobProvider: WorkspaceExportBlobProvider;
 }>;
 
@@ -21,9 +21,9 @@ export function createWorkspaceReplicationCasBackedImportArtifacts(input: Readon
   });
 
   return {
-    workspaceExportArtifacts: createScmSourceControllerWorkspaceExportArtifacts({
+    workspaceExportArtifacts: createScmWorkspaceIntegrationWorkspaceExportArtifacts({
       manifest: input.sourceOffer.manifest,
-      sourceControllerMetadata: input.sourceOffer.sourceControllerMetadata ?? null,
+      workspaceIntegrationMetadata: input.sourceOffer.workspaceIntegrationMetadata ?? null,
     }),
     blobProvider: {
       getBlobFilePath: (digest) => casStore.resolveBlobPath(digest),

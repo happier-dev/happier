@@ -51,9 +51,9 @@ function buildVendorEligibilityMetadata(
 }
 
 function getSessionStorageMode(metadata: Record<string, unknown>): SessionStorageMode {
-  const directSession = metadata.directSessionV1;
-  if (!directSession || typeof directSession !== 'object') return 'persisted';
-  return (directSession as { v?: unknown }).v === 1 ? 'direct' : 'persisted';
+  const externalSession = metadata.externalSessionV1;
+  if (!externalSession || typeof externalSession !== 'object') return 'persisted';
+  return (externalSession as { v?: unknown }).v === 1 ? 'direct' : 'persisted';
 }
 
 export function resolveSessionHandoffEligibility(input: Readonly<{

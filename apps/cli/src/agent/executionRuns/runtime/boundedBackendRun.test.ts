@@ -873,7 +873,7 @@ describe('executeBoundedBackendRun', () => {
               '      "severity": "medium",',
               '      "category": "correctness",',
               '      "summary": "The backend ignores the prompt parameter.",',
-              '      "filePath": "apps/cli/src/agent/reviews/engines/coderabbit/CodeRabbitReviewBackend.ts",',
+              '      "filePath": "apps/cli/src/agent/reviews/prompt/buildStandardReviewPrompt.ts",',
               '      "startLine": 137,',
               '      "endLine": 137',
               '    }',

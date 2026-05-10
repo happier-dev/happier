@@ -68,7 +68,7 @@ describe('createExecutionRunRuntime configured ACP registry convergence', () => 
             },
             executionSurfaces: {
                 terminalRuntime: null,
-                directSessions: null,
+                externalSessions: null,
                 attach: null,
                 sessionHandoff: null,
             },

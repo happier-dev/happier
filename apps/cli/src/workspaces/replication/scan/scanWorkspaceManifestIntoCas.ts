@@ -1,5 +1,5 @@
 import type { ScmBackendRegistry } from '@/scm/registry';
-import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/sourceController/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 
 import { createWorkspaceReplicationCasStore } from '../cas/workspaceReplicationCasStore';
 import { scanWorkspaceManifestWithDigestCache } from './scanWorkspaceManifestWithDigestCache';

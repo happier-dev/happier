@@ -21,7 +21,7 @@ describe('workspace replication (legacy surface deletion)', () => {
     const srcRoot = fileURLToPath(new URL('../..', import.meta.url));
 
     await expectMissing(
-      join(srcRoot, 'scm/sourceController/workspaceExportPackaging/buildWorkspaceExportArtifactsFromTransferEntries.ts'),
+      join(srcRoot, 'scm/workspace/workspaceExportPackaging/buildWorkspaceExportArtifactsFromTransferEntries.ts'),
     );
   });
 });

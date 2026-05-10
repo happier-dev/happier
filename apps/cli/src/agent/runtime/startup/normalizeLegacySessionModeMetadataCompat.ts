@@ -1,5 +1,10 @@
 import type { Metadata } from '@/api/types';
-import { SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
+import {
+    LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
+    readAcpSessionModeIntentFromMetadata,
+    SESSION_MODE_OVERRIDE_KEY,
+} from '@happier-dev/agents';
+import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 
 export function normalizeLegacySessionModeMetadataCompat<TMetadata extends Metadata | null | undefined>(
     metadata: TMetadata,
@@ -10,16 +15,23 @@ export function normalizeLegacySessionModeMetadataCompat<TMetadata extends Metad
 
     const record = metadata as Record<string, unknown>;
     const canonicalOverride = record[SESSION_MODE_OVERRIDE_KEY];
-    const legacyOverride = record.acpSessionModeOverrideV1;
+    const legacyOverride = record[LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY];
 
     if (canonicalOverride === undefined && legacyOverride === undefined) {
         return metadata;
     }
 
-    const normalized = { ...record } as Record<string, unknown>;
     if (canonicalOverride === undefined && legacyOverride !== undefined) {
-        normalized[SESSION_MODE_OVERRIDE_KEY] = legacyOverride;
+        const intent = readAcpSessionModeIntentFromMetadata(metadata);
+        if (!intent || !intent.modeId) {
+            return metadata;
+        }
+        return applySessionStateFieldMetadataPatch(metadata, 'intent.acpSessionMode', {
+            v: 1,
+            modeId: intent.modeId,
+            updatedAt: intent.updatedAt,
+        }) as TMetadata;
     }
-    delete normalized.acpSessionModeOverrideV1;
-    return normalized as TMetadata;
+
+    return metadata;
 }

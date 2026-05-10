@@ -1,7 +1,7 @@
 import type {
     ActionExecuteResult,
-    DirectSessionTakeoverPersistResponse,
-    DirectSessionTakeoverResponse,
+    ExternalSessionTakeoverPersistResponse,
+    ExternalSessionTakeoverResponse,
 } from '@happier-dev/protocol';
 import {
     ExternalSessionTakeoverResultV1Schema,
@@ -11,18 +11,18 @@ import {
 
 import { logger } from '@/ui/logger';
 
-export type DirectSessionsErrorCode = 'invalid_request' | 'machine_offline' | 'provider_unavailable' | 'internal_error';
+export type ExternalSessionsErrorCode = 'invalid_request' | 'machine_offline' | 'provider_unavailable' | 'internal_error';
 
-export function directSessionsError(
-    errorCode: DirectSessionsErrorCode,
+export function externalSessionsError(
+    errorCode: ExternalSessionsErrorCode,
     error?: string,
-): { ok: false; errorCode: DirectSessionsErrorCode; error: string } {
+): { ok: false; errorCode: ExternalSessionsErrorCode; error: string } {
     return { ok: false, errorCode, error: typeof error === 'string' && error.trim() ? error : errorCode };
 }
 
-export function mapActionFailureToDirectSessionsError(
+export function mapActionFailureToExternalSessionsError(
     result: Extract<ActionExecuteResult, { ok: false }>,
-): { ok: false; errorCode: DirectSessionsErrorCode; error: string } {
+): { ok: false; errorCode: ExternalSessionsErrorCode; error: string } {
     const errorCode = result.errorCode === 'machine_offline'
         ? 'machine_offline'
         : result.errorCode === 'provider_unavailable'
@@ -30,13 +30,13 @@ export function mapActionFailureToDirectSessionsError(
             : result.errorCode === 'invalid_request' || result.errorCode === 'invalid_parameters'
                 ? 'invalid_request'
                 : 'internal_error';
-    return directSessionsError(errorCode, result.error);
+    return externalSessionsError(errorCode, result.error);
 }
 
-function mapExternalTakeoverErrorCodeToDirectSessionsErrorCode(
+function mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(
     errorCode: ExternalSessionTakeoverErrorCodeV1,
     error?: string,
-): DirectSessionsErrorCode {
+): ExternalSessionsErrorCode {
     if (errorCode === 'machine_offline') return 'machine_offline';
     if (errorCode === 'transcript_import_failed' || errorCode === 'spawn_failed') return 'internal_error';
     if (errorCode === 'capability_unsupported') {
@@ -54,28 +54,28 @@ function mapExternalTakeoverErrorCodeToDirectSessionsErrorCode(
     return 'invalid_request';
 }
 
-function mapExternalTakeoverFailureToDirectSessionsError(
+function mapExternalTakeoverFailureToExternalSessionsError(
     result: Extract<ExternalSessionTakeoverResultV1, { ok: false }>,
-): { ok: false; errorCode: DirectSessionsErrorCode; error: string } {
-    return directSessionsError(mapExternalTakeoverErrorCodeToDirectSessionsErrorCode(result.errorCode, result.error), result.error);
+): { ok: false; errorCode: ExternalSessionsErrorCode; error: string } {
+    return externalSessionsError(mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(result.errorCode, result.error), result.error);
 }
 
 export function mapExternalTakeoverResultToDirectTakeoverResponse(
     value: unknown,
-): DirectSessionTakeoverResponse {
+): ExternalSessionTakeoverResponse {
     const parsed = ExternalSessionTakeoverResultV1Schema.safeParse(value);
-    if (!parsed.success) return directSessionsError('internal_error', 'takeover_action_result_invalid') satisfies DirectSessionTakeoverResponse;
-    if (!parsed.data.ok) return mapExternalTakeoverFailureToDirectSessionsError(parsed.data) satisfies DirectSessionTakeoverResponse;
-    return { ok: true } satisfies DirectSessionTakeoverResponse;
+    if (!parsed.success) return externalSessionsError('internal_error', 'takeover_action_result_invalid') satisfies ExternalSessionTakeoverResponse;
+    if (!parsed.data.ok) return mapExternalTakeoverFailureToExternalSessionsError(parsed.data) satisfies ExternalSessionTakeoverResponse;
+    return { ok: true } satisfies ExternalSessionTakeoverResponse;
 }
 
 export function mapExternalTakeoverResultToDirectTakeoverPersistResponse(
     value: unknown,
-): DirectSessionTakeoverPersistResponse {
+): ExternalSessionTakeoverPersistResponse {
     const parsed = ExternalSessionTakeoverResultV1Schema.safeParse(value);
-    if (!parsed.success) return directSessionsError('internal_error', 'takeover_action_result_invalid') satisfies DirectSessionTakeoverPersistResponse;
-    if (!parsed.data.ok) return mapExternalTakeoverFailureToDirectSessionsError(parsed.data) satisfies DirectSessionTakeoverPersistResponse;
-    return { ok: true, converted: parsed.data.converted } satisfies DirectSessionTakeoverPersistResponse;
+    if (!parsed.success) return externalSessionsError('internal_error', 'takeover_action_result_invalid') satisfies ExternalSessionTakeoverPersistResponse;
+    if (!parsed.data.ok) return mapExternalTakeoverFailureToExternalSessionsError(parsed.data) satisfies ExternalSessionTakeoverPersistResponse;
+    return { ok: true, converted: parsed.data.converted } satisfies ExternalSessionTakeoverPersistResponse;
 }
 
 function stripErrorMessageFromStack(stack: string | undefined): string | undefined {
@@ -88,32 +88,32 @@ function stripErrorMessageFromStack(stack: string | undefined): string | undefin
     return lines.join('\n');
 }
 
-export function logDirectSessionsInternalError(context: string, error: unknown): void {
+export function logExternalSessionsInternalError(context: string, error: unknown): void {
     if (process.env.DEBUG) {
         if (error instanceof Error) {
-            logger.debug('[directSessions][internal_error]', {
+            logger.debug('[externalSessions][internal_error]', {
                 context,
                 name: error.name,
                 stack: stripErrorMessageFromStack(error.stack),
             });
             return;
         }
-        logger.debug('[directSessions][internal_error]', { context, errorType: typeof error, error });
+        logger.debug('[externalSessions][internal_error]', { context, errorType: typeof error, error });
         return;
     }
 
     if (error instanceof Error) {
-        logger.debug('[directSessions][internal_error]', { context, name: error.name });
+        logger.debug('[externalSessions][internal_error]', { context, name: error.name });
         return;
     }
-    logger.debug('[directSessions][internal_error]', { context, errorType: typeof error });
+    logger.debug('[externalSessions][internal_error]', { context, errorType: typeof error });
 }
 
 export function internalErrorResponse(
     context: string,
     error: unknown,
     safeError: string,
-): { ok: false; errorCode: DirectSessionsErrorCode; error: string } {
-    logDirectSessionsInternalError(context, error);
-    return directSessionsError('internal_error', safeError);
+): { ok: false; errorCode: ExternalSessionsErrorCode; error: string } {
+    logExternalSessionsInternalError(context, error);
+    return externalSessionsError('internal_error', safeError);
 }

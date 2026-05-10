@@ -6,8 +6,8 @@ import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOpe
 import {
   readRuntimeDescriptorV1,
   readAgentRuntimeFacetsV1,
-  writeRuntimeDescriptorV1ToMetadata,
 } from '@happier-dev/protocol';
+import type { SessionStateSyncEngine } from '@happier-dev/agents';
 
 type RuntimePublicationEvent = Readonly<{
   type: 'event';
@@ -40,7 +40,8 @@ function updateRuntimePublicationMetadata(
 }
 
 export function subscribeSessionRuntimePublicationToMetadata(params: Readonly<{
-  session: Pick<ApiSessionClient, 'updateMetadata'>;
+  session: Pick<ApiSessionClient, 'sessionId' | 'updateMetadata'>;
+  sessionState: Pick<SessionStateSyncEngine, 'writeHappierField'>;
   runtime: RuntimeTurnOperations;
 }>): () => void {
   let lastPublishedDescriptor: unknown = undefined;
@@ -57,11 +58,23 @@ export function subscribeSessionRuntimePublicationToMetadata(params: Readonly<{
       if (isDeepStrictEqual(lastPublishedDescriptor, nextDescriptor)) {
         return;
       }
+      const previousDescriptor = lastPublishedDescriptor;
       lastPublishedDescriptor = nextDescriptor;
-      void params.session.updateMetadata((metadata) => writeRuntimeDescriptorV1ToMetadata(
-        metadata as Metadata & Record<string, unknown>,
-        nextDescriptor,
-      ) as Metadata);
+      void params.sessionState.writeHappierField({
+        sessionId: params.session.sessionId,
+        fieldId: 'identity.runtimeDescriptor',
+        value: nextDescriptor,
+        reason: 'reconciliation',
+        metadataReason: 'runtime-identity-publication',
+      }).then((result) => {
+        if (!result.ok && isDeepStrictEqual(lastPublishedDescriptor, nextDescriptor)) {
+          lastPublishedDescriptor = previousDescriptor;
+        }
+      }).catch(() => {
+        if (isDeepStrictEqual(lastPublishedDescriptor, nextDescriptor)) {
+          lastPublishedDescriptor = previousDescriptor;
+        }
+      });
       return;
     }
 

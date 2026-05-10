@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { CliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 import { renderSessionListTable } from './renderSessionListTable';
+import { resolveSessionSelectorColumnLayout } from './sessionTableLayout';
 
 describe('renderSessionListTable', () => {
   it('does not exceed the provided terminal width (columns)', () => {
@@ -31,5 +32,11 @@ describe('renderSessionListTable', () => {
       expect(line.length).toBeLessThanOrEqual(columns);
     }
   });
-});
 
+  it('allocates enough width for selector column headers to stay on one line', () => {
+    const layout = resolveSessionSelectorColumnLayout(120);
+
+    expect(layout).not.toBeNull();
+    expect(layout?.updatedWidth).toBeGreaterThanOrEqual('Updated'.length);
+  });
+});

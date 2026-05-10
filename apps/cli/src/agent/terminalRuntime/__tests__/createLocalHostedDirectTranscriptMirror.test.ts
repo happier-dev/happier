@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-import type { DirectSessionProviderOps } from '@/session/external/providerOps';
+import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
 import { createLocalHostedDirectTranscriptMirror } from '../createLocalHostedDirectTranscriptMirror';
 
 describe('createLocalHostedDirectTranscriptMirror', () => {
@@ -15,7 +15,7 @@ describe('createLocalHostedDirectTranscriptMirror', () => {
             directory: '/repo/canonical',
         } as const;
 
-        const providerOps: DirectSessionProviderOps = {
+        const providerOps: ExternalSessionProviderOps = {
             validateSource: () => ({ ok: true, source: canonicalSource }),
             listCandidates: async () => ({ candidates: [], nextCursor: null }),
             getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),
@@ -55,17 +55,17 @@ describe('createLocalHostedDirectTranscriptMirror', () => {
         const observedIds: string[] = [];
         let followListener:
             | ((update: Readonly<{
-                items: DirectTranscriptRawMessageV1[];
+                items: ExternalSessionTranscriptRawMessageV1[];
                 nextCursor: string | null;
                 truncated: boolean;
             }>) => void | Promise<void>)
             | null = null;
         const release = vi.fn(async () => {});
-        const olderItem: DirectTranscriptRawMessageV1 = { id: 'older', createdAtMs: 1, raw: { id: 'older' } };
-        const newerItem: DirectTranscriptRawMessageV1 = { id: 'newer', createdAtMs: 2, raw: { id: 'newer' } };
-        const tailItem: DirectTranscriptRawMessageV1 = { id: 'tail', createdAtMs: 3, raw: { id: 'tail' } };
+        const olderItem: ExternalSessionTranscriptRawMessageV1 = { id: 'older', createdAtMs: 1, raw: { id: 'older' } };
+        const newerItem: ExternalSessionTranscriptRawMessageV1 = { id: 'newer', createdAtMs: 2, raw: { id: 'newer' } };
+        const tailItem: ExternalSessionTranscriptRawMessageV1 = { id: 'tail', createdAtMs: 3, raw: { id: 'tail' } };
 
-        const providerOps: DirectSessionProviderOps = {
+        const providerOps: ExternalSessionProviderOps = {
             validateSource: () => ({ ok: true, source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/omp' } }),
             listCandidates: async () => ({ candidates: [], nextCursor: null }),
             getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),
@@ -129,16 +129,16 @@ describe('createLocalHostedDirectTranscriptMirror', () => {
         const observedIds: string[] = [];
         let followListener:
             | ((update: Readonly<{
-                items: DirectTranscriptRawMessageV1[];
+                items: ExternalSessionTranscriptRawMessageV1[];
                 nextCursor: string | null;
                 truncated: boolean;
             }>) => void | Promise<void>)
             | null = null;
         let emittedDuringStartup = false;
-        const olderItem: DirectTranscriptRawMessageV1 = { id: 'older', createdAtMs: 1, raw: { id: 'older' } };
-        const liveItem: DirectTranscriptRawMessageV1 = { id: 'live', createdAtMs: 2, raw: { id: 'live' } };
+        const olderItem: ExternalSessionTranscriptRawMessageV1 = { id: 'older', createdAtMs: 1, raw: { id: 'older' } };
+        const liveItem: ExternalSessionTranscriptRawMessageV1 = { id: 'live', createdAtMs: 2, raw: { id: 'live' } };
 
-        const providerOps: DirectSessionProviderOps = {
+        const providerOps: ExternalSessionProviderOps = {
             validateSource: () => ({ ok: true, source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/omp' } }),
             listCandidates: async () => ({ candidates: [], nextCursor: null }),
             getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),
@@ -197,11 +197,11 @@ describe('createLocalHostedDirectTranscriptMirror', () => {
 
     it('bridges replay-to-follow handoff gaps with a read-after catch-up pass', async () => {
         const observedIds: string[] = [];
-        const replayItem: DirectTranscriptRawMessageV1 = { id: 'replay', createdAtMs: 1, raw: { id: 'replay' } };
-        const handoffItem: DirectTranscriptRawMessageV1 = { id: 'handoff', createdAtMs: 2, raw: { id: 'handoff' } };
+        const replayItem: ExternalSessionTranscriptRawMessageV1 = { id: 'replay', createdAtMs: 1, raw: { id: 'replay' } };
+        const handoffItem: ExternalSessionTranscriptRawMessageV1 = { id: 'handoff', createdAtMs: 2, raw: { id: 'handoff' } };
         const readAfterCalls: string[] = [];
 
-        const providerOps: DirectSessionProviderOps = {
+        const providerOps: ExternalSessionProviderOps = {
             validateSource: () => ({ ok: true, source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/omp' } }),
             listCandidates: async () => ({ candidates: [], nextCursor: null }),
             getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),
@@ -257,7 +257,7 @@ describe('createLocalHostedDirectTranscriptMirror', () => {
                 source: { kind: 'ohMyPiAgentDir', agentDir: '/tmp/omp' },
                 remoteSessionId: 'session-1',
             },
-            getProviderOps: async (): Promise<DirectSessionProviderOps> => ({
+            getProviderOps: async (): Promise<ExternalSessionProviderOps> => ({
                 validateSource: () => ({ ok: false, error: 'invalid_source' }),
                 listCandidates: async () => ({ candidates: [], nextCursor: null }),
                 getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),

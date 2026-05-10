@@ -31,7 +31,7 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
     started = true;
     await sync.flushPendingAfterStart();
 
-    expect(setSessionConfigOption).toHaveBeenCalledWith('telemetry', 'true');
+    expect(setSessionConfigOption).toHaveBeenCalledWith('telemetry', true);
     expect(setSessionConfigOption).toHaveBeenCalledWith('mode', 'ask');
   });
 
@@ -56,7 +56,7 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
     });
 
     sync.syncFromMetadata();
-    expect(setSessionConfigOption).toHaveBeenCalledWith('telemetry', 'false');
+    expect(setSessionConfigOption).toHaveBeenCalledWith('telemetry', false);
   });
 
   it('reads generic sessionConfigOptionOverridesV1 metadata', async () => {
@@ -113,6 +113,61 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
     sync.syncFromMetadata();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
-    expect(setSessionConfigOption).toHaveBeenNthCalledWith(2, 'telemetry', 'true');
+    expect(setSessionConfigOption).toHaveBeenNthCalledWith(2, 'telemetry', true);
+  });
+
+  it('applies the newest config option value across canonical and legacy aliases', async () => {
+    const setSessionConfigOption = vi.fn(async (_configId: string, _value: any) => {});
+
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () =>
+          ({
+            sessionConfigOptionOverridesV1: {
+              v: 1,
+              updatedAt: 10,
+              overrides: {
+                effort: { updatedAt: 10, value: 'medium' },
+              },
+            },
+            acpConfigOptionOverridesV1: {
+              v: 1,
+              updatedAt: 20,
+              overrides: {
+                effort: { updatedAt: 20, value: 'high' },
+              },
+            },
+          }) as any,
+      },
+      runtime: { setSessionConfigOption },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    expect(setSessionConfigOption).toHaveBeenCalledWith('effort', 'high');
+  });
+
+  it('applies null config option tombstones instead of dropping them', async () => {
+    const setSessionConfigOption = vi.fn(async (_configId: string, _value: any) => {});
+
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () =>
+          ({
+            sessionConfigOptionOverridesV1: {
+              v: 1,
+              updatedAt: 10,
+              overrides: {
+                effort: { updatedAt: 10, value: null },
+              },
+            },
+          }) as any,
+      },
+      runtime: { setSessionConfigOption },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    expect(setSessionConfigOption).toHaveBeenCalledWith('effort', null);
   });
 });

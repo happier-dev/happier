@@ -3,14 +3,14 @@ import { rm } from 'node:fs/promises';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { applyWorkspaceSyncArtifacts } from '@/scm/sourceController/applyWorkspaceSyncArtifacts';
-import { prepareWorkspaceSyncTargetPath } from '@/scm/sourceController/prepareWorkspaceSyncTargetPath';
-import { materializeWorkspaceExportArtifactsWithSourceController } from '@/scm/sourceController/workspaceExportMaterialization';
+import { applyWorkspaceSyncArtifacts } from '@/scm/workspace/applyWorkspaceSyncArtifacts';
+import { prepareWorkspaceSyncTargetPath } from '@/scm/workspace/prepareWorkspaceSyncTargetPath';
+import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceExportMaterialization';
 import type {
-    ScmSourceControllerWorkspaceTransferConflictPolicy,
-    ScmSourceControllerWorkspaceTransferStrategy,
-} from '@/scm/sourceController/workspaceTransfer';
-import { createWorkspaceSyncArtifactsFromManifest } from '@/scm/sourceController/workspaceSyncArtifacts';
+    ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy,
+    ScmWorkspaceIntegrationWorkspaceTransferStrategy,
+} from '@/scm/workspace/workspaceTransfer';
+import { createWorkspaceSyncArtifactsFromManifest } from '@/scm/workspace/workspaceSyncArtifacts';
 
 import type { WorkspaceReplicationSourceOffer } from '../transport/createWorkspaceReplicationSourceOffer';
 
@@ -20,8 +20,8 @@ export async function applyWorkspaceReplicationPlan(params: Readonly<{
     activeServerDir: string;
     sourceOffer: WorkspaceReplicationSourceOffer;
     targetPath: string;
-    strategy: ScmSourceControllerWorkspaceTransferStrategy;
-    conflictPolicy: ScmSourceControllerWorkspaceTransferConflictPolicy;
+    strategy: ScmWorkspaceIntegrationWorkspaceTransferStrategy;
+    conflictPolicy: ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy;
     currentTargetManifest?: WorkspaceManifest;
     registry?: ScmBackendRegistry;
     assertCanContinue?: () => Promise<void>;
@@ -45,7 +45,7 @@ export async function applyWorkspaceReplicationPlan(params: Readonly<{
             const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
                 currentManifest: params.currentTargetManifest,
                 nextManifest: params.sourceOffer.manifest,
-                sourceControllerMetadata: params.sourceOffer.sourceControllerMetadata ?? null,
+                workspaceIntegrationMetadata: params.sourceOffer.workspaceIntegrationMetadata ?? null,
             });
 
             return await applyWorkspaceSyncArtifacts({
@@ -63,7 +63,7 @@ export async function applyWorkspaceReplicationPlan(params: Readonly<{
         }
     }
 
-    return await materializeWorkspaceExportArtifactsWithSourceController({
+    return await materializeWorkspaceExportArtifactsWithScmWorkspace({
         workspaceExportArtifacts: casBackedImportArtifacts.workspaceExportArtifacts,
         targetPath: params.targetPath,
         conflictPolicy: params.conflictPolicy,

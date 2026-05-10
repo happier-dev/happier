@@ -2,7 +2,7 @@ import type { SocketRpcCallPayload, SocketRpcCallResponse, SocketRpcRequestPaylo
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
   TRANSFER_RELAY_V2_SOCKET_EVENT,
-  type DirectSessionTranscriptDeltaEphemeral,
+  type ExternalSessionTranscriptDeltaEphemeral,
   type MachineTransferReceiveEnvelope,
   type MachineTransferSendEnvelope,
   type TransferRelayV2SendEnvelope,
@@ -23,7 +23,7 @@ export interface ServerToDaemonEvents {
 export interface DaemonToServerEvents {
   'machine-alive': (data: { machineId: string; time: number }) => void;
   'session-end': (data: { sid: string; time: number; exit?: any }) => void;
-  'direct-session-transcript-delta': (data: DirectSessionTranscriptDeltaEphemeral) => void;
+  'direct-session-transcript-delta': (data: ExternalSessionTranscriptDeltaEphemeral) => void;
 
   'machine-update-metadata': (
     data: { machineId: string; metadata: string; expectedVersion: number },

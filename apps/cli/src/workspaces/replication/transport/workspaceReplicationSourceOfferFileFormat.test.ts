@@ -34,7 +34,7 @@ describe('workspaceReplicationSourceOfferFileFormat', () => {
           fingerprint: `sha256:${'c'.repeat(64)}`,
         },
         blobIndex: [{ digest: `sha256:${'b'.repeat(64)}`, sizeBytes: 1 }],
-        sourceControllerMetadata: { scm: 'git' },
+        workspaceIntegrationMetadata: { scm: 'git' },
       };
 
       await writeWorkspaceReplicationSourceOfferToFile({ offer: offer as any, filePath });
@@ -47,7 +47,7 @@ describe('workspaceReplicationSourceOfferFileFormat', () => {
         relationshipId: 'rel_1',
         directionId: 'dir_1',
         sourceFingerprint: offer.sourceFingerprint,
-        sourceControllerMetadata: { scm: 'git' },
+        workspaceIntegrationMetadata: { scm: 'git' },
         manifest: {
           fingerprint: offer.manifest.fingerprint,
         },

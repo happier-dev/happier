@@ -2,10 +2,10 @@ import type { WorkspaceManifest } from '@happier-dev/protocol';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { ScmBackendRegistry } from '@/scm/registry';
-import type { ScmSourceControllerWorkspaceTransferMetadata } from '@/scm/sourceController/workspaceTransfer';
-import type { WorkspaceManifestEntry } from '@/scm/sourceController/workspaceExportPackaging/buildWorkspaceManifestEntry';
-import { fingerprintWorkspaceManifest } from '@/scm/sourceController/workspaceExportPackaging/fingerprintWorkspaceManifest';
-import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/sourceController/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import type { ScmWorkspaceIntegrationWorkspaceTransferMetadata } from '@/scm/workspace/workspaceTransfer';
+import type { WorkspaceManifestEntry } from '@/scm/workspace/workspaceExportPackaging/buildWorkspaceManifestEntry';
+import { fingerprintWorkspaceManifest } from '@/scm/workspace/workspaceExportPackaging/fingerprintWorkspaceManifest';
+import type { WorkspaceManifestSafeFilterPolicy } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 import { objectKey } from '@/utils/deterministicJson';
 
 import { createWorkspaceReplicationCasStore } from '../cas/workspaceReplicationCasStore';
@@ -28,7 +28,7 @@ export type WorkspaceReplicationSourceOffer = Readonly<{
   sourceFingerprint: string;
   manifest: WorkspaceManifest;
   blobIndex: readonly WorkspaceReplicationSourceOfferBlob[];
-  sourceControllerMetadata?: ScmSourceControllerWorkspaceTransferMetadata;
+  workspaceIntegrationMetadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata;
 }>;
 
 function compareManifestEntryPaths(left: WorkspaceManifestEntry, right: WorkspaceManifestEntry): number {
@@ -119,7 +119,7 @@ export async function createWorkspaceReplicationSourceOfferFromManifest(input: R
   mode: WorkspaceReplicationDirectionScope['mode'];
   ignorePatterns?: readonly string[];
   manifest: WorkspaceManifest;
-  sourceControllerMetadata?: ScmSourceControllerWorkspaceTransferMetadata;
+  workspaceIntegrationMetadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata;
   seedCasFromWorkspaceRoot?: boolean;
 }>): Promise<WorkspaceReplicationSourceOffer> {
   const scope: WorkspaceReplicationDirectionScope = {
@@ -164,7 +164,7 @@ export async function createWorkspaceReplicationSourceOfferFromManifest(input: R
     sourceFingerprint,
     manifest,
     blobIndex: buildWorkspaceReplicationSourceOfferBlobIndex(manifest),
-    ...(input.sourceControllerMetadata ? { sourceControllerMetadata: input.sourceControllerMetadata } : {}),
+    ...(input.workspaceIntegrationMetadata ? { workspaceIntegrationMetadata: input.workspaceIntegrationMetadata } : {}),
   };
 }
 

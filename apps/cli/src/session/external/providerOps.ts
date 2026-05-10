@@ -1,7 +1,7 @@
 import type {
-  DirectSessionCandidateV1,
-  DirectSessionsSource,
-  DirectTranscriptRawMessageV1,
+  ExternalSessionCandidateV1,
+  ExternalSessionsSource,
+  ExternalSessionTranscriptRawMessageV1,
   RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import type {
@@ -10,97 +10,97 @@ import type {
   TranscriptSourceReadAfter,
 } from '@happier-dev/agents';
 
-import type { LoadedLinkedDirectSession } from '@/api/session/external/takeover/loadLinkedDirectSession';
+import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
-import { createPollingDirectSessionFollowLease } from '@/api/session/external/backgroundFollow/createPollingDirectSessionFollowLease';
+import { createPollingExternalSessionFollowLease } from '@/api/session/external/backgroundFollow/createPollingExternalSessionFollowLease';
 
-export type DirectSessionCandidatesPage = Readonly<{
-  candidates: DirectSessionCandidateV1[];
+export type ExternalSessionCandidatesPage = Readonly<{
+  candidates: ExternalSessionCandidateV1[];
   nextCursor: string | null;
 }>;
 
-export type DirectSessionActivitySample = Readonly<{
+export type ExternalSessionActivitySample = Readonly<{
   lastActivityAtMs: number | null;
   isRunning: boolean;
 }>;
 
-export type DirectSessionTranscriptPage = TranscriptSourcePage<DirectTranscriptRawMessageV1>;
+export type ExternalSessionTranscriptPage = TranscriptSourcePage<ExternalSessionTranscriptRawMessageV1>;
 
-export type DirectSessionTranscriptReadAfter = TranscriptSourceReadAfter<DirectTranscriptRawMessageV1>;
+export type ExternalSessionTranscriptReadAfter = TranscriptSourceReadAfter<ExternalSessionTranscriptRawMessageV1>;
 
-export type DirectSessionFollowLeaseReason = 'attached_view' | 'background_follow';
+export type ExternalSessionFollowLeaseReason = 'attached_view' | 'background_follow';
 
-export type DirectSessionFollowLease = TranscriptSourceFollowLease<DirectTranscriptRawMessageV1>;
+export type ExternalSessionFollowLease = TranscriptSourceFollowLease<ExternalSessionTranscriptRawMessageV1>;
 
-export type DirectSessionLinkIdentity = Readonly<{
+export type ExternalSessionLinkIdentity = Readonly<{
   remoteSessionId: string;
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   vendorMetadata?: Record<string, unknown>;
-  directSessionMetadata?: Record<string, unknown>;
+  externalSessionMetadata?: Record<string, unknown>;
 }>;
 
-export type DirectSessionSourceValidationResult =
-  | Readonly<{ ok: true; source: DirectSessionsSource }>
+export type ExternalSessionSourceValidationResult =
+  | Readonly<{ ok: true; source: ExternalSessionsSource }>
   | Readonly<{ ok: false; error: string }>;
 
-export type DirectSessionProviderOps = Readonly<{
+export type ExternalSessionProviderOps = Readonly<{
   validateSource: (params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     env: NodeJS.ProcessEnv;
-  }>) => Promise<DirectSessionSourceValidationResult> | DirectSessionSourceValidationResult;
+  }>) => Promise<ExternalSessionSourceValidationResult> | ExternalSessionSourceValidationResult;
   listCandidates: (params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     cursor?: string;
     limit: number;
     searchTerm?: string;
-  }>) => Promise<DirectSessionCandidatesPage>;
+  }>) => Promise<ExternalSessionCandidatesPage>;
   getActivity: (params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     remoteSessionId: string;
-  }>) => Promise<DirectSessionActivitySample>;
+  }>) => Promise<ExternalSessionActivitySample>;
   pageTranscript: (params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     remoteSessionId: string;
     direction: 'older' | 'newer';
     cursor?: string;
     maxBytes: number;
     maxItems: number;
-  }>) => Promise<DirectSessionTranscriptPage>;
+  }>) => Promise<ExternalSessionTranscriptPage>;
   readAfterTranscript: (params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     remoteSessionId: string;
     cursor: string;
     maxBytes: number;
     maxItems: number;
-  }>) => Promise<DirectSessionTranscriptReadAfter>;
+  }>) => Promise<ExternalSessionTranscriptReadAfter>;
   acquireFollowLease?: (params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     remoteSessionId: string;
-    reason: DirectSessionFollowLeaseReason;
-  }>) => Promise<DirectSessionFollowLease | null>;
+    reason: ExternalSessionFollowLeaseReason;
+  }>) => Promise<ExternalSessionFollowLease | null>;
   canonicalizeLinkedSession?: (params: Readonly<{
     metadata: Record<string, unknown>;
     remoteSessionId: string;
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
   }>) => Promise<Readonly<{
     remoteSessionId: string;
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
   }>>;
   resolveLinkIdentity?: (params: Readonly<{
     remoteSessionId: string;
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     runtimeDescriptor?: RuntimeDescriptorV1 | null;
     metadata?: Record<string, unknown>;
-  }>) => Promise<DirectSessionLinkIdentity>;
+  }>) => Promise<ExternalSessionLinkIdentity>;
   resolveTakeoverSpawnOptions: (params: Readonly<{
-    linked: LoadedLinkedDirectSession;
+    linked: LoadedLinkedExternalSession;
     sessionId: string;
   }>) => Promise<SpawnSessionOptions | null>;
 }>;
 
-type DirectSessionTranscriptPageLoader<TItem> = (params: Readonly<{
-  source: DirectSessionsSource;
+type ExternalSessionTranscriptPageLoader<TItem> = (params: Readonly<{
+  source: ExternalSessionsSource;
   remoteSessionId: string;
   direction: 'older' | 'newer';
   cursor?: string;
@@ -108,28 +108,28 @@ type DirectSessionTranscriptPageLoader<TItem> = (params: Readonly<{
   maxItems: number;
 }>) => Promise<TranscriptSourcePage<TItem>>;
 
-type DirectSessionTranscriptReadAfterLoader<TItem> = (params: Readonly<{
-  source: DirectSessionsSource;
+type ExternalSessionTranscriptReadAfterLoader<TItem> = (params: Readonly<{
+  source: ExternalSessionsSource;
   remoteSessionId: string;
   cursor: string;
   maxBytes: number;
   maxItems: number;
 }>) => Promise<TranscriptSourceReadAfter<TItem>>;
 
-type DirectSessionTranscriptFollowLeaseAcquirer<TItem> = (params: Readonly<{
-  source: DirectSessionsSource;
+type ExternalSessionTranscriptFollowLeaseAcquirer<TItem> = (params: Readonly<{
+  source: ExternalSessionsSource;
   remoteSessionId: string;
-  reason: DirectSessionFollowLeaseReason;
+  reason: ExternalSessionFollowLeaseReason;
 }>) => Promise<TranscriptSourceFollowLease<TItem> | null>;
 
-export function createDirectSessionTranscriptProviderOps<TItem>(params: Readonly<{
-  pageOlder: DirectSessionTranscriptPageLoader<TItem>;
-  readAfter: DirectSessionTranscriptReadAfterLoader<TItem>;
-  acquireFollowLease?: DirectSessionTranscriptFollowLeaseAcquirer<TItem>;
+export function createExternalSessionTranscriptProviderOps<TItem>(params: Readonly<{
+  pageOlder: ExternalSessionTranscriptPageLoader<TItem>;
+  readAfter: ExternalSessionTranscriptReadAfterLoader<TItem>;
+  acquireFollowLease?: ExternalSessionTranscriptFollowLeaseAcquirer<TItem>;
 }>): Readonly<{
-  pageTranscript: DirectSessionTranscriptPageLoader<TItem>;
-  readAfterTranscript: DirectSessionTranscriptReadAfterLoader<TItem>;
-  acquireFollowLease?: DirectSessionTranscriptFollowLeaseAcquirer<TItem>;
+  pageTranscript: ExternalSessionTranscriptPageLoader<TItem>;
+  readAfterTranscript: ExternalSessionTranscriptReadAfterLoader<TItem>;
+  acquireFollowLease?: ExternalSessionTranscriptFollowLeaseAcquirer<TItem>;
 }> {
   return {
     pageTranscript: async (input) => {
@@ -142,7 +142,7 @@ export function createDirectSessionTranscriptProviderOps<TItem>(params: Readonly
       if (params.acquireFollowLease) {
         return await params.acquireFollowLease(input);
       }
-      return await createPollingDirectSessionFollowLease<TItem>({
+      return await createPollingExternalSessionFollowLease<TItem>({
         readAfterTranscript: ({ cursor, maxBytes, maxItems }) =>
           params.readAfter({
             source: input.source,
@@ -156,7 +156,7 @@ export function createDirectSessionTranscriptProviderOps<TItem>(params: Readonly
   };
 }
 
-export function mergeDirectSessionEnvironmentVariables(values: Array<Record<string, string> | null>): Record<string, string> | undefined {
+export function mergeExternalSessionEnvironmentVariables(values: Array<Record<string, string> | null>): Record<string, string> | undefined {
   const merged: Record<string, string> = {};
   for (const value of values) {
     if (!value) continue;

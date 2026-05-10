@@ -10,12 +10,8 @@
 import os from 'node:os';
 import { resolve } from 'node:path';
 
+import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 import {
-    computeNextMetadataConfigOptionOverrideV1,
-    SESSION_MODE_OVERRIDE_KEY,
-} from '@happier-dev/agents';
-import {
-    buildModelOverrideV1,
     parseSessionMcpSelectionV1Json,
 } from '@happier-dev/protocol';
 
@@ -27,7 +23,6 @@ import packageJson from '../../../package.json';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/runtime/terminalMetadata';
 import {
-    buildSessionModeOverrideV1,
     parseSessionMetadataConfigOptionOverridesJson,
     type SessionMetadataConfigOptionOverrides,
 } from './compat/sessionMetadataOverrides';
@@ -87,8 +82,8 @@ function applySessionConfigOptionOverridesToMetadata(
 
     let nextMetadata = metadata as Record<string, unknown>;
     for (const [configId, entry] of Object.entries(overrides.overrides)) {
-        nextMetadata = computeNextMetadataConfigOptionOverrideV1({
-            metadata: nextMetadata,
+        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.acpConfigOption', {
+            v: 1,
             configId,
             value: entry.value,
             updatedAt: entry.updatedAt,
@@ -96,6 +91,36 @@ function applySessionConfigOptionOverridesToMetadata(
     }
 
     return nextMetadata as Metadata;
+}
+
+function applyInitialIntentMetadata(metadata: Metadata, opts: CreateSessionMetadataOptions): Metadata {
+    let nextMetadata = metadata;
+
+    if (opts.permissionMode) {
+        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.permissionMode', {
+            v: 1,
+            permissionMode: opts.permissionMode,
+            updatedAt: typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : Date.now(),
+        }) as Metadata;
+    }
+
+    if (typeof opts.sessionModeId === 'string' && opts.sessionModeId.trim()) {
+        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.acpSessionMode', {
+            v: 1,
+            modeId: opts.sessionModeId.trim(),
+            updatedAt: typeof opts.sessionModeUpdatedAt === 'number' ? opts.sessionModeUpdatedAt : Date.now(),
+        }) as Metadata;
+    }
+
+    if (typeof opts.modelId === 'string' && opts.modelId.trim()) {
+        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.model', {
+            v: 1,
+            modelId: opts.modelId.trim(),
+            updatedAt: typeof opts.modelUpdatedAt === 'number' ? opts.modelUpdatedAt : Date.now(),
+        }) as Metadata;
+    }
+
+    return nextMetadata;
 }
 
 /**
@@ -156,32 +181,14 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: opts.flavor,
-        ...(opts.permissionMode && { permissionMode: opts.permissionMode }),
-        ...(typeof opts.permissionModeUpdatedAt === 'number' && { permissionModeUpdatedAt: opts.permissionModeUpdatedAt }),
-        ...(typeof opts.sessionModeId === 'string' && opts.sessionModeId.trim()
-            ? (() => {
-                  const override = buildSessionModeOverrideV1({
-                      updatedAt: typeof opts.sessionModeUpdatedAt === 'number' ? opts.sessionModeUpdatedAt : Date.now(),
-                      modeId: opts.sessionModeId.trim(),
-                  });
-                  return {
-                      [SESSION_MODE_OVERRIDE_KEY]: override,
-                  };
-              })()
-            : {}),
-        ...(typeof opts.modelId === 'string' && opts.modelId.trim()
-            ? {
-                  modelOverrideV1: buildModelOverrideV1({
-                      updatedAt: typeof opts.modelUpdatedAt === 'number' ? opts.modelUpdatedAt : Date.now(),
-                      modelId: opts.modelId.trim(),
-                  }),
-              }
-            : {}),
         ...(mcpSelection ? { mcpSelectionV1: mcpSelection } : {}),
     };
 
     const metadata = (opts.augmentMetadata ?? ((current) => current))(
-        applySessionConfigOptionOverridesToMetadata(metadataBase, sessionConfigOptionOverrides),
+        applySessionConfigOptionOverridesToMetadata(
+            applyInitialIntentMetadata(metadataBase, opts),
+            sessionConfigOptionOverrides,
+        ),
     );
 
     return { state, metadata };

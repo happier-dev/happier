@@ -13,8 +13,8 @@ import { relative, resolve, sep } from 'node:path';
 import { rewriteDirectPeerEndpointCandidatesForTransferId } from '@/machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
 import { requestDirectPeerTransferToFileWithRetry } from '@/machines/transfer/requestDirectPeerTransferToFileWithRetry';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
-import type { ScmSourceControllerWorkspaceExportArtifacts } from '@/scm/sourceController/workspaceExportArtifacts';
-import { buildWorkspaceExportArtifactsWithSourceController } from '@/scm/sourceController/workspaceTransferResolution';
+import type { ScmWorkspaceIntegrationWorkspaceExportArtifacts } from '@/scm/workspace/workspaceExportArtifacts';
+import { buildWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
 import { createWorkspaceReplicationEngine } from '@/workspaces/replication/engine';
 import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
 import { createWorkspaceReplicationSourceOfferFromManifest } from '@/workspaces/replication/transport/createWorkspaceReplicationSourceOffer';
@@ -141,7 +141,7 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
 }>> {
-  const workspaceExportArtifacts = await buildWorkspaceExportArtifactsWithSourceController({
+  const workspaceExportArtifacts = await buildWorkspaceExportArtifactsWithScmWorkspace({
     sourcePath: input.sourceRootPath,
     workspaceTransfer: input.workspaceTransfer,
   });
@@ -536,9 +536,6 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
             : {}),
           ...(workspaceReplicationManifestTransferPublicationNormalized
             ? { workspaceReplicationManifestTransferPublication: workspaceReplicationManifestTransferPublicationNormalized }
-            : {}),
-          ...(workspaceReplicationMetadata?.sourceControllerMetadata
-            ? { workspaceReplicationSourceControllerMetadata: workspaceReplicationMetadata.sourceControllerMetadata }
             : {}),
         }
       : undefined;

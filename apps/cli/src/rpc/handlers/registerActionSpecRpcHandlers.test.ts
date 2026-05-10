@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { SUBAGENT_RPC_SCOPES } from './actionSpecRpcRegistration';
 
@@ -147,9 +149,9 @@ describe('ActionSpec-derived RPC registrar', () => {
             actionExecutor,
             scopes: [
                 {
-                    id: 'fixture.directSessions',
-                    methodPrefixes: ['daemon.directSessions.'],
-                    excludedMethods: ['daemon.directSessions.takeover'],
+                    id: 'fixture.externalSessions',
+                    methodPrefixes: ['daemon.externalSessions.'],
+                    excludedMethods: ['daemon.externalSessions.takeover'],
                 },
             ],
             exceptions: [],
@@ -157,17 +159,17 @@ describe('ActionSpec-derived RPC registrar', () => {
                 {
                     id: 'sessions.external.candidates.list',
                     surfaces: { rpc: true },
-                    bindings: { rpcMethod: 'daemon.directSessions.candidates.list' },
+                    bindings: { rpcMethod: 'daemon.externalSessions.candidates.list' },
                 },
                 {
                     id: 'sessions.external.takeover',
                     surfaces: { rpc: true },
-                    bindings: { rpcMethod: 'daemon.directSessions.takeover' },
+                    bindings: { rpcMethod: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY },
                 },
             ],
         });
 
-        expect([...handlers.keys()]).toEqual(['daemon.directSessions.candidates.list']);
+        expect([...handlers.keys()]).toEqual(['daemon.externalSessions.candidates.list']);
     });
 
     it('registers ActionSpec RPC aliases through the same action handler', async () => {
@@ -209,7 +211,7 @@ describe('ActionSpec-derived RPC registrar', () => {
             'daemon.directSessions.candidates.list',
         ]);
 
-        await expect(handlers.get('daemon.directSessions.candidates.list')?.({
+        await expect(handlers.get('daemon.externalSessions.candidates.list')?.({
             machineId: 'machine-1',
         })).resolves.toEqual({
             actionId: 'sessions.external.candidates.list',
@@ -238,7 +240,7 @@ describe('ActionSpec-derived RPC registrar', () => {
                 {
                     id: 'sessions.external.takeover',
                     surfaces: { rpc: true },
-                    bindings: { rpcMethod: 'daemon.directSessions.takeover' },
+                    bindings: { rpcMethod: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY },
                 },
             ],
         });

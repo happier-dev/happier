@@ -5,10 +5,11 @@ import {
   resolveVendorResumeIdFromSessionMetadata,
 } from '@happier-dev/agents';
 import {
-  DirectSessionsSourceSchema,
+  ExternalSessionsSourceSchema,
+  readLinkedExternalSessionV1FromMetadata,
   readRuntimeDescriptorV1FromMetadata,
   type RuntimeDescriptorV1,
-  type DirectSessionsSource,
+  type ExternalSessionsSource,
 } from '@happier-dev/protocol';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -22,24 +23,24 @@ function normalizeString(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function readDirectSessionRecord(metadataRecord: Record<string, unknown>): Record<string, unknown> | null {
-  return asRecord(metadataRecord.directSessionV1);
+function readExternalSessionRecord(metadataRecord: Record<string, unknown>): Record<string, unknown> | null {
+  return asRecord(readLinkedExternalSessionV1FromMetadata(metadataRecord));
 }
 
-function readDirectSessionSource(directSessionRecord: Record<string, unknown> | null): DirectSessionsSource | null {
-  if (!directSessionRecord) return null;
-  const parsed = DirectSessionsSourceSchema.safeParse(directSessionRecord.source);
+function readExternalSessionSource(externalSessionRecord: Record<string, unknown> | null): ExternalSessionsSource | null {
+  if (!externalSessionRecord) return null;
+  const parsed = ExternalSessionsSourceSchema.safeParse(externalSessionRecord.source);
   return parsed.success ? parsed.data : null;
 }
 
-function readDirectSessionRemoteSessionId(directSessionRecord: Record<string, unknown> | null): string | null {
-  if (!directSessionRecord) return null;
-  return normalizeString(directSessionRecord.remoteSessionId);
+function readExternalSessionRemoteSessionId(externalSessionRecord: Record<string, unknown> | null): string | null {
+  if (!externalSessionRecord) return null;
+  return normalizeString(externalSessionRecord.remoteSessionId);
 }
 
-function readDirectSessionProviderId(directSessionRecord: Record<string, unknown> | null): string | null {
-  if (!directSessionRecord) return null;
-  return normalizeString(directSessionRecord.providerId);
+function readExternalSessionProviderId(externalSessionRecord: Record<string, unknown> | null): string | null {
+  if (!externalSessionRecord) return null;
+  return normalizeString(externalSessionRecord.providerId);
 }
 
 export type SessionRuntimeIdentitySourceTier =
@@ -51,8 +52,8 @@ export type SessionRuntimeIdentityFallbackResult = Readonly<{
   providerId: string | null;
   vendorSessionId: string | null;
   runtimeDescriptorV1: RuntimeDescriptorV1 | null;
-  directSessionSource: DirectSessionsSource | null;
-  directSessionRemoteSessionId: string | null;
+  externalSessionSource: ExternalSessionsSource | null;
+  externalSessionRemoteSessionId: string | null;
   runtimeIdentityPublication: ReturnType<typeof publishRuntimeIdentity>;
   sourceTier: SessionRuntimeIdentitySourceTier;
 }>;
@@ -63,20 +64,20 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
     providerId?: string | null;
     vendorSessionId?: string | null;
     runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
-    directSessionSource?: DirectSessionsSource | null;
-    directSessionRemoteSessionId?: string | null;
+    externalSessionSource?: ExternalSessionsSource | null;
+    externalSessionRemoteSessionId?: string | null;
   }>;
 }>): SessionRuntimeIdentityFallbackResult {
   const metadataRecord = asRecord(params.metadata) ?? {};
-  const directSessionRecord = readDirectSessionRecord(metadataRecord);
-  const descriptorFromDirectSession = readRuntimeDescriptorV1FromMetadata(directSessionRecord);
+  const externalSessionRecord = readExternalSessionRecord(metadataRecord);
+  const descriptorFromExternalSession = readRuntimeDescriptorV1FromMetadata(externalSessionRecord);
   const descriptorFromMetadata = readRuntimeDescriptorV1FromMetadata(metadataRecord);
   const normalizedRuntimeDescriptor =
     readNormalizedRuntimeDescriptor(metadataRecord)
-    ?? (descriptorFromDirectSession
-      ? readNormalizedRuntimeDescriptor({ runtimeDescriptorV1: descriptorFromDirectSession })
+    ?? (descriptorFromExternalSession
+      ? readNormalizedRuntimeDescriptor({ runtimeDescriptorV1: descriptorFromExternalSession })
       : null);
-  const runtimeDescriptorV1 = descriptorFromDirectSession
+  const runtimeDescriptorV1 = descriptorFromExternalSession
     ?? descriptorFromMetadata
     ?? params.providerDefaults?.runtimeDescriptorV1
     ?? null;
@@ -85,24 +86,24 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
   const vendorSessionIdFromLegacy = providerIdFromLegacy
     ? resolveVendorResumeIdFromSessionMetadata(providerIdFromLegacy, metadataRecord)
     : null;
-  const directSessionRemoteSessionId = readDirectSessionRemoteSessionId(directSessionRecord)
-    ?? params.providerDefaults?.directSessionRemoteSessionId
+  const externalSessionRemoteSessionId = readExternalSessionRemoteSessionId(externalSessionRecord)
+    ?? params.providerDefaults?.externalSessionRemoteSessionId
     ?? null;
-  const directSessionSource = readDirectSessionSource(directSessionRecord)
-    ?? params.providerDefaults?.directSessionSource
+  const externalSessionSource = readExternalSessionSource(externalSessionRecord)
+    ?? params.providerDefaults?.externalSessionSource
     ?? null;
-  const directSessionProviderId = readDirectSessionProviderId(directSessionRecord);
+  const externalSessionProviderId = readExternalSessionProviderId(externalSessionRecord);
 
   const providerId = normalizedRuntimeDescriptor?.providerId
-    ?? normalizeString(descriptorFromDirectSession?.providerId)
+    ?? normalizeString(descriptorFromExternalSession?.providerId)
     ?? normalizeString(descriptorFromMetadata?.providerId)
     ?? providerIdFromLegacy
-    ?? directSessionProviderId
+    ?? externalSessionProviderId
     ?? normalizeString(params.providerDefaults?.providerId)
     ?? null;
   const vendorSessionId = normalizedRuntimeDescriptor?.vendorSessionId
     ?? vendorSessionIdFromLegacy
-    ?? directSessionRemoteSessionId
+    ?? externalSessionRemoteSessionId
     ?? normalizeString(params.providerDefaults?.vendorSessionId)
     ?? null;
 
@@ -114,10 +115,10 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
   const hasLegacyIdentity =
     providerIdFromLegacy !== null
     || vendorSessionIdFromLegacy !== null
-    || readDirectSessionRemoteSessionId(directSessionRecord) !== null
-    || directSessionProviderId !== null
-    || readDirectSessionSource(directSessionRecord) !== null
-    || descriptorFromDirectSession !== null
+    || readExternalSessionRemoteSessionId(externalSessionRecord) !== null
+    || externalSessionProviderId !== null
+    || readExternalSessionSource(externalSessionRecord) !== null
+    || descriptorFromExternalSession !== null
     || descriptorFromMetadata !== null;
 
   const sourceTier: SessionRuntimeIdentitySourceTier = normalizedRuntimeDescriptor
@@ -130,8 +131,8 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
     providerId,
     vendorSessionId,
     runtimeDescriptorV1,
-    directSessionSource,
-    directSessionRemoteSessionId,
+    externalSessionSource,
+    externalSessionRemoteSessionId,
     runtimeIdentityPublication,
     sourceTier,
   };
