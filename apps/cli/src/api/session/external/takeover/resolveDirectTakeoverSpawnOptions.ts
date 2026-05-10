@@ -1,12 +1,12 @@
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
-import type { LoadedLinkedDirectSession } from './loadLinkedDirectSession';
+import type { LoadedLinkedExternalSession } from './loadLinkedExternalSession';
 
 export async function resolveDirectTakeoverSpawnOptions(params: Readonly<{
-  linked: LoadedLinkedDirectSession;
+  linked: LoadedLinkedExternalSession;
   sessionId: string;
 }>): Promise<SpawnSessionOptions | null> {
-  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(params.linked.providerId)).directSessions;
+  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(params.linked.providerId)).externalSessions;
   if (!providerOps) return null;
   return await providerOps.resolveTakeoverSpawnOptions(params);
 }

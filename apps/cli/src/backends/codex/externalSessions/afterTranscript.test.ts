@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import type { FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
 import {
@@ -42,7 +42,7 @@ async function readAfterCodexTranscript(params: Readonly<{
     },
     async (store): Promise<CodexRolloutSessionStoreReadAfterResult> =>
       (store as FileBackedTranscriptSessionStore<
-        DirectTranscriptRawMessageV1,
+        ExternalSessionTranscriptRawMessageV1,
         unknown,
         string | null
       >).readAfter({

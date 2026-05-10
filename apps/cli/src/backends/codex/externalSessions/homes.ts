@@ -1,8 +1,8 @@
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 import { homeEntries } from './homeEntries';
 
 export async function homes(params: Readonly<{
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
 }>): Promise<string[]> {

@@ -22,7 +22,7 @@ afterEach(async () => {
   tempDirs.clear();
 });
 
-describe('ohMyPiDirectSessionProviderOps.resolveTakeoverSpawnOptions', () => {
+describe('ohMyPiExternalSessionProviderOps.resolveTakeoverSpawnOptions', () => {
   it('reuses the linked oh-my-pi agent dir and working directory for takeover', async () => {
     const agentDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-oh-my-pi-provider-ops-')));
     const sessionRoot = join(agentDir, 'sessions', '-repo');
@@ -52,9 +52,9 @@ describe('ohMyPiDirectSessionProviderOps.resolveTakeoverSpawnOptions', () => {
     );
 
     const canonicalAgentDir = await realpath(agentDir);
-    const { ohMyPiDirectSessionProviderOps } = await import('./providerOps');
+    const { ohMyPiExternalSessionProviderOps } = await import('./providerOps');
 
-    const result = await ohMyPiDirectSessionProviderOps.resolveTakeoverSpawnOptions({
+    const result = await ohMyPiExternalSessionProviderOps.resolveTakeoverSpawnOptions({
       linked: {
         rawSession: {
           id: 'raw-session-1',
@@ -101,7 +101,7 @@ describe('ohMyPiDirectSessionProviderOps.resolveTakeoverSpawnOptions', () => {
   });
 });
 
-describe('ohMyPiDirectSessionProviderOps.canonicalizeLinkedSession', () => {
+describe('ohMyPiExternalSessionProviderOps.canonicalizeLinkedSession', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -109,10 +109,10 @@ describe('ohMyPiDirectSessionProviderOps.canonicalizeLinkedSession', () => {
   it('replaces stale linked agentDir values with the current configured oh-my-pi agent dir', async () => {
     vi.stubEnv('PI_CODING_AGENT_DIR', '/tmp/current-omp-agent');
 
-    const { ohMyPiDirectSessionProviderOps } = await import('./providerOps');
+    const { ohMyPiExternalSessionProviderOps } = await import('./providerOps');
 
     await expect(
-      ohMyPiDirectSessionProviderOps.canonicalizeLinkedSession?.({
+      ohMyPiExternalSessionProviderOps.canonicalizeLinkedSession?.({
         metadata: {},
         remoteSessionId: 'omp-session',
         source: {

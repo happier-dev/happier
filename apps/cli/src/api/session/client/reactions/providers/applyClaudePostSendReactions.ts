@@ -1,10 +1,7 @@
 import type { Usage } from '@/api/types';
 import { logger } from '@/ui/logger';
-
-import {
-    updateMetadataBestEffort,
-} from '../../../sessionWritesBestEffort';
 import { publishClaudeAssistantUsage } from '@/backends/claude/usage/publishAssistantUsage';
+import { writeSessionStateFieldWithMetadataPortBestEffort } from '@/agent/runtime/state/writeSessionStateFieldWithMetadataPort';
 import type { PostSendReactionPort } from './postSendReactionPort';
 
 type ClaudeDispatchReaction = Readonly<{
@@ -35,16 +32,15 @@ export function applyClaudePostSendReactions(
         return;
     }
 
-    updateMetadataBestEffort(
-        port,
-        (metadata) => ({
-            ...metadata,
-            summary: {
-                text: summary.text,
-                updatedAt: summary.updatedAt,
-            },
-        }),
-        '[API]',
-        'mirror_claude_summary',
-    );
+    writeSessionStateFieldWithMetadataPortBestEffort({
+        sessionId: port.sessionId,
+        fieldId: 'display.title',
+        value: {
+            title: summary.text,
+            updatedAt: summary.updatedAt,
+        },
+        updateMetadata: port.updateMetadata,
+        reason: 'reconciliation',
+        metadataReason: 'mirror_claude_summary',
+    });
 }

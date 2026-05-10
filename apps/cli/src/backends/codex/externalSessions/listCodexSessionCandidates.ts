@@ -1,7 +1,7 @@
-import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateV1, ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { createCodexAppServerClient } from '../appServer/client/createCodexAppServerClient';
-import { listCodexDirectSessionCandidatesViaExistingAppServerClient } from '../appServer/session/candidates';
+import { listCodexExternalSessionCandidatesViaExistingAppServerClient } from '../appServer/session/candidates';
 import { homeEntries as resolveHomeEntries } from './homeEntries';
 import { rolloutCandidates } from './rolloutCandidates';
 
@@ -26,16 +26,16 @@ function decodeIndexCursor(raw: string | undefined): number {
 }
 
 function resolveCodexDirectListAppServerBudgetMs(env: NodeJS.ProcessEnv): number {
-  const raw = Number.parseInt(String(env.HAPPIER_CODEX_DIRECT_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS ?? ''), 10);
+  const raw = Number.parseInt(String(env.HAPPIER_CODEX_EXTERNAL_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS ?? ''), 10);
   return Number.isFinite(raw) && raw > 0 ? raw : 750;
 }
 
 async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly<{
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
   searchTerm?: string;
-}>): Promise<DirectSessionCandidateV1[]> {
+}>): Promise<ExternalSessionCandidateV1[]> {
   const budgetMs = resolveCodexDirectListAppServerBudgetMs(params.env);
   const homeEntries = await resolveHomeEntries({
     source: params.source,
@@ -43,7 +43,7 @@ async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly
     env: params.env,
   });
 
-  const listed: DirectSessionCandidateV1[] = [];
+  const listed: ExternalSessionCandidateV1[] = [];
   const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
   for (const homeEntry of homeEntries) {
     const processEnv = {
@@ -53,8 +53,8 @@ async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly
     } as NodeJS.ProcessEnv;
     const client = await createCodexAppServerClient({ processEnv }).catch(() => null);
     if (!client) continue;
-    const result = await Promise.race<DirectSessionCandidateV1[] | null>([
-      listCodexDirectSessionCandidatesViaExistingAppServerClient({ client, processEnv })
+    const result = await Promise.race<ExternalSessionCandidateV1[] | null>([
+      listCodexExternalSessionCandidatesViaExistingAppServerClient({ client, processEnv })
         .then((value) => value)
         .catch(() => null)
         .finally(async () => {
@@ -86,13 +86,13 @@ async function listCodexSessionCandidatesViaAppServerWithBudget(params: Readonly
 }
 
 export async function listCodexSessionCandidates(params: Readonly<{
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   activeServerDir: string;
   env?: NodeJS.ProcessEnv;
   cursor?: string;
   limit: number;
   searchTerm?: string;
-}>): Promise<Readonly<{ candidates: DirectSessionCandidateV1[]; nextCursor: string | null }>> {
+}>): Promise<Readonly<{ candidates: ExternalSessionCandidateV1[]; nextCursor: string | null }>> {
   const env = params.env ?? process.env;
 
   const offset = decodeIndexCursor(params.cursor);
@@ -133,7 +133,7 @@ export async function listCodexSessionCandidates(params: Readonly<{
     })
     : rolloutListing;
 
-  const merged = new Map<string, DirectSessionCandidateV1>();
+  const merged = new Map<string, ExternalSessionCandidateV1>();
   for (const candidate of appServerCandidates) {
     merged.set(candidate.remoteSessionId, candidate);
   }

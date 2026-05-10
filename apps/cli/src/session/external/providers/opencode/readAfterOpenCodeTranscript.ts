@@ -1,4 +1,4 @@
-import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionsSource, ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { createOpenCodeDirectClient } from './createOpenCodeDirectClient';
 import { decodeOpenCodeDirectAfterCursor, encodeOpenCodeDirectAfterCursor } from './openCodeDirectAfterCursor';
@@ -6,12 +6,12 @@ import { mapOpenCodeMessageToDirectItem } from './mapOpenCodeMessageToDirectItem
 import { measureDirectTranscriptItemBytes } from './measureDirectTranscriptItemBytes';
 
 export async function readAfterOpenCodeTranscript(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     remoteSessionId: string;
     cursor: string;
     maxBytes: number;
     maxItems: number;
-}>): Promise<Readonly<{ items: DirectTranscriptRawMessageV1[]; nextCursor: string | null; truncated: boolean }>> {
+}>): Promise<Readonly<{ items: ExternalSessionTranscriptRawMessageV1[]; nextCursor: string | null; truncated: boolean }>> {
     const client = await createOpenCodeDirectClient(params.source);
 
     try {
@@ -41,7 +41,7 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
         }
 
         const slice = rawMessages.slice(decoded.nextIndex);
-        const items: DirectTranscriptRawMessageV1[] = [];
+        const items: ExternalSessionTranscriptRawMessageV1[] = [];
         let remainingBytes = maxBytes;
         let consumedCount = 0;
         let truncated = false;

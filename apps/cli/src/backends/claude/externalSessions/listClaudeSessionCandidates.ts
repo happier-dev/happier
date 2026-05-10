@@ -1,9 +1,9 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateV1, ExternalSessionsSource } from '@happier-dev/protocol';
 
-import { deriveDirectSessionActivityFromTimestamp } from '../../../api/session/external/activity/deriveDirectSessionActivityFromTimestamp';
+import { deriveExternalSessionActivityFromTimestamp } from '../../../api/session/external/activity/deriveExternalSessionActivityFromTimestamp';
 import { mapWithConcurrency } from '../../../api/session/external/discovery/mapWithConcurrency';
 
 import { withClaudeJsonlSessionStore } from '../transcripts/sessionStore';
@@ -30,18 +30,18 @@ function decodeIndexCursor(raw: string | undefined): number {
 }
 
 function resolveClaudeSessionDiscoveryConcurrency(env: NodeJS.ProcessEnv): number {
-  const raw = Number.parseInt(String(env.HAPPIER_DIRECT_SESSIONS_CLAUDE_DISCOVERY_CONCURRENCY ?? ''), 10);
+  const raw = Number.parseInt(String(env.HAPPIER_EXTERNAL_SESSIONS_CLAUDE_DISCOVERY_CONCURRENCY ?? ''), 10);
   const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 64;
   return Math.max(1, Math.min(512, configured));
 }
 
 export async function listClaudeSessionCandidates(params: Readonly<{
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   env?: NodeJS.ProcessEnv;
   cursor?: string;
   limit: number;
   searchTerm?: string;
-}>): Promise<Readonly<{ candidates: DirectSessionCandidateV1[]; nextCursor: string | null }>> {
+}>): Promise<Readonly<{ candidates: ExternalSessionCandidateV1[]; nextCursor: string | null }>> {
   const env = params.env ?? process.env;
   const configDir = resolveClaudeConfigDir({ source: params.source, env });
   const projectsDir = join(configDir, 'projects');
@@ -115,7 +115,7 @@ export async function listClaudeSessionCandidates(params: Readonly<{
     .sort((a, b) => b.updatedAtMs - a.updatedAtMs || String(a.remoteSessionId).localeCompare(String(b.remoteSessionId)));
   const pageSessions = sortedSessions.slice(offset, offset + limit);
   const page = await Promise.all(
-    pageSessions.map(async (session): Promise<DirectSessionCandidateV1> => {
+    pageSessions.map(async (session): Promise<ExternalSessionCandidateV1> => {
       const title = await withClaudeJsonlSessionStore({
         env,
         key: {
@@ -135,7 +135,7 @@ export async function listClaudeSessionCandidates(params: Readonly<{
         remoteSessionId: session.remoteSessionId,
         ...(title ? { title } : {}),
         updatedAtMs: session.updatedAtMs,
-        activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs: session.updatedAtMs, env }),
+        activity: deriveExternalSessionActivityFromTimestamp({ updatedAtMs: session.updatedAtMs, env }),
         details: { projectId: session.projectId },
       };
     }),

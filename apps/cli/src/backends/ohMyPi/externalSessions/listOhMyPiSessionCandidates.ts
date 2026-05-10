@@ -1,9 +1,9 @@
 import { readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
-import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateV1, ExternalSessionsSource } from '@happier-dev/protocol';
 
-import { deriveDirectSessionActivityFromTimestamp } from '@/api/session/external/activity/deriveDirectSessionActivityFromTimestamp';
+import { deriveExternalSessionActivityFromTimestamp } from '@/api/session/external/activity/deriveExternalSessionActivityFromTimestamp';
 import { mapWithConcurrency } from '@/api/session/external/discovery/mapWithConcurrency';
 
 import { resolveOhMyPiAgentDir } from './resolveOhMyPiAgentDir';
@@ -28,7 +28,7 @@ function decodeIndexCursor(raw: string | undefined): number {
 }
 
 function resolveDiscoveryConcurrency(env: NodeJS.ProcessEnv): number {
-  const raw = Number.parseInt(String(env.HAPPIER_DIRECT_SESSIONS_OH_MY_PI_DISCOVERY_CONCURRENCY ?? ''), 10);
+  const raw = Number.parseInt(String(env.HAPPIER_EXTERNAL_SESSIONS_OH_MY_PI_DISCOVERY_CONCURRENCY ?? ''), 10);
   const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 64;
   return Math.max(1, Math.min(512, configured));
 }
@@ -43,12 +43,12 @@ type DiscoveredSession = Readonly<{
 }>;
 
 export async function listOhMyPiSessionCandidates(params: Readonly<{
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   env?: NodeJS.ProcessEnv;
   cursor?: string;
   limit: number;
   searchTerm?: string;
-}>): Promise<Readonly<{ candidates: DirectSessionCandidateV1[]; nextCursor: string | null }>> {
+}>): Promise<Readonly<{ candidates: ExternalSessionCandidateV1[]; nextCursor: string | null }>> {
   const env = params.env ?? process.env;
   const agentDir = resolveOhMyPiAgentDir({ source: params.source, env });
   const sessionsDir = join(agentDir, 'sessions');
@@ -114,12 +114,12 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
     ...(session.title ? { title: session.title } : {}),
     updatedAtMs: session.updatedAtMs,
     ...(typeof session.createdAtMs === 'number' ? { createdAtMs: session.createdAtMs } : {}),
-    activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs: session.updatedAtMs, env }),
+    activity: deriveExternalSessionActivityFromTimestamp({ updatedAtMs: session.updatedAtMs, env }),
     details: {
       workingDirectory: session.workingDirectory,
       agentDir,
     },
-  } satisfies DirectSessionCandidateV1));
+  } satisfies ExternalSessionCandidateV1));
   const nextOffset = offset + candidates.length;
   return {
     candidates,

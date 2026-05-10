@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { readJsonlFileBackwardPage } from '@/api/session/fileBackedTranscripts/jsonl/pageJsonlBackward';
 import type { FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
@@ -44,7 +44,7 @@ async function pageCodexTranscript(params: Readonly<{
     },
     async (store): Promise<CodexRolloutSessionStorePageResult> =>
       (store as FileBackedTranscriptSessionStore<
-        DirectTranscriptRawMessageV1,
+        ExternalSessionTranscriptRawMessageV1,
         unknown,
         string | null
       >).pageOlder({

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-describe('claudeDirectSessionProviderOps.canonicalizeLinkedSession', () => {
+describe('claudeExternalSessionProviderOps.canonicalizeLinkedSession', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -8,10 +8,10 @@ describe('claudeDirectSessionProviderOps.canonicalizeLinkedSession', () => {
   it('replaces stale linked configDir values with the current configured Claude configDir', async () => {
     vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', '/tmp/current-claude-config');
 
-    const { claudeDirectSessionProviderOps } = await import('./providerOps');
+    const { claudeExternalSessionProviderOps } = await import('./providerOps');
 
     await expect(
-      claudeDirectSessionProviderOps.canonicalizeLinkedSession?.({
+      claudeExternalSessionProviderOps.canonicalizeLinkedSession?.({
         metadata: {},
         remoteSessionId: 'claude-session',
         source: {

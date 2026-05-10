@@ -1,4 +1,4 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 function parseMaybeTimestampMs(value: unknown): number {
     if (typeof value === 'string' && value.trim()) {
@@ -27,7 +27,7 @@ function extractTextFromParts(parts: unknown): string {
     return chunks.join('');
 }
 
-export function mapOpenCodeMessageToDirectItem(message: unknown, index: number): DirectTranscriptRawMessageV1 | null {
+export function mapOpenCodeMessageToDirectItem(message: unknown, index: number): ExternalSessionTranscriptRawMessageV1 | null {
     const fallbackId = `opencode:${Math.max(0, Math.trunc(index))}`;
     if (!message || typeof message !== 'object' || Array.isArray(message)) {
         return {

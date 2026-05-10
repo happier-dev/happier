@@ -1,7 +1,7 @@
 import { buildOpenCodeAgentRuntimeDescriptor } from '@happier-dev/agents';
-import type { DirectSessionCandidateV1, DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateV1, ExternalSessionsSource } from '@happier-dev/protocol';
 
-import { deriveDirectSessionActivityFromTimestamp } from '@/api/session/external/activity/deriveDirectSessionActivityFromTimestamp';
+import { deriveExternalSessionActivityFromTimestamp } from '@/api/session/external/activity/deriveExternalSessionActivityFromTimestamp';
 
 import { createOpenCodeDirectClient } from './createOpenCodeDirectClient';
 import { isOpenCodeSessionBusy } from './isOpenCodeSessionBusy';
@@ -28,11 +28,11 @@ function decodeIndexCursor(raw: string | undefined): number {
 }
 
 export async function listOpenCodeSessionCandidates(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     cursor?: string;
     limit: number;
     searchTerm?: string;
-}>): Promise<Readonly<{ candidates: DirectSessionCandidateV1[]; nextCursor: string | null }>> {
+}>): Promise<Readonly<{ candidates: ExternalSessionCandidateV1[]; nextCursor: string | null }>> {
     const client = await createOpenCodeDirectClient(params.source);
 
     try {
@@ -44,7 +44,7 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
                 : {};
         const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
 
-        const candidates: DirectSessionCandidateV1[] = [];
+        const candidates: ExternalSessionCandidateV1[] = [];
         for (const raw of rawSessions) {
             const parsed = parseOpenCodeSessionCandidate(raw);
             if (!parsed) continue;
@@ -54,7 +54,7 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
             }
             const activity = isOpenCodeSessionBusy(statuses[parsed.remoteSessionId])
                 ? 'running'
-                : deriveDirectSessionActivityFromTimestamp({ updatedAtMs: parsed.updatedAtMs });
+                : deriveExternalSessionActivityFromTimestamp({ updatedAtMs: parsed.updatedAtMs });
             const serverBaseUrl =
                 params.source.kind === 'opencodeServer'
                 && typeof params.source.baseUrl === 'string'
@@ -66,7 +66,7 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
                 activity,
                 details: {
                     ...(parsed.details ?? {}),
-                    agentRuntimeDescriptorV1: buildOpenCodeAgentRuntimeDescriptor({
+                    runtimeDescriptorV1: buildOpenCodeAgentRuntimeDescriptor({
                         backendMode: 'server',
                         vendorSessionId: parsed.remoteSessionId,
                         ...(serverBaseUrl ? { serverBaseUrl } : {}),

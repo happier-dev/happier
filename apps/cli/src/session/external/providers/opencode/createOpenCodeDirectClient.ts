@@ -1,6 +1,6 @@
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
-import { validateOpenCodeDirectSessionsSource } from './validateOpenCodeDirectSessionsSource';
+import { validateOpenCodeExternalSessionsSource } from './validateOpenCodeExternalSessionsSource';
 
 function normalizeBaseUrl(raw: string): string {
     return raw.trim().replace(/\/+$/, '');
@@ -35,7 +35,7 @@ export type OpenCodeDirectClient = Readonly<{
     dispose: () => Promise<void>;
 }>;
 
-function resolveBaseUrlOrThrow(source: DirectSessionsSource): string {
+function resolveBaseUrlOrThrow(source: ExternalSessionsSource): string {
     if (source.kind !== 'opencodeServer') {
         throw new Error('OpenCode direct client requires an opencodeServer source');
     }
@@ -46,14 +46,14 @@ function resolveBaseUrlOrThrow(source: DirectSessionsSource): string {
     return normalizeBaseUrl(raw);
 }
 
-function resolveDirectory(source: DirectSessionsSource): string {
+function resolveDirectory(source: ExternalSessionsSource): string {
     if (source.kind !== 'opencodeServer') return '';
     return typeof source.directory === 'string' && source.directory.trim().length > 0 ? source.directory.trim() : '';
 }
 
-export async function createOpenCodeDirectClient(source: DirectSessionsSource): Promise<OpenCodeDirectClient> {
+export async function createOpenCodeDirectClient(source: ExternalSessionsSource): Promise<OpenCodeDirectClient> {
     // Ensure the same validation rules as the RPC boundary (env overrides, etc.).
-    const validated = validateOpenCodeDirectSessionsSource({ source, env: process.env });
+    const validated = validateOpenCodeExternalSessionsSource({ source, env: process.env });
     if (!validated.ok) {
         throw new Error(validated.error);
     }

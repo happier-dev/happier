@@ -1,29 +1,29 @@
 import {
-    mergeDirectSessionEnvironmentVariables,
-    type DirectSessionProviderOps,
+    mergeExternalSessionEnvironmentVariables,
+    type ExternalSessionProviderOps,
 } from '@/session/external/providerOps';
 import { readOpenCodeSessionRuntimeHandleFromMetadata } from '@happier-dev/agents';
 
-import { getOpenCodeDirectSessionActivity } from './getOpenCodeDirectSessionActivity';
-import { getOpenCodeDirectSessionWorkingDirectory } from './getOpenCodeDirectSessionWorkingDirectory';
+import { getOpenCodeExternalSessionActivity } from './getOpenCodeExternalSessionActivity';
+import { getOpenCodeExternalSessionWorkingDirectory } from './getOpenCodeExternalSessionWorkingDirectory';
 import { listOpenCodeSessionCandidates } from './listOpenCodeSessionCandidates';
 import { pageOpenCodeTranscript } from './pageOpenCodeTranscript';
 import { readAfterOpenCodeTranscript } from './readAfterOpenCodeTranscript';
-import { resolveOpenCodeDirectSessionLinkIdentity } from './resolveOpenCodeDirectSessionLinkIdentity';
-import { validateOpenCodeDirectSessionsSource } from './validateOpenCodeDirectSessionsSource';
+import { resolveOpenCodeExternalSessionLinkIdentity } from './resolveOpenCodeExternalSessionLinkIdentity';
+import { validateOpenCodeExternalSessionsSource } from './validateOpenCodeExternalSessionsSource';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-export const openCodeDirectSessionProviderOps: DirectSessionProviderOps = {
-    validateSource: ({ source, env }) => validateOpenCodeDirectSessionsSource({ source, env }),
+export const openCodeExternalSessionProviderOps: ExternalSessionProviderOps = {
+    validateSource: ({ source, env }) => validateOpenCodeExternalSessionsSource({ source, env }),
     listCandidates: async ({ source, cursor, limit, searchTerm }) => {
         const res = await listOpenCodeSessionCandidates({ source, cursor, limit, searchTerm });
         return { candidates: res.candidates, nextCursor: res.nextCursor ?? null };
     },
     getActivity: async ({ source, remoteSessionId }) => {
-        const res = await getOpenCodeDirectSessionActivity({ source, remoteSessionId });
+        const res = await getOpenCodeExternalSessionActivity({ source, remoteSessionId });
         return {
             lastActivityAtMs: typeof res.lastActivityAtMs === 'number' && Number.isFinite(res.lastActivityAtMs) ? res.lastActivityAtMs : null,
             isRunning: res.isBusy === true,
@@ -44,10 +44,11 @@ export const openCodeDirectSessionProviderOps: DirectSessionProviderOps = {
         return { items: res.items, nextCursor: res.nextCursor ?? null, truncated: res.truncated === true };
     },
     canonicalizeLinkedSession: async ({ metadata, remoteSessionId, source }) => {
-        const directSession = asRecord((metadata as any).directSessionV1);
+        const externalSession = asRecord((metadata as any).externalSessionV1);
         const runtimeHandle = readOpenCodeSessionRuntimeHandleFromMetadata({
-            agentRuntimeDescriptorV1: directSession?.agentRuntimeDescriptorV1 ?? (metadata as any).agentRuntimeDescriptorV1,
             ...metadata,
+            runtimeDescriptorV1: externalSession?.runtimeDescriptorV1 ?? (metadata as any).runtimeDescriptorV1,
+            agentRuntimeDescriptorV1: externalSession?.agentRuntimeDescriptorV1 ?? (metadata as any).agentRuntimeDescriptorV1,
         });
         const baseUrl =
             runtimeHandle.serverBaseUrl
@@ -66,12 +67,12 @@ export const openCodeDirectSessionProviderOps: DirectSessionProviderOps = {
         };
     },
     resolveLinkIdentity: async ({ remoteSessionId, source, runtimeDescriptor }) => {
-        return resolveOpenCodeDirectSessionLinkIdentity({ remoteSessionId, source, runtimeDescriptor });
+        return resolveOpenCodeExternalSessionLinkIdentity({ remoteSessionId, source, runtimeDescriptor });
     },
     resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
         const directory =
             linked.sessionPath
-            ?? (await getOpenCodeDirectSessionWorkingDirectory({
+            ?? (await getOpenCodeExternalSessionWorkingDirectory({
                 source: linked.source,
                 remoteSessionId: linked.remoteSessionId,
             }));
@@ -87,7 +88,7 @@ export const openCodeDirectSessionProviderOps: DirectSessionProviderOps = {
             resume: linked.remoteSessionId,
             approvedNewDirectoryCreation: true,
             transcriptStorage: 'direct',
-            environmentVariables: mergeDirectSessionEnvironmentVariables([
+            environmentVariables: mergeExternalSessionEnvironmentVariables([
                 {
                     HAPPIER_OPENCODE_BACKEND_MODE: 'server',
                     ...(baseUrl ? { HAPPIER_OPENCODE_SERVER_URL: baseUrl } : {}),

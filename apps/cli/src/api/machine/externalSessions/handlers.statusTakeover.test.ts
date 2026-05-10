@@ -17,7 +17,7 @@ const {
   updateSessionMetadataWithRetryMock,
   dispatchActivityNotificationAsyncMock,
   getActiveAccountSettingsSnapshotMock,
-  createManagedDirectSessionFollowLeaseMock,
+  createManagedExternalSessionFollowLeaseMock,
 } = vi.hoisted(() => ({
   readCredentialsMock: vi.fn(),
   fetchSessionByIdMock: vi.fn(),
@@ -28,7 +28,7 @@ const {
     deliveredChannels: 1,
   })),
   getActiveAccountSettingsSnapshotMock: vi.fn(),
-  createManagedDirectSessionFollowLeaseMock: vi.fn(),
+  createManagedExternalSessionFollowLeaseMock: vi.fn(),
 }));
 
 vi.mock('@/configuration', () => ({
@@ -66,20 +66,20 @@ vi.mock('@/settings/accountSettings/activeAccountSettingsSnapshot', () => ({
   getActiveAccountSettingsSnapshot: getActiveAccountSettingsSnapshotMock,
 }));
 
-vi.mock('@/api/session/external/backgroundFollow/createManagedDirectSessionFollowLease', async () => {
-  const actual = await vi.importActual<typeof import('@/api/session/external/backgroundFollow/createManagedDirectSessionFollowLease')>(
-    '@/api/session/external/backgroundFollow/createManagedDirectSessionFollowLease',
+vi.mock('@/api/session/external/backgroundFollow/createManagedExternalSessionFollowLease', async () => {
+  const actual = await vi.importActual<typeof import('@/api/session/external/backgroundFollow/createManagedExternalSessionFollowLease')>(
+    '@/api/session/external/backgroundFollow/createManagedExternalSessionFollowLease',
   );
   return {
     ...actual,
-    createManagedDirectSessionFollowLease: async (
-      ...args: Parameters<typeof actual.createManagedDirectSessionFollowLease>
+    createManagedExternalSessionFollowLease: async (
+      ...args: Parameters<typeof actual.createManagedExternalSessionFollowLease>
     ) => {
-      const forced = await createManagedDirectSessionFollowLeaseMock(...args);
+      const forced = await createManagedExternalSessionFollowLeaseMock(...args);
       if (forced !== undefined) {
         return forced;
       }
-      return actual.createManagedDirectSessionFollowLease(...args);
+      return actual.createManagedExternalSessionFollowLease(...args);
     },
   };
 });
@@ -110,7 +110,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
     clearClaudeJsonlSessionStoreRegistriesForTests();
-    createManagedDirectSessionFollowLeaseMock.mockReset();
+    createManagedExternalSessionFollowLeaseMock.mockReset();
     getActiveAccountSettingsSnapshotMock.mockReturnValue({
       source: 'active',
       settings: {
@@ -126,7 +126,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('takes over a direct claude session using provider cwd and config dir', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-takeover-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-takeover-'));
     const configDir = join(root, '.claude');
     const sessionFile = join(configDir, 'projects', 'proj-a', 'sess-claude-direct.jsonl');
     await mkdir(join(configDir, 'projects', 'proj-a'), { recursive: true });
@@ -168,7 +168,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
         machineId: 'm1',
         flavor: 'claude',
         claudeSessionId: 'sess-claude-direct',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           machineId: 'm1',
@@ -193,7 +193,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
+    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -219,12 +219,12 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   it.each([
     {
       label: 'takeover',
-      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER,
+      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
       request: { machineId: 'm1', sessionId: 'sess_happy_direct_no_credentials' },
     },
     {
       label: 'takeoverPersist',
-      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST,
+      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY,
       request: { machineId: 'm1', sessionId: 'sess_happy_direct_no_credentials' },
     },
   ])('preserves legacy provider_unavailable when $label cannot read credentials', async ({ method, request }) => {
@@ -262,12 +262,12 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   it.each([
     {
       label: 'takeover',
-      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER,
+      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
       request: { machineId: 'm1', sessionId: 'sess_happy_direct_bad_metadata' },
     },
     {
       label: 'takeoverPersist',
-      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST,
+      method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY,
       request: { machineId: 'm1', sessionId: 'sess_happy_direct_bad_metadata' },
     },
   ])('preserves legacy provider_unavailable when $label cannot decrypt linked session metadata', async ({ method, request }) => {
@@ -325,7 +325,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
         machineId: 'm1',
         flavor: 'claude',
         claudeSessionId: 'remote_force_stop',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           machineId: 'm1',
@@ -364,7 +364,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
     try {
       registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
 
-      const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
+      const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY);
       expect(handler).toBeDefined();
 
       const res = await handler!({
@@ -383,7 +383,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('converts a direct session to persisted mode by importing transcript, then respawning before flipping persisted metadata', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-persist-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-persist-'));
     const configDir = join(root, '.claude');
     const sessionFile = join(configDir, 'projects', 'proj-persist', 'sess-claude-persist.jsonl');
     await mkdir(join(configDir, 'projects', 'proj-persist'), { recursive: true });
@@ -423,7 +423,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       machineId: 'm1',
       flavor: 'claude',
       claudeSessionId: 'sess-claude-persist',
-      directSessionV1: {
+      externalSessionV1: {
         v: 1,
         providerId: 'claude',
         machineId: 'm1',
@@ -468,7 +468,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST);
+    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -499,7 +499,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
     );
     const metadataUpdateArgs = updateSessionMetadataWithRetryMock.mock.calls[0]?.[0];
     const updatedMetadata = metadataUpdateArgs?.updater?.(metadata);
-    expect(updatedMetadata.directSessionV1).toBeUndefined();
+    expect(updatedMetadata.externalSessionV1).toBeUndefined();
     expect(updatedMetadata.path).toBe('/tmp/direct-claude-persist-worktree');
     expect(updatedMetadata.externalHistoryImportV1).toMatchObject({
       v: 1,
@@ -510,7 +510,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('does not remove direct-session metadata when persisted respawn fails after import', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-persist-fail-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-persist-fail-'));
     const configDir = join(root, '.claude');
     const sessionFile = join(configDir, 'projects', 'proj-persist', 'sess-claude-persist.jsonl');
     await mkdir(join(configDir, 'projects', 'proj-persist'), { recursive: true });
@@ -529,7 +529,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       machineId: 'm1',
       flavor: 'claude',
       claudeSessionId: 'sess-claude-persist',
-      directSessionV1: {
+      externalSessionV1: {
         v: 1,
         providerId: 'claude',
         machineId: 'm1',
@@ -571,7 +571,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST);
+    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -586,7 +586,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('dispatches candidates.list to the claude adapter', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-'));
     const configDir = join(root, '.claude');
     const sessionFile = join(configDir, 'projects', 'proj-a', 'sess-1.jsonl');
     await mkdir(join(configDir, 'projects', 'proj-a'), { recursive: true });
@@ -602,7 +602,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -617,7 +617,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('dispatches transcript.page to the claude adapter', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-page-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-page-'));
     const configDir = join(root, '.claude');
     const sessionFile = join(configDir, 'projects', 'proj-a', 'sess-1.jsonl');
     await mkdir(join(configDir, 'projects', 'proj-a'), { recursive: true });
@@ -637,7 +637,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -666,7 +666,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -693,7 +693,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -712,7 +712,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', '/safe/.claude');
 
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-takeover-rogue-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-takeover-rogue-'));
     const rogueConfigDir = join(root, '.claude-rogue');
     const sessionFile = join(rogueConfigDir, 'projects', 'proj-rogue', 'sess-rogue.jsonl');
     await mkdir(join(rogueConfigDir, 'projects', 'proj-rogue'), { recursive: true });
@@ -740,7 +740,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
         machineId: 'm1',
         flavor: 'claude',
         claudeSessionId: 'sess-rogue',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           machineId: 'm1',
@@ -765,7 +765,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
+    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -775,7 +775,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     expect(res.ok).toBe(false);
     expect(res.errorCode).toBe('invalid_request');
-    expect(res.error).toBe('direct_session_directory_unavailable');
+    expect(res.error).toBe('external_session_directory_unavailable');
     expect(spawnSession).not.toHaveBeenCalled();
     expect(stopSession).not.toHaveBeenCalled();
   });
@@ -795,7 +795,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
         machineId: 'm1',
         flavor: 'claude',
         claudeSessionId: 'sess-claude-status',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           machineId: 'm1',
@@ -815,7 +815,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -831,7 +831,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('reuses cached takeover readiness across repeated direct-session status polls', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-status-cache-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-status-cache-'));
     const configDir = join(root, '.claude');
     const sessionFile = join(configDir, 'projects', 'proj-cache', 'sess-cache.jsonl');
     await mkdir(join(configDir, 'projects', 'proj-cache'), { recursive: true });
@@ -846,7 +846,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
       'utf8',
     );
     vi.stubEnv('HAPPIER_CLAUDE_CONFIG_DIR', configDir);
-    vi.stubEnv('HAPPIER_DIRECT_SESSIONS_STATUS_TAKEOVER_CACHE_MS', '60000');
+    vi.stubEnv('HAPPIER_EXTERNAL_SESSIONS_STATUS_TAKEOVER_CACHE_MS', '60000');
 
     readCredentialsMock.mockResolvedValue({
       token: 'token-cache',
@@ -861,7 +861,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
         machineId: 'm1',
         flavor: 'claude',
         claudeSessionId: 'sess-cache',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           machineId: 'm1',
@@ -881,7 +881,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET);
     expect(handler).toBeDefined();
 
     const request = {
@@ -904,7 +904,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('marks claude sessions with recent file activity as active_recently', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-status-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-status-'));
     const configDir = join(root, '.claude');
     const sessionFile = join(configDir, 'projects', 'proj-a', 'sess-1.jsonl');
     await mkdir(join(configDir, 'projects', 'proj-a'), { recursive: true });
@@ -921,7 +921,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -939,7 +939,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('marks codex sessions with recent rollout activity as active_recently', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-status-codex-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-status-codex-'));
     const codexHome = join(root, '.codex');
     const rolloutFile = join(codexHome, 'sessions', 'rollout-2026-03-05T00-00-00-remote_123.jsonl');
     await mkdir(join(codexHome, 'sessions'), { recursive: true });
@@ -956,7 +956,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -973,7 +973,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   });
 
   it('marks app-server codex sessions as active_recently from thread metadata when no rollout file exists', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-directSessions-rpc-status-codex-app-server-'));
+    const root = await mkdtemp(join(tmpdir(), 'happier-externalSessions-rpc-status-codex-app-server-'));
     const codexHome = join(root, '.codex');
     const nowUpdatedAtMs = Date.now();
     const nowUpdatedAtSeconds = nowUpdatedAtMs / 1000;
@@ -998,7 +998,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -1057,7 +1057,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
       registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-      const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET);
+      const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET);
       expect(handler).toBeDefined();
 
       const res = await handler!({
@@ -1090,7 +1090,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-    const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER);
+    const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER);
     expect(handler).toBeDefined();
 
     const res = await handler!({
@@ -1131,7 +1131,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
       registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-      const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET);
+      const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET);
       expect(handler).toBeDefined();
 
       const res = await handler!({
@@ -1176,7 +1176,7 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
 
       registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager });
 
-      const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET);
+      const handler = registered.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET);
       expect(handler).toBeDefined();
 
       const res = await handler!({

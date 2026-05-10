@@ -1,7 +1,7 @@
 import {
   readRuntimeDescriptorV1FromMetadata,
-  type DirectSessionsSource,
-  type DirectTranscriptRawMessageV1,
+  type ExternalSessionsSource,
+  type ExternalSessionTranscriptRawMessageV1,
   type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import { configuration } from '../../../configuration';
@@ -10,14 +10,14 @@ import {
 } from '@happier-dev/agents';
 
 import {
-  createDirectSessionTranscriptProviderOps,
-  mergeDirectSessionEnvironmentVariables,
-  type DirectSessionProviderOps,
+  createExternalSessionTranscriptProviderOps,
+  mergeExternalSessionEnvironmentVariables,
+  type ExternalSessionProviderOps,
 } from '@/session/external/providerOps';
 
-import { getCodexDirectSessionWorkingDirectory } from './getCodexDirectSessionWorkingDirectory';
+import { getCodexExternalSessionWorkingDirectory } from './getCodexExternalSessionWorkingDirectory';
 import { listCodexSessionCandidates } from './listCodexSessionCandidates';
-import { resolveCodexDirectSessionLinkIdentity } from './resolveCodexDirectSessionLinkIdentity';
+import { resolveCodexExternalSessionLinkIdentity } from './resolveCodexExternalSessionLinkIdentity';
 import { homeEntries } from './homeEntries';
 import { sourceValidation } from './sourceValidation';
 import { resolveCodexRolloutDirectTranscriptSnapshot } from '../rollout/sessionStore/transcriptHistory';
@@ -27,7 +27,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
+export const codexExternalSessionProviderOps: ExternalSessionProviderOps = {
   validateSource: ({ source, env }) => sourceValidation({ source, env }),
   listCandidates: async ({ source, cursor, limit, searchTerm }) => {
     const res = await listCodexSessionCandidates({ source, activeServerDir: configuration.activeServerDir, cursor, limit, searchTerm });
@@ -55,7 +55,7 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
       isRunning: false,
     };
   },
-  ...createDirectSessionTranscriptProviderOps<DirectTranscriptRawMessageV1>({
+  ...createExternalSessionTranscriptProviderOps<ExternalSessionTranscriptRawMessageV1>({
     pageOlder: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems }) => {
       const res = await withCodexRolloutSessionStore(
         {
@@ -67,7 +67,7 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
           },
         },
         async (store): Promise<Readonly<{
-          items: DirectTranscriptRawMessageV1[];
+          items: ExternalSessionTranscriptRawMessageV1[];
           nextCursor: string | null;
           tailCursor: string | null;
           hasMore: boolean;
@@ -75,7 +75,7 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
         }>> => {
           const page = await store.pageOlder({ direction, cursor, maxBytes, maxItems });
           return {
-            items: Array.from(page.items as readonly DirectTranscriptRawMessageV1[]),
+            items: Array.from(page.items as readonly ExternalSessionTranscriptRawMessageV1[]),
             nextCursor: page.nextCursor,
             tailCursor: page.tailCursor,
             hasMore: page.hasMore,
@@ -102,13 +102,13 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
           },
         },
         async (store): Promise<Readonly<{
-          items: DirectTranscriptRawMessageV1[];
+          items: ExternalSessionTranscriptRawMessageV1[];
           nextCursor: string | null;
           truncated: boolean;
         }>> => {
           const read = await store.readAfter({ cursor, maxBytes, maxItems });
           return {
-            items: Array.from(read.items as readonly DirectTranscriptRawMessageV1[]),
+            items: Array.from(read.items as readonly ExternalSessionTranscriptRawMessageV1[]),
             nextCursor: read.nextCursor,
             truncated: read.truncated,
           };
@@ -130,7 +130,7 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
         getTailCursor: () => lease.store.getTailCursor(),
         subscribeToTranscriptUpdates: (listener) => lease.store.subscribe(async (event) => {
           await listener({
-            items: Array.from(event.items as readonly DirectTranscriptRawMessageV1[]),
+            items: Array.from(event.items as readonly ExternalSessionTranscriptRawMessageV1[]),
             nextCursor: event.nextCursor,
             truncated: event.truncated,
           });
@@ -139,12 +139,12 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
     },
   }),
   canonicalizeLinkedSession: async ({ metadata, remoteSessionId, source }) => {
-    const directSession = asRecord(metadata.directSessionV1);
+    const externalSession = asRecord(metadata.externalSessionV1);
     const runtimeDescriptor = (
-      readRuntimeDescriptorV1FromMetadata(directSession)
+      readRuntimeDescriptorV1FromMetadata(externalSession)
       ?? readRuntimeDescriptorV1FromMetadata(metadata)
     ) as RuntimeDescriptorV1 | null;
-    const identity = resolveCodexDirectSessionLinkIdentity({
+    const identity = resolveCodexExternalSessionLinkIdentity({
       remoteSessionId,
       source,
       runtimeDescriptor,
@@ -157,7 +157,7 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
     };
   },
   resolveLinkIdentity: async ({ remoteSessionId, source, runtimeDescriptor, metadata }) => {
-    return resolveCodexDirectSessionLinkIdentity({ remoteSessionId, source, runtimeDescriptor, metadata });
+    return resolveCodexExternalSessionLinkIdentity({ remoteSessionId, source, runtimeDescriptor, metadata });
   },
   resolveTakeoverSpawnOptions: async ({ linked, sessionId }) => {
     const snapshot = await resolveCodexRolloutDirectTranscriptSnapshot({
@@ -175,7 +175,7 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
     const fallbackCodexHome = fallbackHomeEntries?.length === 1 ? fallbackHomeEntries[0]?.codexHome ?? null : null;
     const directory =
       linked.sessionPath ??
-      (await getCodexDirectSessionWorkingDirectory({
+      (await getCodexExternalSessionWorkingDirectory({
         source: linked.source,
         activeServerDir: configuration.activeServerDir,
         remoteSessionId: linked.remoteSessionId,
@@ -193,7 +193,7 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
       ...buildCodexSpawnRuntimeAffinityCompatFields(
         linked.codexBackendMode ? { backendMode: linked.codexBackendMode } : null,
       ),
-      environmentVariables: mergeDirectSessionEnvironmentVariables([effectiveCodexHome ? { CODEX_HOME: effectiveCodexHome } : null]),
+      environmentVariables: mergeExternalSessionEnvironmentVariables([effectiveCodexHome ? { CODEX_HOME: effectiveCodexHome } : null]),
     };
   },
 };

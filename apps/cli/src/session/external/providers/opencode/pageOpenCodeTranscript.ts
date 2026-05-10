@@ -1,4 +1,4 @@
-import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionsSource, ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { createOpenCodeDirectClient } from './createOpenCodeDirectClient';
 import { mapOpenCodeMessageToDirectItem } from './mapOpenCodeMessageToDirectItem';
@@ -31,14 +31,14 @@ function decodeBackwardCursor(raw: string | undefined): OpenCodeBackwardCursorV1
 }
 
 export async function pageOpenCodeTranscript(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     remoteSessionId: string;
     direction: 'older' | 'newer';
     cursor?: string;
     maxBytes: number;
     maxItems: number;
 }>): Promise<Readonly<{
-    items: DirectTranscriptRawMessageV1[];
+    items: ExternalSessionTranscriptRawMessageV1[];
     nextCursor: string | null;
     tailCursor: string | null;
     hasMore: boolean;
@@ -61,7 +61,7 @@ export async function pageOpenCodeTranscript(params: Readonly<{
         const tailCursor = encodeOpenCodeDirectAfterCursor({ v: 1, kind: 'opencodeAfter', nextIndex: rawMessages.length });
 
         const pageMessages = rawMessages.slice(startIndex, endIndex);
-        const itemsReversed: DirectTranscriptRawMessageV1[] = [];
+        const itemsReversed: ExternalSessionTranscriptRawMessageV1[] = [];
         let firstReturnedIndex: number | null = null;
         let remainingBytes = maxBytes;
         let truncated = false;

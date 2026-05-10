@@ -21,7 +21,7 @@ function responseItemLine(payload: Record<string, unknown>): string {
   return `${JSON.stringify({ type: 'response_item', payload })}\n`;
 }
 
-function createDirectSessionsEnv(codexHome: string, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+function createExternalSessionsEnv(codexHome: string, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return createCodexAppServerProcessEnv(
     overrides.HAPPIER_CODEX_APP_SERVER_BIN ?? join(codexHome, 'missing-codex-app-server-binary'),
     {
@@ -78,7 +78,7 @@ describe('listCodexSessionCandidates', () => {
 
     const first = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome),
+      env: createExternalSessionsEnv(codexHome),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 1,
     });
@@ -91,7 +91,7 @@ describe('listCodexSessionCandidates', () => {
 
     const second = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome),
+      env: createExternalSessionsEnv(codexHome),
       activeServerDir: join(root, 'servers', 'cloud'),
       cursor: first.nextCursor ?? undefined,
       limit: 10,
@@ -143,7 +143,7 @@ describe('listCodexSessionCandidates', () => {
 
     const first = await listWithMockedFs({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome),
+      env: createExternalSessionsEnv(codexHome),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 1,
     });
@@ -179,7 +179,7 @@ describe('listCodexSessionCandidates', () => {
     // Search by title-only term that does NOT appear in sessionId or cwd
     const result = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome),
+      env: createExternalSessionsEnv(codexHome),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,
       searchTerm: 'unique',
@@ -228,7 +228,7 @@ describe('listCodexSessionCandidates', () => {
     // Search by sessionId substring
     const bySessionId = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome),
+      env: createExternalSessionsEnv(codexHome),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,
       searchTerm: 'aaaa',
@@ -239,7 +239,7 @@ describe('listCodexSessionCandidates', () => {
     // Search by cwd substring
     const byCwd = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome),
+      env: createExternalSessionsEnv(codexHome),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,
       searchTerm: 'frontend',
@@ -288,7 +288,7 @@ describe('listCodexSessionCandidates', () => {
 
     const result = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
+      env: createExternalSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,
     });
@@ -330,7 +330,7 @@ describe('listCodexSessionCandidates', () => {
 
     const result = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
+      env: createExternalSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,
     });
@@ -363,7 +363,7 @@ describe('listCodexSessionCandidates', () => {
 
     const result = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
+      env: createExternalSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,
     });
@@ -408,7 +408,7 @@ describe('listCodexSessionCandidates', () => {
 
     const result = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome),
+      env: createExternalSessionsEnv(codexHome),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,
     });
@@ -455,7 +455,7 @@ describe('listCodexSessionCandidates', () => {
 
     const result = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome),
+      env: createExternalSessionsEnv(codexHome),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,
     });
@@ -504,7 +504,7 @@ describe('listCodexSessionCandidates', () => {
       source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'svc_1' },
       env: createCodexAppServerProcessEnv(fakeAppServer, {
         CODEX_HOME: firstHome,
-        HAPPIER_CODEX_DIRECT_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS: '5000',
+        HAPPIER_CODEX_EXTERNAL_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS: '5000',
       }),
       activeServerDir,
       limit: 10,
@@ -655,7 +655,7 @@ describe('listCodexSessionCandidates', () => {
 
     const result = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome),
+      env: createExternalSessionsEnv(codexHome),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,
     });
@@ -701,7 +701,7 @@ describe('listCodexSessionCandidates', () => {
 
     const first = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
+      env: createExternalSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 1,
     });
@@ -710,7 +710,7 @@ describe('listCodexSessionCandidates', () => {
 
     const second = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
+      env: createExternalSessionsEnv(codexHome, { HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer }),
       activeServerDir: join(root, 'servers', 'cloud'),
       cursor: first.nextCursor ?? undefined,
       limit: 1,
@@ -750,9 +750,9 @@ describe('listCodexSessionCandidates', () => {
 
     const result = await listCodexSessionCandidates({
       source: { kind: 'codexHome', home: 'user' },
-      env: createDirectSessionsEnv(codexHome, {
+      env: createExternalSessionsEnv(codexHome, {
         HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer,
-        HAPPIER_CODEX_DIRECT_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS: '100',
+        HAPPIER_CODEX_EXTERNAL_SESSIONS_APP_SERVER_LIST_TIMEOUT_MS: '100',
       }),
       activeServerDir: join(root, 'servers', 'cloud'),
       limit: 10,

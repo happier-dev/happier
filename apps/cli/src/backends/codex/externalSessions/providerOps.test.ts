@@ -14,7 +14,7 @@ function responseItemLine(payload: Record<string, unknown>): string {
     return `${JSON.stringify({ type: 'response_item', payload })}\n`;
 }
 
-describe('codexDirectSessionProviderOps.resolveTakeoverSpawnOptions', () => {
+describe('codexExternalSessionProviderOps.resolveTakeoverSpawnOptions', () => {
     const originalActiveServerDir = configuration.activeServerDir;
 
     afterEach(() => {
@@ -53,9 +53,9 @@ describe('codexDirectSessionProviderOps.resolveTakeoverSpawnOptions', () => {
 
         (configuration as { activeServerDir: string }).activeServerDir = activeServerDir;
 
-        const { codexDirectSessionProviderOps } = await import('./providerOps');
+        const { codexExternalSessionProviderOps } = await import('./providerOps');
 
-        const result = await codexDirectSessionProviderOps.resolveTakeoverSpawnOptions({
+        const result = await codexExternalSessionProviderOps.resolveTakeoverSpawnOptions({
             linked: {
                 rawSession: {
                     id: 'raw-session-1',

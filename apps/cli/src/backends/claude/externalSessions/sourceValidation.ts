@@ -1,7 +1,7 @@
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
 import {
-  canonicalizeDirectSessionsPath,
+  canonicalizeExternalSessionsPath,
   directSourceValidationError,
   type DirectSourceValidationResult,
 } from '@/session/external/sourceValidation';
@@ -9,14 +9,14 @@ import {
 import { resolveCanonicalConfiguredClaudeConfigDir } from './resolveClaudeConfigDir';
 
 export function validateSource(params: Readonly<{
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   env: NodeJS.ProcessEnv;
 }>): DirectSourceValidationResult {
   const { source, env } = params;
   if (source.kind !== 'claudeConfig') return directSourceValidationError('provider/source mismatch');
   const requestedConfigDir =
     typeof source.configDir === 'string' && source.configDir.trim().length > 0
-      ? canonicalizeDirectSessionsPath(source.configDir)
+      ? canonicalizeExternalSessionsPath(source.configDir)
       : null;
   const configuredConfigDir = resolveCanonicalConfiguredClaudeConfigDir({ env });
   if (requestedConfigDir && requestedConfigDir !== configuredConfigDir) {

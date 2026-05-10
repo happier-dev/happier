@@ -1,20 +1,20 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
-import { canonicalizeDirectSessionsPath } from '@/session/external/sourceValidation';
+import { canonicalizeExternalSessionsPath } from '@/session/external/sourceValidation';
 
 export function resolveConfiguredOhMyPiAgentDir(env: NodeJS.ProcessEnv): string {
   const configured =
     typeof env.PI_CODING_AGENT_DIR === 'string' && env.PI_CODING_AGENT_DIR.trim().length > 0
       ? env.PI_CODING_AGENT_DIR
       : join(homedir(), '.omp', 'agent');
-  return canonicalizeDirectSessionsPath(configured);
+  return canonicalizeExternalSessionsPath(configured);
 }
 
 export function resolveOhMyPiAgentDir(params: Readonly<{
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   env?: NodeJS.ProcessEnv;
 }>): string {
   const env = params.env ?? process.env;
@@ -26,6 +26,6 @@ export function resolveOhMyPiAgentDir(params: Readonly<{
       ? params.source.agentDir
       : null;
   return sourceAgentDir
-    ? canonicalizeDirectSessionsPath(sourceAgentDir)
+    ? canonicalizeExternalSessionsPath(sourceAgentDir)
     : resolveConfiguredOhMyPiAgentDir(env);
 }

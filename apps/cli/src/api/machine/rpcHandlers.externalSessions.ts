@@ -2,15 +2,15 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   type ActionExecuteResult,
   type ActionId,
-  type DirectSessionTranscriptDeltaEphemeral,
+  type ExternalSessionTranscriptDeltaEphemeral,
 } from '@happier-dev/protocol';
 
-import { createDirectSessionFollowLeaseManager } from '@/api/session/external/leases/createDirectSessionFollowLeaseManager';
+import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
 import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { EXTERNAL_SESSION_REQUIRED_GENERIC_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import {
-  directSessionsError,
+  externalSessionsError,
   executeExternalSessionAttachAction,
   executeExternalSessionCandidatesListAction,
   executeExternalSessionDetachAction,
@@ -21,7 +21,7 @@ import {
   executeExternalSessionTranscriptPageAction,
   executeExternalSessionTranscriptReadAfterAction,
   internalErrorResponse,
-  mapActionFailureToDirectSessionsError,
+  mapActionFailureToExternalSessionsError,
   resolveTakeoverReadinessCacheMs,
   type ExternalSessionActionContext,
   type ExternalSessionTakeoverActionInput,
@@ -70,30 +70,30 @@ function createExternalSessionRpcActionExecutor(
   };
 }
 
-function readDirectSessionGenericFailure(actionId: ActionId): string {
+function readExternalSessionGenericFailure(actionId: ActionId): string {
   switch (actionId) {
     case 'sessions.external.candidates.list':
-      return 'direct_sessions_candidates_list_failed';
+      return 'external_sessions_candidates_list_failed';
     case 'sessions.external.link.ensure':
-      return 'direct_session_link_ensure_failed';
+      return 'external_session_link_ensure_failed';
     case 'sessions.external.attach':
-      return 'direct_session_attach_failed';
+      return 'external_session_attach_failed';
     case 'sessions.external.detach':
-      return 'direct_session_detach_failed';
+      return 'external_session_detach_failed';
     case 'sessions.external.followPolicy.set':
       return 'follow_policy_set_failed';
     case 'sessions.external.status.get':
-      return 'direct_session_status_get_failed';
+      return 'external_session_status_get_failed';
     case 'sessions.external.transcript.page':
-      return 'direct_session_transcript_page_failed';
+      return 'external_session_transcript_page_failed';
     case 'sessions.external.transcript.readAfter':
-      return 'direct_session_transcript_read_after_failed';
+      return 'external_session_transcript_read_after_failed';
     default:
-      return 'direct_session_action_failed';
+      return 'external_session_action_failed';
   }
 }
 
-function createDirectSessionGenericRpcActionExecutor(
+function createExternalSessionGenericRpcActionExecutor(
   executor: RpcActionExecutor,
 ): RpcActionExecutor {
   return {
@@ -105,15 +105,15 @@ function createDirectSessionGenericRpcActionExecutor(
         }
         return {
           ok: true,
-          result: mapActionFailureToDirectSessionsError(result),
+          result: mapActionFailureToExternalSessionsError(result),
         };
       } catch (error) {
         return {
           ok: true,
           result: internalErrorResponse(
-            `direct_session_generic.${actionId}`,
+            `external_session_generic.${actionId}`,
             error,
-            readDirectSessionGenericFailure(actionId),
+            readExternalSessionGenericFailure(actionId),
           ),
         };
       }
@@ -125,13 +125,13 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession?: (sessionId: string) => Promise<boolean>;
-  emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+  emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptDeltaEphemeral) => void;
   actionExecutor?: RpcActionExecutor;
 }>): void {
-  const { rpcHandlerManager, emitDirectSessionTranscriptUpdate } = params;
+  const { rpcHandlerManager, emitExternalSessionTranscriptUpdate } = params;
   const takeoverReadinessCacheMs = resolveTakeoverReadinessCacheMs();
   const takeoverReadinessBySessionId = new Map<string, Readonly<{ value: boolean; expiresAtMs: number }>>();
-  const followLeaseManager = createDirectSessionFollowLeaseManager();
+  const followLeaseManager = createExternalSessionFollowLeaseManager();
 
   const readCachedTakeoverReadiness = (sessionId: string): boolean | null => {
     if (takeoverReadinessCacheMs <= 0) return null;
@@ -158,7 +158,7 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
 
   const externalSessionActionContext: ExternalSessionActionContext = {
     followLeaseManager,
-    emitDirectSessionTranscriptUpdate,
+    emitExternalSessionTranscriptUpdate,
     spawnSession: params.spawnSession,
     stopSession: params.stopSession,
     takeoverReadiness: {
@@ -173,7 +173,7 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
 
   registerActionSpecRpcHandlers({
     rpcHandlerManager,
-    actionExecutor: createDirectSessionGenericRpcActionExecutor(externalSessionRpcActionExecutor),
+    actionExecutor: createExternalSessionGenericRpcActionExecutor(externalSessionRpcActionExecutor),
     scopes: EXTERNAL_SESSION_REQUIRED_GENERIC_RPC_SCOPES,
   });
 
@@ -187,7 +187,7 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
         executor: externalSessionRpcActionExecutor,
       });
     } catch (error) {
-      return internalErrorResponse('direct_session_takeover', error, 'direct_session_takeover_failed');
+      return internalErrorResponse('external_session_takeover', error, 'external_session_takeover_failed');
     }
   };
 

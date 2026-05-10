@@ -1,7 +1,7 @@
 import {
-  createDirectSessionTranscriptProviderOps,
-  mergeDirectSessionEnvironmentVariables,
-  type DirectSessionProviderOps,
+  createExternalSessionTranscriptProviderOps,
+  mergeExternalSessionEnvironmentVariables,
+  type ExternalSessionProviderOps,
 } from '@/session/external/providerOps';
 
 import { listOhMyPiSessionCandidates } from './listOhMyPiSessionCandidates';
@@ -9,7 +9,7 @@ import { resolveConfiguredOhMyPiAgentDir, resolveOhMyPiAgentDir } from './resolv
 import { sourceValidation } from './sourceValidation';
 import { acquireOhMyPiJsonlSessionStore, withOhMyPiJsonlSessionStore } from '../transcripts/sessionStore';
 
-export const ohMyPiDirectSessionProviderOps: DirectSessionProviderOps = {
+export const ohMyPiExternalSessionProviderOps: ExternalSessionProviderOps = {
   validateSource: ({ source, env }) => sourceValidation({ source, env }),
   listCandidates: async ({ source, cursor, limit, searchTerm }) => {
     const res = await listOhMyPiSessionCandidates({ source, cursor, limit, searchTerm });
@@ -30,7 +30,7 @@ export const ohMyPiDirectSessionProviderOps: DirectSessionProviderOps = {
       };
     });
   },
-  ...createDirectSessionTranscriptProviderOps({
+  ...createExternalSessionTranscriptProviderOps({
     pageOlder: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems }) => {
       if (direction !== 'older') {
         return {
@@ -125,7 +125,7 @@ export const ohMyPiDirectSessionProviderOps: DirectSessionProviderOps = {
         resume: linked.remoteSessionId,
         approvedNewDirectoryCreation: true,
         transcriptStorage: 'direct',
-        environmentVariables: mergeDirectSessionEnvironmentVariables([
+        environmentVariables: mergeExternalSessionEnvironmentVariables([
           { PI_CODING_AGENT_DIR: agentDir },
         ]),
       };

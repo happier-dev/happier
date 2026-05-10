@@ -1,4 +1,4 @@
-import type { DirectSessionCandidateV1 } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateV1 } from '@happier-dev/protocol';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -17,7 +17,7 @@ function getNumber(value: unknown, key: string): number | null {
     return n != null ? Math.trunc(n) : null;
 }
 
-export function parseOpenCodeSessionCandidate(raw: unknown): DirectSessionCandidateV1 | null {
+export function parseOpenCodeSessionCandidate(raw: unknown): ExternalSessionCandidateV1 | null {
     const rec = asRecord(raw);
     if (!rec) return null;
     const remoteSessionId = getString(rec, 'id').trim();

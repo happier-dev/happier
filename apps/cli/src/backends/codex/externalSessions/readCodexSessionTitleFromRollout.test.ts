@@ -4,7 +4,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { createCodexRolloutDisplayTitleHandler } from '../rollout/displayTitle';
 import { readCodexSessionTitleFromRollout } from '../rollout/readCodexSessionTitleFromRollout';
+import { codexSessionStateFacet } from '../sessionState';
 
 function sessionMetaLine(payload: Record<string, unknown>): string {
   return `${JSON.stringify({ type: 'session_meta', payload })}\n`;
@@ -53,5 +55,103 @@ describe('readCodexSessionTitleFromRollout', () => {
     await writeFile(filePath, lines.join(''), 'utf8');
 
     await expect(readCodexSessionTitleFromRollout(filePath)).resolves.toBe(meaningfulTask);
+  });
+
+  it('exposes rollout title adoption as the Codex display.title provider field handler', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-display-title-'));
+    const filePath = join(root, 'rollout.jsonl');
+    await writeFile(
+      filePath,
+      responseItemLine({
+        timestamp: '2026-03-06T00:00:01.000Z',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'Summarize display title adoption' }],
+        },
+      }),
+      'utf8',
+    );
+
+    const handler = createCodexRolloutDisplayTitleHandler({ rolloutFilePath: filePath });
+
+    await expect(handler.readField?.({ sessionId: 'sess-1' })).resolves.toBe('Summarize display title adoption');
+  });
+
+  it('prefers Happier MCP change_title tool calls over fallback text', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-mcp-title-'));
+    const filePath = join(root, 'rollout.jsonl');
+    await writeFile(
+      filePath,
+      [
+        responseItemLine({
+          timestamp: '2026-03-06T00:00:01.000Z',
+          payload: {
+            type: 'function_call',
+            call_id: 'call-title',
+            name: 'mcp__happier__change_title',
+            arguments: JSON.stringify({ title: 'Canonical MCP title' }),
+          },
+        }),
+        responseItemLine({
+          timestamp: '2026-03-06T00:00:02.000Z',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Fallback user task' }],
+          },
+        }),
+      ].join(''),
+      'utf8',
+    );
+
+    await expect(readCodexSessionTitleFromRollout(filePath)).resolves.toBe('Canonical MCP title');
+  });
+
+  it('recognizes centralized session_title_set aliases when reading rollout titles', async () => {
+    const filePath = join(tmpdir(), `codex-title-${Date.now()}-${Math.random()}.jsonl`);
+    await writeFile(
+      filePath,
+      [
+        responseItemLine({
+          timestamp: '2026-03-06T00:00:01.000Z',
+          payload: {
+            type: 'function_call',
+            call_id: 'call-central-title',
+            name: 'mcp__happier__session_title_set',
+            arguments: JSON.stringify({ title: 'Central Alias Title' }),
+          },
+        }),
+      ].join('\n'),
+      'utf8',
+    );
+
+    await expect(readCodexSessionTitleFromRollout(filePath)).resolves.toBe('Central Alias Title');
+  });
+
+  it('exposes rollout title adoption through the Codex session-state facet', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-display-title-facet-'));
+    const filePath = join(root, 'rollout.jsonl');
+    await writeFile(
+      filePath,
+      responseItemLine({
+        timestamp: '2026-03-06T00:00:01.000Z',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'Read title through session state facet' }],
+        },
+      }),
+      'utf8',
+    );
+
+    expect(codexSessionStateFacet.capabilities?.display?.title?.providerToHappier).toMatchObject({
+      supported: true,
+      source: 'snapshot',
+    });
+    await expect(codexSessionStateFacet.readField(
+      { sessionId: 'sess-1', rolloutFilePath: filePath },
+      'display.title',
+    )).resolves.toBe('Read title through session state facet');
   });
 });

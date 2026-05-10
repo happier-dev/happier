@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
-import type { LoadedLinkedDirectSession } from './loadLinkedDirectSession';
+import type { LoadedLinkedExternalSession } from './loadLinkedExternalSession';
 import { resolveDirectTakeoverSpawnOptions } from './resolveDirectTakeoverSpawnOptions';
 
 vi.mock('@/configuration', () => ({
@@ -24,11 +24,11 @@ function jsonlLine(value: unknown): string {
 
 function createLinkedCodexSessionFixture(params: Readonly<{
   remoteSessionId: string;
-  source: LoadedLinkedDirectSession['source'];
+  source: LoadedLinkedExternalSession['source'];
   sessionPath?: string | null;
-  metadata?: LoadedLinkedDirectSession['metadata'];
+  metadata?: LoadedLinkedExternalSession['metadata'];
   codexBackendMode?: 'mcp' | 'acp' | 'appServer';
-}>): LoadedLinkedDirectSession {
+}>): LoadedLinkedExternalSession {
   return {
     rawSession: {} as RawSessionRecord,
     metadata: params.metadata ?? {},
@@ -43,9 +43,9 @@ function createLinkedCodexSessionFixture(params: Readonly<{
 
 function createLinkedOpenCodeSessionFixture(params: Readonly<{
   remoteSessionId: string;
-  source: LoadedLinkedDirectSession['source'];
+  source: LoadedLinkedExternalSession['source'];
   sessionPath?: string | null;
-}>): LoadedLinkedDirectSession {
+}>): LoadedLinkedExternalSession {
   return {
     rawSession: {} as RawSessionRecord,
     metadata: {},

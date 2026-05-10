@@ -1,14 +1,14 @@
 import { readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
-import type { DirectSessionCandidateV1 } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateV1 } from '@happier-dev/protocol';
 
-import { deriveDirectSessionActivityFromTimestamp } from '../../../api/session/external/activity/deriveDirectSessionActivityFromTimestamp';
+import { deriveExternalSessionActivityFromTimestamp } from '../../../api/session/external/activity/deriveExternalSessionActivityFromTimestamp';
 
 import { readCodexSessionMetaFromRollout } from '../rollout/discovery/rolloutDiscovery';
 import { parseCodexRolloutSessionIdFromFilename } from '../rollout/discovery/parseCodexRolloutSessionIdFromFilename';
 import { withCodexRolloutSessionStore } from '../rollout/sessionStore/codexRolloutSessionStoreRegistry';
-import type { CodexDirectSessionHomeEntry } from './homeEntries';
+import type { CodexExternalSessionHomeEntry } from './homeEntries';
 import { homeEntries as resolveHomeEntries } from './homeEntries';
 
 type RolloutCandidateGroup = Readonly<{
@@ -70,8 +70,8 @@ async function buildRolloutCandidate(params: Readonly<{
   remoteSessionId: string;
   group: RolloutCandidateGroup;
   env: NodeJS.ProcessEnv;
-  source: CodexDirectSessionHomeEntry['source'];
-}>): Promise<DirectSessionCandidateV1> {
+  source: CodexExternalSessionHomeEntry['source'];
+}>): Promise<ExternalSessionCandidateV1> {
   const [latestMeta, earliestMeta, storeMetadata] = await Promise.all([
     readCodexSessionMetaFromRollout(params.group.latestFilePath),
     readCodexSessionMetaFromRollout(params.group.earliestFilePath),
@@ -119,7 +119,7 @@ async function buildRolloutCandidate(params: Readonly<{
     createdAtMs,
     updatedAtMs,
     archived: params.group.archived,
-    activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs, env: params.env }),
+    activity: deriveExternalSessionActivityFromTimestamp({ updatedAtMs, env: params.env }),
     details: {
       ...(cwd ? { cwd } : {}),
       source: params.source,
@@ -138,13 +138,13 @@ async function resolveRolloutCandidateSessionId(filePath: string): Promise<strin
 }
 
 export async function rolloutCandidates(params: Readonly<{
-  source: CodexDirectSessionHomeEntry['source'];
+  source: CodexExternalSessionHomeEntry['source'];
   activeServerDir: string;
   env?: NodeJS.ProcessEnv;
   offset?: number;
   limit?: number;
   searchTerm?: string;
-}>): Promise<Readonly<{ candidates: DirectSessionCandidateV1[]; totalCount: number }>> {
+}>): Promise<Readonly<{ candidates: ExternalSessionCandidateV1[]; totalCount: number }>> {
   const env = params.env ?? process.env;
   const homeEntries = await resolveHomeEntries({
     source: params.source,
@@ -152,7 +152,7 @@ export async function rolloutCandidates(params: Readonly<{
     env,
   });
 
-  const grouped = new Map<string, { group: RolloutCandidateGroup; source: CodexDirectSessionHomeEntry['source'] }>();
+  const grouped = new Map<string, { group: RolloutCandidateGroup; source: CodexExternalSessionHomeEntry['source'] }>();
   for (const homeEntry of homeEntries) {
     const files = [
       ...(await collectRolloutFiles({ rootDir: join(homeEntry.codexHome, 'sessions'), maxDepth: 10, archived: false })),

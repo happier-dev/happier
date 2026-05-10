@@ -3,14 +3,14 @@ import { resolveCanonicalConfiguredClaudeConfigDir, resolveClaudeConfigDir } fro
 import { validateSource } from './sourceValidation';
 
 import {
-  createDirectSessionTranscriptProviderOps,
-  mergeDirectSessionEnvironmentVariables,
-  type DirectSessionProviderOps,
+  createExternalSessionTranscriptProviderOps,
+  mergeExternalSessionEnvironmentVariables,
+  type ExternalSessionProviderOps,
 } from '@/session/external/providerOps';
 
 import { acquireClaudeJsonlSessionStore, withClaudeJsonlSessionStore } from '../transcripts/sessionStore';
 
-export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
+export const claudeExternalSessionProviderOps: ExternalSessionProviderOps = {
   validateSource: ({ source, env }) => validateSource({ source, env }),
   listCandidates: async ({ source, cursor, limit, searchTerm }) => {
     const res = await listClaudeSessionCandidates({ source, cursor, limit, searchTerm });
@@ -31,7 +31,7 @@ export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
       };
     });
   },
-  ...createDirectSessionTranscriptProviderOps({
+  ...createExternalSessionTranscriptProviderOps({
     pageOlder: async ({ source, remoteSessionId, direction, cursor, maxBytes, maxItems }) => {
       if (direction !== 'older') {
         return {
@@ -122,7 +122,7 @@ export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
         resume: linked.remoteSessionId,
         approvedNewDirectoryCreation: true,
         transcriptStorage: 'direct',
-        environmentVariables: mergeDirectSessionEnvironmentVariables([{ CLAUDE_CONFIG_DIR: configDir }]),
+        environmentVariables: mergeExternalSessionEnvironmentVariables([{ CLAUDE_CONFIG_DIR: configDir }]),
       };
     });
   },

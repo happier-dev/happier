@@ -1,11 +1,11 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
-import { canonicalizeDirectSessionsPath } from '@/session/external/sourceValidation';
+import { canonicalizeExternalSessionsPath } from '@/session/external/sourceValidation';
 
-export function expandHomeDirForDirectSessions(raw: string): string {
+export function expandHomeDirForExternalSessions(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed === '~') return homedir();
   if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) return join(homedir(), trimmed.slice(2));
@@ -21,18 +21,18 @@ export function resolveConfiguredClaudeConfigDir(params: Readonly<{ env: NodeJS.
         : '';
 
   const resolved = fromEnv || join(homedir(), '.claude');
-  return expandHomeDirForDirectSessions(resolved) || join(homedir(), '.claude');
+  return expandHomeDirForExternalSessions(resolved) || join(homedir(), '.claude');
 }
 
 export function resolveCanonicalConfiguredClaudeConfigDir(params: Readonly<{ env: NodeJS.ProcessEnv }>): string {
-  return canonicalizeDirectSessionsPath(resolveConfiguredClaudeConfigDir(params));
+  return canonicalizeExternalSessionsPath(resolveConfiguredClaudeConfigDir(params));
 }
 
-export function resolveClaudeConfigDir(params: Readonly<{ source: DirectSessionsSource; env: NodeJS.ProcessEnv }>): string {
+export function resolveClaudeConfigDir(params: Readonly<{ source: ExternalSessionsSource; env: NodeJS.ProcessEnv }>): string {
   if (params.source.kind !== 'claudeConfig') {
     return join(homedir(), '.claude');
   }
   const fromSource = typeof params.source.configDir === 'string' ? params.source.configDir.trim() : '';
   const resolved = fromSource || resolveConfiguredClaudeConfigDir({ env: params.env });
-  return expandHomeDirForDirectSessions(resolved) || join(homedir(), '.claude');
+  return expandHomeDirForExternalSessions(resolved) || join(homedir(), '.claude');
 }

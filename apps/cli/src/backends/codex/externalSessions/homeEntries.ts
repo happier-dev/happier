@@ -3,11 +3,11 @@ import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
-export type CodexDirectSessionHomeEntry = Readonly<{
+export type CodexExternalSessionHomeEntry = Readonly<{
   codexHome: string;
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
 }>;
 
 function isSafeConnectedServiceId(raw: unknown): raw is string {
@@ -57,10 +57,10 @@ async function resolveVerifiedCodexHomePath(expectedPath: string, exactHomePath:
   }
 }
 
-export function inferCodexDirectSessionsSourceFromHome(params: Readonly<{
+export function inferCodexExternalSessionsSourceFromHome(params: Readonly<{
   codexHome?: string | null;
   activeServerDir?: string | null;
-}>): DirectSessionsSource {
+}>): ExternalSessionsSource {
   const codexHome = typeof params.codexHome === 'string' && params.codexHome.trim().length > 0
     ? normalizeHomePath(params.codexHome)
     : normalizeHomePath(join(homedir(), '.codex'));
@@ -97,10 +97,10 @@ export function inferCodexDirectSessionsSourceFromHome(params: Readonly<{
 }
 
 export async function homeEntries(params: Readonly<{
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
-}>): Promise<CodexDirectSessionHomeEntry[]> {
+}>): Promise<CodexExternalSessionHomeEntry[]> {
   if (params.source.kind !== 'codexHome') return [];
 
   if (params.source.home === 'user') {
@@ -139,7 +139,7 @@ export async function homeEntries(params: Readonly<{
   }
 
   if (exactHomePath) {
-    const inferred = inferCodexDirectSessionsSourceFromHome({ codexHome: exactHomePath, activeServerDir: params.activeServerDir });
+    const inferred = inferCodexExternalSessionsSourceFromHome({ codexHome: exactHomePath, activeServerDir: params.activeServerDir });
     if (inferred.kind !== 'codexHome' || inferred.home !== 'connectedService') {
       return [];
     }
@@ -164,7 +164,7 @@ export async function homeEntries(params: Readonly<{
     }];
   }
 
-  const entries: CodexDirectSessionHomeEntry[] = [];
+  const entries: CodexExternalSessionHomeEntry[] = [];
   const base = join(params.activeServerDir, 'daemon', 'connected-services', 'homes', connectedServiceId);
   let profiles: Dirent[];
   try {

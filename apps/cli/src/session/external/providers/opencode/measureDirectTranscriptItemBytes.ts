@@ -1,5 +1,5 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
-export function measureDirectTranscriptItemBytes(item: DirectTranscriptRawMessageV1): number {
+export function measureDirectTranscriptItemBytes(item: ExternalSessionTranscriptRawMessageV1): number {
     return Buffer.byteLength(JSON.stringify(item), 'utf8');
 }

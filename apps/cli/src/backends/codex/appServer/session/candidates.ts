@@ -1,9 +1,9 @@
 import { buildCodexAgentRuntimeDescriptor } from '@happier-dev/agents';
 import {
-    type DirectSessionCandidateV1,
+    type ExternalSessionCandidateV1,
 } from '@happier-dev/protocol';
 
-import { deriveDirectSessionActivityFromTimestamp } from '../../../../api/session/external/activity/deriveDirectSessionActivityFromTimestamp';
+import { deriveExternalSessionActivityFromTimestamp } from '../../../../api/session/external/activity/deriveExternalSessionActivityFromTimestamp';
 import type { CodexAppServerClient } from '../client/createCodexAppServerClient';
 import { withCodexAppServerClient } from '../client/withCodexAppServerClient';
 
@@ -74,16 +74,16 @@ async function listThreadsForArchiveState(params: Readonly<{
     });
 }
 
-export async function listCodexDirectSessionCandidatesViaExistingAppServerClient(params: Readonly<{
+export async function listCodexExternalSessionCandidatesViaExistingAppServerClient(params: Readonly<{
     client: CodexAppServerClient;
     processEnv: NodeJS.ProcessEnv;
-}>): Promise<DirectSessionCandidateV1[]> {
+}>): Promise<ExternalSessionCandidateV1[]> {
     const [nonArchivedThreads, archivedThreads] = await Promise.all([
         listThreadsForArchiveStateWithClient({ client: params.client, processEnv: params.processEnv, archived: false }),
         listThreadsForArchiveStateWithClient({ client: params.client, processEnv: params.processEnv, archived: true }),
     ]);
 
-    const toCandidate = (thread: CodexAppServerThread, archived: boolean): DirectSessionCandidateV1 => {
+    const toCandidate = (thread: CodexAppServerThread, archived: boolean): ExternalSessionCandidateV1 => {
         const createdAtMs = Number.isFinite(thread.createdAt)
             ? Math.trunc((thread.createdAt as number) * 1000)
             : Number.isFinite(thread.updatedAt)
@@ -104,7 +104,7 @@ export async function listCodexDirectSessionCandidatesViaExistingAppServerClient
             ...(title ? { title } : {}),
             createdAtMs,
             updatedAtMs,
-            activity: deriveDirectSessionActivityFromTimestamp({ updatedAtMs, env: params.processEnv ?? process.env }),
+            activity: deriveExternalSessionActivityFromTimestamp({ updatedAtMs, env: params.processEnv ?? process.env }),
             archived,
             details: {
                 ...(typeof thread.cwd === 'string' && thread.cwd.trim() ? { cwd: thread.cwd } : {}),
@@ -123,7 +123,7 @@ export async function listCodexDirectSessionCandidatesViaExistingAppServerClient
 export async function candidates(params: Readonly<{
     codexHome: string;
     env?: NodeJS.ProcessEnv;
-}>): Promise<DirectSessionCandidateV1[]> {
+}>): Promise<ExternalSessionCandidateV1[]> {
     const processEnv = {
         ...process.env,
         ...(params.env ?? {}),
@@ -131,6 +131,6 @@ export async function candidates(params: Readonly<{
     } as NodeJS.ProcessEnv;
     return await withCodexAppServerClient({
         processEnv,
-        run: async (client) => listCodexDirectSessionCandidatesViaExistingAppServerClient({ client, processEnv }),
+        run: async (client) => listCodexExternalSessionCandidatesViaExistingAppServerClient({ client, processEnv }),
     });
 }
