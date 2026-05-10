@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+import { applyThemeWithTransition } from './themeTransition';
 
 export type ThemeChoice = 'dark' | 'light';
 
@@ -43,9 +45,15 @@ export function useTheme(): {
     setTheme: (next: ThemeChoice) => void;
 } {
     const [theme, setThemeState] = useState<ThemeChoice>(() => resolveInitialTheme());
+    const previousThemeRef = useRef<ThemeChoice>(theme);
 
     useEffect(() => {
-        document.documentElement.setAttribute('data-theme', theme);
+        void applyThemeWithTransition({
+            currentTheme: previousThemeRef.current,
+            nextTheme: theme,
+            reduceMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        });
+        previousThemeRef.current = theme;
         try {
             localStorage.setItem(STORAGE_KEY, theme);
         } catch {

@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+::view-transition-image-pair(root) {
+    isolation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+    display: block;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    Theme tokens — every CSS var here mirrors a key in src/theme/tokens.ts.
    The default block (`:root` and `[data-theme='dark']`) holds the DARK theme
