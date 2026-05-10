@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
-import { homeEntries as resolveCodexHomeEntriesForDirectSessionsSource } from '@/backends/codex/externalSessions/homeEntries';
+import { homeEntries as resolveCodexHomeEntriesForExternalSessionsSource } from '@/backends/codex/externalSessions/homeEntries';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
 import type { PetDiscoveryDiagnosticV1 } from '@happier-dev/protocol';
 
@@ -101,7 +101,7 @@ export async function resolveCodexPetRootsWithDiagnostics(input: Readonly<{
         addRootLimitDiagnostic(listed.rootPath);
         break;
       }
-      const entries = await resolveCodexHomeEntriesForDirectSessionsSource({
+      const entries = await resolveCodexHomeEntriesForExternalSessionsSource({
         source: {
           kind: 'codexHome',
           home: 'connectedService',

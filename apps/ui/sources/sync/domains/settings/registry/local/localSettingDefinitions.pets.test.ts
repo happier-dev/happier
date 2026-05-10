@@ -6,6 +6,14 @@ describe('LOCAL_SETTING_DEFINITIONS pets', () => {
     it('defaults local pet settings to account inheritance with Codex detection enabled', () => {
         expect(LOCAL_SETTING_DEFINITIONS.petsEnabledOverride.default).toBe('inherit');
         expect(LOCAL_SETTING_DEFINITIONS.petsSelectedPetOverride.default).toEqual({ kind: 'inherit' });
+        expect(LOCAL_SETTING_DEFINITIONS.petsCompanionPosition.default).toEqual({
+            schemaVersion: 1,
+            surface: 'mobile-app-shell',
+            normalizedX: 0.82,
+            normalizedY: 0.72,
+            lastViewport: null,
+        });
+        expect(LOCAL_SETTING_DEFINITIONS.petsDismissedCompanionTrayItemKeys.default).toEqual([]);
         expect(LOCAL_SETTING_DEFINITIONS.petsCompanionSizeScale.default).toBe(1);
         expect(LOCAL_SETTING_DEFINITIONS.petsDetectCodexPets.default).toBe(true);
         expect(LOCAL_SETTING_DEFINITIONS.desktopPetOverlayEnabledOverride.default).toBe('inherit');
@@ -23,6 +31,52 @@ describe('LOCAL_SETTING_DEFINITIONS pets', () => {
         expect(schema.safeParse({ kind: 'happierManagedLocal', sourceKey: 'local:blink' }).success).toBe(true);
         expect(schema.safeParse({ kind: 'accountPet', accountPetId: 'acct_pet_1' }).success).toBe(false);
         expect(schema.safeParse({ kind: 'builtIn', petId: 'blink' }).success).toBe(false);
+    });
+
+    it('accepts only versioned normalized app-shell companion positions', () => {
+        const schema = LOCAL_SETTING_DEFINITIONS.petsCompanionPosition.schema;
+
+        expect(schema.safeParse({
+            schemaVersion: 1,
+            surface: 'mobile-app-shell',
+            normalizedX: 0,
+            normalizedY: 1,
+            lastViewport: {
+                width: 390,
+                height: 844,
+                margin: 12,
+                keyboardHeight: 300,
+                safeAreaInsets: { top: 59, right: 0, bottom: 34, left: 0 },
+            },
+        }).success).toBe(true);
+        expect(schema.safeParse({
+            schemaVersion: 2,
+            surface: 'mobile-app-shell',
+            normalizedX: 0.5,
+            normalizedY: 0.5,
+            lastViewport: null,
+        }).success).toBe(false);
+        expect(schema.safeParse({
+            schemaVersion: 1,
+            surface: 'mobile-app-shell',
+            normalizedX: 1.2,
+            normalizedY: 0.5,
+            lastViewport: null,
+        }).success).toBe(false);
+        expect(schema.safeParse({
+            schemaVersion: 1,
+            surface: 'desktop-overlay',
+            normalizedX: 0.5,
+            normalizedY: 0.5,
+            lastViewport: null,
+        }).success).toBe(false);
+    });
+
+    it('stores dismissed companion tray keys as a device-local list', () => {
+        const schema = LOCAL_SETTING_DEFINITIONS.petsDismissedCompanionTrayItemKeys.schema;
+
+        expect(schema.safeParse(['waiting:session:1000']).success).toBe(true);
+        expect(schema.safeParse([42])).toMatchObject({ success: true, data: [] });
     });
 
     it('accepts a numeric companion size scale as a local device preference', () => {

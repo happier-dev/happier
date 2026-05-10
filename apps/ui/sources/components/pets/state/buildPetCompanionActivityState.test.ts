@@ -10,7 +10,7 @@ describe('buildPetCompanionActivityState', () => {
             id: 'waiting-session',
             active: true,
             thinking: true,
-            pendingCount: 1,
+            pendingUserActionRequestCount: 1,
         });
 
         expect(buildPetCompanionActivityState({
@@ -19,10 +19,11 @@ describe('buildPetCompanionActivityState', () => {
             signalsBySessionId: {
                 [session.id]: {
                     hasFailure: true,
+                    hasPendingUserActionRequests: true,
                     hasUnreadMessages: true,
                     latestThinkingActivityAtMs: 5_000,
                     latestMeaningfulActivityAtMs: 5_000,
-                    pendingMessageCount: 1,
+                    pendingMessageCount: 0,
                 },
             },
         })).toMatchObject({
@@ -62,7 +63,7 @@ describe('buildPetCompanionActivityState', () => {
         });
     });
 
-    it('maps recent session thinking timestamps to running activity without transcript signals', () => {
+    it('does not map historical session thinking timestamps to running activity without live thinking state', () => {
         const session = createSessionFixture({
             id: 'recent-thinking-session',
             active: true,
@@ -86,15 +87,10 @@ describe('buildPetCompanionActivityState', () => {
                 },
             },
         })).toMatchObject({
-            state: 'running',
-            reason: 'running',
+            state: 'idle',
+            reason: 'idle',
             sessionId: session.id,
-            trayItems: [
-                expect.objectContaining({
-                    sessionId: session.id,
-                    status: 'running',
-                }),
-            ],
+            trayItems: [],
         });
     });
 
@@ -197,7 +193,7 @@ describe('buildPetCompanionActivityState', () => {
         });
     });
 
-    it('maps unread completion attention to review', () => {
+    it('maps unread completion attention to waiting', () => {
         const session = createSessionFixture({
             id: 'review-session',
             active: false,
@@ -217,8 +213,8 @@ describe('buildPetCompanionActivityState', () => {
                 },
             },
         })).toMatchObject({
-            state: 'review',
-            reason: 'review',
+            state: 'waiting',
+            reason: 'waiting',
             sessionId: session.id,
         });
     });

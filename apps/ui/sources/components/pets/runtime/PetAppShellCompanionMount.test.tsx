@@ -2,10 +2,20 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    collectHostText,
+    createSessionFixture,
+    invokeTestInstanceHandler,
+    renderScreen,
+    standardCleanup,
+} from '@/dev/testkit';
 import { resolveBuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
+import type { ActivityAttentionSource } from '@/activity/source/activityAttentionSourceTypes';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import type { StorageState } from '@/sync/store/types';
 
 type PetAppShellCompanionTestState = {
     account: {
@@ -16,6 +26,7 @@ type PetAppShellCompanionTestState = {
         petsEnabledOverride: LocalSettings['petsEnabledOverride'];
         petsSelectedPetOverride: LocalSettings['petsSelectedPetOverride'];
         petsCompanionSizeScale: number;
+        petsDismissedCompanionTrayItemKeys: string[];
     };
 };
 
@@ -36,7 +47,23 @@ const settingsState = vi.hoisted((): PetAppShellCompanionTestState => ({
         petsEnabledOverride: 'inherit',
         petsSelectedPetOverride: { kind: 'inherit' },
         petsCompanionSizeScale: 1,
+        petsDismissedCompanionTrayItemKeys: [],
     },
+}));
+const applyLocalSettingsSpy = vi.hoisted(() => vi.fn());
+const activityState = vi.hoisted(() => ({
+    sessions: [] as Session[],
+}));
+const activitySourceState = vi.hoisted(() => ({
+    source: {
+        isDataReady: true,
+        sessionsById: {},
+        sessionListRenderablesById: {},
+        sessionListIndexByServerId: {},
+        concurrentSessionListCacheByServerId: {},
+        serverProfilesById: {},
+        activeServer: null,
+    } as ActivityAttentionSource,
 }));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -61,6 +88,27 @@ function enableAccountPetsForTest(petId = 'milo') {
     };
 }
 
+function createActivitySource(sessions: readonly Session[]): ActivityAttentionSource {
+    return {
+        isDataReady: true,
+        sessionsById: Object.fromEntries(sessions.map((session) => [session.id, session])),
+        sessionListRenderablesById: Object.fromEntries(
+            sessions.map((session) => [session.id, buildSessionListRenderableFromSession(session)]),
+        ),
+        sessionListIndexByServerId: {
+            'server-a': sessions.map((session) => ({
+                type: 'session' as const,
+                sessionId: session.id,
+                serverId: 'server-a',
+                serverName: 'Server A',
+            })),
+        },
+        concurrentSessionListCacheByServerId: {},
+        serverProfilesById: {},
+        activeServer: null,
+    };
+}
+
 vi.mock('react-native', async (importOriginal) => {
     const actual = await importOriginal<typeof import('react-native')>();
     return {
@@ -74,8 +122,17 @@ vi.mock('react-native', async (importOriginal) => {
     };
 });
 
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => platformState.tauri,
+}));
+
+vi.mock('@/activity/source/useActivityAttentionSource', () => ({
+    useActivityAttentionSource: () => activitySourceState.source,
 }));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
@@ -91,10 +148,24 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
     const { settingsDefaults } = await import('@/sync/domains/settings/settings');
     const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
+    const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
     return createStorageModuleMock({
         importOriginal,
         overrides: {
             ...actual,
+            storage: ((selector?: (state: StorageState) => unknown) => {
+                const snapshot = {
+                    sessionMessages: {},
+                    sessionPending: {},
+                    sessionListRenderables: Object.fromEntries(
+                        activityState.sessions.map((session) => [
+                            session.id,
+                            buildSessionListRenderableFromSession(session),
+                        ]),
+                    ),
+                } as StorageState;
+                return typeof selector === 'function' ? selector(snapshot) : snapshot;
+            }) as typeof actual.storage,
             useSettings: () => ({
                 ...settingsDefaults,
                 ...settingsState.account,
@@ -103,10 +174,14 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 ...localSettingsDefaults,
                 ...settingsState.local,
             }),
-            useAllSessions: () => [],
+            useAllSessions: () => activityState.sessions,
         },
     });
 });
+
+vi.mock('@/sync/store/settingsWriters', () => ({
+    useApplyLocalSettings: () => applyLocalSettingsSpy,
+}));
 
 describe('PetAppShellCompanionMount', () => {
     afterEach(() => {
@@ -124,7 +199,11 @@ describe('PetAppShellCompanionMount', () => {
             petsEnabledOverride: 'inherit',
             petsSelectedPetOverride: { kind: 'inherit' },
             petsCompanionSizeScale: 1,
+            petsDismissedCompanionTrayItemKeys: [],
         };
+        applyLocalSettingsSpy.mockReset();
+        activityState.sessions = [];
+        activitySourceState.source = createActivitySource([]);
         vi.unstubAllGlobals();
     });
 
@@ -143,8 +222,75 @@ describe('PetAppShellCompanionMount', () => {
         const screen = await renderScreen(<PetAppShellCompanionMount />);
 
         expect(screen.findByTestId('pet-app-shell-companion-root')).not.toBeNull();
+        const rootStyle = flattenStyle(screen.findByTestId('pet-app-shell-companion-root')?.props.style);
+        expect(rootStyle.position).toBe('fixed');
+        expect(rootStyle.zIndex).toBeGreaterThan(100);
         const sprite = screen.findByTestId('pet-app-shell-companion-sprite');
         expect(sprite?.props['data-pet-state']).toBe('idle');
+    });
+
+    it('renders pet-attached activity bubbles in the ordinary web app shell', async () => {
+        enableAccountPetsForTest();
+        vi.spyOn(Date, 'now').mockReturnValue(3_000);
+        activityState.sessions = [
+            createSessionFixture({
+                id: 'session-needs-user',
+                serverId: 'server-a',
+                active: true,
+                seq: 2,
+                createdAt: 1_000,
+                updatedAt: 2_000,
+                activeAt: 2_000,
+                lastViewedSessionSeq: 0,
+                pendingPermissionRequestCount: 1,
+                pendingUserActionRequestCount: 0,
+                thinking: true,
+                thinkingAt: 2_000,
+            }),
+        ];
+        activitySourceState.source = createActivitySource(activityState.sessions);
+        const { PetAppShellCompanionMount } = await import('./PetAppShellCompanionMount');
+
+        const screen = await renderScreen(<PetAppShellCompanionMount />);
+
+        expect(screen.findByTestId('desktop-pet-overlay-tray')).toBeTruthy();
+        expect(screen.findByTestId('desktop-pet-overlay-tray-item-session-needs-user')).toBeTruthy();
+        expect(collectHostText(screen.tree)).toEqual(expect.arrayContaining([
+            'project',
+            '~/project',
+        ]));
+    });
+
+    it('persists dismissed web app-shell activity bubbles by dismiss key', async () => {
+        enableAccountPetsForTest();
+        activityState.sessions = [
+            createSessionFixture({
+                id: 'session-dismiss-web',
+                serverId: 'server-a',
+                active: true,
+                pendingPermissionRequestCount: 1,
+                updatedAt: 2_000,
+                activeAt: 2_000,
+            }),
+        ];
+        activitySourceState.source = createActivitySource(activityState.sessions);
+        const { PetAppShellCompanionMount } = await import('./PetAppShellCompanionMount');
+
+        const screen = await renderScreen(<PetAppShellCompanionMount />);
+        await act(async () => {
+            invokeTestInstanceHandler(
+                screen.findByTestId('desktop-pet-overlay-tray-dismiss-session-dismiss-web'),
+                'onPress',
+                { stopPropagation: vi.fn() },
+            );
+        });
+
+        expect(screen.findByTestId('desktop-pet-overlay-tray-item-session-dismiss-web')).toBeNull();
+        expect(applyLocalSettingsSpy).toHaveBeenCalledWith({
+            petsDismissedCompanionTrayItemKeys: expect.arrayContaining([
+                expect.stringMatching(/^waiting:session-dismiss-web:/),
+            ]),
+        });
     });
 
     it('updates the rendered built-in pet when the selected pet changes', async () => {

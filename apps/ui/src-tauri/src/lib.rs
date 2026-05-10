@@ -5,6 +5,9 @@ mod autostart;
 mod tray;
 
 #[cfg(desktop)]
+mod pet_overlay;
+
+#[cfg(desktop)]
 mod system_tasks;
 
 #[cfg(desktop)]
@@ -56,6 +59,7 @@ pub fn run() {
             .manage(system_tasks::SystemTasksState::default())
             .manage(window_sizing::WindowSizingState::default())
             .manage(activity_overlay::ActivityOverlayState::default())
+            .manage(pet_overlay::DesktopPetOverlayState::default())
             .invoke_handler(tauri::generate_handler![
                 app_updates::desktop_fetch_update,
                 app_updates::desktop_install_update,
@@ -63,6 +67,18 @@ pub fn run() {
                 autostart::desktop_get_autostart_enabled,
                 autostart::desktop_set_autostart_enabled,
                 tray::desktop_set_tray_state,
+                pet_overlay::sync_desktop_pet_overlay_state,
+                pet_overlay::desktop_pet_overlay_read_window_state,
+                pet_overlay::desktop_pet_overlay_set_input_locked,
+                pet_overlay::desktop_pet_overlay_sync_element_metrics,
+                pet_overlay::desktop_pet_overlay_start_drag_session,
+                pet_overlay::desktop_pet_overlay_apply_drag_delta,
+                pet_overlay::desktop_pet_overlay_release_drag_velocity,
+                pet_overlay::desktop_pet_overlay_apply_momentum_delta,
+                pet_overlay::desktop_pet_overlay_end_drag_session,
+                pet_overlay::desktop_pet_overlay_reset_position,
+                pet_overlay::emit_desktop_pet_overlay_interaction_result,
+                pet_overlay::desktop_pet_overlay_show_main_window,
                 system_tasks::start_system_task,
                 system_tasks::cancel_system_task,
                 system_tasks::get_system_task_snapshot,
@@ -99,6 +115,7 @@ pub fn run() {
                 window_chrome::register(app)?;
                 window_sizing::register(app)?;
                 activity_overlay::register(app)?;
+                pet_overlay::register(app)?;
             }
 
             #[cfg(desktop)]

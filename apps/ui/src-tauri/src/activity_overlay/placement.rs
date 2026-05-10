@@ -257,6 +257,63 @@ pub(crate) fn sanitize_dimension(value: f64, fallback: f64, min: f64, max: f64) 
     clamp(raw, min, max)
 }
 
+fn point_inside_rect(x: f64, y: f64, rect: Rect) -> bool {
+    x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
+}
+
+fn distance_from_point_to_rect(x: f64, y: f64, rect: Rect) -> f64 {
+    let clamped_x = clamp(x, rect.x, rect.x + rect.width);
+    let clamped_y = clamp(y, rect.y, rect.y + rect.height);
+    (x - clamped_x).hypot(y - clamped_y)
+}
+
+pub(crate) fn resolve_overlay_monitor_for_position(
+    monitors: &[Rect],
+    fallback_monitor: Rect,
+    position: OverlayPlacementRect,
+    overlay: Rect,
+) -> Rect {
+    let center_x = position.x + overlay.width / 2.0;
+    let center_y = position.y + overlay.height / 2.0;
+
+    monitors
+        .iter()
+        .copied()
+        .find(|monitor| point_inside_rect(center_x, center_y, *monitor))
+        .or_else(|| {
+            monitors.iter().copied().min_by(|left, right| {
+                distance_from_point_to_rect(center_x, center_y, *left)
+                    .partial_cmp(&distance_from_point_to_rect(center_x, center_y, *right))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        })
+        .unwrap_or(fallback_monitor)
+}
+
+pub(crate) fn resolve_overlay_offsets_from_absolute_position(
+    monitor: Rect,
+    overlay: Rect,
+    anchor: DesktopActivityOverlayAnchor,
+    policy_offset_x: f64,
+    policy_offset_y: f64,
+    position: OverlayPlacementRect,
+    padding: f64,
+) -> (f64, f64) {
+    let base = resolve_overlay_placement(
+        monitor,
+        overlay,
+        anchor,
+        policy_offset_x,
+        policy_offset_y,
+        padding,
+    );
+
+    (
+        sanitize_offset(position.x - base.x),
+        sanitize_offset(position.y - base.y),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +506,65 @@ mod tests {
 
         assert!((placement.x - 3460.0).abs() < 0.001);
         assert!((placement.y - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn drag_target_monitor_switches_when_overlay_center_crosses_display_boundary() {
+        let left = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+        };
+        let right = Rect {
+            x: 800.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+        };
+        let overlay = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 160.0,
+            height: 96.0,
+        };
+
+        let target = resolve_overlay_monitor_for_position(
+            &[left, right],
+            left,
+            OverlayPlacementRect { x: 760.0, y: 250.0 },
+            overlay,
+        );
+
+        assert_eq!(target, right);
+    }
+
+    #[test]
+    fn drag_offsets_from_absolute_position_preserve_cross_monitor_window_position() {
+        let monitor = Rect {
+            x: 800.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+        };
+        let overlay = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 160.0,
+            height: 96.0,
+        };
+
+        let offsets = resolve_overlay_offsets_from_absolute_position(
+            monitor,
+            overlay,
+            DesktopActivityOverlayAnchor::BottomRight,
+            0.0,
+            0.0,
+            OverlayPlacementRect { x: 860.0, y: 420.0 },
+            16.0,
+        );
+
+        assert_eq!(offsets, (-564.0, -68.0));
     }
 
     #[test]

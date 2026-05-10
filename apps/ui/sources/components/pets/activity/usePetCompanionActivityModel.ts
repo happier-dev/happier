@@ -1,20 +1,12 @@
 import * as React from 'react';
-import type {
-    PrimaryTurnStatusV1,
-    SessionRuntimeIssueV1,
-} from '@happier-dev/protocol';
 
-import {
-    storage,
-    useAllSessions,
-} from '@/sync/domains/state/storage';
-import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
+import { storage } from '@/sync/domains/state/storage';
+import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
+import { buildActivityOverviewFromSource } from '@/activity/source/buildActivityOverviewFromSource';
+import { useActivityAttentionSource } from '@/activity/source/useActivityAttentionSource';
 import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import { deriveSessionListMeaningfulActivityAt } from '@/sync/domains/session/listing/deriveSessionListActivity';
-import { deriveSessionAttentionState } from '@/sync/domains/session/attention/deriveSessionAttentionState';
-import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionMessages } from '@/sync/store/domains/messages';
 import type { StorageState } from '@/sync/store/types';
@@ -65,13 +57,14 @@ function resolveLatestCommittedMessageSubtitle(transcript: SessionMessages | und
 
 function buildSessionSignalsBySessionId(
     state: StorageState,
-    sessions: readonly Session[],
+    candidates: readonly SessionActivityAttention[],
 ): Record<string, PetCompanionSessionSignals> {
     const signalsBySessionId: Record<string, PetCompanionSessionSignals> = {};
     const sessionMessages = state.sessionMessages ?? {};
     const sessionPending = state.sessionPending ?? {};
 
-    for (const session of sessions) {
+    for (const candidate of candidates) {
+        const session = candidate.session;
         const transcript = sessionMessages[session.id];
         const pending = sessionPending[session.id];
         const messages = Object.values(transcript?.messagesById ?? {});
@@ -93,30 +86,13 @@ function buildSessionSignalsBySessionId(
         }
         const pendingRequestFlags = derivePendingRequestFlagsFromSession(session, messages);
 
-        const hasUnreadMessages = computeHasUnreadActivity({
-            sessionSeq: session.seq ?? 0,
-            pendingActivityAt: 0,
-            lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
-            lastViewedPendingActivityAt: session.metadata?.readStateV1?.pendingActivityAt,
-        });
-        const hasWaitingActivity =
-            pendingRequestFlags.hasPendingPermissionRequests
-            || pendingRequestFlags.hasPendingUserActionRequests
-            || (session.pendingCount ?? 0) > 0
-            || (pending?.messages?.length ?? 0) > 0;
-        const attentionState = deriveSessionAttentionState({
-            latestTurnStatus: (session as { latestTurnStatus?: PrimaryTurnStatusV1 | null }).latestTurnStatus ?? null,
-            lastRuntimeIssue: (session as { lastRuntimeIssue?: SessionRuntimeIssueV1 | null }).lastRuntimeIssue ?? null,
-            hasWaitingActivity,
-            isRunning: session.thinking === true,
-            hasReviewActivity: hasUnreadMessages,
-        });
-
         signalsBySessionId[session.id] = {
-            hasFailure: attentionState === 'failed',
-            hasPendingPermissionRequests: pendingRequestFlags.hasPendingPermissionRequests,
-            hasPendingUserActionRequests: pendingRequestFlags.hasPendingUserActionRequests,
-            hasUnreadMessages,
+            hasFailure: candidate.attentionState === 'failed',
+            hasPendingPermissionRequests: candidate.reasons.hasPendingPermissionRequests
+                || pendingRequestFlags.hasPendingPermissionRequests,
+            hasPendingUserActionRequests: candidate.reasons.hasPendingUserActionRequests
+                || pendingRequestFlags.hasPendingUserActionRequests,
+            hasUnreadMessages: candidate.reasons.hasUnread,
             latestThinkingActivityAtMs: transcript?.latestThinkingMessageActivityAtMs ?? null,
             latestMeaningfulActivityAtMs: deriveSessionListMeaningfulActivityAt({
                 sessionCreatedAt: session.createdAt,
@@ -124,7 +100,9 @@ function buildSessionSignalsBySessionId(
                 latestThinkingActivityAt: transcript?.latestThinkingMessageActivityAtMs ?? null,
                 latestPendingMessageCreatedAt,
             }),
-            lastMessageSubtitle: resolveLatestCommittedMessageSubtitle(transcript),
+            lastMessageSubtitle: resolveLatestCommittedMessageSubtitle(transcript)
+                ?? candidate.subtitle
+                ?? null,
             pendingMessageCount: pending?.messages?.length ?? 0,
         };
     }
@@ -135,18 +113,27 @@ function buildSessionSignalsBySessionId(
 export function usePetCompanionActivityModel(input?: Readonly<{
     dismissedTrayItemKeys?: ReadonlySet<string>;
 }>): PetCompanionActivityModel {
-    const sessions = useAllSessions();
+    const activitySource = useActivityAttentionSource();
     const state = storage();
     const [nowMs, setNowMs] = React.useState(() => Date.now());
+    const overview = React.useMemo(
+        () => buildActivityOverviewFromSource({
+            source: activitySource,
+            nowMs,
+            includeWarmSourceWhenNotReady: true,
+        }),
+        [activitySource, nowMs],
+    );
+    const activityCandidates = overview.candidates;
     const activitySessions = React.useMemo(
-        () => sessions.filter(isUserFacingSession),
-        [sessions],
+        () => activityCandidates.map((candidate) => candidate.session),
+        [activityCandidates],
     );
     const selectedSessionId = React.useMemo(() => selectCompanionSessionId(activitySessions), [activitySessions]);
     const dismissedTrayItemKeys = input?.dismissedTrayItemKeys;
     const signalsBySessionId = React.useMemo(
-        () => buildSessionSignalsBySessionId(state, activitySessions),
-        [activitySessions, state],
+        () => buildSessionSignalsBySessionId(state, activityCandidates),
+        [activityCandidates, state],
     );
 
     const model = React.useMemo(() => buildPetCompanionActivityModel({

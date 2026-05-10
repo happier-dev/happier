@@ -76,7 +76,9 @@ use self::macos_display_context::resolve_overlay_display_context_for_monitor;
 #[cfg(target_os = "macos")]
 use self::macos_event_repost::repost_macos_left_click_after_collapse;
 #[cfg(desktop)]
-use self::monitor_resolution::resolve_anchor_monitor_resolution;
+use self::monitor_resolution::{
+    resolve_anchor_monitor_resolution, resolve_available_monitor_rects,
+};
 #[cfg(desktop)]
 use self::notch_native_geometry::{
     advance_expanded_notch_native_mouse_state, advance_notch_native_mouse_state,
@@ -88,7 +90,9 @@ use self::notch_native_geometry::{
 use self::panel_host::{apply_macos_overlay_panel_host, apply_macos_overlay_panel_position};
 #[cfg(desktop)]
 use self::placement::{
-    clamp, sanitize_dimension, sanitize_offset, DesktopActivityOverlayDisplayMode, Rect,
+    clamp, resolve_overlay_monitor_for_position, resolve_overlay_offsets_from_absolute_position,
+    sanitize_dimension, sanitize_offset, DesktopActivityOverlayDisplayMode, OverlayPlacementRect,
+    Rect, ResolvedOverlayAnchorMonitorRect,
 };
 #[cfg(desktop)]
 use self::storage::{
@@ -471,6 +475,71 @@ fn resolve_activity_overlay_momentum_deltas(vx: f64, vy: f64) -> Vec<(f64, f64)>
         elapsed_ms += PET_MOMENTUM_TICK_MS;
     }
     deltas
+}
+
+#[cfg(desktop)]
+fn resolve_activity_overlay_window_rect(
+    window_state: &DesktopActivityOverlayWindowStatePayload,
+) -> Rect {
+    let dimensions = if window_state.expanded {
+        window_state.window.expanded
+    } else {
+        window_state.window.collapsed
+    };
+
+    Rect {
+        x: 0.0,
+        y: 0.0,
+        width: sanitize_dimension(dimensions.width, 340.0, 1.0, 4096.0),
+        height: sanitize_dimension(dimensions.height, 72.0, 1.0, 4096.0),
+    }
+}
+
+#[cfg(desktop)]
+fn resolve_activity_overlay_drag_retarget<R: Runtime>(
+    app: &AppHandle<R>,
+    overlay_window: &WebviewWindow<R>,
+    payload: &DesktopActivityOverlaySyncPayload,
+    window_state: &DesktopActivityOverlayWindowStatePayload,
+    cached_display_context: Option<DesktopActivityOverlayDisplayContext>,
+    delta_x: f64,
+    delta_y: f64,
+) -> Option<(
+    PersistedOverlayDragOffsets,
+    Option<DesktopActivityOverlayDisplayContext>,
+)> {
+    let placement_diagnostics = window_state.placement_diagnostics.as_ref()?;
+    let overlay = resolve_activity_overlay_window_rect(window_state);
+    let desired_position = OverlayPlacementRect {
+        x: placement_diagnostics.computed_position.x + delta_x,
+        y: placement_diagnostics.computed_position.y + delta_y,
+    };
+    let monitors = resolve_available_monitor_rects(app, overlay_window);
+    let target_monitor = resolve_overlay_monitor_for_position(
+        &monitors,
+        placement_diagnostics.effective_monitor,
+        desired_position,
+        overlay,
+    );
+    let target_display_context = resolve_effective_overlay_display_context(
+        resolve_overlay_display_context_for_monitor(app, target_monitor),
+        cached_display_context,
+        target_monitor,
+    );
+    let (offset_x, offset_y) = resolve_overlay_offsets_from_absolute_position(
+        target_monitor,
+        overlay,
+        payload.policy.anchor,
+        sanitize_offset(payload.policy.offset_x),
+        sanitize_offset(payload.policy.offset_y),
+        desired_position,
+        OVERLAY_SAFE_PADDING_PX,
+    );
+
+    Some((
+        sanitize_drag_offsets(PersistedOverlayDragOffsets { offset_x, offset_y }),
+        target_display_context,
+    ))
 }
 
 #[cfg(desktop)]
@@ -1070,6 +1139,33 @@ pub fn desktop_activity_overlay_apply_drag_delta<R: Runtime>(
         return Err("Desktop activity overlay drag delta must be finite".to_string());
     }
 
+    let drag_retarget = {
+        let mut guard = state
+            .0
+            .lock()
+            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
+        ensure_drag_offsets_loaded(&app, &mut guard);
+        if !activity_overlay_allows_drag(&guard) {
+            return Ok(());
+        }
+
+        guard
+            .last_sync_payload
+            .as_ref()
+            .zip(guard.last_window_state.as_ref())
+            .and_then(|(payload, window_state)| {
+                resolve_activity_overlay_drag_retarget(
+                    &app,
+                    &caller_window,
+                    payload,
+                    window_state,
+                    guard.last_display_context.clone(),
+                    delta_x,
+                    delta_y,
+                )
+            })
+    };
+
     {
         let mut guard = state
             .0
@@ -1080,8 +1176,21 @@ pub fn desktop_activity_overlay_apply_drag_delta<R: Runtime>(
             return Ok(());
         }
 
-        guard.drag_offsets.offset_x = clamp(guard.drag_offsets.offset_x + delta_x, -4096.0, 4096.0);
-        guard.drag_offsets.offset_y = clamp(guard.drag_offsets.offset_y + delta_y, -4096.0, 4096.0);
+        if let Some((offsets, display_context)) = drag_retarget {
+            guard.drag_offsets = offsets;
+            guard.drag_offsets_storage_key = display_context
+                .as_ref()
+                .and_then(|context| context.display_identity.as_ref())
+                .map(|identity| identity.storage_key.clone());
+            if let Some(display_context) = display_context {
+                guard.last_display_context = Some(display_context);
+            }
+        } else {
+            guard.drag_offsets.offset_x =
+                clamp(guard.drag_offsets.offset_x + delta_x, -4096.0, 4096.0);
+            guard.drag_offsets.offset_y =
+                clamp(guard.drag_offsets.offset_y + delta_y, -4096.0, 4096.0);
+        }
         let display_identity = guard
             .last_display_context
             .as_ref()
@@ -1100,6 +1209,34 @@ fn apply_activity_overlay_momentum_delta<R: Runtime>(
     delta_x: f64,
     delta_y: f64,
 ) -> Result<bool, String> {
+    let drag_retarget = {
+        let Some(overlay_window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
+            return Ok(false);
+        };
+        let guard = state
+            .0
+            .lock()
+            .map_err(|_| "Desktop activity overlay state mutex poisoned".to_string())?;
+        if guard.momentum_generation != generation || !activity_overlay_allows_drag(&guard) {
+            return Ok(false);
+        }
+        guard
+            .last_sync_payload
+            .as_ref()
+            .zip(guard.last_window_state.as_ref())
+            .and_then(|(payload, window_state)| {
+                resolve_activity_overlay_drag_retarget(
+                    app,
+                    &overlay_window,
+                    payload,
+                    window_state,
+                    guard.last_display_context.clone(),
+                    delta_x,
+                    delta_y,
+                )
+            })
+    };
+
     {
         let mut guard = state
             .0
@@ -1109,8 +1246,21 @@ fn apply_activity_overlay_momentum_delta<R: Runtime>(
             return Ok(false);
         }
         ensure_drag_offsets_loaded(app, &mut guard);
-        guard.drag_offsets.offset_x = clamp(guard.drag_offsets.offset_x + delta_x, -4096.0, 4096.0);
-        guard.drag_offsets.offset_y = clamp(guard.drag_offsets.offset_y + delta_y, -4096.0, 4096.0);
+        if let Some((offsets, display_context)) = drag_retarget {
+            guard.drag_offsets = offsets;
+            guard.drag_offsets_storage_key = display_context
+                .as_ref()
+                .and_then(|context| context.display_identity.as_ref())
+                .map(|identity| identity.storage_key.clone());
+            if let Some(display_context) = display_context {
+                guard.last_display_context = Some(display_context);
+            }
+        } else {
+            guard.drag_offsets.offset_x =
+                clamp(guard.drag_offsets.offset_x + delta_x, -4096.0, 4096.0);
+            guard.drag_offsets.offset_y =
+                clamp(guard.drag_offsets.offset_y + delta_y, -4096.0, 4096.0);
+        }
         let display_identity = guard
             .last_display_context
             .as_ref()
@@ -1132,11 +1282,13 @@ fn resolve_activity_overlay_momentum_plan(
         tick_ms: PET_MOMENTUM_TICK_MS,
         deltas: resolve_activity_overlay_momentum_deltas(velocity.0, velocity.1)
             .into_iter()
-            .map(|(delta_x, delta_y)| DesktopActivityOverlayScheduledMomentumDeltaPayload {
-                delta_x,
-                delta_y,
-                delay_ms: PET_MOMENTUM_TICK_MS,
-            })
+            .map(
+                |(delta_x, delta_y)| DesktopActivityOverlayScheduledMomentumDeltaPayload {
+                    delta_x,
+                    delta_y,
+                    delay_ms: PET_MOMENTUM_TICK_MS,
+                },
+            )
             .collect(),
     }
 }
@@ -1343,12 +1495,18 @@ fn apply_overlay_state<R: Runtime>(
         guard.last_window_state = Some(window_state);
         return Ok(());
     }
-    let monitor_resolution = resolve_anchor_monitor_resolution(
+    let mut monitor_resolution = resolve_anchor_monitor_resolution(
         app,
         &window,
         payload.policy.placement_mode,
         payload.policy.display_mode,
     )?;
+    monitor_resolution = resolve_custom_overlay_monitor_resolution_with_cached_display(
+        monitor_resolution,
+        payload.policy.placement_mode,
+        cached_display_context.as_ref(),
+        &resolve_available_monitor_rects(app, &window),
+    );
     let monitor = monitor_resolution.rect;
     let display_context = resolve_effective_overlay_display_context(
         resolve_overlay_display_context_for_monitor(app, monitor),
@@ -1807,6 +1965,33 @@ fn resolve_effective_overlay_display_context(
 }
 
 #[cfg(desktop)]
+fn resolve_custom_overlay_monitor_resolution_with_cached_display(
+    monitor_resolution: ResolvedOverlayAnchorMonitorRect,
+    placement_mode: DesktopActivityOverlayPlacementMode,
+    cached_display_context: Option<&DesktopActivityOverlayDisplayContext>,
+    available_monitors: &[Rect],
+) -> ResolvedOverlayAnchorMonitorRect {
+    if !matches!(placement_mode, DesktopActivityOverlayPlacementMode::Custom) {
+        return monitor_resolution;
+    }
+
+    let Some(cached_display_context) = cached_display_context else {
+        return monitor_resolution;
+    };
+
+    if !available_monitors.iter().any(|monitor| {
+        rect_matches_for_runtime_display_context(cached_display_context.screen_frame, *monitor)
+    }) {
+        return monitor_resolution;
+    }
+
+    ResolvedOverlayAnchorMonitorRect {
+        source: monitor_resolution.source,
+        rect: cached_display_context.screen_frame,
+    }
+}
+
+#[cfg(desktop)]
 fn rect_matches_for_runtime_display_context(left: Rect, right: Rect) -> bool {
     (left.x - right.x).abs() <= 1.0
         && (left.y - right.y).abs() <= 1.0
@@ -2202,11 +2387,14 @@ mod tests {
             .expect("activity overlay source should contain production code before tests");
 
         assert!(
-            production_source.contains("resolve_activity_overlay_momentum_plan(generation, velocity)"),
+            production_source
+                .contains("resolve_activity_overlay_momentum_plan(generation, velocity)"),
             "release velocity should return a scheduled momentum plan",
         );
         assert!(
-            !production_source.contains("apply_activity_overlay_momentum(&app, state.inner(), generation, velocity)"),
+            !production_source.contains(
+                "apply_activity_overlay_momentum(&app, state.inner(), generation, velocity)"
+            ),
             "release velocity must not apply every momentum tick before returning",
         );
     }

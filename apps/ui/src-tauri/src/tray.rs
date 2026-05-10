@@ -48,7 +48,6 @@ pub fn register<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
             "{} · {}",
             initial_state.label, initial_state.detail
         ))
-        .title(initial_state.label.clone())
         .menu(&build_menu(app, &initial_state)?)
         .show_menu_on_left_click(false)
         .on_menu_event(handle_menu_event)
@@ -188,6 +187,11 @@ fn should_include_resolve_setup_action(status: DesktopTrayStatus) -> bool {
     )
 }
 
+#[cfg(desktop)]
+fn desktop_tray_menu_bar_title() -> Option<String> {
+    None
+}
+
 #[cfg(test)]
 fn build_menu_entries(state: &DesktopTrayStatePayload) -> Vec<TrayMenuEntry> {
     let mut entries = vec![
@@ -226,7 +230,7 @@ fn apply_tray_state<R: Runtime>(
         .ok_or_else(|| tauri::Error::AssetNotFound("tray icon".into()))?;
 
     tray.set_icon(Some(build_status_icon(state.status)))?;
-    tray.set_title(Some(state.label.clone()))?;
+    tray.set_title(desktop_tray_menu_bar_title())?;
     tray.set_tooltip(Some(format!("{} · {}", state.label, state.detail)))?;
     tray.set_menu(Some(build_menu(app, state)?))?;
     Ok(())
@@ -407,5 +411,10 @@ mod tests {
 
         let entries = build_menu_entries(&state);
         assert!(!entries.contains(&TrayMenuEntry::ResolveSetup));
+    }
+
+    #[test]
+    fn desktop_tray_menu_bar_title_is_suppressed() {
+        assert_eq!(desktop_tray_menu_bar_title(), None);
     }
 }

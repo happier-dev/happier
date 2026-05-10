@@ -1,5 +1,5 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { getSessionName, OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS } from '@/utils/sessions/sessionUtils';
 
 import {
     PET_COMPANION_ACTIVITY_EXPIRY_MS,
@@ -44,14 +44,37 @@ function latestTimestamp(values: readonly unknown[]): number | null {
 }
 
 function hasWaitingActivity(session: Session, signals: PetCompanionSessionSignals | undefined): boolean {
+    const isSessionActive = session.active === true;
     return (
-        (session.pendingPermissionRequestCount ?? 0) > 0
-        || (session.pendingUserActionRequestCount ?? 0) > 0
-        || (session.pendingCount ?? 0) > 0
-        || signals?.hasPendingPermissionRequests === true
-        || signals?.hasPendingUserActionRequests === true
-        || (signals?.pendingMessageCount ?? 0) > 0
+        isSessionActive
+        && (
+            (session.pendingPermissionRequestCount ?? 0) > 0
+            || (session.pendingUserActionRequestCount ?? 0) > 0
+            || signals?.hasPendingPermissionRequests === true
+            || signals?.hasPendingUserActionRequests === true
+        )
     );
+}
+
+function latestConversationActivityTimestamp(
+    session: Session,
+    signals: PetCompanionSessionSignals | undefined,
+): number | null {
+    return latestTimestamp([
+        signals?.latestMeaningfulActivityAtMs,
+        signals?.latestThinkingActivityAtMs,
+        session.thinkingAt,
+        session.optimisticThinkingAt,
+        session.createdAt,
+    ]);
+}
+
+function getOptimisticThinkingExpiryAtMs(session: Session, nowMs: number | undefined): number | null {
+    const optimisticThinkingAt = session.optimisticThinkingAt ?? null;
+    if (!isPositiveTimestamp(optimisticThinkingAt)) return null;
+    const expiresAtMs = optimisticThinkingAt + OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS;
+    if (isFiniteTimestamp(nowMs) && nowMs >= expiresAtMs) return null;
+    return expiresAtMs;
 }
 
 function resolveCandidate(
@@ -60,12 +83,7 @@ function resolveCandidate(
     nowMs: number | undefined,
 ): SessionActivityCandidate | null {
     if (hasWaitingActivity(session, signals)) {
-        const activityAtMs = latestTimestamp([
-            signals?.latestMeaningfulActivityAtMs,
-            session.updatedAt,
-            session.activeAt,
-            session.createdAt,
-        ]);
+        const activityAtMs = latestConversationActivityTimestamp(session, signals);
         return {
             session,
             status: 'waiting',
@@ -75,12 +93,7 @@ function resolveCandidate(
     }
 
     if (signals?.hasFailure) {
-        const activityAtMs = latestTimestamp([
-            signals.latestMeaningfulActivityAtMs,
-            session.updatedAt,
-            session.activeAt,
-            session.createdAt,
-        ]);
+        const activityAtMs = latestConversationActivityTimestamp(session, signals);
         return {
             session,
             status: 'failed',
@@ -90,52 +103,45 @@ function resolveCandidate(
     }
 
     if (signals?.hasUnreadMessages) {
-        const activityAtMs = latestTimestamp([
-            signals.latestMeaningfulActivityAtMs,
-            session.updatedAt,
-            session.activeAt,
-            session.createdAt,
-        ]);
+        const activityAtMs = latestConversationActivityTimestamp(session, signals);
         return {
             session,
-            status: 'review',
+            status: 'waiting',
             activityAtMs,
-            expiresAtMs: activityAtMs === null ? null : activityAtMs + PET_COMPANION_ACTIVITY_EXPIRY_MS.review,
+            expiresAtMs: null,
         };
     }
 
     const isInThinkingGrace =
         isPositiveTimestamp(session.thinkingGraceUntil)
         && (!isFiniteTimestamp(nowMs) || session.thinkingGraceUntil > nowMs);
-    const hasRecentThinkingActivity =
-        isPositiveTimestamp(signals?.latestThinkingActivityAtMs)
-        || isPositiveTimestamp(session.thinkingAt)
-        || isPositiveTimestamp(session.optimisticThinkingAt);
+    const optimisticThinkingExpiryAtMs = getOptimisticThinkingExpiryAtMs(session, nowMs);
+    const isOptimisticThinking = optimisticThinkingExpiryAtMs !== null;
 
-    if (session.thinking || isInThinkingGrace || hasRecentThinkingActivity) {
+    if (session.thinking || isInThinkingGrace || isOptimisticThinking) {
         const activityAtMs = session.thinking
             ? latestTimestamp([
                 signals?.latestThinkingActivityAtMs,
                 session.thinkingAt,
                 session.optimisticThinkingAt,
-                session.updatedAt,
-                session.activeAt,
                 session.createdAt,
             ])
             : latestTimestamp([
                 signals?.latestThinkingActivityAtMs,
                 session.thinkingAt,
                 session.optimisticThinkingAt,
-                isInThinkingGrace ? session.updatedAt : null,
-                isInThinkingGrace ? session.activeAt : null,
+                session.createdAt,
             ]);
+        const runningExpiresAtMs = session.thinking
+            ? null
+            : isInThinkingGrace
+                ? session.thinkingGraceUntil ?? null
+                : optimisticThinkingExpiryAtMs;
         return {
             session,
             status: 'running',
             activityAtMs,
-            expiresAtMs: session.thinking || isInThinkingGrace || activityAtMs === null
-                ? null
-                : activityAtMs + PET_COMPANION_ACTIVITY_EXPIRY_MS.running,
+            expiresAtMs: runningExpiresAtMs,
         };
     }
 

@@ -68,7 +68,6 @@ pub(crate) enum DesktopMainWindowLifecycleEvent {
 #[cfg(desktop)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DesktopMainWindowPresentationIntent {
-    None,
     Show,
 }
 
@@ -147,14 +146,8 @@ pub(crate) fn resolve_desktop_main_window_presentation_intent(
 ) -> DesktopMainWindowPresentationIntent {
     match event {
         DesktopMainWindowLifecycleEvent::AppReady => DesktopMainWindowPresentationIntent::Show,
-        DesktopMainWindowLifecycleEvent::MacOsReopen {
-            has_visible_windows,
-        } => {
-            if has_visible_windows {
-                DesktopMainWindowPresentationIntent::None
-            } else {
-                DesktopMainWindowPresentationIntent::Show
-            }
+        DesktopMainWindowLifecycleEvent::MacOsReopen { .. } => {
+            DesktopMainWindowPresentationIntent::Show
         }
     }
 }
@@ -488,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn macos_reopen_shows_the_main_window_only_when_no_window_is_visible() {
+    fn macos_reopen_presents_the_main_window_even_when_auxiliary_windows_are_visible() {
         assert_eq!(
             resolve_desktop_main_window_presentation_intent(
                 DesktopMainWindowLifecycleEvent::MacOsReopen {
@@ -503,7 +496,7 @@ mod tests {
                     has_visible_windows: true,
                 }
             ),
-            DesktopMainWindowPresentationIntent::None
+            DesktopMainWindowPresentationIntent::Show
         );
     }
 

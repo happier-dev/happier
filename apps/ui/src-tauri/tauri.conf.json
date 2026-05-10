@@ -14,7 +14,8 @@
     "security": {
       "capabilities": [
         "default",
-        "overlay"
+        "overlay",
+        "pet_overlay"
       ],
       "csp": null
     },

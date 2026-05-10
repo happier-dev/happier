@@ -1,8 +1,8 @@
 import * as React from 'react';
 import {
     Platform,
-    StyleSheet,
     View,
+    type ViewStyle,
 } from 'react-native';
 
 import { DEFAULT_BUILT_IN_PET_ID } from '@/components/pets/builtIns/builtInPetRegistry';
@@ -10,6 +10,11 @@ import {
     type PetPointerDragMove,
     usePetPointerDragSession,
 } from '@/components/pets/interaction/usePetPointerDragSession';
+import type { PetCompanionTrayItem } from '@/components/pets/activity';
+import {
+    usePetCompanionActivityModel,
+    usePetCompanionTrayDismissals,
+} from '@/components/pets/activity';
 import { PetCompanionSurface } from '@/components/pets/render/PetCompanionSurface';
 import {
     resolvePetCompanionOverlayMetrics,
@@ -17,12 +22,19 @@ import {
 } from '@/components/pets/render/petCompanionDisplayMetrics';
 import { usePetSpritesheetSource } from '@/components/pets/render/usePetSpritesheetSource';
 import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPackage';
-import { usePetCompanionActivityState } from '@/components/pets/state/usePetCompanionActivityState';
+import { PetCompanionActivityTray } from '@/components/pets/tray/PetCompanionActivityTray';
+import {
+    PET_COMPANION_ACTIVITY_TRAY_MAX_HEIGHT,
+    PET_COMPANION_ACTIVITY_TRAY_WIDTH,
+} from '@/components/pets/tray/petCompanionActivityTrayGeometry';
 import { useLocalSettings } from '@/sync/domains/state/storage';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
 const APP_SHELL_PET_MARGIN = 24;
 const APP_SHELL_DEFAULT_METRICS = resolvePetCompanionOverlayMetrics(1);
+const APP_SHELL_PET_WEB_Z_INDEX = 90_000;
+const APP_SHELL_PET_WEB_POSITION = ('fixed' as unknown) as ViewStyle['position'];
 
 type PetDragOffset = Readonly<{ x: number; y: number }>;
 
@@ -81,10 +93,30 @@ function useAppShellPetDrag(): {
 
 export function PetAppShellCompanionMount(): React.ReactElement | null {
     const selectedPetPackage = useSelectedPetPackage();
-    const activity = usePetCompanionActivityState();
+    const { dismissedTrayItemKeys, dismissTrayItem } = usePetCompanionTrayDismissals();
+    const activity = usePetCompanionActivityModel({ dismissedTrayItemKeys });
     const spritesheetSource = usePetSpritesheetSource(selectedPetPackage.source, DEFAULT_BUILT_IN_PET_ID);
     const drag = useAppShellPetDrag();
-
+    const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
+    const hasTrayItems = activity.trayItems.length > 0;
+    const handleOpenTrayItem = React.useCallback(async (item: PetCompanionTrayItem) => {
+        await actionExecutor.execute(
+            'session.open',
+            { sessionId: item.sessionId },
+            { defaultSessionId: item.sessionId },
+        );
+    }, [actionExecutor]);
+    const handleQuickReply = React.useCallback(async (item: PetCompanionTrayItem, message: string) => {
+        const trimmedMessage = message.trim();
+        if (!trimmedMessage) {
+            return;
+        }
+        await actionExecutor.execute(
+            'session.message.send',
+            { sessionId: item.sessionId, message: trimmedMessage },
+            { defaultSessionId: item.sessionId },
+        );
+    }, [actionExecutor]);
     if (Platform.OS !== 'web' || isTauriDesktop() || !selectedPetPackage.enabled || !selectedPetPackage.source) {
         return null;
     }
@@ -95,8 +127,12 @@ export function PetAppShellCompanionMount(): React.ReactElement | null {
             style={[
                 styles.root,
                 {
-                    width: drag.metrics.spriteWidth,
-                    height: drag.metrics.spriteHeight,
+                    width: hasTrayItems
+                        ? Math.max(PET_COMPANION_ACTIVITY_TRAY_WIDTH, drag.metrics.spriteWidth)
+                        : drag.metrics.spriteWidth,
+                    height: hasTrayItems
+                        ? PET_COMPANION_ACTIVITY_TRAY_MAX_HEIGHT + drag.metrics.spriteHeight + 18
+                        : drag.metrics.spriteHeight,
                 },
                 {
                     transform: [
@@ -109,6 +145,13 @@ export function PetAppShellCompanionMount(): React.ReactElement | null {
         >
             <PetCompanionSurface
                 state={drag.dragState ?? activity.state}
+                stateStyle={[
+                    styles.pet,
+                    {
+                        width: drag.metrics.spriteWidth,
+                        height: drag.metrics.spriteHeight,
+                    },
+                ]}
                 hitboxTestID="pet-app-shell-companion-hitbox"
                 spriteTestID="pet-app-shell-companion-sprite"
                 spritesheetSource={spritesheetSource}
@@ -117,18 +160,40 @@ export function PetAppShellCompanionMount(): React.ReactElement | null {
                 pointerHandlers={drag.pointerHandlers}
                 shouldSuppressPress={drag.shouldSuppressPress}
             />
+            {hasTrayItems ? (
+                <PetCompanionActivityTray
+                    items={activity.trayItems}
+                    open
+                    onOpenItem={handleOpenTrayItem}
+                    onDismissItem={dismissTrayItem}
+                    onQuickReply={handleQuickReply}
+                    style={[
+                        styles.tray,
+                        { bottom: drag.metrics.spriteHeight + 18 },
+                    ]}
+                />
+            ) : null}
         </View>
     );
 }
 
-const styles = StyleSheet.create({
+const styles = {
     root: {
-        position: 'absolute',
+        position: APP_SHELL_PET_WEB_POSITION,
         right: APP_SHELL_PET_MARGIN,
         bottom: APP_SHELL_PET_MARGIN,
         width: APP_SHELL_DEFAULT_METRICS.spriteWidth,
         height: APP_SHELL_DEFAULT_METRICS.spriteHeight,
         backgroundColor: 'transparent',
-        zIndex: 20,
-    },
-});
+        zIndex: APP_SHELL_PET_WEB_Z_INDEX,
+    } satisfies ViewStyle,
+    pet: {
+        position: 'absolute',
+        right: 0,
+        bottom: 0,
+    } satisfies ViewStyle,
+    tray: {
+        position: 'absolute',
+        right: 0,
+    } satisfies ViewStyle,
+} satisfies Record<string, ViewStyle>;

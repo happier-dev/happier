@@ -1,6 +1,6 @@
 {
   "id": "blink",
   "displayName": "Blink",
-  "description": "Friendly alpine marmot inspired by the reference photo.",
+  "description": "A warm-toned marmot with the same cute shape and expression as the approved Blink render.",
   "spritesheetPath": "spritesheet.webp"
 }

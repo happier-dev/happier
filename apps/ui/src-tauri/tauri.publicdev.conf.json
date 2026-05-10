@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Happier Dev",
+  "productName": "Happier (dev)",
   "identifier": "dev.happier.app.publicdev",
   "plugins": {
     "updater": {
@@ -17,12 +17,13 @@
       "capabilities": [
         "default",
         "overlay",
+        "pet_overlay",
         "mcp-dev"
       ]
     },
     "windows": [
       {
-        "title": "Happier Dev",
+        "title": "Happier (dev)",
         "width": 800,
         "height": 600,
         "visible": false,

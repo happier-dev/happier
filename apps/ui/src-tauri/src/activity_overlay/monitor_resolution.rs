@@ -120,6 +120,20 @@ pub(crate) fn resolve_anchor_monitor_resolution<R: Runtime>(
     )
 }
 
+pub(crate) fn resolve_available_monitor_rects<R: Runtime>(
+    app: &AppHandle<R>,
+    overlay_window: &WebviewWindow<R>,
+) -> Vec<Rect> {
+    let overlay_scale_factor = overlay_window.scale_factor().unwrap_or(1.0).max(0.000_1);
+    overlay_window
+        .available_monitors()
+        .or_else(|_| app.available_monitors())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|monitor| monitor_to_logical_rect(&monitor, overlay_scale_factor))
+        .collect()
+}
+
 #[cfg(target_os = "macos")]
 fn resolve_builtin_monitor_rect<R: Runtime>(
     app: &AppHandle<R>,

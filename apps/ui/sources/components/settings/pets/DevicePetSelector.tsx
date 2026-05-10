@@ -1,12 +1,12 @@
 import * as React from 'react';
 import {
     Platform,
-    StyleSheet,
     useWindowDimensions,
     View,
     type StyleProp,
     type ViewStyle,
 } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import {
     DEVICE_PET_GRID_HORIZONTAL_PADDING,
