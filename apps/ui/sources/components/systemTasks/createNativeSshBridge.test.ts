@@ -117,6 +117,41 @@ describe('createNativeSshBridge', () => {
         resolveRun({ machineId: 'machine-a' });
     });
 
+    it('expires completed native SSH task records after the retention window', async () => {
+        const loaded = await import('./createNativeSshBridge').catch(() => null);
+        expect(loaded).not.toBeNull();
+
+        const bridge = loaded!.createNativeSshBridge({
+            capability: {
+                available: true,
+                supportedTaskKinds: ['remote.ssh.bootstrapMachine.v1'],
+            },
+            completedRecordRetentionMs: 0,
+            runBootstrapTask: vi.fn(async () => ({ machineId: 'machine-a' })),
+        });
+
+        const taskId = await bridge.start(createRemoteBootstrapSpec());
+        const results: SystemTaskResult[] = [];
+        const unsubscribe = await bridge.subscribe(taskId, {
+            onEvent: () => {},
+            onResult: (payload) => results.push(payload as SystemTaskResult),
+        });
+
+        await vi.waitFor(() => {
+            expect(results).toHaveLength(1);
+        });
+        unsubscribe();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const lateResults: SystemTaskResult[] = [];
+        await bridge.subscribe(taskId, {
+            onEvent: () => {},
+            onResult: (payload) => lateResults.push(payload as SystemTaskResult),
+        });
+
+        expect(lateResults).toEqual([]);
+    });
+
     it('returns an interrupted result when a previous native bootstrap marker survived process restart', async () => {
         const loaded = await import('./createNativeSshBridge').catch(() => null);
         expect(loaded).not.toBeNull();

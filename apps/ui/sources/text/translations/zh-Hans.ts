@@ -1591,6 +1591,10 @@ export const zhHans: TranslationStructure = {
     remoteHostsPortLine: ({ port }: { port: number }) => `端口: ${port}`,
     remoteHostsActiveTaskTitle: "系统任务",
     remoteHostsHostTrustTitle: "信任 SSH 主机？",
+    remoteHostsReplaceHostKeyTitle: "替换 SSH 主机密钥？",
+    remoteHostsReplaceHostKeyAction: "替换主机密钥",
+    remoteHostsHostKeyCurrentFingerprintLabel: "当前信任的指纹",
+    remoteHostsHostKeyNewFingerprintLabel: "新指纹",
     remoteHostsPasswordRequiredTitle: "需要 SSH 密码",
     remoteHostsRememberHostKeyTitle: "记住此 SSH 主机密钥？",
     remoteHostsRememberHostKeyAction: "信任并记住",
@@ -3021,6 +3025,17 @@ export const zhHans: TranslationStructure = {
       permissionRequestsSubtitle: "当会话需要批准时显示本地通知",
       userActionsTitle: "操作请求",
       userActionsSubtitle: "当会话需要你的输入时显示本地通知",
+    },
+    desktop: {
+      title: "桌面通知",
+      footer: "检查此桌面应用的本地通知投递。",
+      permission: {
+        title: "系统权限",
+        checkingSubtitle: "正在检查 macOS 通知权限",
+        grantedSubtitle: "macOS 允许此应用发送通知",
+        notGrantedSubtitle: "点按以请求 macOS 通知权限",
+        errorSubtitle: "无法读取 macOS 通知权限",
+      },
     },
     quietHours: {
       title: "免打扰时段",
@@ -5132,11 +5147,11 @@ export const zhHans: TranslationStructure = {
       default: "CLI 设置",
       plan: "计划模式",
       readOnly: "只读模式",
-      safeYolo: "安全 YOLO",
+      safeYolo: "自动",
       yolo: "YOLO",
       badgePlan: "计划",
       badgeReadOnly: "只读",
-      badgeSafeYolo: "安全 YOLO",
+      badgeSafeYolo: "自动",
       badgeYolo: "YOLO",
     },
     codexModel: {
@@ -6089,13 +6104,15 @@ settingsSession: {
         },
     },
     sessionCreation: {
-        title: '新会话快捷方式',
-        footer: '选择项目快捷方式如何填充新会话界面。',
+        title: '新会话弹窗',
+        footer: '选择新会话弹窗的打开方式，以及项目快捷方式如何填充它。',
         rememberLastProjectSelectionsTitle: '记住项目上次会话选择',
         rememberLastProjectSelectionsEnabledSubtitle: '项目快捷方式会复用最新会话的机器、文件夹、引擎、模型和会话选项。',
         rememberLastProjectSelectionsDisabledSubtitle: '项目快捷方式只预选项目机器和文件夹。',
     },
     mobileWorkspaceExperience: {
+        groupTitle: '移动端工作区',
+        groupFooter: '控制手机尺寸的会话屏幕如何组织。',
         title: '移动工作区',
         subtitle: '选择默认的移动会话布局。',
         options: {
@@ -6368,6 +6385,16 @@ settingsSession: {
       openSubtitle: "打开子代理设置",
     },
       handoff: settingsSessionHandoffTranslationExtensions['zh-Hans'],
+          promptPersonalization: {
+              title: 'Prompt personalization',
+              footer: 'Choose which built-in instructions Happier adds to new agent sessions. This does not hide options an agent already sends.',
+              askAgentToRenameSessionsTitle: 'Ask the agent to rename sessions',
+              askAgentToRenameSessionsEnabledSubtitle: 'The prompt asks agents to set short descriptive session titles.',
+              askAgentToRenameSessionsDisabledSubtitle: 'The prompt does not ask agents to set titles; manual renaming still works.',
+              askAgentToSuggestReplyOptionsTitle: 'Ask the agent to suggest reply options',
+              askAgentToSuggestReplyOptionsEnabledSubtitle: 'The prompt asks agents to propose quick reply options when useful.',
+              askAgentToSuggestReplyOptionsDisabledSubtitle: 'The prompt does not ask agents to add quick reply options.',
+          },
     defaultPermissions: {
       title: "默认权限",
       footer:

@@ -1685,6 +1685,10 @@ export const pl: TranslationStructure = {
     remoteHostsPortLine: ({ port }: { port: number }) => `Port: ${port}`,
     remoteHostsActiveTaskTitle: "Zadanie systemowe",
     remoteHostsHostTrustTitle: "Zaufać hostowi SSH?",
+    remoteHostsReplaceHostKeyTitle: "Zastąpić klucz hosta SSH?",
+    remoteHostsReplaceHostKeyAction: "Zastąp klucz hosta",
+    remoteHostsHostKeyCurrentFingerprintLabel: "Obecny zaufany odcisk",
+    remoteHostsHostKeyNewFingerprintLabel: "Nowy odcisk",
     remoteHostsPasswordRequiredTitle: "Wymagane hasło SSH",
     remoteHostsRememberHostKeyTitle: "Zapamiętać ten klucz hosta SSH?",
     remoteHostsRememberHostKeyAction: "Zaufaj i zapamiętaj",
@@ -3156,6 +3160,17 @@ settingsPets: {
       permissionRequestsSubtitle: 'Pokazuj lokalne powiadomienie, gdy sesja wymaga zatwierdzenia',
       userActionsTitle: 'Prośby o akcję',
       userActionsSubtitle: 'Pokazuj lokalne powiadomienie, gdy sesja wymaga Twojego wkładu',
+    },
+    desktop: {
+      title: 'Powiadomienia desktopowe',
+      footer: 'Sprawdza lokalne dostarczanie powiadomień dla tej aplikacji desktopowej.',
+      permission: {
+        title: 'Uprawnienie systemowe',
+        checkingSubtitle: 'Sprawdzanie uprawnienia powiadomień macOS',
+        grantedSubtitle: 'macOS pozwala tej aplikacji wysyłać powiadomienia',
+        notGrantedSubtitle: 'Stuknij, aby poprosić o uprawnienie powiadomień macOS',
+        errorSubtitle: 'Nie można odczytać uprawnienia powiadomień macOS',
+      },
     },
     quietHours: {
       title: 'Godziny ciszy',
@@ -5349,11 +5364,11 @@ settingsPets: {
       default: "Ustawienia CLI",
       plan: "Tryb planowania",
       readOnly: "Tryb tylko do odczytu",
-      safeYolo: "Bezpieczne YOLO",
+      safeYolo: "Auto",
       yolo: "YOLO",
       badgePlan: "Plan",
       badgeReadOnly: "Tylko do odczytu",
-      badgeSafeYolo: "Bezpieczne YOLO",
+      badgeSafeYolo: "Auto",
       badgeYolo: "YOLO",
     },
     codexModel: {
@@ -6329,13 +6344,15 @@ settingsSession: {
           },
       },
       sessionCreation: {
-          title: 'Skróty nowej sesji',
-          footer: 'Wybierz, jak skróty projektu wypełniają ekran nowej sesji.',
+          title: 'Modal nowej sesji',
+          footer: 'Wybierz, jak otwiera się modal nowej sesji i jak wypełniają go skróty projektu.',
           rememberLastProjectSelectionsTitle: 'Pamiętaj ostatnie wybory sesji projektu',
           rememberLastProjectSelectionsEnabledSubtitle: 'Skróty projektu używają ponownie maszyny, folderu, silnika, modelu i opcji najnowszej sesji.',
           rememberLastProjectSelectionsDisabledSubtitle: 'Skróty projektu tylko wstępnie wybierają maszynę i folder projektu.',
       },
       mobileWorkspaceExperience: {
+          groupTitle: 'Mobilny obszar roboczy',
+          groupFooter: 'Określa sposób organizacji ekranów sesji na telefonach.',
           title: 'Mobilna przestrzeń robocza',
           subtitle: 'Wybierz domyślny układ sesji mobilnej.',
           options: {
@@ -6644,6 +6661,16 @@ settingsSession: {
         openSubtitle: "Otwórz ustawienia sub-agenta",
       },
       handoff: settingsSessionHandoffTranslationExtensions.pl,
+          promptPersonalization: {
+              title: 'Prompt personalization',
+              footer: 'Choose which built-in instructions Happier adds to new agent sessions. This does not hide options an agent already sends.',
+              askAgentToRenameSessionsTitle: 'Ask the agent to rename sessions',
+              askAgentToRenameSessionsEnabledSubtitle: 'The prompt asks agents to set short descriptive session titles.',
+              askAgentToRenameSessionsDisabledSubtitle: 'The prompt does not ask agents to set titles; manual renaming still works.',
+              askAgentToSuggestReplyOptionsTitle: 'Ask the agent to suggest reply options',
+              askAgentToSuggestReplyOptionsEnabledSubtitle: 'The prompt asks agents to propose quick reply options when useful.',
+              askAgentToSuggestReplyOptionsDisabledSubtitle: 'The prompt does not ask agents to add quick reply options.',
+          },
       defaultPermissions: {
         title: "Domyślne uprawnienia",
         footer:

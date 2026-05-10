@@ -2,6 +2,7 @@ import { AppState } from 'react-native';
 
 import {
     createNativeSshTunnelAdapter,
+    type NativeSshTunnelAuthPromptResolver,
     type NativeSshTunnelHostKeyPromptResolver,
     type NativeSshTunnelCredentialResolution,
 } from './adapter';
@@ -36,6 +37,7 @@ const credentialResolutionsByRefKey = new Map<string, NativeSshTunnelCredentialR
 let singletonRuntime: NativeSshTunnelRuntime | null = null;
 let singletonLifecycleSubscription: Readonly<{ remove: () => void }> | null = null;
 let hostKeyPromptResolver: NativeSshTunnelHostKeyPromptResolver | null = null;
+let authPromptResolver: NativeSshTunnelAuthPromptResolver | null = null;
 
 function buildCredentialRefKey(credentialsRef: NativeSshCredentialsRef): string {
     return JSON.stringify({
@@ -56,6 +58,15 @@ function createDefaultSupervisor(): NativeSshTunnelSupervisor {
                     };
                 }
                 return await hostKeyPromptResolver(event, request);
+            },
+            promptAuth: async (event, request) => {
+                if (!authPromptResolver) {
+                    return {
+                        decision: 'cancel',
+                        reason: 'Native SSH tunnel authentication prompt was not handled.',
+                    };
+                }
+                return await authPromptResolver(event, request);
             },
             resolveCredentials: async (credentialsRef) => {
                 const credentials = readNativeSshTunnelCredentialResolution(credentialsRef);
@@ -85,6 +96,12 @@ export function setNativeSshTunnelHostKeyPromptResolver(
     resolver: NativeSshTunnelHostKeyPromptResolver | null,
 ): void {
     hostKeyPromptResolver = resolver;
+}
+
+export function setNativeSshTunnelAuthPromptResolver(
+    resolver: NativeSshTunnelAuthPromptResolver | null,
+): void {
+    authPromptResolver = resolver;
 }
 
 function clearNativeSshTunnelCredentialResolution(credentialsRef: NativeSshCredentialsRef): void {
@@ -216,5 +233,6 @@ export function disposeNativeSshTunnelRuntime(): void {
     singletonLifecycleSubscription = null;
     singletonRuntime = null;
     hostKeyPromptResolver = null;
+    authPromptResolver = null;
     credentialResolutionsByRefKey.clear();
 }

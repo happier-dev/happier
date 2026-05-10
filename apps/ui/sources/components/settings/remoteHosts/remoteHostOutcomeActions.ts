@@ -7,7 +7,6 @@ import { parseSshTarget, type SshTunnelEnsureRequest } from '@happier-dev/protoc
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 import type { NativeSshTunnelRequest } from '@/sync/runtime/nativeSshTunnels/types';
 import type { NativeSshTunnelCredentialResolution } from '@/sync/runtime/nativeSshTunnels/adapter';
-import { isEncryptedPrivateKeyPem } from '@/components/ssh/isEncryptedPrivateKeyPem';
 import {
     REMOTE_HOST_SSH_TUNNEL_REMOTE_HOST,
     REMOTE_HOST_SSH_TUNNEL_REMOTE_PORT,
@@ -173,7 +172,7 @@ export function buildNativeSshTunnelCredentialsFromRemoteHostConfig(
             },
         };
     }
-    if (config.sshAuth === 'keyfile' && config.identityPrivateKey && !isEncryptedPrivateKeyPem(config.identityPrivateKey)) {
+    if (config.sshAuth === 'keyfile' && config.identityPrivateKey) {
         return {
             auth: {
                 username,

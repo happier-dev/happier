@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { buildSshHostKeyPromptBody } from '@/components/ssh/buildSshHostKeyPromptBody';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -31,17 +32,32 @@ export function useSshSystemTaskPromptModals(params: Readonly<{
         if (prompt.kind === 'ssh.trustHost' || prompt.kind === 'ssh.replaceHostKey') {
             void (async () => {
                 const fingerprint = typeof prompt.data.fingerprint === 'string' ? prompt.data.fingerprint.trim() : '';
+                const existingFingerprint = typeof prompt.data.existingFingerprint === 'string'
+                    ? prompt.data.existingFingerprint.trim()
+                    : '';
                 const host = typeof prompt.data.host === 'string' ? prompt.data.host.trim() : '';
+                const isReplacement = prompt.kind === 'ssh.replaceHostKey';
                 const accepted = await Modal.confirm(
-                    prompt.message || t('settings.remoteHostsHostTrustTitle'),
-                    `${host}\n${fingerprint}`.trim(),
-                    { confirmText: t('setupOnboarding.remoteSshChecklist.trustHostTitle'), cancelText: t('common.cancel') },
+                    isReplacement
+                        ? t('settings.remoteHostsReplaceHostKeyTitle')
+                        : t('settings.remoteHostsHostTrustTitle'),
+                    buildSshHostKeyPromptBody({
+                        host,
+                        fingerprint,
+                        existingFingerprint: isReplacement ? existingFingerprint : null,
+                    }),
+                    {
+                        confirmText: isReplacement
+                            ? t('settings.remoteHostsReplaceHostKeyAction')
+                            : t('setupOnboarding.remoteSshChecklist.trustHostTitle'),
+                        cancelText: t('common.cancel'),
+                    },
                 );
                 if (!accepted) {
                     await params.runner.cancel(taskId).catch(() => {});
                     return;
                 }
-                const remember = prompt.kind === 'ssh.replaceHostKey'
+                const remember = isReplacement
                     ? true
                     : await Modal.confirm(
                         t('settings.remoteHostsRememberHostKeyTitle'),
@@ -63,7 +79,7 @@ export function useSshSystemTaskPromptModals(params: Readonly<{
             void (async () => {
                 const host = typeof prompt.data.host === 'string' ? prompt.data.host.trim() : '';
                 const passphrase = await Modal.prompt(
-                    prompt.message || t('settings.remoteHostsPrivateKeyPassphraseTitle'),
+                    t('settings.remoteHostsPrivateKeyPassphraseTitle'),
                     host || undefined,
                     { inputType: 'secure-text', confirmText: t('common.continue'), cancelText: t('common.cancel') },
                 );
@@ -92,7 +108,7 @@ export function useSshSystemTaskPromptModals(params: Readonly<{
                     const echo = entry.echo === true;
                     const value = await Modal.prompt(
                         label,
-                        prompt.message || t('settings.remoteHostsKeyboardInteractiveTitle'),
+                        t('settings.remoteHostsKeyboardInteractiveTitle'),
                         {
                             inputType: echo ? 'default' : 'secure-text',
                             confirmText: t('common.continue'),

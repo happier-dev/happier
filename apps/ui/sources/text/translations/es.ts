@@ -1655,6 +1655,10 @@ export const es: TranslationStructure = {
     remoteHostsPortLine: ({ port }: { port: number }) => `Puerto: ${port}`,
     remoteHostsActiveTaskTitle: "Tarea del sistema",
     remoteHostsHostTrustTitle: "¿Confiar en el host SSH?",
+    remoteHostsReplaceHostKeyTitle: "¿Reemplazar la clave de host SSH?",
+    remoteHostsReplaceHostKeyAction: "Reemplazar clave de host",
+    remoteHostsHostKeyCurrentFingerprintLabel: "Huella confiable actual",
+    remoteHostsHostKeyNewFingerprintLabel: "Nueva huella",
     remoteHostsPasswordRequiredTitle: "Se requiere contraseña SSH",
     remoteHostsRememberHostKeyTitle: "¿Recordar esta clave de host SSH?",
     remoteHostsRememberHostKeyAction: "Confiar y recordar",
@@ -3126,6 +3130,17 @@ export const es: TranslationStructure = {
       permissionRequestsSubtitle: 'Muestra una notificación local cuando una sesión necesita aprobación',
       userActionsTitle: 'Solicitudes de acción',
       userActionsSubtitle: 'Muestra una notificación local cuando una sesión necesita tu intervención',
+    },
+    desktop: {
+      title: 'Notificaciones de escritorio',
+      footer: 'Comprueba la entrega de notificaciones locales para esta app de escritorio.',
+      permission: {
+        title: 'Permiso del sistema',
+        checkingSubtitle: 'Comprobando el permiso de notificaciones de macOS',
+        grantedSubtitle: 'macOS permite que esta app envíe notificaciones',
+        notGrantedSubtitle: 'Toca para solicitar el permiso de notificaciones de macOS',
+        errorSubtitle: 'No se pudo leer el permiso de notificaciones de macOS',
+      },
     },
     quietHours: {
       title: 'Horas de silencio',
@@ -5336,11 +5351,11 @@ export const es: TranslationStructure = {
       default: "Configuración del CLI",
       plan: "Modo de planificación",
       readOnly: "Modo de solo lectura",
-      safeYolo: "YOLO seguro",
+      safeYolo: "Auto",
       yolo: "YOLO",
       badgePlan: "Plan",
       badgeReadOnly: "Solo lectura",
-      badgeSafeYolo: "YOLO seguro",
+      badgeSafeYolo: "Auto",
       badgeYolo: "YOLO",
     },
     codexModel: {
@@ -6322,13 +6337,15 @@ settingsSession: {
           },
       },
       sessionCreation: {
-          title: 'Atajos de nueva sesión',
-          footer: 'Elige cómo los atajos de proyecto preparan la pantalla de nueva sesión.',
+          title: 'Modal de nueva sesión',
+          footer: 'Elige cómo se abre el modal de nueva sesión y cómo lo preparan los atajos de proyecto.',
           rememberLastProjectSelectionsTitle: 'Recordar las últimas selecciones de sesión del proyecto',
           rememberLastProjectSelectionsEnabledSubtitle: 'Los atajos de proyecto reutilizan la máquina, la carpeta, el motor, el modelo y las opciones de la sesión más reciente.',
           rememberLastProjectSelectionsDisabledSubtitle: 'Los atajos de proyecto solo preseleccionan la máquina y la carpeta del proyecto.',
       },
       mobileWorkspaceExperience: {
+          groupTitle: 'Espacio de trabajo móvil',
+          groupFooter: 'Controla cómo se organizan las pantallas de sesión en teléfonos.',
           title: 'Espacio de trabajo móvil',
           subtitle: 'Elige el diseño predeterminado de sesión móvil.',
           options: {
@@ -6670,6 +6687,16 @@ settingsSession: {
         maxSeedCharsPlaceholder: "50000",
       },
       handoff: settingsSessionHandoffTranslationExtensions.es,
+          promptPersonalization: {
+              title: 'Prompt personalization',
+              footer: 'Choose which built-in instructions Happier adds to new agent sessions. This does not hide options an agent already sends.',
+              askAgentToRenameSessionsTitle: 'Ask the agent to rename sessions',
+              askAgentToRenameSessionsEnabledSubtitle: 'The prompt asks agents to set short descriptive session titles.',
+              askAgentToRenameSessionsDisabledSubtitle: 'The prompt does not ask agents to set titles; manual renaming still works.',
+              askAgentToSuggestReplyOptionsTitle: 'Ask the agent to suggest reply options',
+              askAgentToSuggestReplyOptionsEnabledSubtitle: 'The prompt asks agents to propose quick reply options when useful.',
+              askAgentToSuggestReplyOptionsDisabledSubtitle: 'The prompt does not ask agents to add quick reply options.',
+          },
       defaultPermissions: {
         title: "Permisos predeterminados",
         footer:

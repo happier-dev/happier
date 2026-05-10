@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
+import { buildSshHostKeyPromptBody } from '@/components/ssh/buildSshHostKeyPromptBody';
 import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSnapshot';
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
 import { useSshSystemTaskPromptModals } from '@/components/systemTasks/ssh/useSshSystemTaskPromptModals';
@@ -31,6 +32,7 @@ import {
 } from './remoteHostOutcomeActions';
 import {
     getNativeSshTunnelRuntime,
+    setNativeSshTunnelAuthPromptResolver,
     setNativeSshTunnelCredentialResolution,
     setNativeSshTunnelHostKeyPromptResolver,
     startNativeSshTunnelRuntimeAppStateLifecycle,
@@ -83,13 +85,26 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
     React.useEffect(() => {
         if (!nativeLoopbackTunnelAvailable) {
             setNativeSshTunnelHostKeyPromptResolver(null);
+            setNativeSshTunnelAuthPromptResolver(null);
             return;
         }
         setNativeSshTunnelHostKeyPromptResolver(async (event) => {
+            const isReplacement = event.status === 'changed';
             const accepted = await Modal.confirm(
-                t('setupOnboarding.remoteSshChecklist.trustHostTitle'),
-                `${event.host}\n${event.fingerprintSha256}`.trim(),
-                { confirmText: t('setupOnboarding.remoteSshChecklist.trustHostTitle'), cancelText: t('common.cancel') },
+                isReplacement
+                    ? t('settings.remoteHostsReplaceHostKeyTitle')
+                    : t('setupOnboarding.remoteSshChecklist.trustHostTitle'),
+                buildSshHostKeyPromptBody({
+                    host: event.host,
+                    fingerprint: event.fingerprintSha256,
+                    existingFingerprint: isReplacement ? event.existingFingerprintSha256 ?? null : null,
+                }),
+                {
+                    confirmText: isReplacement
+                        ? t('settings.remoteHostsReplaceHostKeyAction')
+                        : t('setupOnboarding.remoteSshChecklist.trustHostTitle'),
+                    cancelText: t('common.cancel'),
+                },
             );
             return accepted
                 ? {
@@ -101,9 +116,52 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
                     reason: 'SSH host trust was declined.',
                 };
         });
+        setNativeSshTunnelAuthPromptResolver(async (event) => {
+            if (event.kind === 'private-key-passphrase') {
+                const passphrase = await Modal.prompt(
+                    t('settings.remoteHostsPrivateKeyPassphraseTitle'),
+                    event.host || undefined,
+                    { inputType: 'secure-text', confirmText: t('common.continue'), cancelText: t('common.cancel') },
+                );
+                return passphrase == null
+                    ? {
+                        decision: 'cancel',
+                        reason: 'cancelled',
+                    }
+                    : {
+                        decision: 'submit',
+                        value: passphrase,
+                    };
+            }
+
+            const answers: Array<{ id: string; value: string }> = [];
+            for (const prompt of event.prompts) {
+                const value = await Modal.prompt(
+                    prompt.label || t('settings.remoteHostsKeyboardInteractivePromptLabel'),
+                    t('settings.remoteHostsKeyboardInteractiveTitle'),
+                    {
+                        inputType: prompt.echo ? 'default' : 'secure-text',
+                        confirmText: t('common.continue'),
+                        cancelText: t('common.cancel'),
+                    },
+                );
+                if (value == null) {
+                    return {
+                        decision: 'cancel',
+                        reason: 'cancelled',
+                    };
+                }
+                answers.push({ id: prompt.id, value });
+            }
+            return {
+                decision: 'submit',
+                answers,
+            };
+        });
         startNativeSshTunnelRuntimeAppStateLifecycle();
         return () => {
             setNativeSshTunnelHostKeyPromptResolver(null);
+            setNativeSshTunnelAuthPromptResolver(null);
         };
     }, [nativeLoopbackTunnelAvailable]);
 

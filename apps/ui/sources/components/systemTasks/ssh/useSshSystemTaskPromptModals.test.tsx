@@ -105,12 +105,42 @@ describe('useSshSystemTaskPromptModals', () => {
         expect(respond).toHaveBeenCalledWith(taskId, { trusted: true, remember: true });
     });
 
+    it('distinguishes changed SSH host keys from first-time trust prompts', async () => {
+        modalSpies.confirm.mockResolvedValueOnce(true);
+
+        const { taskId, respond } = await renderPrompt({
+            kind: 'ssh.replaceHostKey',
+            message: '',
+            data: {
+                kind: 'ssh.replaceHostKey',
+                promptId: 'host-key-task-1',
+                host: 'server.example.test',
+                fingerprint: 'SHA256:new',
+                existingFingerprint: 'SHA256:old',
+            },
+        });
+
+        expect(modalSpies.confirm).toHaveBeenCalledWith(
+            'settings.remoteHostsReplaceHostKeyTitle',
+            expect.stringContaining('settings.remoteHostsHostKeyCurrentFingerprintLabel: SHA256:old'),
+            expect.objectContaining({
+                confirmText: 'settings.remoteHostsReplaceHostKeyAction',
+            }),
+        );
+        expect(modalSpies.confirm).toHaveBeenCalledWith(
+            'settings.remoteHostsReplaceHostKeyTitle',
+            expect.stringContaining('settings.remoteHostsHostKeyNewFingerprintLabel: SHA256:new'),
+            expect.any(Object),
+        );
+        expect(respond).toHaveBeenCalledWith(taskId, { trusted: true, remember: true });
+    });
+
     it('submits private-key passphrases through the shared SSH prompt contract', async () => {
         modalSpies.prompt.mockResolvedValueOnce('secret phrase');
 
         const { taskId, respond } = await renderPrompt({
             kind: 'ssh.privateKeyPassphrase',
-            message: 'Enter the SSH private-key passphrase.',
+            message: 'untranslated-native-message',
             data: {
                 kind: 'ssh.privateKeyPassphrase',
                 promptId: 'auth-passphrase-task-1',
@@ -122,7 +152,7 @@ describe('useSshSystemTaskPromptModals', () => {
         });
 
         expect(modalSpies.prompt).toHaveBeenCalledWith(
-            'Enter the SSH private-key passphrase.',
+            'settings.remoteHostsPrivateKeyPassphraseTitle',
             'server.example.test',
             expect.objectContaining({ inputType: 'secure-text' }),
         );

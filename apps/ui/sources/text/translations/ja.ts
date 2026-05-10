@@ -1954,6 +1954,10 @@ export const ja: TranslationStructure = {
     remoteHostsPortLine: ({ port }: { port: number }) => `ポート: ${port}`,
     remoteHostsActiveTaskTitle: "システムタスク",
     remoteHostsHostTrustTitle: "SSHホストを信頼しますか？",
+    remoteHostsReplaceHostKeyTitle: "SSHホストキーを置き換えますか？",
+    remoteHostsReplaceHostKeyAction: "ホストキーを置き換える",
+    remoteHostsHostKeyCurrentFingerprintLabel: "現在信頼しているフィンガープリント",
+    remoteHostsHostKeyNewFingerprintLabel: "新しいフィンガープリント",
     remoteHostsPasswordRequiredTitle: "SSHパスワードが必要です",
     remoteHostsRememberHostKeyTitle: "この SSH ホストキーを記憶しますか？",
     remoteHostsRememberHostKeyAction: "信頼して記憶",
@@ -3408,6 +3412,17 @@ localTailscale: {
       permissionRequestsSubtitle: "セッションが承認を必要とするときにローカル通知を表示します",
       userActionsTitle: "操作リクエスト",
       userActionsSubtitle: "セッションが入力を必要とするときにローカル通知を表示します",
+    },
+    desktop: {
+      title: "デスクトップ通知",
+      footer: "このデスクトップアプリのローカル通知配信を確認します。",
+      permission: {
+        title: "システム権限",
+        checkingSubtitle: "macOS 通知権限を確認しています",
+        grantedSubtitle: "macOS はこのアプリからの通知送信を許可しています",
+        notGrantedSubtitle: "タップして macOS 通知権限をリクエスト",
+        errorSubtitle: "macOS 通知権限を読み取れませんでした",
+      },
     },
     quietHours: {
       title: "静かな時間",
@@ -5592,11 +5607,11 @@ localTailscale: {
       default: "CLI設定",
       plan: "プランモード",
       readOnly: "読み取り専用モード",
-      safeYolo: "セーフYOLO",
+      safeYolo: "オート",
       yolo: "YOLO",
       badgePlan: "プラン",
       badgeReadOnly: "読み取り専用モード",
-      badgeSafeYolo: "セーフYOLO",
+      badgeSafeYolo: "オート",
       badgeYolo: "YOLO",
     },
     codexModel: {
@@ -6569,13 +6584,15 @@ settingsSession: {
         },
     },
     sessionCreation: {
-        title: '新しいセッションのショートカット',
-        footer: 'プロジェクトのショートカットが新しいセッション画面に何を反映するかを選びます。',
+        title: '新規セッションモーダル',
+        footer: '新規セッションモーダルの開き方と、プロジェクトのショートカットで何を反映するかを選びます。',
         rememberLastProjectSelectionsTitle: 'プロジェクトの最後のセッション選択を記憶',
         rememberLastProjectSelectionsEnabledSubtitle: 'プロジェクトのショートカットは、最新セッションのマシン、フォルダ、エンジン、モデル、セッションオプションを再利用します。',
         rememberLastProjectSelectionsDisabledSubtitle: 'プロジェクトのショートカットは、プロジェクトのマシンとフォルダだけを事前選択します。',
     },
     mobileWorkspaceExperience: {
+        groupTitle: 'モバイルワークスペース',
+        groupFooter: 'スマートフォンサイズのセッション画面の構成を設定します。',
         title: 'モバイルワークスペース',
         subtitle: 'モバイルセッションの既定レイアウトを選択します。',
         options: {
@@ -6878,6 +6895,16 @@ settingsSession: {
         openSubtitle: "サブエージェント設定を開く",
       },
       handoff: settingsSessionHandoffTranslationExtensions.ja,
+          promptPersonalization: {
+              title: 'Prompt personalization',
+              footer: 'Choose which built-in instructions Happier adds to new agent sessions. This does not hide options an agent already sends.',
+              askAgentToRenameSessionsTitle: 'Ask the agent to rename sessions',
+              askAgentToRenameSessionsEnabledSubtitle: 'The prompt asks agents to set short descriptive session titles.',
+              askAgentToRenameSessionsDisabledSubtitle: 'The prompt does not ask agents to set titles; manual renaming still works.',
+              askAgentToSuggestReplyOptionsTitle: 'Ask the agent to suggest reply options',
+              askAgentToSuggestReplyOptionsEnabledSubtitle: 'The prompt asks agents to propose quick reply options when useful.',
+              askAgentToSuggestReplyOptionsDisabledSubtitle: 'The prompt does not ask agents to add quick reply options.',
+          },
       defaultPermissions: {
         title: "デフォルト権限",
         footer:

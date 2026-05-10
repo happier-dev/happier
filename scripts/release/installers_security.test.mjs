@@ -54,9 +54,11 @@ test('release-owned windows installer enforces minisign verification defaults', 
     /\$wingetInstallResult\.ExitCode -ne 0 -and \$wingetInstallResult\.Output[\s\S]*?\$wingetMinisign = Resolve-MinisignExecutablePath[\s\S]*?if \(\$wingetMinisign\) \{[\s\S]*?if \(\$wingetInstallResult\.ExitCode -ne 0\) \{[\s\S]*?throw "winget install failed\."/,
   );
   assert.match(installPs1, /minisign is not available and could not be installed automatically/);
-  assert.match(installPs1, /Payload promotion failed, falling back to direct binary copy\./);
+  assert.match(installPs1, /Payload promotion is unsupported by this CLI build, falling back to legacy direct binary copy\./);
+  assert.match(installPs1, /Payload promotion failed without a safe fallback\./);
+  assert.match(installPs1, /Refusing direct binary copy to avoid partial install state drift/);
   assert.doesNotMatch(installPs1, /\$promotionOutput = & \$binary self __install-payload .*2>&1 \| Out-String/);
-  assert.doesNotMatch(installPs1, /Unknown self subcommand:\s+__install-payload/);
+  assert.match(installPs1, /Unknown self subcommand:\\s\+__install-payload/);
   assert.ok(publicKeyPayload.length > 10);
   assert.ok(installPs1.includes(publicKeyPayload), 'install.ps1 should embed the release minisign public key payload');
 });

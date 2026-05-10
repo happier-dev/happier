@@ -1641,6 +1641,10 @@ export const ru: TranslationStructure = {
     remoteHostsPortLine: ({ port }: { port: number }) => `Порт: ${port}`,
     remoteHostsActiveTaskTitle: "Системная задача",
     remoteHostsHostTrustTitle: "Доверять SSH-хосту?",
+    remoteHostsReplaceHostKeyTitle: "Заменить ключ SSH-хоста?",
+    remoteHostsReplaceHostKeyAction: "Заменить ключ хоста",
+    remoteHostsHostKeyCurrentFingerprintLabel: "Текущий доверенный отпечаток",
+    remoteHostsHostKeyNewFingerprintLabel: "Новый отпечаток",
     remoteHostsPasswordRequiredTitle: "Требуется пароль SSH",
     remoteHostsRememberHostKeyTitle: "Запомнить этот ключ SSH-хоста?",
     remoteHostsRememberHostKeyAction: "Доверять и запомнить",
@@ -3201,6 +3205,17 @@ export const ru: TranslationStructure = {
       permissionRequestsSubtitle: "Показывать локальное уведомление, когда сеанс требует одобрения",
       userActionsTitle: "Запросы на действия",
       userActionsSubtitle: "Показывать локальное уведомление, когда сеансу требуется ваше участие",
+    },
+    desktop: {
+      title: "Уведомления рабочего стола",
+      footer: "Проверяет локальную доставку уведомлений для этого desktop-приложения.",
+      permission: {
+        title: "Системное разрешение",
+        checkingSubtitle: "Проверяем разрешение уведомлений macOS",
+        grantedSubtitle: "macOS разрешает этому приложению отправлять уведомления",
+        notGrantedSubtitle: "Нажмите, чтобы запросить разрешение уведомлений macOS",
+        errorSubtitle: "Не удалось прочитать разрешение уведомлений macOS",
+      },
     },
     quietHours: {
       title: "Тихие часы",
@@ -5330,11 +5345,11 @@ export const ru: TranslationStructure = {
       default: "Настройки CLI",
       plan: "Режим планирования",
       readOnly: "Только чтение",
-      safeYolo: "Безопасный YOLO",
+      safeYolo: "Авто",
       yolo: "YOLO",
       badgePlan: "План",
       badgeReadOnly: "Только чтение",
-      badgeSafeYolo: "Безопасный YOLO",
+      badgeSafeYolo: "Авто",
       badgeYolo: "YOLO",
     },
     codexModel: {
@@ -6311,13 +6326,15 @@ settingsSession: {
         },
     },
     sessionCreation: {
-        title: 'Быстрые действия новой сессии',
-        footer: 'Выберите, как быстрые действия проекта заполняют экран новой сессии.',
+        title: 'Модальное окно новой сессии',
+        footer: 'Выберите, как открывается модальное окно новой сессии и как быстрые действия проекта заполняют его.',
         rememberLastProjectSelectionsTitle: 'Запоминать последние выборы сессии проекта',
         rememberLastProjectSelectionsEnabledSubtitle: 'Быстрые действия проекта повторно используют машину, папку, движок, модель и параметры самой новой сессии.',
         rememberLastProjectSelectionsDisabledSubtitle: 'Быстрые действия проекта только предварительно выбирают машину и папку проекта.',
     },
     mobileWorkspaceExperience: {
+        groupTitle: 'Мобильное рабочее пространство',
+        groupFooter: 'Управляет тем, как экраны сессии организованы на телефонах.',
         title: 'Мобильное рабочее пространство',
         subtitle: 'Выберите макет мобильной сессии по умолчанию.',
         options: {
@@ -6624,6 +6641,16 @@ settingsSession: {
         openSubtitle: "Открыть настройки суб-агента",
       },
       handoff: settingsSessionHandoffTranslationExtensions.ru,
+          promptPersonalization: {
+              title: 'Prompt personalization',
+              footer: 'Choose which built-in instructions Happier adds to new agent sessions. This does not hide options an agent already sends.',
+              askAgentToRenameSessionsTitle: 'Ask the agent to rename sessions',
+              askAgentToRenameSessionsEnabledSubtitle: 'The prompt asks agents to set short descriptive session titles.',
+              askAgentToRenameSessionsDisabledSubtitle: 'The prompt does not ask agents to set titles; manual renaming still works.',
+              askAgentToSuggestReplyOptionsTitle: 'Ask the agent to suggest reply options',
+              askAgentToSuggestReplyOptionsEnabledSubtitle: 'The prompt asks agents to propose quick reply options when useful.',
+              askAgentToSuggestReplyOptionsDisabledSubtitle: 'The prompt does not ask agents to add quick reply options.',
+          },
       defaultPermissions: {
         title: "Разрешения по умолчанию",
         footer:

@@ -80,9 +80,11 @@ export type CreateNativeSshBridgeOptions = Readonly<{
     runBootstrapTask?: (params: RunNativeRemoteSshBootstrapTaskParams) => Promise<unknown>;
     interruptionStore?: NativeSshBridgeInterruptionStore | null;
     trustedHostKeyStore?: RemoteHostTrustedHostKeyStore | null;
+    completedRecordRetentionMs?: number;
 }>;
 
 let nextNativeTaskNumber = 1;
+const DEFAULT_COMPLETED_RECORD_RETENTION_MS = 5 * 60_000;
 
 function createTaskId(): string {
     return `native_ssh_task_${nextNativeTaskNumber++}`;
@@ -180,7 +182,6 @@ function buildHostKeyPromptSystemTaskEvent(
         tsMs: Date.now(),
         type: 'prompt',
         stepId: 'ssh.hostTrust',
-        message: event.status === 'changed' ? 'Replace this SSH host key?' : 'Trust this SSH host?',
         data: {
             kind: event.status === 'changed' ? 'ssh.replaceHostKey' : 'ssh.trustHost',
             promptId: event.promptId,
@@ -204,9 +205,6 @@ function buildAuthPromptSystemTaskEvent(
         tsMs: Date.now(),
         type: 'prompt',
         stepId: 'ssh.auth',
-        message: event.kind === 'private-key-passphrase'
-            ? 'Enter the SSH private-key passphrase.'
-            : 'Answer the SSH authentication prompt.',
         data: event.kind === 'private-key-passphrase'
             ? {
                 kind: 'ssh.privateKeyPassphrase',
@@ -301,8 +299,27 @@ export function createNativeSshBridge(
         ? createDefaultNativeSshBridgeInterruptionStore()
         : options.interruptionStore;
     const trustedHostKeyStore = options.trustedHostKeyStore ?? null;
+    const completedRecordRetentionMs = options.completedRecordRetentionMs ?? DEFAULT_COMPLETED_RECORD_RETENTION_MS;
     const records = new Map<string, NativeTaskRecord>();
     const taskIdByDedupeKey = new Map<string, string>();
+    const recordCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    function scheduleCompletedRecordCleanup(record: NativeTaskRecord): void {
+        if (!record.completed || completedRecordRetentionMs < 0) {
+            return;
+        }
+        const existingTimer = recordCleanupTimers.get(record.taskId);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+        const timer = setTimeout(() => {
+            recordCleanupTimers.delete(record.taskId);
+            if (record.completed && record.listeners.size === 0) {
+                records.delete(record.taskId);
+            }
+        }, completedRecordRetentionMs);
+        recordCleanupTimers.set(record.taskId, timer);
+    }
 
     async function runRecord(record: NativeTaskRecord, spec: SystemTaskSpec) {
         const hostKeySubscription: NativeSshSubscription | null = nativeModule?.addListener?.(
@@ -394,6 +411,7 @@ export function createNativeSshBridge(
             }
             interruptionStore?.remove(readNativeSshBridgeInterruptionKey(spec));
             taskIdByDedupeKey.delete(record.key);
+            scheduleCompletedRecordCleanup(record);
         }
     }
 
@@ -445,6 +463,7 @@ export function createNativeSshBridge(
                     code: 'native_ssh_task_interrupted',
                     message: 'Previous native SSH bootstrap was interrupted before completion.',
                 }));
+                scheduleCompletedRecordCleanup(record);
                 return taskId;
             }
             interruptionStore?.write({
@@ -470,6 +489,9 @@ export function createNativeSshBridge(
             }
             return () => {
                 record.listeners.delete(listeners);
+                if (record.completed) {
+                    scheduleCompletedRecordCleanup(record);
+                }
             };
         },
         async cancel(taskId) {
@@ -486,6 +508,7 @@ export function createNativeSshBridge(
                 code: 'cancelled',
                 message: 'cancelled',
             }));
+            scheduleCompletedRecordCleanup(record);
         },
         async respond(taskId, answer) {
             const record = records.get(taskId);

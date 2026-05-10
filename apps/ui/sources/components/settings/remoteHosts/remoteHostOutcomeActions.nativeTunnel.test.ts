@@ -62,33 +62,46 @@ describe('remote host native tunnel outcome actions', () => {
         })).toBeNull();
     });
 
-    it('does not claim native tunnel support for encrypted private keys until passphrase prompts are wired', () => {
+    it('passes encrypted private keys to native tunnel auth so native passphrase prompts can complete the connection', () => {
+        const encryptedOpenSshPrivateKey = [
+            '-----BEGIN OPENSSH PRIVATE KEY-----',
+            'Proc-Type: 4,ENCRYPTED',
+            'private-key-body',
+            '-----END OPENSSH PRIVATE KEY-----',
+        ].join('\n');
         expect(buildNativeSshTunnelCredentialsFromRemoteHostConfig({
             sshTarget: 'dev@10.0.0.5',
             sshPort: null,
             sshAuth: 'keyfile',
             identityFilePath: '',
-            identityPrivateKey: [
-                '-----BEGIN OPENSSH PRIVATE KEY-----',
-                'Proc-Type: 4,ENCRYPTED',
-                'private-key-body',
-                '-----END OPENSSH PRIVATE KEY-----',
-            ].join('\n'),
+            identityPrivateKey: encryptedOpenSshPrivateKey,
             sshConfigFilePath: '',
             password: '',
-        })).toBeNull();
+        })).toEqual({
+            auth: {
+                username: 'dev',
+                privateKeyPem: encryptedOpenSshPrivateKey,
+            },
+        });
+
+        const encryptedPkcs8PrivateKey = [
+            '-----BEGIN ENCRYPTED PRIVATE KEY-----',
+            'private-key-body',
+            '-----END ENCRYPTED PRIVATE KEY-----',
+        ].join('\n');
         expect(buildNativeSshTunnelCredentialsFromRemoteHostConfig({
             sshTarget: 'dev@10.0.0.5',
             sshPort: null,
             sshAuth: 'keyfile',
             identityFilePath: '',
-            identityPrivateKey: [
-                '-----BEGIN ENCRYPTED PRIVATE KEY-----',
-                'private-key-body',
-                '-----END ENCRYPTED PRIVATE KEY-----',
-            ].join('\n'),
+            identityPrivateKey: encryptedPkcs8PrivateKey,
             sshConfigFilePath: '',
             password: '',
-        })).toBeNull();
+        })).toEqual({
+            auth: {
+                username: 'dev',
+                privateKeyPem: encryptedPkcs8PrivateKey,
+            },
+        });
     });
 });

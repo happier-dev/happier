@@ -142,6 +142,7 @@ const modalSpies = vi.hoisted(() => ({
     show: vi.fn(),
     alert: vi.fn(async () => undefined),
     confirm: vi.fn(async () => true),
+    prompt: vi.fn(async () => null as string | null),
 }));
 const secretState = vi.hoisted(() => ({
     decryptedSecretValue: null as string | null,
@@ -151,12 +152,34 @@ const nativeTunnelState = vi.hoisted(() => ({
     hostKeyPromptResolver: null as ((event: {
         host: string;
         fingerprintSha256: string;
+        status?: 'unknown' | 'changed';
+        existingFingerprintSha256?: string;
+    }) => Promise<unknown>) | null,
+    authPromptResolver: null as ((event: {
+        kind: 'private-key-passphrase';
+        host: string;
+        promptId: string;
+        requestId: string;
+        port: number;
+        username: string;
     }) => Promise<unknown>) | null,
     setHostKeyPromptResolver: vi.fn((resolver: ((event: {
         host: string;
         fingerprintSha256: string;
+        status?: 'unknown' | 'changed';
+        existingFingerprintSha256?: string;
     }) => Promise<unknown>) | null) => {
         nativeTunnelState.hostKeyPromptResolver = resolver;
+    }),
+    setAuthPromptResolver: vi.fn((resolver: ((event: {
+        kind: 'private-key-passphrase';
+        host: string;
+        promptId: string;
+        requestId: string;
+        port: number;
+        username: string;
+    }) => Promise<unknown>) | null) => {
+        nativeTunnelState.authPromptResolver = resolver;
     }),
     leases: [] as Array<{
         leaseId: string;
@@ -234,6 +257,7 @@ installSettingsViewCommonModuleMocks({
                 show: modalSpies.show,
                 alert: modalSpies.alert,
                 confirm: modalSpies.confirm,
+                prompt: modalSpies.prompt,
             },
         }).module;
     },
@@ -366,6 +390,7 @@ vi.mock('@/sync/runtime/nativeSshTunnels/runtime', () => ({
         nativeTunnelState.credentialsByRemoteHostId.set(credentialsRef.remoteHostId, credentials);
     },
     setNativeSshTunnelHostKeyPromptResolver: nativeTunnelState.setHostKeyPromptResolver,
+    setNativeSshTunnelAuthPromptResolver: nativeTunnelState.setAuthPromptResolver,
     startNativeSshTunnelRuntimeAppStateLifecycle: nativeTunnelState.startLifecycle,
 }));
 
@@ -425,6 +450,8 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
             nativeTunnelState.releaseTunnel.mockClear();
             nativeTunnelState.hostKeyPromptResolver = null;
             nativeTunnelState.setHostKeyPromptResolver.mockClear();
+            nativeTunnelState.authPromptResolver = null;
+            nativeTunnelState.setAuthPromptResolver.mockClear();
             nativeBootstrapInterruptionState.markers.clear();
             activeServerState.snapshot = {
                 serverId: 'server-1',
@@ -439,6 +466,8 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
             modalSpies.alert.mockReset();
             modalSpies.confirm.mockReset();
             modalSpies.confirm.mockResolvedValue(true);
+            modalSpies.prompt.mockReset();
+            modalSpies.prompt.mockResolvedValue(null);
 	        standardCleanup();
 	    });
 
@@ -767,6 +796,46 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
             decision: 'accept-once',
             fingerprintSha256: 'SHA256:abc',
         });
+        modalSpies.confirm.mockClear();
+        await expect(nativeTunnelState.hostKeyPromptResolver?.({
+            host: '10.0.0.1',
+            fingerprintSha256: 'SHA256:new',
+            existingFingerprintSha256: 'SHA256:old',
+            status: 'changed',
+        })).resolves.toEqual({
+            decision: 'accept-once',
+            fingerprintSha256: 'SHA256:new',
+        });
+        expect(modalSpies.confirm).toHaveBeenCalledWith(
+            'settings.remoteHostsReplaceHostKeyTitle',
+            expect.stringContaining('settings.remoteHostsHostKeyCurrentFingerprintLabel: SHA256:old'),
+            expect.objectContaining({
+                confirmText: 'settings.remoteHostsReplaceHostKeyAction',
+            }),
+        );
+        expect(modalSpies.confirm).toHaveBeenCalledWith(
+            'settings.remoteHostsReplaceHostKeyTitle',
+            expect.stringContaining('settings.remoteHostsHostKeyNewFingerprintLabel: SHA256:new'),
+            expect.any(Object),
+        );
+        expect(nativeTunnelState.setAuthPromptResolver).toHaveBeenCalledWith(expect.any(Function));
+        modalSpies.prompt.mockResolvedValueOnce('secret phrase');
+        await expect(nativeTunnelState.authPromptResolver?.({
+            requestId: 'native-ssh-tunnel:host-a',
+            promptId: 'auth-passphrase-1',
+            kind: 'private-key-passphrase',
+            host: '10.0.0.1',
+            port: 2222,
+            username: 'dev',
+        })).resolves.toEqual({
+            decision: 'submit',
+            value: 'secret phrase',
+        });
+        expect(modalSpies.prompt).toHaveBeenCalledWith(
+            'settings.remoteHostsPrivateKeyPassphraseTitle',
+            '10.0.0.1',
+            expect.objectContaining({ inputType: 'secure-text' }),
+        );
         expect(startMock).not.toHaveBeenCalledWith(expect.objectContaining({
             kind: 'daemon.sshTunnel.ensure.v1',
         }));
