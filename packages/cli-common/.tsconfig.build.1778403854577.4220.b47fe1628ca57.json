@@ -1,7 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "outDir": "/Users/leeroy/Documents/Development/happier/dev/packages/cli-common/.dist.build.1778403854577.4220.b47fe1628ca57",
-    "tsBuildInfoFile": "/Users/leeroy/Documents/Development/happier/dev/packages/cli-common/.dist.build.1778403854577.4220.b47fe1628ca57/.tsbuildinfo"
-  }
-}
