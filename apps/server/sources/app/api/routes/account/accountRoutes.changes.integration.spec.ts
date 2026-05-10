@@ -5,12 +5,17 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { accountRoutes } from "./accountRoutes";
 
-const { emitUpdate, buildUpdateAccountUpdate, randomKeyNaked, markAccountChanged } = vi.hoisted(() => ({
+const { emitUpdate, buildUpdateAccountUpdate, buildAccountSettingsChangedUpdate, randomKeyNaked, markAccountChanged } = vi.hoisted(() => ({
     emitUpdate: vi.fn(),
     buildUpdateAccountUpdate: vi.fn((_userId: string, _profile: any, updSeq: number, updId: string) => ({
         id: updId,
         seq: updSeq,
         body: { t: "update-account" },
+    })),
+    buildAccountSettingsChangedUpdate: vi.fn((settingsVersion: number, updSeq: number, updId: string) => ({
+        id: updId,
+        seq: updSeq,
+        body: { t: "account-settings-changed", settingsVersion },
     })),
     randomKeyNaked: vi.fn(() => "upd-id"),
     markAccountChanged: vi.fn(async () => 444),
@@ -19,6 +24,7 @@ const { emitUpdate, buildUpdateAccountUpdate, randomKeyNaked, markAccountChanged
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: { emitUpdate },
     buildUpdateAccountUpdate,
+    buildAccountSettingsChangedUpdate,
 }));
 
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
@@ -90,7 +96,7 @@ describe("accountRoutes (AccountChange integration)", () => {
             expect.objectContaining({ accountId: account.id, kind: "account", entityId: "self" }),
         );
 
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledTimes(2);
         expect(emitUpdate).toHaveBeenCalledWith(
             expect.objectContaining({
                 userId: account.id,
@@ -98,6 +104,17 @@ describe("accountRoutes (AccountChange integration)", () => {
                     seq: 444,
                     body: expect.objectContaining({ t: "update-account" }),
                 }),
+                recipientFilter: { type: "user-scoped-only" },
+            }),
+        );
+        expect(emitUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: account.id,
+                payload: expect.objectContaining({
+                    seq: 444,
+                    body: expect.objectContaining({ t: "account-settings-changed", settingsVersion: 2 }),
+                }),
+                recipientFilter: { type: "user-machine-scoped-only" },
             }),
         );
     });

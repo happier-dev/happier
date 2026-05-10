@@ -1,7 +1,7 @@
 import { Socket } from "socket.io";
 import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 import type {
-    DirectSessionTranscriptDeltaEphemeral,
+    ExternalSessionTranscriptDeltaEphemeral,
     ExecutionRunPublicState,
     PrimaryTurnStatusV1,
     SessionRuntimeIssueV1,
@@ -43,6 +43,8 @@ export type RecipientFilter =
     // Machine daemon only (excludes user-scoped connections). Use this for daemon-only wakeups/hints that would otherwise
     // duplicate in user-scoped channels.
     | { type: 'machine-only'; machineId: string }
+    // All machine daemons for the user, excluding user/session scoped sockets.
+    | { type: 'user-machine-scoped-only' }
     | { type: 'all-user-authenticated-connections' };
 
 // === UPDATE EVENT TYPES (Persistent) ===
@@ -141,6 +143,9 @@ export type UpdateEvent = {
         version: number;
     } | null | undefined;
     linkedProviders?: LinkedProvider[] | undefined;
+} | {
+    type: 'account-settings-changed';
+    settingsVersion: number;
 } | {
     type: 'new-machine';
     machineId: string;
@@ -282,7 +287,7 @@ export type EphemeralEvent = {
         createdAt: number;
         updatedAt: number;
     };
-} | DirectSessionTranscriptDeltaEphemeral | {
+} | ExternalSessionTranscriptDeltaEphemeral | {
     type: 'machine-activity';
     id: string;
     active: boolean;

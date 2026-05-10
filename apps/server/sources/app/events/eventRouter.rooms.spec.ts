@@ -128,6 +128,22 @@ describe("eventRouter (rooms)", () => {
         expect(emit).toHaveBeenCalledWith("update", expect.anything());
     });
 
+    it("routes user-machine-scoped-only to the aggregate machine room", () => {
+        const ioTo = vi.fn();
+        const emit = vi.fn();
+        ioTo.mockReturnValue({ emit });
+        eventRouter.setIo({ to: ioTo } as any);
+
+        eventRouter.emitUpdate({
+            userId: "u1",
+            payload: { id: "x", seq: 1, body: { t: "account-settings-changed" }, createdAt: 0 } as any,
+            recipientFilter: { type: "user-machine-scoped-only" },
+        });
+
+        expect(ioTo).toHaveBeenCalledWith("user-machines:u1");
+        expect(emit).toHaveBeenCalledWith("update", expect.anything());
+    });
+
     it("never emits per-account update containers to shared session/machine rooms", () => {
         const ioTo = vi.fn();
         const emit = vi.fn();

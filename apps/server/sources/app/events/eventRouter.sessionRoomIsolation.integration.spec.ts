@@ -223,4 +223,42 @@ describe("eventRouter session room isolation (integration)", () => {
             await server.close();
         }
     });
+
+    it("delivers aggregate machine-only broadcasts to machine-scoped sockets only", async () => {
+        const server = await startTestIoServer();
+        eventRouter.setIo(server.io as any);
+
+        const userScoped = connectClient({ url: server.url, userId: "u1", clientType: "user-scoped" });
+        const machineScoped = connectClient({
+            url: server.url,
+            userId: "u1",
+            clientType: "machine-scoped",
+            machineId: "m1",
+        });
+
+        try {
+            await Promise.all([waitForConnect(userScoped), waitForConnect(machineScoped)]);
+
+            const receivedByUserScoped: any[] = [];
+            const receivedByMachineScoped: any[] = [];
+
+            userScoped.on("update", (data) => receivedByUserScoped.push(data));
+            machineScoped.on("update", (data) => receivedByMachineScoped.push(data));
+
+            eventRouter.emitUpdate({
+                userId: "u1",
+                payload: { id: "upd-machines", seq: 1, createdAt: Date.now(), body: { t: "account-settings-changed", settingsVersion: 2 } } as any,
+                recipientFilter: { type: "user-machine-scoped-only" },
+            });
+
+            await vi.waitFor(() => {
+                expect(receivedByMachineScoped.some((payload) => payload?.id === "upd-machines")).toBe(true);
+            });
+            expect(receivedByUserScoped.some((payload) => payload?.id === "upd-machines")).toBe(false);
+        } finally {
+            userScoped.disconnect();
+            machineScoped.disconnect();
+            await server.close();
+        }
+    });
 });

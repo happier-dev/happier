@@ -1,5 +1,5 @@
 import { type Fastify } from "../../types";
-import { inTx } from "@/storage/inTx";
+import { afterTx, inTx } from "@/storage/inTx";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
     AccountEncryptionMigrateRequestSchema,
@@ -18,6 +18,10 @@ import { encodeCredentialTokenBytes } from "@/app/api/routes/connect/connectedSe
 import { encryptString } from "@/modules/encrypt";
 import { encodeUtf8Bytes } from "@/app/api/routes/connect/connectedServicesV3/bytesCodec";
 import { AutomationValidationError, parseAutomationPatchInput } from "@/app/automations/automationValidation";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { eventRouter } from "@/app/events/eventRouter";
+import { buildAccountSettingsChangedUpdate } from "@/app/events/eventPayloadBuilders";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 
 export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
     app.post("/v1/account/encryption/migrate", {
@@ -311,6 +315,21 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                             ...(contentPublicKeySigUpdate ? { contentPublicKeySig: contentPublicKeySigUpdate } : {}),
                         } : {}),
                     },
+                });
+
+                const cursor = await markAccountChanged(tx, {
+                    accountId: userId,
+                    kind: "account",
+                    entityId: "self",
+                    hint: { settingsVersion: expectedSettingsVersion + 1 },
+                });
+
+                afterTx(tx, () => {
+                    eventRouter.emitUpdate({
+                        userId,
+                        payload: buildAccountSettingsChangedUpdate(expectedSettingsVersion + 1, cursor, randomKeyNaked(12)),
+                        recipientFilter: { type: "user-machine-scoped-only" },
+                    });
                 });
 
                 return { type: "success" as const, mode: toMode, settingsVersion: expectedSettingsVersion + 1 };

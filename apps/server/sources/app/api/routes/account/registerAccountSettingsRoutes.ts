@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { db } from "@/storage/db";
-import { buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
+import { buildAccountSettingsChangedUpdate, buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import { afterTx, inTx } from "@/storage/inTx";
@@ -150,6 +150,11 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                         userId,
                         payload: updatePayload,
                         recipientFilter: { type: 'user-scoped-only' }
+                    });
+                    eventRouter.emitUpdate({
+                        userId,
+                        payload: buildAccountSettingsChangedUpdate(expectedVersion + 1, cursor, randomKeyNaked(12)),
+                        recipientFilter: { type: "user-machine-scoped-only" },
                     });
                 });
 
@@ -325,6 +330,11 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                         userId,
                         payload: updatePayload,
                         recipientFilter: { type: "user-scoped-only" },
+                    });
+                    eventRouter.emitUpdate({
+                        userId,
+                        payload: buildAccountSettingsChangedUpdate(expectedVersion + 1, cursor, randomKeyNaked(12)),
+                        recipientFilter: { type: "user-machine-scoped-only" },
                     });
                 });
 

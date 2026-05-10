@@ -3,6 +3,18 @@ import { describe, expect, it } from "vitest";
 import { computeSessionContributesToActivityBadge } from "./accountActivityBadge";
 
 describe("computeSessionContributesToActivityBadge", () => {
+    it("does not count queued pending input as badge attention", () => {
+        expect(computeSessionContributesToActivityBadge({
+            active: true,
+            archivedAt: null,
+            seq: 5,
+            lastViewedSessionSeq: 5,
+            pendingCount: 2,
+            pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 0,
+        })).toBe(false);
+    });
+
     it("counts failed primary-session runtime issues as badge attention", () => {
         expect(computeSessionContributesToActivityBadge({
             active: true,

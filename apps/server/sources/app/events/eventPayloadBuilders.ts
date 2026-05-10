@@ -269,6 +269,18 @@ export function buildUpdateAccountUpdate(userId: string, profile: Partial<Accoun
     };
 }
 
+export function buildAccountSettingsChangedUpdate(settingsVersion: number, updateSeq: number, updateId: string): UpdatePayload {
+    return {
+        id: updateId,
+        seq: updateSeq,
+        body: {
+            t: 'account-settings-changed',
+            settingsVersion,
+        },
+        createdAt: Date.now(),
+    };
+}
+
 export function buildNewMachineUpdate(machine: {
     id: string;
     seq: number;

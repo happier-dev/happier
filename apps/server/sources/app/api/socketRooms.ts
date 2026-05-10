@@ -37,7 +37,8 @@ export function getSocketRooms(params: {
         }
         // Machine daemons should not subscribe to the generic user room. That room is the fanout target
         // for "all authenticated connections" events, and Bun's long-lived socket clients retain native
-        // memory aggressively under websocket churn. Keep machine daemons on the dedicated per-machine room.
+        // memory aggressively under websocket churn. Keep machine daemons on dedicated machine rooms.
+        rooms.push(`user-machines:${params.userId}`);
         rooms.push(`machine:${params.machineId}:${params.userId}`);
     }
 

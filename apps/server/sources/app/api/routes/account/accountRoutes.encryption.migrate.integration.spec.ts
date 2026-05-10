@@ -1,5 +1,5 @@
 import Fastify from "fastify";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
 import { db } from "@/storage/db";
@@ -9,6 +9,14 @@ import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+
+const { emitUpdate } = vi.hoisted(() => ({
+    emitUpdate: vi.fn(),
+}));
+
+vi.mock("@/app/events/eventRouter", () => ({
+    eventRouter: { emitUpdate },
+}));
 
 function createTestApp() {
     const app = Fastify({ logger: false });
@@ -37,6 +45,7 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
     }, 120_000);
 
     afterEach(async () => {
+        emitUpdate.mockClear();
         harness.resetEnv();
         await db.serviceAccountToken.deleteMany().catch(() => {});
         await db.automation.deleteMany().catch(() => {});
@@ -88,6 +97,22 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
         expect(storedAccount?.settingsVersion).toBe(1);
         expect(typeof storedAccount?.settings).toBe("string");
         expect((storedAccount?.settings ?? "").includes("ciphertext")).toBe(false);
+        const settingsChange = await db.accountChange.findFirst({
+            where: { accountId: account.id, kind: "account", entityId: "self" },
+            orderBy: { cursor: "desc" },
+        });
+        expect(settingsChange?.hint).toEqual({ settingsVersion: 1 });
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            userId: account.id,
+            payload: expect.objectContaining({
+                body: {
+                    t: "account-settings-changed",
+                    settingsVersion: 1,
+                },
+            }),
+            recipientFilter: { type: "user-machine-scoped-only" },
+        }));
 
         const getV2 = await app.inject({
             method: "GET",
@@ -96,6 +121,40 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
         });
         expect(getV2.statusCode).toBe(200);
         expect(getV2.json()).toMatchObject({ version: 1, content: { t: "plain" } });
+
+        await app.close();
+    });
+
+    it("does not emit a settings version hint when migration preconditions fail", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+        });
+
+        const account = await db.account.create({
+            data: { publicKey: "pk-migrate-conflict", encryptionMode: "e2ee", settings: "ciphertext", settingsVersion: 3 },
+            select: { id: true },
+        });
+
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app as any);
+        await app.ready();
+
+        const res = await app.inject({
+            method: "POST",
+            url: "/v1/account/encryption/migrate",
+            headers: { "content-type": "application/json", "x-test-user-id": account.id },
+            payload: {
+                toMode: "plain",
+                expectedSettingsVersion: 2,
+                settingsContent: { t: "plain", v: { schemaVersion: 2 } },
+                connectedServices: { action: "assert_empty" },
+                automations: { action: "assert_empty" },
+            },
+        });
+
+        expect(res.statusCode).toBe(409);
+        expect(emitUpdate).not.toHaveBeenCalled();
 
         await app.close();
     });

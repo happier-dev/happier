@@ -8,7 +8,7 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";
-import { DirectSessionTranscriptDeltaEphemeralSchema } from "@happier-dev/protocol";
+import { ExternalSessionTranscriptDeltaEphemeralSchema } from "@happier-dev/protocol";
 
 export function machineUpdateHandler(userId: string, socket: Socket) {
     socket.on('machine-alive', async (data: {
@@ -67,7 +67,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 return;
             }
 
-            const parsed = DirectSessionTranscriptDeltaEphemeralSchema.safeParse(data);
+            const parsed = ExternalSessionTranscriptDeltaEphemeralSchema.safeParse(data);
             if (!parsed.success) {
                 return;
             }
