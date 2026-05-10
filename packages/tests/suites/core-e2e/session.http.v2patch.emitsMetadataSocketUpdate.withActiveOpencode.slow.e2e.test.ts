@@ -208,7 +208,10 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
 
       await waitFor(async () => {
         const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-        return snap.active === true || (typeof snap.agentStateVersion === 'number' && snap.agentStateVersion > baselineAgentStateVersion);
+        return snap.active === true || (
+          typeof snap.agentStateVersion === 'number' &&
+          snap.agentStateVersion > baselineAgentStateVersion
+        );
       }, { timeoutMs: 45_000 });
 
       const localId = `pending-${randomUUID()}`;
@@ -254,21 +257,13 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
         expectedVersion: before.metadataVersion,
       });
 
-      await waitFor(async () => {
-        const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-        return snap.metadata === updatedCiphertext;
-      }, { timeoutMs: 20_000 });
-
-      const afterPatched = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
-      expect(afterPatched.metadata).toBe(updatedCiphertext);
-
-      const metadataAfter = decryptLegacyBase64(afterPatched.metadata, secret) as Record<string, unknown>;
-      expect(metadataAfter.acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 2000, modeId: 'plan' });
-
       // The OpenCode ACP backend can update session metadata concurrently (e.g. modes/currentModeId),
       // so assert that *our patched ciphertext* is broadcast, not that the latest observed metadata is the patch.
-      await waitFor(() => findMetadataUpdateEventByValue(userSocket.getEvents(), sessionId, updatedCiphertext) !== null, { timeoutMs: 20_000 });
-      await waitFor(() => findMetadataUpdateEventByValue(sessionSocket.getEvents(), sessionId, updatedCiphertext) !== null, { timeoutMs: 20_000 });
+      await waitFor(() => {
+        const userEvent = findMetadataUpdateEventByValue(userSocket.getEvents(), sessionId, updatedCiphertext);
+        const sessionEvent = findMetadataUpdateEventByValue(sessionSocket.getEvents(), sessionId, updatedCiphertext);
+        return userEvent !== null && sessionEvent !== null;
+      }, { timeoutMs: 30_000 });
 
       const userEvent = findMetadataUpdateEventByValue(userSocket.getEvents(), sessionId, updatedCiphertext);
       const sessionEvent = findMetadataUpdateEventByValue(sessionSocket.getEvents(), sessionId, updatedCiphertext);
@@ -282,6 +277,10 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
       expect(sessionValue.value).toBe(updatedCiphertext);
       expect(decryptLegacyBase64(String(userValue.value), secret)).toEqual(nextMetadata);
       expect(decryptLegacyBase64(String(sessionValue.value), secret)).toEqual(nextMetadata);
+
+      const latest = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
+      const metadataAfter = decryptLegacyBase64(latest.metadata, secret) as Record<string, unknown>;
+      expect(metadataAfter.acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 2000, modeId: 'plan' });
     } finally {
       userSocket.close();
       sessionSocket.close();

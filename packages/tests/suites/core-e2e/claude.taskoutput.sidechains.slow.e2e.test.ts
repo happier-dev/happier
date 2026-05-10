@@ -6,21 +6,19 @@ import { join, resolve } from 'node:path';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { createSessionWithCiphertexts, fetchAllMessages, fetchMessagesPage, type SessionMessageRow } from '../../src/testkit/sessions';
+import { createSessionWithCiphertexts, fetchAllMessages, fetchMessagesPage, fetchSessionV2, type SessionMessageRow } from '../../src/testkit/sessions';
 import { spawnLoggedProcess, type SpawnedProcess } from '../../src/testkit/process/spawnProcess';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
-import { stopDaemonFromHomeDir, waitForDaemonState } from '../../src/testkit/daemon/daemon';
-import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
+import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
+import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { postEncryptedUiTextMessage } from '../../src/testkit/uiMessages';
-import { requestSessionSwitchRpc } from '../../src/testkit/sessionSwitchRpc';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { repoRootDir } from '../../src/testkit/paths';
-import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -185,33 +183,33 @@ describe('core e2e: Claude TaskOutput sidechains are imported with sidechainId +
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     };
 
-    await ensureCliSharedDepsBuilt({ testDir, env: cliEnv }, { skipSourceFreshnessCheck: true });
-
-    const cliLaunchSpec = await resolveCliTestLaunchSpec(
-      { testDir, env: cliEnv },
-      { snapshotDir: resolve(join(testDir, 'cli-dist')), preferSourceEntrypoint: true },
-    );
+    const cliDistEntrypoint = await ensureCliDistBuilt({ testDir, env: cliEnv });
 
     const proc: SpawnedProcess = spawnLoggedProcess({
-      command: cliLaunchSpec.command,
-      args: [...cliLaunchSpec.args, 'claude', '--existing-session', sessionId, '--started-by', 'terminal'],
-      cwd: cliLaunchSpec.cwd ?? repoRootDir(),
-      env: {
-        ...cliEnv,
-        ...(cliLaunchSpec.env ?? {}),
-      },
+      command: process.execPath,
+      args: [cliDistEntrypoint, 'claude', '--existing-session', sessionId, '--started-by', 'terminal', '--happy-starting-mode', 'remote'],
+      cwd: repoRootDir(),
+      env: cliEnv,
       stdoutPath: resolve(join(testDir, 'cli.stdout.log')),
       stderrPath: resolve(join(testDir, 'cli.stderr.log')),
     });
 
     const ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
     ui.connect();
+    const baseline = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
+    const baselineAgentStateVersion = baseline.agentStateVersion;
 
     try {
       await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
-      await waitForDaemonState(cliHome, { timeoutMs: 90_000 });
 
-      await requestSessionSwitchRpc({ ui, sessionId, to: 'remote', secret, timeoutMs: 20_000 });
+      // Attachment readiness is the stable contract for this flow; daemon startup can be optional.
+      await waitFor(async () => {
+        const snap = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
+        return snap.active === true || (
+          typeof snap.agentStateVersion === 'number' &&
+          snap.agentStateVersion > baselineAgentStateVersion
+        );
+      }, { timeoutMs: 90_000 });
 
       await postEncryptedUiTextMessage({
         baseUrl: server.baseUrl,

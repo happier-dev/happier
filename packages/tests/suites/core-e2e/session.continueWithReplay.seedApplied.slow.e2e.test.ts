@@ -22,6 +22,7 @@ import { encryptDataKeyBase64, decryptDataKeyBase64 } from '../../src/testkit/rp
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { createSession, fetchAllMessages } from '../../src/testkit/sessions';
+import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { unwrapSerializedJsonValue } from '../../src/testkit/unwrapSerializedJsonValue';
 
@@ -132,7 +133,7 @@ async function postEncryptedMessage(params: {
   }
 }
 
-async function postEncryptedUiTextMessage(params: {
+async function enqueueEncryptedUiTextMessage(params: {
   baseUrl: string;
   token: string;
   sessionId: string;
@@ -140,22 +141,23 @@ async function postEncryptedUiTextMessage(params: {
   text: string;
 }): Promise<{ localId: string }> {
   const localId = randomUUID();
-  const msg = {
+  const message = {
     role: 'user',
     content: { type: 'text', text: params.text },
     localId,
     meta: { source: 'ui', sentFrom: 'e2e' },
   };
-  const ciphertext = encryptDataKeyBase64(msg, params.sessionKey);
-  const endpoint = `${params.baseUrl}/v2/sessions/${params.sessionId}/messages`;
-  const res = await fetchJson<any>(endpoint, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${params.token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ciphertext, localId }),
+  const ciphertext = encryptDataKeyBase64(message, params.sessionKey);
+  const enqueue = await enqueuePendingQueueV2({
+    baseUrl: params.baseUrl,
+    token: params.token,
+    sessionId: params.sessionId,
+    localId,
+    ciphertext,
     timeoutMs: 20_000,
   });
-  if (res.status < 200 || res.status >= 300) {
-    throw new Error(`Failed to post UI message to ${endpoint} (status=${res.status})`);
+  if (enqueue.status !== 200) {
+    throw new Error(`Failed to enqueue pending UI message (status=${enqueue.status})`);
   }
   return { localId };
 }
@@ -285,6 +287,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
         HAPPIER_WEBAPP_URL: server.baseUrl,
         HAPPIER_CLAUDE_PATH: fakeClaudePath,
         HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeChildLogPath,
+        HAPPIER_E2E_DAEMON_CLI_SNAPSHOT_MODE: 'testdir',
       },
     });
 
@@ -336,7 +339,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
     if (!openedChildDek || openedChildDek.length !== 32) throw new Error('Failed to open child session DEK');
 
     const childPrompt = `CHILD_CTX_CHECK_${randomUUID()}`;
-    const firstUi = await postEncryptedUiTextMessage({
+    const firstUi = await enqueueEncryptedUiTextMessage({
       baseUrl: server.baseUrl,
       token: auth.token,
       sessionId: childSessionId,
@@ -429,7 +432,7 @@ describe('core e2e: replaySeedV1 is applied to the first provider prompt but not
     expect(childSpawn2.data.success).toBe(true);
 
     const childPrompt2 = `CHILD_CTX_RESTART_${randomUUID()}`;
-    const firstUi2 = await postEncryptedUiTextMessage({
+    const firstUi2 = await enqueueEncryptedUiTextMessage({
       baseUrl: server.baseUrl,
       token: auth.token,
       sessionId: childSessionId2,

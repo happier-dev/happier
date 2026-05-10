@@ -15,7 +15,6 @@ import { waitFor } from '../../src/testkit/timing';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { stopDaemonFromHomeDir } from '../../src/testkit/daemon/daemon';
 import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
-import { yarnCommand } from '../../src/testkit/process/commands';
 import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
@@ -173,20 +172,19 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
       HAPPIER_SERVER_URL: server.baseUrl,
       HAPPIER_WEBAPP_URL: server.baseUrl,
       HAPPIER_SESSION_ATTACH_FILE: attachFile,
+      HAPPIER_GEMINI_PATH: fakeGeminiPath,
+      GEMINI_API_KEY: 'e2e-fake-gemini-api-key',
       // Ensure the fake gemini CLI is used.
       PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
       HAPPIER_E2E_GEMINI_LOG: fakeGeminiLog,
     };
 
-    await ensureCliDistBuilt({ testDir, env: cliEnv });
+    const cliDistEntrypoint = await ensureCliDistBuilt({ testDir, env: cliEnv });
 
     const proc: SpawnedProcess = spawnLoggedProcess({
-      command: yarnCommand(),
+      command: process.execPath,
       args: [
-        '-s',
-        'workspace',
-        '@happier-dev/cli',
-        'dev',
+        cliDistEntrypoint,
         'gemini',
         '--existing-session',
         sessionId,
@@ -207,7 +205,10 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
 
       await waitFor(async () => {
         const snap: any = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
-        return snap.active === true || (typeof snap.agentStateVersion === 'number' && snap.agentStateVersion > baselineAgentStateVersion);
+        return snap.active === true || (
+          typeof snap.agentStateVersion === 'number' &&
+          snap.agentStateVersion > baselineAgentStateVersion
+        );
       }, { timeoutMs: 45_000 });
 
       // First message should use the seeded model override (pro).

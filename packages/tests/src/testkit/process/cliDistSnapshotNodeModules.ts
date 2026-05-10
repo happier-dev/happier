@@ -98,8 +98,8 @@ function ensureCopiedNodeModulesEntries(sourceNodeModulesDir: string, destNodeMo
   }
 }
 
-function ensureCopiedTextFile(destPath: string, sourcePath: string): void {
-  if (existsSync(destPath)) return;
+function ensureCopiedTextFile(destPath: string, sourcePath: string, options: { overwriteExisting?: boolean } = {}): void {
+  if (existsSync(destPath) && !options.overwriteExisting) return;
   mkdirSync(dirname(destPath), { recursive: true });
   try {
     writeFileSync(destPath, readFileSync(sourcePath));
@@ -261,7 +261,7 @@ function ensureWorkspacePackageManifests(snapshotNodeModulesDir: string, rootDir
     if (!scopePackageName) continue;
 
     const snapshotPackageJsonPath = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName, 'package.json');
-    ensureCopiedTextFile(snapshotPackageJsonPath, packageJsonPath);
+    ensureCopiedTextFile(snapshotPackageJsonPath, packageJsonPath, { overwriteExisting: true });
   }
 }
 
