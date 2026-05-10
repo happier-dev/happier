@@ -21,13 +21,14 @@ test('buildTuiAuthArgs builds stack-scoped auth login args', () => {
   ]);
 });
 
-test('buildTuiDaemonStartArgs builds stack-scoped daemon start args', () => {
+test('buildTuiDaemonStartArgs builds source-mode stack-scoped daemon start args', () => {
   assert.deepEqual(buildTuiDaemonStartArgs({ happysBin: 'bin/hstack.mjs', stackName: 'main' }), [
     'bin/hstack.mjs',
     'stack',
     'daemon',
     'main',
     'start',
+    '--source',
   ]);
 });
 
@@ -36,4 +37,3 @@ test('shouldHoldAfterAuthExit holds on failure but not on success', () => {
   assert.equal(shouldHoldAfterAuthExit({ code: 1, signal: null }), true);
   assert.equal(shouldHoldAfterAuthExit({ code: 0, signal: 'SIGINT' }), true);
 });
-

@@ -234,8 +234,8 @@ async function writeYarnBuildRefreshesAgentsAndPreservesCliDistStub({ binDir, ou
       '  exit 0',
       'fi',
       'if [ "${1:-}" = "-s" ] && [ "${2:-}" = "build" ]; then',
-      `  mkdir -p ${JSON.stringify(join(agentsDir, 'dist', 'sessionControls'))}`,
-      `  echo "export const publish = true;" > ${JSON.stringify(join(agentsDir, 'dist', 'sessionControls', 'publish.js'))}`,
+      `  mkdir -p ${JSON.stringify(join(agentsDir, 'dist', 'session', 'state'))}`,
+      `  echo "export const state = true;" > ${JSON.stringify(join(agentsDir, 'dist', 'session', 'state', 'index.js'))}`,
       `  echo "export const agentsBuilt = true;" > ${JSON.stringify(join(agentsDir, 'dist', 'index.js'))}`,
       '  exit 0',
       'fi',
@@ -1140,7 +1140,7 @@ test('ensureCliBuilt refreshes shared workspace deps before trusting a cached cl
   await mkdir(join(cliDir, 'node_modules'), { recursive: true });
   await mkdir(join(cliDir, 'dist'), { recursive: true });
   await mkdir(join(agentsDir, 'src'), { recursive: true });
-  await mkdir(join(agentsDir, 'dist', 'sessionControls'), { recursive: true });
+  await mkdir(join(agentsDir, 'dist', 'session', 'state'), { recursive: true });
   await writeFile(join(root, 'package.json'), '{ "name": "repo", "private": true }\n', 'utf-8');
   await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
   await writeFile(join(root, 'apps', 'ui', 'package.json'), '{ "name": "@happier-dev/ui", "private": true }\n', 'utf-8');
@@ -1172,7 +1172,7 @@ test('ensureCliBuilt refreshes shared workspace deps before trusting a cached cl
   await writeFile(join(agentsDir, 'src', 'index.ts'), 'export const source = true;\n', 'utf-8');
   await writeFile(
     join(agentsDir, 'dist', 'index.js'),
-    'import "./sessionControls/publish.js";\nexport const agentsCached = true;\n',
+    'import "./session/state/index.js";\nexport const agentsCached = true;\n',
     'utf-8',
   );
 
@@ -1191,7 +1191,7 @@ test('ensureCliBuilt refreshes shared workspace deps before trusting a cached cl
 
   const argv = await readFile(outputPath, 'utf-8');
   assert.match(argv, /-s build/);
-  assert.equal(await readFile(join(agentsDir, 'dist', 'sessionControls', 'publish.js'), 'utf-8'), 'export const publish = true;\n');
+  assert.equal(await readFile(join(agentsDir, 'dist', 'session', 'state', 'index.js'), 'utf-8'), 'export const state = true;\n');
 });
 
 test('ensureCliBuilt defaults to no rebuild in service mode even when git signature changed', async (t) => {

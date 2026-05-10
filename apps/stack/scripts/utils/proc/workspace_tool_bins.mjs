@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, extname, join, resolve } from 'node:path';
 
@@ -124,6 +124,7 @@ async function writeCommandShim({ binDir, commandName, targetPath }) {
       : `exec ${JSON.stringify(targetPath)} "$@"`,
     '',
   ].join('\n');
+  await rm(unixShimPath, { force: true });
   await writeFile(unixShimPath, unixBody, { encoding: 'utf-8', mode: 0o755 });
   await chmod(unixShimPath, 0o755);
 
@@ -134,10 +135,11 @@ async function writeCommandShim({ binDir, commandName, targetPath }) {
       launchMode === 'node'
         ? `${JSON.stringify(process.execPath)} ${JSON.stringify(targetPath)} %*`
         : /^(?:\.cmd|\.bat)$/i.test(extname(targetPath))
-          ? `call ${JSON.stringify(targetPath)} %*`
-          : `${JSON.stringify(targetPath)} %*`,
+        ? `call ${JSON.stringify(targetPath)} %*`
+        : `${JSON.stringify(targetPath)} %*`,
       '',
     ].join('\r\n');
+    await rm(cmdShimPath, { force: true });
     await writeFile(cmdShimPath, cmdBody, 'utf-8');
   }
 }

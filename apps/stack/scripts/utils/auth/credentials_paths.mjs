@@ -1,9 +1,23 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
-import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import { fileHasContent } from '../fs/file_has_content.mjs';
 
 const SERVER_ID_SAFE_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const require = createRequire(import.meta.url);
+
+let protocolComparableKeyFactory;
+function getProtocolComparableKeyFactory() {
+  if (protocolComparableKeyFactory !== undefined) return protocolComparableKeyFactory;
+  try {
+    const protocol = require('@happier-dev/protocol');
+    protocolComparableKeyFactory =
+      typeof protocol?.createServerUrlComparableKey === 'function' ? protocol.createServerUrlComparableKey : null;
+  } catch {
+    protocolComparableKeyFactory = null;
+  }
+  return protocolComparableKeyFactory;
+}
 
 function normalizeServerUrl(url) {
   return String(url ?? '').trim().replace(/\/+$/, '');
@@ -12,8 +26,21 @@ function normalizeServerUrl(url) {
 function safeCreateComparableServerUrlKey(url) {
   const normalized = normalizeServerUrl(url);
   if (!normalized) return '';
+  const protocolFactory = getProtocolComparableKeyFactory();
+  if (protocolFactory) {
+    try {
+      return protocolFactory(normalized);
+    } catch {
+      // fall through to local normalization
+    }
+  }
   try {
-    return createServerUrlComparableKey(normalized);
+    const parsed = new URL(normalized);
+    const protocol = parsed.protocol.toLowerCase();
+    const host = parsed.hostname.toLowerCase();
+    const port = parsed.port ? `:${parsed.port}` : '';
+    const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    return `${protocol}//${host}${port}${pathname}`;
   } catch {
     return '';
   }
