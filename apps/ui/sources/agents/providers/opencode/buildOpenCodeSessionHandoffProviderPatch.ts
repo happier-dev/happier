@@ -2,7 +2,7 @@ import {
     buildOpenCodeAgentRuntimeDescriptor,
     normalizeOpenCodeBackendMode,
 } from '@happier-dev/agents';
-import type { DirectSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type { ExternalSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { readCanonicalRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
 
 import type { AgentSessionHandoffProviderPatch } from '@/agents/registry/registryUiBehavior';
@@ -20,7 +20,7 @@ function normalizeTrimmedString(value: unknown): string | null {
 
 function readTargetOpenCodeServerBaseUrl(
     metadata: Record<string, unknown>,
-    targetDirectSource: DirectSessionsSource | Record<string, unknown>,
+    targetDirectSource: ExternalSessionsSource | Record<string, unknown>,
 ): string | null {
     const directSourceRecord = asRecord(targetDirectSource);
     if (directSourceRecord?.kind === 'opencodeServer') {
@@ -36,7 +36,7 @@ function readTargetOpenCodeServerBaseUrl(
 
 function resolveTargetOpenCodeBackendMode(
     metadata: Record<string, unknown>,
-    targetDirectSource: DirectSessionsSource | Record<string, unknown>,
+    targetDirectSource: ExternalSessionsSource | Record<string, unknown>,
 ): 'server' | 'acp' | null {
     const directSourceRecord = asRecord(targetDirectSource);
     if (directSourceRecord?.kind === 'opencodeServer') {
@@ -49,7 +49,7 @@ function resolveTargetOpenCodeBackendMode(
 function buildOpenCodeRuntimeDescriptor(input: Readonly<{
     metadata: Record<string, unknown>;
     targetRemoteSessionId: string;
-    targetDirectSource: DirectSessionsSource | Record<string, unknown>;
+    targetDirectSource: ExternalSessionsSource | Record<string, unknown>;
     targetRuntimeDescriptor?: RuntimeDescriptorV1;
 }>): RuntimeDescriptorV1 | null {
     const importedRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(input.targetRuntimeDescriptor, 'opencode');
@@ -77,7 +77,7 @@ function buildOpenCodeRuntimeDescriptor(input: Readonly<{
 export function buildOpenCodeSessionHandoffProviderPatch(input: Readonly<{
     metadata: Record<string, unknown>;
     targetRemoteSessionId: string;
-    targetDirectSource: DirectSessionsSource | Record<string, unknown>;
+    targetDirectSource: ExternalSessionsSource | Record<string, unknown>;
     targetRuntimeDescriptor?: RuntimeDescriptorV1;
 }>): AgentSessionHandoffProviderPatch {
     const runtimeDescriptor = buildOpenCodeRuntimeDescriptor(input);
@@ -99,6 +99,6 @@ export function buildOpenCodeSessionHandoffProviderPatch(input: Readonly<{
                 : {}),
         },
         runtimeDescriptor,
-        directSessionRuntimeDescriptor: runtimeDescriptor,
+        externalSessionRuntimeDescriptor: runtimeDescriptor,
     };
 }

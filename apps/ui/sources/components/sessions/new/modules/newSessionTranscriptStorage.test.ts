@@ -31,7 +31,7 @@ describe('coerceNewSessionTranscriptStorage', () => {
             settings: {
                 opencodeBackendMode: 'acp',
             } as never,
-            directSessionsEnabled: true,
+            externalSessionsEnabled: true,
         })).toBe('persisted');
     });
 });

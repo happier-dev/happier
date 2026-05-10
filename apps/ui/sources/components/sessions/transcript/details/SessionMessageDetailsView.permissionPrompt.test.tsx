@@ -48,9 +48,9 @@ vi.mock('@/hooks/session/useSessionRunningExecutionRuns', () => ({
     useSessionRunningExecutionRuns: () => [],
 }));
 
-vi.mock('@/components/sessions/model/useDirectSessionRuntime', () => ({
-    useDirectSessionRuntime: () => ({
-        directSessionLink: null,
+vi.mock('@/components/sessions/model/useExternalSessionRuntime', () => ({
+    useExternalSessionRuntime: () => ({
+        externalSessionLink: null,
         status: null,
     }),
 }));

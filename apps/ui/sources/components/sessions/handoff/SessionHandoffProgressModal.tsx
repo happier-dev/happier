@@ -434,6 +434,7 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
         kind: 'card' as const,
         title: resolvedTitle,
         testID: 'session-handoff-progress-modal',
+        bodyScroll: 'auto' as const,
         dimensions: { width: 420, maxHeightRatio: 0.92 },
     }), [resolvedTitle]);
 

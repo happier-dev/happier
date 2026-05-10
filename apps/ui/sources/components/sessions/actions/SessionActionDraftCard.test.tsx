@@ -410,29 +410,24 @@ describe('SessionActionDraftCard', () => {
     const draft = {
       id: 'd1',
       sessionId: 's1',
-      actionId: 'review.start',
+      actionId: 'session.target.tracked.set',
       createdAt: 1,
       status: 'editing',
       input: {
-        engineIds: ['coderabbit'],
-        instructions: 'Review',
-        changeType: 'committed',
-        base: { kind: 'none' },
-        engines: { coderabbit: { configFiles: [] } },
+        sessionIds: [],
       },
     } as const;
 
     const screen = await renderScreen(React.createElement(SessionActionDraftCard, { sessionId: 's1', draft: draft as any }));
 
     const inputs = screen.tree.findAllByType('TextInput');
-    // instructions + configFiles list
-    expect(inputs.length).toBe(2);
+    expect(inputs.length).toBe(1);
 
-    const listInput = inputs.find((i: any) => typeof i.props?.onChangeText === 'function' && i.props?.multiline !== true) ?? inputs[1]!;
+    const listInput = inputs[0]!;
     await act(async () => {
       changeTextTestInstance(listInput, 'a.yml, b.yml');
     });
 
-    expect(updateSessionActionDraftInput).toHaveBeenCalledWith('s1', 'd1', { engines: { coderabbit: { configFiles: ['a.yml', 'b.yml'] } } });
+    expect(updateSessionActionDraftInput).toHaveBeenCalledWith('s1', 'd1', { sessionIds: ['a.yml', 'b.yml'] });
   });
 });

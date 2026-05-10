@@ -12,6 +12,9 @@ import { useAttachmentDraftManager } from '@/components/sessions/attachments/use
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
 import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { blurActiveElementOnWeb, deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { nativeReadClipboardImageAttachment } from '@/utils/files/nativeClipboardImageAttachment';
+import { Modal } from '@/modal';
+import { t } from '@/text';
 import { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
 import type { CreatedSessionFollowUpContext } from '@/components/sessions/new/hooks/useCreateNewSession';
 import { buildReviewCommentsOutboundMessage } from '@/sync/domains/input/reviewComments/buildReviewCommentsOutboundMessage';
@@ -145,6 +148,21 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         reviewDraftHandlers.clearReviewCommentDrafts();
     }, [reviewDraftHandlers]);
 
+    const pasteAttachmentImage = React.useCallback(() => {
+        void (async () => {
+            try {
+                const picked = await nativeReadClipboardImageAttachment();
+                if (picked.length === 0) {
+                    Modal.alert(t('attachments.alerts.noClipboardImageTitle'), t('attachments.alerts.noClipboardImageBody'));
+                    return;
+                }
+                addPickedAttachments(picked);
+            } catch {
+                Modal.alert(t('attachments.alerts.noClipboardImageTitle'), t('attachments.alerts.noClipboardImageBody'));
+            }
+        })();
+    }, [addPickedAttachments]);
+
     const extraActionChips = React.useMemo(() => {
         const chips: AgentInputExtraActionChip[] = [];
 
@@ -152,6 +170,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             chips.push(createAttachmentActionChip({
                 onPickFile: () => openAttachmentFilePickerFiles(filePickerRef.current),
                 onPickImage: () => openAttachmentFilePickerImages(filePickerRef.current),
+                onPasteImage: pasteAttachmentImage,
                 disabled: params.isCreating,
             }));
         }
@@ -177,6 +196,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         hasDiscoverableReviewCommentDrafts,
         params.baseActionChips,
         params.isCreating,
+        pasteAttachmentImage,
         setReviewCommentDraftIncluded,
         updateReviewCommentDraft,
         deleteReviewCommentDraft,

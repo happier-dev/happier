@@ -5,15 +5,15 @@ import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/
 import { isAgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
-import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/acp/configOptionsControl';
-import { buildDynamicConfigOptionsProbeCacheKey } from '@/sync/acp/dynamicConfigOptionsProbeCacheKey';
+import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
+import { buildDynamicConfigOptionsProbeCacheKey } from '@/sync/domains/sessionControl/dynamicConfigOptionsProbeCacheKey';
 import {
     DYNAMIC_CONFIG_OPTIONS_PROBE_ERROR_BACKOFF_MS,
     readDynamicConfigOptionsProbeCache,
     runDynamicConfigOptionsProbeDedupe,
     writeDynamicConfigOptionsProbeCacheError,
     writeDynamicConfigOptionsProbeCacheSuccess,
-} from '@/sync/acp/dynamicConfigOptionsProbeCache';
+} from '@/sync/domains/sessionControl/dynamicConfigOptionsProbeCache';
 import {
     buildNewSessionCapabilityProbeContextKey,
     normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts,

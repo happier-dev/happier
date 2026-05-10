@@ -82,4 +82,25 @@ describe('useAttachmentDraftManager (attachments.uploads)', () => {
             });
         }
     });
+
+    it('uses in-memory image preview URIs for clipboard image drafts', async () => {
+        const { useAttachmentDraftManager } = await import('./useAttachmentDraftManager');
+        const hook = await renderHook(() => useAttachmentDraftManager({ enabled: true, maxFileBytes: 25 * 1024 * 1024 }));
+        const manager = () => hook.getCurrent();
+
+        act(() => {
+            manager().addPickedAttachments([{
+                kind: 'memory',
+                name: 'pasted-image.png',
+                bytes: new Uint8Array([1, 2, 3]),
+                mimeType: 'image/png',
+                previewUri: 'data:image/png;base64,AQID',
+            } as any]);
+        });
+
+        expect(manager().agentInputAttachments[0]?.preview).toEqual({
+            kind: 'image',
+            uri: 'data:image/png;base64,AQID',
+        });
+    });
 });

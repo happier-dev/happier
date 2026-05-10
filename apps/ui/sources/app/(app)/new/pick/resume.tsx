@@ -9,11 +9,11 @@ import { getResolvedBackendCatalogEntries, resolveProviderAgentIdForBackendTarge
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
-import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openDirectSessionsResumeIdPickerModal';
+import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
 import { NewSessionScreenPortalScope, createNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
-import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/external/browse/resolveDirectBrowseLockedSourceOption';
+import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
@@ -75,7 +75,7 @@ export default function ResumePickerScreen() {
         const directParam = typeof params.spawnServerId === 'string' ? params.spawnServerId.trim() : '';
         return directParam || null;
     }, [params.spawnServerId]);
-    const directSessionsFeatureEnabled = useFeatureEnabled('sessions.direct', {
+    const externalSessionsFeatureEnabled = useFeatureEnabled('sessions.direct', {
         scopeKind: 'spawn',
         serverId: effectiveServerId,
     });
@@ -142,7 +142,7 @@ export default function ResumePickerScreen() {
     const agentType = React.useMemo<AgentId>(() => {
         return runtimeCarrierAgentId ?? explicitSelectedBuiltInAgentId ?? DEFAULT_AGENT_ID;
     }, [explicitSelectedBuiltInAgentId, runtimeCarrierAgentId]);
-    const directBrowseCarrierAgentId = React.useMemo<AgentId | null>(() => {
+    const externalSessionBrowseCarrierAgentId = React.useMemo<AgentId | null>(() => {
         return runtimeCarrierAgentId;
     }, [runtimeCarrierAgentId]);
     const agentLabel = selectedBackendEntry?.title ?? t(getAgentCore(agentType).displayNameKey);
@@ -150,10 +150,10 @@ export default function ResumePickerScreen() {
         const map = readBackendNewSessionOptionStateByTargetKey(tempSessionData);
         return map?.[effectiveBackendTargetKey] ?? null;
     }, [effectiveBackendTargetKey, tempSessionData]);
-    const resumeBrowseEnabled = directSessionsFeatureEnabled
+    const resumeBrowseEnabled = externalSessionsFeatureEnabled
         && Boolean(effectiveMachineId)
-        && directBrowseCarrierAgentId !== null
-        && canBrowseDirectSessions(directBrowseCarrierAgentId);
+        && externalSessionBrowseCarrierAgentId !== null
+        && canBrowseExternalSessions(externalSessionBrowseCarrierAgentId);
     const roundTripBackendParams = React.useMemo(() => {
         return buildBackendTargetRouteParams({
             backendTarget: params.backendTarget,
@@ -238,21 +238,21 @@ export default function ResumePickerScreen() {
                 resumeBrowse={resumeBrowseEnabled ? {
                     enabled: true,
                     onBrowse: async () => {
-                        if (!effectiveMachineId || !directBrowseCarrierAgentId) return null;
-                        const source = resolveDirectBrowseLockedSource({
-                            providerId: directBrowseCarrierAgentId as any,
+                        if (!effectiveMachineId || !externalSessionBrowseCarrierAgentId) return null;
+                        const source = resolveExternalSessionBrowseLockedSource({
+                            providerId: externalSessionBrowseCarrierAgentId as any,
                             agentOptionState,
                             profile: accountProfile,
                             settings,
                         });
                         if (!source) return null;
-                        return await openDirectSessionsResumeIdPickerModal({
-                            title: t('directSessions.browseTitle'),
+                        return await openExternalSessionsResumeIdPickerModal({
+                            title: t('externalSessions.browseTitle'),
                             webPortalTarget: modalPortalTarget,
                             lockScope: {
                                 machineId: effectiveMachineId,
                                 serverId: effectiveServerId,
-                                providerId: directBrowseCarrierAgentId as any,
+                                providerId: externalSessionBrowseCarrierAgentId as any,
                                 source,
                             },
                         });

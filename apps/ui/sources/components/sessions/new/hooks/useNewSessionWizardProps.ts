@@ -23,6 +23,7 @@ import type {
     NewSessionWizardLayoutProps,
     NewSessionWizardMachineProps,
     NewSessionWizardProfilesProps,
+    NewSessionWizardProps,
 } from '../components/NewSessionWizard';
 import type { CliNotDetectedBannerDismissScope } from '../components/CliNotDetectedBanner';
 
@@ -86,8 +87,11 @@ export function useNewSessionWizardProps(params: Readonly<{
     agentPickerOptions?: NewSessionWizardAgentProps['agentPickerOptions'];
     agentPickerSelectedOptionId?: NewSessionWizardAgentProps['agentPickerSelectedOptionId'];
     onAgentPickerSelect?: NewSessionWizardAgentProps['onAgentPickerSelect'];
+    selectedBackendEntry?: NewSessionWizardAgentProps['selectedBackendEntry'];
     modelOptions: ReadonlyArray<{ value: ModelMode; label: string; description: string }>;
     modelOptionsProbe?: NewSessionWizardAgentProps['modelOptionsProbe'];
+    favoriteModelSelections?: NewSessionWizardAgentProps['favoriteModelSelections'];
+    setFavoriteModelSelections?: NewSessionWizardAgentProps['setFavoriteModelSelections'];
     acpSessionModeOptions?: NewSessionWizardAgentProps['acpSessionModeOptions'];
     acpSessionModeProbe?: NewSessionWizardAgentProps['acpSessionModeProbe'];
     acpSessionModeId?: NewSessionWizardAgentProps['acpSessionModeId'];
@@ -141,8 +145,12 @@ export function useNewSessionWizardProps(params: Readonly<{
     sessionPromptInputMaxHeight: number;
     agentInputExtraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
     attachmentFlowId?: string | null;
+    sectionPresentation?: NewSessionWizardProps['sectionPresentation'];
+    useColumnLayout?: NewSessionWizardProps['useColumnLayout'];
 }>): Readonly<{
     layout: NewSessionWizardLayoutProps;
+    sectionPresentation?: NewSessionWizardProps['sectionPresentation'];
+    useColumnLayout?: NewSessionWizardProps['useColumnLayout'];
     profiles: NewSessionWizardProfilesProps;
     agent: NewSessionWizardAgentProps;
     machine: NewSessionWizardMachineProps;
@@ -334,8 +342,11 @@ export function useNewSessionWizardProps(params: Readonly<{
             agentPickerSelectedOptionId: params.agentPickerSelectedOptionId,
             onAgentPickerSelect: params.onAgentPickerSelect,
             agentPickerProbe,
+            selectedBackendEntry: params.selectedBackendEntry,
             modelOptions: params.modelOptions,
             modelOptionsProbe: params.modelOptionsProbe,
+            favoriteModelSelections: params.favoriteModelSelections,
+            setFavoriteModelSelections: params.setFavoriteModelSelections,
             acpSessionModeOptions: params.acpSessionModeOptions,
             acpSessionModeProbe: params.acpSessionModeProbe,
             acpSessionModeId: params.acpSessionModeId,
@@ -358,6 +369,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.agentPickerOptions,
         params.agentPickerSelectedOptionId,
         params.agentPickerTitle,
+        params.selectedBackendEntry,
         params.cliAvailability,
         params.selectedMachineId,
         params.dismissCliBanner,
@@ -367,6 +379,8 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.modelMode,
         params.modelOptions,
         params.modelOptionsProbe,
+        params.favoriteModelSelections,
+        params.setFavoriteModelSelections,
         params.acpSessionModeId,
         params.acpSessionModeOptions,
         params.acpSessionModeProbe,
@@ -473,6 +487,8 @@ export function useNewSessionWizardProps(params: Readonly<{
 
     return {
         layout: wizardLayoutProps,
+        sectionPresentation: params.sectionPresentation,
+        useColumnLayout: params.useColumnLayout,
         profiles: wizardProfilesProps,
         agent: wizardAgentProps,
         machine: wizardMachineProps,

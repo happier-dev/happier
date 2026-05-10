@@ -258,6 +258,64 @@ describe('AgentInput (history navigation)', () => {
     expect(mocks.historyReset).not.toHaveBeenCalled();
   });
 
+  it('uses immediate-send bypass on Cmd+Enter (web)', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      <AgentInput
+        sessionId="s1"
+        value="draft"
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompletePrefixes={[]}
+        autocompleteSuggestions={async () => []}
+        isSendDisabled={false}
+        disabled={false}
+        showAbortButton={false}
+      />
+    );
+
+    const input = findMultiTextInput(screen);
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'Enter', shiftKey: false, metaKey: true });
+    });
+
+    expect(handled).toBe(true);
+    expect(mocks.onSend).toHaveBeenCalledTimes(1);
+    expect(mocks.onSend).toHaveBeenCalledWith({ forceImmediate: true });
+  });
+
+  it('uses immediate-send bypass on Ctrl+Enter (web)', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      <AgentInput
+        sessionId="s1"
+        value="draft"
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompletePrefixes={[]}
+        autocompleteSuggestions={async () => []}
+        isSendDisabled={false}
+        disabled={false}
+        showAbortButton={false}
+      />
+    );
+
+    const input = findMultiTextInput(screen);
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({ key: 'Enter', shiftKey: false, ctrlKey: true });
+    });
+
+    expect(handled).toBe(true);
+    expect(mocks.onSend).toHaveBeenCalledTimes(1);
+    expect(mocks.onSend).toHaveBeenCalledWith({ forceImmediate: true });
+  });
+
   it('intercepts ArrowUp at start-of-input on web and applies history text', async () => {
     mocks.historyMoveUp.mockReturnValue('previous message');
 

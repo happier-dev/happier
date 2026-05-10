@@ -15,11 +15,15 @@ const captured = vi.hoisted(() => ({
     lastItems: null as any,
     lastRecentItems: null as any,
     lastFavoriteItems: null as any,
+    lastGroupOrder: null as any,
+    lastDropdownProps: null as any,
     reset() {
         this.lastConfig = null;
         this.lastItems = null;
         this.lastRecentItems = null;
         this.lastFavoriteItems = null;
+        this.lastGroupOrder = null;
+        this.lastDropdownProps = null;
     },
 }));
 
@@ -53,8 +57,20 @@ vi.mock('@/components/ui/forms/SearchableListSelector', () => ({
         captured.lastItems = props?.items ?? null;
         captured.lastRecentItems = props?.recentItems ?? null;
         captured.lastFavoriteItems = props?.favoriteItems ?? null;
+        captured.lastGroupOrder = props?.groupOrder ?? null;
         return null;
     },
+}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => {
+        captured.lastDropdownProps = props;
+        return null;
+    },
+}));
+
+vi.mock('@/components/ui/lists/ItemGroup', () => ({
+    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
 }));
 
 vi.mock('@/components/sessions/new/components/MachineCliGlyphs', () => ({
@@ -125,5 +141,51 @@ describe('MachineSelector (disable offline)', () => {
         expect((captured.lastRecentItems as any[]).map((m) => m.id)).toEqual([]);
         expect((captured.lastFavoriteItems as any[]).map((m) => m.id)).toEqual(['m-1']);
         expect((captured.lastItems as any[]).map((m) => m.id)).toEqual(['m-2']);
+    });
+
+    it('can render favorites before recent rows for wizard list presentation', async () => {
+        captured.reset();
+
+        const machine: any = { id: 'm-1', active: true, activeAt: Date.now(), revokedAt: null, metadata: { displayName: 'One' } };
+
+        await renderScreen(React.createElement(MachineSelector as any, {
+            machines: [machine],
+            selectedMachine: machine,
+            recentMachines: [machine],
+            favoriteMachines: [machine],
+            onSelect: vi.fn(),
+            showCliGlyphs: false,
+            favoriteGroupPlacement: 'beforeRecent',
+        }));
+
+        expect(captured.lastGroupOrder).toBe('favoritesFirst');
+    });
+
+    it('renders a dropdown trigger with the selected machine as subtitle', async () => {
+        captured.reset();
+
+        const machine: any = { id: 'm-1', active: true, activeAt: Date.now(), revokedAt: null, metadata: { displayName: 'One' } };
+
+        await renderScreen(React.createElement(MachineSelector as any, {
+            presentation: 'dropdown',
+            machines: [machine],
+            selectedMachine: machine,
+            recentMachines: [machine],
+            favoriteMachines: [],
+            onSelect: vi.fn(),
+            showCliGlyphs: false,
+            dropdownTitle: 'Select Machine',
+            dropdownTestID: 'machine-dropdown',
+        }));
+
+        expect(captured.lastDropdownProps?.itemTrigger).toMatchObject({
+            title: 'Select Machine',
+            subtitle: 'One',
+            showSelectedDetail: false,
+            showSelectedSubtitle: false,
+        });
+        expect(captured.lastDropdownProps?.itemTrigger?.itemProps).toMatchObject({
+            testID: 'machine-dropdown',
+        });
     });
 });

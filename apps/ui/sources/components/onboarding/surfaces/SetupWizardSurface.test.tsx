@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 
+import { WizardModalShell } from '../ui/WizardModalShell';
+
 const routerMock = vi.hoisted(() => ({
     spies: {
         push: vi.fn(),
@@ -440,6 +442,37 @@ describe('SetupWizardSurface', () => {
 
         expect(screen.findByType('WizardProviderSetupStep' as never)).toBeTruthy();
         expect(screen.findAllByType('LocalRelayRuntimeControlSection' as never)).toHaveLength(0);
+    });
+
+    it('passes backward transition direction when returning from the local setup step', async () => {
+        const { SetupWizardSurface } = await import('./SetupWizardSurface');
+        const screen = await renderScreen(React.createElement(SetupWizardSurface, {
+            isDesktopShell: true,
+        }));
+
+        const localBranch = screen.findByTestId('setupWizard-branch:local');
+        await act(async () => {
+            const handler = localBranch?.props.action ?? localBranch?.props.onPress;
+            await handler?.();
+        });
+
+        const continueButton = screen.findByTestId('setupWizard.surface-primary');
+        await act(async () => {
+            const handler = continueButton?.props.action ?? continueButton?.props.onPress;
+            await handler?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findByType(WizardModalShell as never).props.contentTransitionDirection).toBe('forward');
+
+        const backButton = screen.findByTestId('setupWizard.surface-back');
+        await act(async () => {
+            const handler = backButton?.props.action ?? backButton?.props.onPress;
+            await handler?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findByType(WizardModalShell as never).props.contentTransitionDirection).toBe('backward');
     });
 
     it('propagates the local machine id to the providers wizard step after local setup completes', async () => {

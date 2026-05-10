@@ -78,6 +78,7 @@ export function SessionHandoffFailureRecoveryModal({ onClose, setChrome, title, 
         testID: 'session-handoff-recovery-modal',
         titleTestID: 'session-handoff-recovery-title',
         closeButtonTestID: 'session-handoff-recovery-close',
+        bodyScroll: 'auto' as const,
         dimensions: { width: 440, maxHeightRatio: 0.92 },
         footer,
     }), [footer, title]);

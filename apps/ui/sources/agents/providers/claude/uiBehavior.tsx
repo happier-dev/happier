@@ -14,7 +14,7 @@ export const CLAUDE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     mcpServers: {
         supportsDetectedConfigScan: true,
     },
-    directSessions: {
+    externalSessions: {
         supportsBackgroundFollow: true,
         browse: {
             order: 20,

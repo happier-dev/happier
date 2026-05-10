@@ -295,12 +295,12 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     computeSessionModePickerControl: () => mockSessionModePickerControl,
 }));
 
-vi.mock('@/sync/acp/configOptionsControl', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/acp/configOptionsControl')>();
+vi.mock('@/sync/domains/sessionControl/configOptionsControl', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/sessionControl/configOptionsControl')>();
     return {
         ...actual,
         computeAcpConfigOptionControls: () => null,

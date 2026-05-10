@@ -11,7 +11,6 @@ const setPermissionModeApplyTiming = vi.fn();
 const setPermissionPromptSurface = vi.fn();
 const setDefaultPersistenceMode = vi.fn();
 const setDefaultPersistenceModeByTargetKey = vi.fn();
-const setRememberLastProjectSessionSelections = vi.fn();
 
 installSessionSettingsCommonModuleMocks({
     unistyles: async () => {
@@ -36,7 +35,6 @@ installSessionSettingsCommonModuleMocks({
                     if (name === 'permissionPromptSurface') return ['composer', setPermissionPromptSurface];
                     if (name === 'newSessionDefaultPersistenceModeV1') return ['persisted', setDefaultPersistenceMode];
                     if (name === 'newSessionDefaultPersistenceModeByTargetKeyV1') return [{}, setDefaultPersistenceModeByTargetKey];
-                    if (name === 'rememberLastProjectSessionSelections') return [true, setRememberLastProjectSessionSelections];
                     return [null, vi.fn()];
                 },
                 useSettings: () => ({ schemaVersion: 1, opencodeBackendMode: 'server' } as any),
@@ -108,13 +106,11 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 }));
 
 describe('PermissionsSettingsView', () => {
-    it('renders the remembered project session selection toggle', async () => {
+    it('does not render new-session shortcut settings', async () => {
         const { PermissionsSettingsView } = await import('./PermissionsSettingsView');
         const screen = await renderSettingsView(React.createElement(PermissionsSettingsView));
 
-        expect(screen.findRowByTitle('settingsSession.sessionCreation.rememberLastProjectSelectionsTitle')).toBeTruthy();
-        screen.pressRowByTitle('settingsSession.sessionCreation.rememberLastProjectSelectionsTitle');
-        expect(setRememberLastProjectSessionSelections).toHaveBeenCalledWith(false);
+        expect(screen.findRowByTitle('settingsSession.sessionCreation.rememberLastProjectSelectionsTitle')).toBeNull();
     });
 
     it('renders session storage defaults and updates both global and per-agent settings', async () => {
@@ -137,5 +133,13 @@ describe('PermissionsSettingsView', () => {
         expect(screen.findRowByTitle('DropdownItem:agent.codex:settingsSession.defaultStorage.useGlobalDefault')).toBeTruthy();
         screen.pressRowByTitle('DropdownItem:agent.codex:settingsSession.defaultStorage.useGlobalDefault');
         expect(setDefaultPersistenceModeByTargetKey).toHaveBeenCalledWith({});
+    });
+
+    it('does not render prompt personalization controls inside permissions settings', async () => {
+        const { PermissionsSettingsView } = await import('./PermissionsSettingsView');
+        const screen = await renderSettingsView(React.createElement(PermissionsSettingsView));
+
+        expect(screen.findRowByTitle('settingsSession.promptPersonalization.askAgentToRenameSessionsTitle')).toBeNull();
+        expect(screen.findRowByTitle('settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsTitle')).toBeNull();
     });
 });

@@ -323,7 +323,7 @@ vi.mock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => (
 vi.mock('@/sync/domains/permissions/permissionModeApply', () => ({
     applyPermissionModeSelection: async () => {},
 }));
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({

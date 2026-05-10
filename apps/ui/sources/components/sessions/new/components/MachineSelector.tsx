@@ -1,7 +1,10 @@
 import React from 'react';
+import { Pressable, type View as RNView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { SearchableListSelector } from '@/components/ui/forms/SearchableListSelector';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { t } from '@/text';
@@ -17,6 +20,7 @@ export interface MachineSelectorProps {
     showFavorites?: boolean;
     showRecent?: boolean;
     showSearch?: boolean;
+    presentation?: 'list' | 'dropdown';
     /**
      * When true, show small CLI glyphs per machine row.
      *
@@ -31,6 +35,7 @@ export interface MachineSelectorProps {
     autoDetectCliGlyphs?: boolean;
     serverId?: string | null;
     searchPlacement?: 'header' | 'recent' | 'favorites' | 'all';
+    favoriteGroupPlacement?: 'beforeRecent' | 'afterRecent';
     searchPlaceholder?: string;
     recentSectionTitle?: string;
     favoritesSectionTitle?: string;
@@ -41,6 +46,10 @@ export interface MachineSelectorProps {
      * When true, offline machines are visible but non-selectable (greyed out + not-allowed cursor on web).
      */
     disableOfflineMachines?: boolean;
+    dropdownTitle?: string;
+    dropdownSubtitle?: string | null;
+    dropdownTestID?: string;
+    popoverBoundaryRef?: React.RefObject<RNView> | null;
 }
 
 export function MachineSelector({
@@ -53,10 +62,12 @@ export function MachineSelector({
     showFavorites = true,
     showRecent = true,
     showSearch = true,
+    presentation = 'list',
     showCliGlyphs = true,
     autoDetectCliGlyphs = true,
     serverId,
     searchPlacement = 'header',
+    favoriteGroupPlacement = 'afterRecent',
     searchPlaceholder: searchPlaceholderProp,
     recentSectionTitle: recentSectionTitleProp,
     favoritesSectionTitle: favoritesSectionTitleProp,
@@ -64,8 +75,13 @@ export function MachineSelector({
     noItemsMessage: noItemsMessageProp,
     testIdPrefix,
     disableOfflineMachines = true,
+    dropdownTitle,
+    dropdownSubtitle,
+    dropdownTestID,
+    popoverBoundaryRef,
 }: MachineSelectorProps) {
     const { theme } = useUnistyles();
+    const [dropdownOpen, setDropdownOpen] = React.useState(false);
 
     const searchPlaceholder = searchPlaceholderProp ?? t('newSession.machinePicker.searchPlaceholder');
     const recentSectionTitle = recentSectionTitleProp ?? t('newSession.machinePicker.recentTitle');
@@ -98,6 +114,141 @@ export function MachineSelector({
         if (pinnedIds.size === 0) return visibleMachines;
         return visibleMachines.filter((machine) => !pinnedIds.has(machine.id));
     }, [showFavorites, showRecent, visibleFavoriteMachines, visibleMachines, visibleRecentMachinesWithoutFavorites]);
+    const selectedMachineId = selectedMachine?.id ?? null;
+    const machineById = React.useMemo(() => {
+        return new Map([
+            ...visibleMachines,
+            ...visibleRecentMachines,
+            ...visibleFavoriteMachines,
+        ].map((machine) => [machine.id, machine] as const));
+    }, [visibleFavoriteMachines, visibleMachines, visibleRecentMachines]);
+
+    const renderFavoriteToggle = React.useCallback((machine: Machine, isFavorite: boolean) => {
+        if (!showFavorites || !onToggleFavorite) return null;
+
+        const selectedColor = theme.colors.button.primary.background;
+        return (
+            <Pressable
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                onPress={(event) => {
+                    event.stopPropagation?.();
+                    onToggleFavorite(machine);
+                }}
+            >
+                <Ionicons
+                    name={isFavorite ? 'star' : 'star-outline'}
+                    size={22}
+                    color={isFavorite ? selectedColor : theme.colors.textSecondary}
+                />
+            </Pressable>
+        );
+    }, [onToggleFavorite, showFavorites, theme.colors.button.primary.background, theme.colors.textSecondary]);
+
+    const toDropdownItem = React.useCallback((
+        machine: Machine,
+        category: string,
+        isFavorite: boolean,
+        iconName: React.ComponentProps<typeof Ionicons>['name'],
+    ): DropdownMenuItem => {
+        const offline = !isMachineOnline(machine);
+        return {
+            id: machine.id,
+            title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
+            subtitle: offline ? t('status.offline') : t('status.online'),
+            category,
+            disabled: disableOfflineMachines && offline,
+            icon: (
+                <Ionicons
+                    name={iconName}
+                    size={20}
+                    color={theme.colors.textSecondary}
+                />
+            ),
+            rightElement: renderFavoriteToggle(machine, isFavorite),
+        };
+    }, [disableOfflineMachines, renderFavoriteToggle, theme.colors.textSecondary]);
+
+    const dropdownItems = React.useMemo(() => {
+        const favoriteItems = showFavorites
+            ? visibleFavoriteMachines.map((machine) => toDropdownItem(
+                machine,
+                favoritesSectionTitle,
+                true,
+                'desktop-outline',
+            ))
+            : [];
+        const recentItems = showRecent
+            ? visibleRecentMachinesWithoutFavorites.map((machine) => toDropdownItem(
+                machine,
+                recentSectionTitle,
+                favoriteMachineIdSet.has(machine.id),
+                'time-outline',
+            ))
+            : [];
+        const allItems = visibleAllMachines.map((machine) => toDropdownItem(
+            machine,
+            allSectionTitle,
+            favoriteMachineIdSet.has(machine.id),
+            'desktop-outline',
+        ));
+
+        return favoriteGroupPlacement === 'beforeRecent'
+            ? [...favoriteItems, ...recentItems, ...allItems]
+            : [...recentItems, ...favoriteItems, ...allItems];
+    }, [
+        allSectionTitle,
+        favoriteGroupPlacement,
+        favoriteMachineIdSet,
+        favoritesSectionTitle,
+        recentSectionTitle,
+        showFavorites,
+        showRecent,
+        toDropdownItem,
+        visibleAllMachines,
+        visibleFavoriteMachines,
+        visibleRecentMachinesWithoutFavorites,
+    ]);
+
+    if (presentation === 'dropdown') {
+        return (
+            <ItemGroup title="">
+                <DropdownMenu
+                    open={dropdownOpen}
+                    onOpenChange={setDropdownOpen}
+                    items={dropdownItems}
+                    selectedId={selectedMachineId}
+                    onSelect={(machineId) => {
+                        const machine = machineById.get(machineId);
+                        if (!machine) return;
+                        if (disableOfflineMachines && !isMachineOnline(machine)) return;
+                        onSelect(machine);
+                    }}
+                    rowKind="item"
+                    variant="selectable"
+                    search={showSearch}
+                    searchPlaceholder={searchPlaceholder}
+                    showCategoryTitles={showFavorites || showRecent}
+                    matchTriggerWidth
+                    connectToTrigger
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: dropdownTitle ?? t('newSession.selectMachineTitle'),
+                        subtitle: dropdownSubtitle ?? selectedMachine?.metadata?.displayName ?? selectedMachine?.metadata?.host ?? selectedMachine?.id ?? t('newSession.selectMachineDescription'),
+                        showSelectedDetail: false,
+                        showSelectedSubtitle: false,
+                        icon: (
+                            <Ionicons
+                                name="desktop-outline"
+                                size={24}
+                                color={theme.colors.textSecondary}
+                            />
+                        ),
+                        itemProps: { testID: dropdownTestID },
+                    }}
+                />
+            </ItemGroup>
+        );
+    }
 
     return (
         <SearchableListSelector<Machine>
@@ -169,6 +320,7 @@ export function MachineSelector({
             onSelect={onSelect}
             onToggleFavorite={onToggleFavorite}
             searchPlacement={searchPlacement}
+            groupOrder={favoriteGroupPlacement === 'beforeRecent' ? 'favoritesFirst' : 'recentFirst'}
             testIdPrefix={testIdPrefix}
         />
     );

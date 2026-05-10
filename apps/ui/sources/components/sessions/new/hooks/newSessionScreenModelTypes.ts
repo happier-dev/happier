@@ -7,6 +7,7 @@ import type {
     NewSessionWizardLayoutProps,
     NewSessionWizardMachineProps,
     NewSessionWizardProfilesProps,
+    NewSessionWizardProps,
 } from '@/components/sessions/new/components/NewSessionWizard';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 
@@ -26,6 +27,8 @@ export type NewSessionScreenModel =
         popoverBoundaryRef: React.RefObject<View>;
         wizardProps: Readonly<{
             layout: NewSessionWizardLayoutProps;
+            sectionPresentation?: NewSessionWizardProps['sectionPresentation'];
+            useColumnLayout?: NewSessionWizardProps['useColumnLayout'];
             profiles: NewSessionWizardProfilesProps;
             agent: NewSessionWizardAgentProps;
             machine: NewSessionWizardMachineProps;

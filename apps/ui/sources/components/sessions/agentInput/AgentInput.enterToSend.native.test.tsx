@@ -351,4 +351,44 @@ describe('AgentInput (enter to send on native)', () => {
         expect(mocks.onChangeText).toHaveBeenCalledWith('hello\n');
         expect(mocks.onSend).not.toHaveBeenCalled();
     });
+
+    it('uses immediate-send bypass on hardware Cmd+Enter and Ctrl+Enter', async () => {
+        settingState.webEnterToSend = false;
+        settingState.nativeEnterToSend = false;
+
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                sessionId="session-1"
+                value="hello"
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={[]}
+                autocompleteSuggestions={async () => []}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />,
+        );
+
+        const input = findNativeTextInput(screen);
+
+        await act(async () => {
+            input.props.onKeyPress?.({
+                nativeEvent: { key: 'Enter', shiftKey: false, metaKey: true, ctrlKey: false },
+                preventDefault: vi.fn(),
+            });
+        });
+        await act(async () => {
+            input.props.onKeyPress?.({
+                nativeEvent: { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: true },
+                preventDefault: vi.fn(),
+            });
+        });
+
+        expect(mocks.onSend).toHaveBeenCalledTimes(2);
+        expect(mocks.onSend).toHaveBeenNthCalledWith(1, { forceImmediate: true });
+        expect(mocks.onSend).toHaveBeenNthCalledWith(2, { forceImmediate: true });
+    });
 });

@@ -8,7 +8,7 @@ import { layout } from '@/components/ui/layout/layout';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
-type DirectSessionsEmptyStateProps = Readonly<{
+type ExternalSessionsEmptyStateProps = Readonly<{
     surface?: 'default' | 'sidebar' | 'primaryPane';
 }>;
 
@@ -27,7 +27,7 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
-export function DirectSessionsEmptyState(props: DirectSessionsEmptyStateProps) {
+export function ExternalSessionsEmptyState(props: ExternalSessionsEmptyStateProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const sidebarWidthPx = useLocalSetting('sidebarWidthPx');
@@ -52,8 +52,8 @@ export function DirectSessionsEmptyState(props: DirectSessionsEmptyStateProps) {
                         style={{ marginBottom: 12 }}
                     />
                 )}
-                title={t('directSessions.emptyStateTitle')}
-                description={t('directSessions.emptyStateDescription')}
+                title={t('externalSessions.emptyStateTitle')}
+                description={t('externalSessions.emptyStateDescription')}
             />
         </View>
     );

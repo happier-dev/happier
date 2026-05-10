@@ -54,15 +54,22 @@ import { useSessionRightPanelGitOpenDetails } from './useSessionRightPanelGitOpe
 import type { SourceControlRemoteAction } from '@/components/workspaces/scm/SourceControlRemoteActionsRail';
 import { SourceControlRemotesSection } from '@/components/workspaces/scm/update/SourceControlRemotesSection';
 import { SourceControlBranchIntegrationSection } from '@/components/workspaces/scm/update/SourceControlBranchIntegrationSection';
+import { SourceControlPullRequestSection } from '@/components/workspaces/scm/update/SourceControlPullRequestSection';
+import { SourceControlPublishRepositorySection } from '@/components/workspaces/scm/update/SourceControlPublishRepositorySection';
 import {
     createSessionScmReviewDetailsTab,
     createSessionScmStashDetailsTab,
 } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import {
+    sessionScmBranchCreate,
     sessionScmBranchMerge,
     sessionScmBranchOperationAbort,
     sessionScmBranchOperationContinue,
     sessionScmBranchRebase,
+    sessionScmHostingRepositoryDescribePublishTargets,
+    sessionScmHostingRepositoryPublish,
+    sessionScmPullRequestOpenOrReuse,
+    sessionScmRepositoryInit,
     sessionScmRepositoryRemoveIndexLock,
     sessionScmRemoteAdd,
     sessionScmRemoteRemove,
@@ -213,6 +220,8 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             effectiveScmSnapshot?.capabilities?.writeRemoteFetch === true
             || effectiveScmSnapshot?.capabilities?.writeRemotePull === true
             || effectiveScmSnapshot?.capabilities?.writeRemotePush === true
+            || effectiveScmSnapshot?.capabilities?.readPullRequestStatus === true
+            || effectiveScmSnapshot?.capabilities?.readHostingRepositoryPublishTargets === true
         )
         && pullPreflightReason !== 'write_disabled'
         && pushPreflightReason !== 'write_disabled';
@@ -586,6 +595,26 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         }),
         [props.sessionId, runSessionUpdateMutation],
     );
+    const initializeRepository = React.useCallback(
+        () => sessionScmRepositoryInit(props.sessionId, {}),
+        [props.sessionId],
+    );
+    const openOrReusePullRequest = React.useCallback(
+        (request: { base: string; head: string }) => sessionScmPullRequestOpenOrReuse(props.sessionId, request),
+        [props.sessionId],
+    );
+    const createFeatureBranch = React.useCallback(
+        (request: { name: string; checkout: true; startPoint?: string }) => sessionScmBranchCreate(props.sessionId, request),
+        [props.sessionId],
+    );
+    const describePublishTargets = React.useCallback(
+        () => sessionScmHostingRepositoryDescribePublishTargets(props.sessionId, { providerKind: 'github' }),
+        [props.sessionId],
+    );
+    const publishRepository = React.useCallback(
+        (request: Parameters<typeof sessionScmHostingRepositoryPublish>[1]) => sessionScmHostingRepositoryPublish(props.sessionId, request),
+        [props.sessionId],
+    );
 
     if (!effectiveScmSnapshot && scmSnapshotError) {
         if (isSessionInactive && !machineRpcTargetAvailable) {
@@ -621,7 +650,14 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     }
 
     if (!effectiveScmSnapshot.repo.isRepo) {
-        return <NotSourceControlRepositoryState />;
+        return (
+            <NotSourceControlRepositoryState
+                canInitializeRepository={scmWriteEnabled && effectiveScmSnapshot.capabilities?.writeRepositoryInit === true}
+                initializeRepositoryBusy={scmOperationBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
+                onInitializeRepository={initializeRepository}
+                onRefresh={refreshScmDataFromMutation}
+            />
+        );
     }
 
     const scmUiPlugin = scmUiBackendRegistry.getPluginForSnapshot(effectiveScmSnapshot);
@@ -700,6 +736,24 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 />
             ) : null}
         >
+            <SourceControlPullRequestSection
+                theme={theme}
+                snapshot={effectiveScmSnapshot}
+                disabled={scmOperationBusy || publishBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
+                onOpenOrReuse={openOrReusePullRequest}
+                onCreateFeatureBranch={createFeatureBranch}
+                onRefresh={refreshScmDataFromMutation}
+            />
+            <SourceControlPublishRepositorySection
+                theme={theme}
+                snapshot={effectiveScmSnapshot}
+                writeEnabled={scmWriteEnabled}
+                disabled={scmOperationBusy || publishBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
+                publishTargets={null}
+                onDescribePublishTargets={describePublishTargets}
+                onPublishRepository={publishRepository}
+                onRefresh={refreshScmDataFromMutation}
+            />
             <SourceControlRemotesSection
                 theme={theme}
                 snapshot={effectiveScmSnapshot}

@@ -4,12 +4,12 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { Text } from '@/components/ui/text/Text';
-import type { AcpConfigOptionControl, AcpConfigOptionValueId } from '@/sync/acp/configOptionsControl';
+import type { AcpConfigOptionControl, AcpConfigOptionValueId } from '@/sync/domains/sessionControl/configOptionsControl';
 import {
     isBooleanConfigOptionType,
     resolveBooleanConfigOptionNextValue,
     resolveBooleanConfigOptionValue,
-} from '@/sync/acp/configOptionsControl';
+} from '@/sync/domains/sessionControl/configOptionsControl';
 import { t } from '@/text';
 
 type AgentInputAcpConfigOptionsSectionProps = Readonly<{

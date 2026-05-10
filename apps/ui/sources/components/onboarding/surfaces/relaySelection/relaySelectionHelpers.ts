@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 
-import { classifyAccessEndpointHostedHttpsCompatibility } from '@/sync/domains/accessEndpoints/classifyAccessEndpoint';
+import { classifyAccessEndpointHostedHttpsCompatibility } from '@/sync/domains/accessEndpoints/classify';
 import { isSameServerUrl, normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getOrCreateHappierCloudServerProfile, listServerProfiles } from '@/sync/domains/server/serverProfiles';

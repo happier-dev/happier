@@ -1,7 +1,7 @@
 import { buildCodexAgentRuntimeDescriptor, readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
 import { normalizeCodexBackendMode } from '@happier-dev/protocol';
 
-import type { DirectBrowseLinkEnsureRequestExtras } from '@/agents/registry/registryUiBehavior';
+import type { ExternalSessionBrowseLinkEnsureRequestExtras } from '@/agents/registry/registryUiBehavior';
 
 function normalizeCandidateRuntimeDescriptorMetadata(details: Record<string, unknown> | undefined) {
     if (!details) return undefined;
@@ -98,7 +98,7 @@ export function resolveCodexLinkEnsureRequestExtras(params: Readonly<{
         homePath?: string;
     }>;
     candidate: Readonly<{ details?: Record<string, unknown> }>;
-}>): DirectBrowseLinkEnsureRequestExtras {
+}>): ExternalSessionBrowseLinkEnsureRequestExtras {
     const codexBackendMode = readCodexBackendMode(params.candidate.details);
     const candidateSource = readCodexSource(params.candidate.details);
     const compatibleCandidateSource = candidateSource && shouldUseCandidateCodexSource({

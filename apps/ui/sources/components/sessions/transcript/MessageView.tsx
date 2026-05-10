@@ -43,6 +43,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
 import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
 import { TranscriptRollbackActionButton } from '@/components/sessions/transcript/TranscriptRollbackActionButton';
+import { executeTranscriptRollbackAction } from '@/components/sessions/transcript/transcriptRollbackActionRunner';
 import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
@@ -218,7 +219,7 @@ function UserTextBlock(props: {
   const [isMessageHovered, setIsMessageHovered] = React.useState(false);
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
-  const usesLongPressMessageContextMenu = false;
+  const usesLongPressMessageContextMenu = Platform.OS !== 'web';
   const contextMenuAnchorRef = React.useRef<View>(null);
 	  const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
 	  const router = useRouter();
@@ -448,24 +449,13 @@ function UserTextBlock(props: {
     if (itemId === 'rollback' && props.rollbackAction) {
       fireAndForget((async () => {
         try {
-          const target = props.rollbackAction?.target ?? { type: 'latest_turn' };
-          const result = await executor.execute('session.rollback', {
+          await executeTranscriptRollbackAction({
+            checkpointCodeRollback: props.rollbackAction?.checkpointCodeRollback,
+            executor,
+            restoredDraftText: props.rollbackAction?.restoredDraftText,
             sessionId: props.sessionId,
-            target,
-          }, {
-            defaultSessionId: props.sessionId,
-            surface: 'ui',
+            target: props.rollbackAction?.target,
           });
-          if (result.ok !== true) {
-            Modal.alert(t('common.error'), result.error ?? t('errors.unknownError'));
-            return;
-          }
-          const restoredDraftText = typeof props.rollbackAction?.restoredDraftText === 'string'
-            ? props.rollbackAction.restoredDraftText
-            : null;
-          if (restoredDraftText && restoredDraftText.trim().length > 0) {
-            storage.getState().updateSessionDraft(props.sessionId, restoredDraftText);
-          }
         } catch (e) {
           Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.unknownError'));
         }
@@ -546,6 +536,7 @@ function UserTextBlock(props: {
                   sessionId={props.sessionId}
                   target={props.rollbackAction.target}
                   restoredDraftText={props.rollbackAction.restoredDraftText}
+                  checkpointCodeRollback={props.rollbackAction.checkpointCodeRollback}
                   testID={`transcript-message-rollback:${props.message.id}`}
                   onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
                   onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
@@ -658,6 +649,7 @@ function UserTextBlock(props: {
                   sessionId={props.sessionId}
                   target={props.rollbackAction.target}
                   restoredDraftText={props.rollbackAction.restoredDraftText}
+                  checkpointCodeRollback={props.rollbackAction.checkpointCodeRollback}
                   testID={`transcript-message-rollback:${props.message.id}`}
                   onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
                   onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
@@ -717,7 +709,7 @@ function AgentTextBlock(props: {
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
   const fallbackTextSelectable = shouldEnableFallbackTextNativeSelection(Platform.OS);
-  const usesLongPressMessageContextMenu = false;
+  const usesLongPressMessageContextMenu = Platform.OS !== 'web';
   const contextMenuAnchorRef = React.useRef<View>(null);
 	  const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
 	  const router = useRouter();
@@ -919,24 +911,13 @@ function AgentTextBlock(props: {
     if (itemId === 'rollback' && props.rollbackAction) {
       fireAndForget((async () => {
         try {
-          const target = props.rollbackAction?.target ?? { type: 'latest_turn' };
-          const result = await executor.execute('session.rollback', {
+          await executeTranscriptRollbackAction({
+            checkpointCodeRollback: props.rollbackAction?.checkpointCodeRollback,
+            executor,
+            restoredDraftText: props.rollbackAction?.restoredDraftText,
             sessionId: props.sessionId,
-            target,
-          }, {
-            defaultSessionId: props.sessionId,
-            surface: 'ui',
+            target: props.rollbackAction?.target,
           });
-          if (result.ok !== true) {
-            Modal.alert(t('common.error'), result.error ?? t('errors.unknownError'));
-            return;
-          }
-          const restoredDraftText = typeof props.rollbackAction?.restoredDraftText === 'string'
-            ? props.rollbackAction.restoredDraftText
-            : null;
-          if (restoredDraftText && restoredDraftText.trim().length > 0) {
-            storage.getState().updateSessionDraft(props.sessionId, restoredDraftText);
-          }
         } catch (e) {
           Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.unknownError'));
         }
@@ -1154,6 +1135,7 @@ function AgentTextBlock(props: {
                 sessionId={props.sessionId}
                 target={props.rollbackAction.target}
                 restoredDraftText={props.rollbackAction.restoredDraftText}
+                checkpointCodeRollback={props.rollbackAction.checkpointCodeRollback}
                 testID={`transcript-message-rollback:${props.message.id}`}
                 onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
                 onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}

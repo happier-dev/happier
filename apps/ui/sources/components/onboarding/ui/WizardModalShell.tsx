@@ -10,6 +10,10 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useIsInsideModalBoundary } from '@/modal/context/ModalBoundaryContext';
+import {
+    StepTransitionFrame,
+    type StepTransitionDirection,
+} from '@/components/ui/motion/StepTransitionFrame';
 
 import { WizardStepDots } from './WizardStepDots';
 import { shouldUseWizardFullscreenPresentation } from './wizardPresentation';
@@ -34,7 +38,7 @@ function forceSingleLineText(node: React.ReactNode): React.ReactNode {
                 numberOfLines: 1,
                 ellipsizeMode: element.props.ellipsizeMode ?? 'middle',
             },
-            children
+            children,
         );
     }
 
@@ -69,6 +73,13 @@ export type WizardModalShellProps = Readonly<{
     testID?: string;
     contentStyle?: StyleProp<ViewStyle>;
     scrollable?: boolean;
+    /**
+     * Optional transition key for animated step body changes. When provided,
+     * step body content is wrapped in a `StepTransitionFrame` so step changes
+     * animate consistently with `StoryDeck` and other paged surfaces.
+     */
+    contentTransitionKey?: string | number;
+    contentTransitionDirection?: StepTransitionDirection;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -143,8 +154,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         minWidth: 160,
     },
-    footerSecondaryButton: {
-    },
+    footerSecondaryButton: {},
 }));
 
 export function WizardModalShell(props: WizardModalShellProps) {
@@ -155,8 +165,6 @@ export function WizardModalShell(props: WizardModalShellProps) {
     const isInsideModalBoundary = useIsInsideModalBoundary();
     const layoutPresentation = props.layoutPresentation ?? 'auto';
     const insets = React.useMemo(() => {
-        // On native, BaseModal already applies safe-area padding at the overlay container level.
-        // Avoid double-applying insets inside the wizard chrome.
         if (Platform.OS !== 'web' && isInsideModalBoundary) {
             return { top: 0, bottom: 0, left: 0, right: 0 } as const;
         }
@@ -179,7 +187,10 @@ export function WizardModalShell(props: WizardModalShellProps) {
                 <HeaderLogo />
             </View>
             <View style={styles.headerCenter}>
-                <WizardStepDots currentStepIndex={props.stepIndex} stepCount={props.stepCount} />
+                <WizardStepDots
+                    currentStepIndex={props.stepIndex}
+                    stepCount={props.stepCount}
+                />
                 {props.headerHint
                     ? typeof props.headerHint === 'string' || typeof props.headerHint === 'number'
                         ? <Text style={styles.headerHint}>{props.headerHint}</Text>
@@ -192,7 +203,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
                         testID={`${props.testID ?? 'wizard'}-skip`}
                         size="small"
                         display="inverted"
-                        title={props.skipLabel ?? t('common.skip')}
+                        title={props.skipLabel ?? t('common.cancel')}
                         disabled={skipDisabled}
                         onPress={props.onSkip}
                     />
@@ -253,6 +264,23 @@ export function WizardModalShell(props: WizardModalShellProps) {
         </View>
     );
 
+    const body = (
+        <View testID={props.testID} style={styles.body}>
+            {props.children}
+        </View>
+    );
+
+    const wrappedBody = props.contentTransitionKey != null
+        ? (
+            <StepTransitionFrame
+                transitionKey={props.contentTransitionKey}
+                direction={props.contentTransitionDirection ?? 'forward'}
+            >
+                {body}
+            </StepTransitionFrame>
+        )
+        : body;
+
     return (
         <FlowSurfaceChrome
             testID={props.testID}
@@ -270,9 +298,7 @@ export function WizardModalShell(props: WizardModalShellProps) {
             subtitle={props.subtitle}
             contentStyle={props.contentStyle}
         >
-            <View testID={props.testID} style={styles.body}>
-                {props.children}
-            </View>
+            {wrappedBody}
         </FlowSurfaceChrome>
     );
 }

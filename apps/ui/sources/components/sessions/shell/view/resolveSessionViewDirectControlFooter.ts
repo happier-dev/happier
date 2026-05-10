@@ -5,8 +5,8 @@ export type SessionViewDirectControlFooter = ChatFooterDirectControlState;
 type DirectControlFooterState = NonNullable<SessionViewDirectControlFooter>;
 
 type Input = Readonly<{
-    directSessionLink: Readonly<{ machineId: string }> | null;
-    directSessionRuntime: Readonly<{
+    externalSessionLink: Readonly<{ machineId: string }> | null;
+    externalSessionRuntime: Readonly<{
         status?: Readonly<{
             machineOnline?: boolean;
             runnerActive?: boolean;
@@ -15,7 +15,7 @@ type Input = Readonly<{
             canTakeOverPersist?: boolean;
         }> | null;
     }>;
-    directSessionTakeover: Readonly<{
+    externalSessionTakeover: Readonly<{
         takeoverInFlight: 'direct' | 'persisted' | null;
         requestTakeover: (kind: 'direct' | 'persisted') => void | Promise<void | boolean>;
     }>;
@@ -33,23 +33,23 @@ export function resolveSessionViewDirectControlFooter(input: Input): SessionView
     if (input.isHiddenSystemSessionSession) {
         return null;
     }
-    if (!input.directSessionLink) {
+    if (!input.externalSessionLink) {
         return null;
     }
 
-    const status = input.directSessionRuntime.status;
+    const status = input.externalSessionRuntime.status;
     return {
         machineOnline: status?.machineOnline ?? true,
         runnerActive: status?.runnerActive ?? false,
         activity: normalizeDirectControlActivity(status?.activity),
         canTakeOverDirect: status?.canTakeOverDirect ?? false,
         canTakeOverPersist: status?.canTakeOverPersist ?? false,
-        takeoverInFlight: input.directSessionTakeover.takeoverInFlight,
+        takeoverInFlight: input.externalSessionTakeover.takeoverInFlight,
         onRequestTakeOverDirect: (status?.canTakeOverDirect ?? false)
-            ? () => { void input.directSessionTakeover.requestTakeover('direct'); }
+            ? () => { void input.externalSessionTakeover.requestTakeover('direct'); }
             : undefined,
         onRequestTakeOverPersist: (status?.canTakeOverPersist ?? false)
-            ? () => { void input.directSessionTakeover.requestTakeover('persisted'); }
+            ? () => { void input.externalSessionTakeover.requestTakeover('persisted'); }
             : undefined,
     };
 }

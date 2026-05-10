@@ -27,13 +27,13 @@ describe('newSessionContainedModalScreen helpers', () => {
         const { createNewSessionContainedModalScreenOptions } = await import('./newSessionContainedModalScreen');
 
         const options = createNewSessionContainedModalScreenOptions({
-            title: 'directSessions.browseTitle',
+            title: 'externalSessions.browseTitle',
             headerBackTitle: 'common.cancel',
         });
 
         expect(options.presentation).toBe('containedModal');
         expect(options.headerShown).toBe(true);
-        expect(options.title).toBe('directSessions.browseTitle');
+        expect(options.title).toBe('externalSessions.browseTitle');
         expect(options.headerBackTitle).toBe('common.cancel');
     });
 

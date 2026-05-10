@@ -201,7 +201,7 @@ describe('ChatFooter (local control)', () => {
             },
         } as any);
 
-        expect(screen.getTextContent()).toContain('chatFooter.directSessionTakeoverAvailable');
+        expect(screen.getTextContent()).toContain('chatFooter.externalSessionTakeoverAvailable');
         expect(screen.findByTestId('session-chatFooter-takeOverDirect')).not.toBeNull();
         expect(screen.findByTestId('session-chatFooter-takeOverPersist')).not.toBeNull();
 

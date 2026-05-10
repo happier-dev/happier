@@ -222,12 +222,12 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
     useKeyboardHeight: () => 0,
 }));
 
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     computeAcpPlanModeControl: () => null,
     computeAcpSessionModePickerControl: () => null,
 }));
 
-vi.mock('@/sync/acp/configOptionsControl', () => ({
+vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
     computeAcpConfigOptionControls: () => null,
 }));
 

@@ -41,7 +41,7 @@ import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashComman
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
 import {
     supportsSessionModeOverrides,
-} from '@/sync/acp/sessionModeControl';
+} from '@/sync/domains/sessionControl/sessionModeControl';
 import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { randomUUID } from '@/platform/randomUUID';
@@ -49,6 +49,7 @@ import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/u
 import { listPendingPermissionRequests, listPendingUserActionRequests, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { nativeReadClipboardImageAttachment } from '@/utils/files/nativeClipboardImageAttachment';
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import type { ModelMode, PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
@@ -118,9 +119,9 @@ import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessio
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { SessionResumeProvider } from '@/components/sessions/model/SessionResumeContext';
 import { useSessionResumeRequestListener } from '@/components/sessions/model/sessionResumeRequests';
-import { useDirectSessionTakeover } from '@/components/sessions/model/useDirectSessionTakeover';
-import { useDirectSessionRuntime } from '@/components/sessions/model/useDirectSessionRuntime';
-import { SessionDirectSessionRuntimeProvider } from '@/components/sessions/model/useSessionDirectSessionRuntime';
+import { useExternalSessionTakeover } from '@/components/sessions/model/useExternalSessionTakeover';
+import { useExternalSessionRuntime } from '@/components/sessions/model/useExternalSessionRuntime';
+import { SessionExternalSessionRuntimeProvider } from '@/components/sessions/model/useSessionExternalSessionRuntime';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
@@ -337,7 +338,7 @@ export const SessionView = React.memo((props: {
     });
     const { messages: pendingMessages } = useSessionPendingMessages(sessionId);
     const { messages: committedMessages, isLoaded: committedMessagesLoaded } = useSessionMessages(sessionId);
-    const directSessionRuntime = useDirectSessionRuntime({
+    const externalSessionRuntime = useExternalSessionRuntime({
         sessionId,
         metadata: session?.metadata ?? null,
         enabled: isSurfaceFocused,
@@ -346,7 +347,7 @@ export const SessionView = React.memo((props: {
         sessionId,
         session,
         messages: committedMessages,
-        directSessionRuntime,
+        externalSessionRuntime,
     });
     const subagentCounts = deriveSessionSubagentCounts(subagents);
     const shouldShowSubagentsButton = subagentCounts.total > 0 || sessionExecutionRunsSupported || hasSessionSubagentLaunchCards(session);
@@ -455,7 +456,7 @@ export const SessionView = React.memo((props: {
     ]);
 
     return (
-        <SessionDirectSessionRuntimeProvider value={directSessionRuntime}>
+        <SessionExternalSessionRuntimeProvider value={externalSessionRuntime}>
         <SessionScreenTestIdsProvider enabled={isFocused}>
             {debugRouterEnabled && Platform.OS === 'web' ? (
                 <View
@@ -536,13 +537,13 @@ export const SessionView = React.memo((props: {
                            initialAttachmentDrafts={props.initialAttachmentDrafts ?? null}
                            paneScopeId={paneScopeId}
                            pendingMessages={pendingMessages}
-                           directSessionRuntime={directSessionRuntime}
+                           externalSessionRuntime={externalSessionRuntime}
                            chatBottomSpacing={props.chatBottomSpacing ?? 'default'}
                        />
                   )}
             </View>
         </SessionScreenTestIdsProvider>
-        </SessionDirectSessionRuntimeProvider>
+        </SessionExternalSessionRuntimeProvider>
     );
 });
 
@@ -565,7 +566,7 @@ function SessionViewLoaded({
     initialAttachmentDrafts,
     paneScopeId,
     pendingMessages,
-    directSessionRuntime,
+    externalSessionRuntime,
     chatBottomSpacing,
 }: {
     authSurfaceState: SessionAuthSurfaceState | null;
@@ -585,7 +586,7 @@ function SessionViewLoaded({
     initialAttachmentDrafts: readonly AttachmentDraft[] | null;
     paneScopeId: string;
     pendingMessages: readonly PendingMessage[];
-    directSessionRuntime: ReturnType<typeof useDirectSessionRuntime>;
+    externalSessionRuntime: ReturnType<typeof useExternalSessionRuntime>;
     chatBottomSpacing: 'default' | 'none';
 }) {
     const { theme } = useUnistyles();
@@ -739,6 +740,20 @@ function SessionViewLoaded({
     const agentInputAttachments = attachmentDraftManager.agentInputAttachments;
     const addAttachments = attachmentDraftManager.addWebFiles;
     const addPickedAttachments = attachmentDraftManager.addPickedAttachments;
+    const pasteAttachmentImage = React.useCallback(() => {
+        fireAndForget((async () => {
+            const picked = await nativeReadClipboardImageAttachment();
+            if (picked.length === 0) {
+                Modal.alert(t('attachments.alerts.noClipboardImageTitle'), t('attachments.alerts.noClipboardImageBody'));
+                return;
+            }
+            addPickedAttachments(picked);
+        })(), {
+            onError: () => {
+                Modal.alert(t('attachments.alerts.noClipboardImageTitle'), t('attachments.alerts.noClipboardImageBody'));
+            },
+        });
+    }, [addPickedAttachments]);
     const [isUploadingAttachments, setIsUploadingAttachments] = React.useState(false);
     const recipientState = useSessionRecipientState({ targets: participantTargets, autoRecipient: null });
 
@@ -796,6 +811,7 @@ function SessionViewLoaded({
 
     const isResumable = canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions);
     const [isResuming, setIsResuming] = React.useState(false);
+    const [isPendingQueueWakeResuming, setIsPendingQueueWakeResuming] = React.useState(false);
     const persistedVoiceComposerRouting = resolveVoiceSessionComposerRouting({
         conversationSessionId: sessionId,
         sessionMetadata: session.metadata,
@@ -1130,16 +1146,16 @@ function SessionViewLoaded({
             }
         })(), { tag: 'SessionView.requestSwitchToRemote' });
     }, [finishControlSwitchAttempt, hasWriteAccess, sessionId]);
-    const directSessionTakeover = useDirectSessionTakeover({
+    const externalSessionTakeover = useExternalSessionTakeover({
         sessionId,
         hasWriteAccess,
-        directSessionRuntime,
+        externalSessionRuntime,
     });
 
     const directControlFooter = resolveSessionViewDirectControlFooter({
-        directSessionLink: directSessionRuntime.directSessionLink,
-        directSessionRuntime,
-        directSessionTakeover,
+        externalSessionLink: externalSessionRuntime.externalSessionLink,
+        externalSessionRuntime,
+        externalSessionTakeover,
         isHiddenSystemSessionSession,
     });
 
@@ -1294,6 +1310,7 @@ function SessionViewLoaded({
             onPickAttachmentImage: () => {
                 openAttachmentFilePickerImages(filePickerRef.current);
             },
+            onPasteAttachmentImage: pasteAttachmentImage,
             onAppendLinkedPath: (path) => {
                 setMessage((prev) => {
                     const base = prev ?? '';
@@ -1438,21 +1455,26 @@ function SessionViewLoaded({
                     );
                 } : undefined}
                 connectionStatus={{
-                    text: isResuming ? t('session.resuming') : (inactiveStatusText || sessionStatus.statusText),
+                    text: (isResuming || isPendingQueueWakeResuming) ? t('session.resuming') : (inactiveStatusText || sessionStatus.statusText),
                     color: sessionStatus.statusColor,
                     dotColor: sessionStatus.statusDotColor,
-                    isPulsing: isResuming || sessionStatus.isPulsing
+                    isPulsing: isResuming || isPendingQueueWakeResuming || sessionStatus.isPulsing
                 }}
-                onSend={() => {
+                onSend={(sendOptions) => {
                     if (!hasWriteAccess) {
                         Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
                         return;
                     }
 
-                    const sendComposerText = (messageToSend: string, composerTextBeforeSend: string) => {
+                    const sendComposerText = (
+                        messageToSend: string,
+                        composerTextBeforeSend: string,
+                        sendIntent?: Readonly<{ forceImmediate?: boolean }>,
+                    ) => {
                         const configuredMode = storage.getState().settings.sessionMessageSendMode;
                         const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
                         const submitMode = chooseSubmitMode({ configuredMode, busySteerSendPolicy, session });
+                        const forceImmediateSend = sendIntent?.forceImmediate === true;
 
                         const additionalMessage = messageToSend;
                         const trimmedText = messageToSend.trim();
@@ -1489,7 +1511,7 @@ function SessionViewLoaded({
                             fireAndForget((async () => {
                                 markComposerSent();
                                 try {
-                                    const readyForSend = await directSessionTakeover.ensureReadyForSend();
+                                    const readyForSend = await externalSessionTakeover.ensureReadyForSend();
                                     if (!readyForSend) {
                                         setMessage(previousMessage);
                                         return;
@@ -1636,7 +1658,7 @@ function SessionViewLoaded({
                         if (executionRunSend) {
                             fireAndForget((async () => {
                                 markComposerSent();
-                                const readyForSend = await directSessionTakeover.ensureReadyForSend();
+                                const readyForSend = await externalSessionTakeover.ensureReadyForSend();
                                 if (!readyForSend) {
                                     setMessage(previousMessage);
                                     return;
@@ -1654,10 +1676,10 @@ function SessionViewLoaded({
                             return;
                         }
 
-                        if (submitMode === 'server_pending') {
+                        if (submitMode === 'server_pending' && !forceImmediateSend) {
                             fireAndForget((async () => {
                                 markComposerSent();
-                                const readyForSend = await directSessionTakeover.ensureReadyForSend();
+                                const readyForSend = await externalSessionTakeover.ensureReadyForSend();
                                 if (!readyForSend) {
                                     setMessage(previousMessage);
                                     return;
@@ -1694,6 +1716,7 @@ function SessionViewLoaded({
                                 }
 
                                 try {
+                                    setIsPendingQueueWakeResuming(true);
                                     const result = await resumeSession({
                                         ...wakeOpts,
                                         serverId: capabilityServerId,
@@ -1705,6 +1728,8 @@ function SessionViewLoaded({
                                 } catch {
                                     // Non-fatal: message is already persisted in the pending queue.
                                     setPendingQueueResumeFailed(true);
+                                } finally {
+                                    setIsPendingQueueWakeResuming(false);
                                 }
                             })(), { tag: 'SessionView.sendMessage.serverPending' });
                             return;
@@ -1713,7 +1738,7 @@ function SessionViewLoaded({
                         if (!isSessionActive && isResumable) {
                             fireAndForget((async () => {
                                 markComposerSent();
-                                const readyForSend = await directSessionTakeover.ensureReadyForSend();
+                                const readyForSend = await externalSessionTakeover.ensureReadyForSend();
                                 if (!readyForSend) {
                                     setMessage(previousMessage);
                                     return;
@@ -1721,7 +1746,7 @@ function SessionViewLoaded({
 
                                 try {
                                     const supportsPendingQueueV2 = typeof session.pendingVersion === 'number';
-                                    if (supportsPendingQueueV2) {
+                                    if (supportsPendingQueueV2 && !forceImmediateSend) {
                                         await sync.enqueuePendingMessage(sessionId, outbound.text, outbound.displayText, outbound.metaOverrides);
                                         if (shouldSendReviewComments) {
                                             clearSentReviewCommentDrafts();
@@ -1752,7 +1777,7 @@ function SessionViewLoaded({
 
                         fireAndForget((async () => {
                             markComposerSent();
-                            const readyForSend = await directSessionTakeover.ensureReadyForSend();
+                            const readyForSend = await externalSessionTakeover.ensureReadyForSend();
                             if (!readyForSend) {
                                 setMessage(previousMessage);
                                 return;
@@ -1790,7 +1815,7 @@ function SessionViewLoaded({
                                     return;
                                 }
 
-                                sendComposerText(expanded, composerTextBeforeSend);
+                                sendComposerText(expanded, composerTextBeforeSend, sendOptions);
                             } catch (e) {
                                 Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
                             }
@@ -1833,7 +1858,7 @@ function SessionViewLoaded({
                     }
 
                     if (resolved.kind !== 'send') return;
-                    sendComposerText(resolved.text, message);
+                    sendComposerText(resolved.text, message, sendOptions);
                 }}
                 isSendDisabled={!shouldShowInput || isResuming || isReadOnly || isUploadingAttachments}
                 onMicPress={micButtonState.onMicPress}

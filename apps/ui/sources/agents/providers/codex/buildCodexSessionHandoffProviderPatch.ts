@@ -2,7 +2,7 @@ import {
     buildCodexAgentRuntimeDescriptor,
     normalizeCodexBackendMode,
 } from '@happier-dev/agents';
-import type { DirectSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type { ExternalSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { readCanonicalRuntimeDescriptorV1ForProvider } from '@happier-dev/protocol';
 
 import type { AgentSessionHandoffProviderPatch } from '@/agents/registry/registryUiBehavior';
@@ -19,7 +19,7 @@ function normalizeTrimmedString(value: unknown): string | null {
 }
 
 function resolveCodexRuntimeSourceAffinity(
-    targetDirectSource: DirectSessionsSource | Record<string, unknown>,
+    targetDirectSource: ExternalSessionsSource | Record<string, unknown>,
 ): Readonly<{
     home?: 'user' | 'connectedService';
     connectedServiceId?: string;
@@ -47,7 +47,7 @@ function resolveCodexRuntimeSourceAffinity(
 function buildCodexRuntimeDescriptor(input: Readonly<{
     metadata: Record<string, unknown>;
     targetRemoteSessionId: string;
-    targetDirectSource: DirectSessionsSource | Record<string, unknown>;
+    targetDirectSource: ExternalSessionsSource | Record<string, unknown>;
     targetRuntimeDescriptor?: RuntimeDescriptorV1;
 }>): RuntimeDescriptorV1 | null {
     const importedRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(input.targetRuntimeDescriptor, 'codex');
@@ -74,7 +74,7 @@ function buildCodexRuntimeDescriptor(input: Readonly<{
 export function buildCodexSessionHandoffProviderPatch(input: Readonly<{
     metadata: Record<string, unknown>;
     targetRemoteSessionId: string;
-    targetDirectSource: DirectSessionsSource | Record<string, unknown>;
+    targetDirectSource: ExternalSessionsSource | Record<string, unknown>;
     targetRuntimeDescriptor?: RuntimeDescriptorV1;
 }>): AgentSessionHandoffProviderPatch {
     const runtimeDescriptor = buildCodexRuntimeDescriptor(input);
@@ -84,6 +84,6 @@ export function buildCodexSessionHandoffProviderPatch(input: Readonly<{
     return {
         ...(backendMode ? { metadataPatch: { codexBackendMode: backendMode } } : {}),
         runtimeDescriptor,
-        directSessionRuntimeDescriptor: runtimeDescriptor,
+        externalSessionRuntimeDescriptor: runtimeDescriptor,
     };
 }

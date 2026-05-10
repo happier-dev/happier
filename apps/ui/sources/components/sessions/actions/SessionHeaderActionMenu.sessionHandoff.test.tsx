@@ -1188,7 +1188,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           version: '0.0.0',
           path: '/tmp',
           homeDir: '/tmp',
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'codex',
             machineId: 'machine-1',
@@ -1211,7 +1211,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(dropdown.props.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'session.directSession.backgroundFollow',
+          id: 'session.externalSession.backgroundFollow',
           title: 'session.actionMenu.backgroundFollow',
           subtitle: 'common.disabled',
         }),
@@ -1225,7 +1225,7 @@ describe('SessionHeaderActionMenu handoff', () => {
         leaseActive: true,
         updatedAtMs: 1,
       });
-      dropdown.props.onSelect('session.directSession.backgroundFollow');
+      dropdown.props.onSelect('session.externalSession.backgroundFollow');
     });
     await flushHookEffects({ cycles: 1 });
 
@@ -1234,14 +1234,14 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
       serverId: 'server_a',
-      method: 'daemon.directSessions.followPolicy.set',
+      method: 'daemon.externalSessions.followPolicy.set',
       payload: expect.objectContaining({
         sessionId: 's1',
         remoteSessionId: 'vendor-session-1',
         enabled: true,
       }),
     }));
-    expect((storageState.current.sessions.s1 as any).metadata.directSessionV1.followPolicyV1).toEqual({
+    expect((storageState.current.sessions.s1 as any).metadata.externalSessionV1.followPolicyV1).toEqual({
       v: 1,
       policy: 'background_follow',
       updatedAtMs: 1,
@@ -1265,7 +1265,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           version: '0.0.0',
           path: '/tmp',
           homeDir: '/tmp',
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'codex',
             machineId: 'machine-1',
@@ -1288,7 +1288,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(dropdown.props.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'session.directSession.backgroundFollow',
+          id: 'session.externalSession.backgroundFollow',
           title: 'session.actionMenu.backgroundFollow',
           subtitle: 'common.enabled',
         }),
@@ -1302,7 +1302,7 @@ describe('SessionHeaderActionMenu handoff', () => {
         leaseActive: false,
         updatedAtMs: 2,
       });
-      dropdown.props.onSelect('session.directSession.backgroundFollow');
+      dropdown.props.onSelect('session.externalSession.backgroundFollow');
     });
     await flushHookEffects({ cycles: 1 });
 
@@ -1311,14 +1311,14 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
       serverId: 'server_a',
-      method: 'daemon.directSessions.followPolicy.set',
+      method: 'daemon.externalSessions.followPolicy.set',
       payload: expect.objectContaining({
         sessionId: 's1',
         remoteSessionId: 'vendor-session-1',
         enabled: false,
       }),
     }));
-    expect((storageState.current.sessions.s1 as any).metadata.directSessionV1.followPolicyV1).toEqual({
+    expect((storageState.current.sessions.s1 as any).metadata.externalSessionV1.followPolicyV1).toEqual({
       v: 1,
       policy: 'attached_only',
       updatedAtMs: 2,
@@ -1342,7 +1342,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           version: '0.0.0',
           path: '/tmp',
           homeDir: '/tmp',
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'opencode',
             machineId: 'machine-1',
@@ -1362,7 +1362,7 @@ describe('SessionHeaderActionMenu handoff', () => {
         />);
 
     const dropdown = screen.findByType('DropdownMenu' as any);
-    expect(dropdown.props.items.find((item: { id: string }) => item.id === 'session.directSession.backgroundFollow')).toBeUndefined();
+    expect(dropdown.props.items.find((item: { id: string }) => item.id === 'session.externalSession.backgroundFollow')).toBeUndefined();
   });
 
   it('drops execution-run menu items after execution runs are disabled in settings', async () => {

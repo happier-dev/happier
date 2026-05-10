@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { ActivityIndicator, Pressable, View, type AccessibilityState } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -9,7 +9,11 @@ export type WizardSectionHeaderRowAction = {
     accessibilityLabel: string;
     iconName: React.ComponentProps<typeof Ionicons>['name'];
     iconColor?: string;
-    onPress: () => void;
+    onPress?: () => void;
+    disabled?: boolean;
+    loading?: boolean;
+    loadingAccessibilityLabel?: string;
+    testID?: string;
 };
 
 export type WizardSectionHeaderRowProps = {
@@ -25,7 +29,8 @@ export const WizardSectionHeaderRow = React.memo((props: WizardSectionHeaderRowP
     const leadingIcon = normalizeNodeForView(
         <Ionicons name={props.iconName} size={18} color={props.iconColor} />,
     );
-    const actionIcon = props.action
+    const actionDisabled = props.action?.disabled === true || props.action?.loading === true || typeof props.action?.onPress !== 'function';
+    const actionIcon = props.action && !props.action.loading
         ? normalizeNodeForView(
             <Ionicons
                 name={props.action.iconName}
@@ -41,13 +46,22 @@ export const WizardSectionHeaderRow = React.memo((props: WizardSectionHeaderRowP
             <Text style={props.titleStyle}>{props.title}</Text>
             {props.action ? (
                 <Pressable
-                    onPress={props.action.onPress}
+                    testID={props.action.testID}
+                    onPress={!actionDisabled ? props.action.onPress : undefined}
+                    disabled={actionDisabled}
                     hitSlop={10}
                     style={{ padding: 2 }}
                     accessibilityRole="button"
                     accessibilityLabel={props.action.accessibilityLabel}
+                    accessibilityState={{ disabled: actionDisabled } satisfies AccessibilityState}
                 >
-                    {actionIcon}
+                    {props.action.loading ? (
+                        <ActivityIndicator
+                            size="small"
+                            color={props.action.iconColor}
+                            accessibilityLabel={props.action.loadingAccessibilityLabel}
+                        />
+                    ) : actionIcon}
                 </Pressable>
             ) : null}
         </View>

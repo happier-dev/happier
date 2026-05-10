@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
+import type { SshAuthMode, SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
 import { SshConfiguredHostPicker } from '@/components/ssh/SshConfiguredHostPicker';
 import type { SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
@@ -34,6 +34,7 @@ export type RemoteSshChecklistCredentialsPhaseProps = Readonly<{
 
     draft: SshCredentialsDraft;
     onChangeDraft: (next: SshCredentialsDraft) => void;
+    supportedAuthModes?: readonly SshAuthMode[];
 
     remoteHostsManagementEnabled: boolean;
     remoteHostsSecretMaterialEnabled: boolean;
@@ -118,6 +119,7 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
                         layoutVariant="wizard"
                         value={props.draft}
                         onChange={props.onChangeDraft}
+                        supportedAuthModes={props.supportedAuthModes}
                         privateKeyMaterial={props.privateKeyMaterialDraft}
                         onChangePrivateKeyMaterial={props.onChangePrivateKeyMaterialDraft}
                     />

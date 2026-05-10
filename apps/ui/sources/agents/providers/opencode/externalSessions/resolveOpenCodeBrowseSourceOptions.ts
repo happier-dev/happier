@@ -1,10 +1,10 @@
-import type { DirectBrowseSourceOption } from '@/agents/registry/registryUiBehavior';
+import type { ExternalSessionBrowseSourceOption } from '@/agents/registry/registryUiBehavior';
 import { t } from '@/text';
 
-export function resolveOpenCodeBrowseSourceOptions(): readonly DirectBrowseSourceOption[] {
+export function resolveOpenCodeBrowseSourceOptions(): readonly ExternalSessionBrowseSourceOption[] {
     return [{
         key: 'opencode:default',
-        label: t('directSessions.browseSourceOpenCodeDefault'),
+        label: t('externalSessions.browseSourceOpenCodeDefault'),
         source: { kind: 'opencodeServer' },
     }];
 }

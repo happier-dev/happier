@@ -9,6 +9,7 @@ import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+let backdropBlurEnabled = true;
 
 function flattenRnStyle(style: any): React.CSSProperties | undefined {
     if (style == null) return undefined;
@@ -215,7 +216,10 @@ vi.mock('@/sync/domains/state/storageStore', () => ({
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: () => 1,
+    useLocalSetting: (key: string) => {
+        if (key === 'uiBackdropBlurEnabled') return backdropBlurEnabled;
+        return 1;
+    },
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -269,7 +273,31 @@ async function renderAgentInput(props: Readonly<{ onAttachmentsAdded: (files: re
 }
 
 describe('AgentInput (attachments drag overlay)', () => {
+    it('does not apply web backdrop blur when the local backdrop blur setting is disabled', async () => {
+        backdropBlurEnabled = false;
+        const rendered = await renderAgentInput({ onAttachmentsAdded: () => { } });
+
+        try {
+            await act(async () => {
+                rendered.dropSurface.dispatchEvent(createFileDragEvent('dragenter'));
+            });
+
+            const overlay = rendered.container.querySelector<HTMLElement>('[data-testid="agent-input-drop-overlay"]');
+            expect(overlay).not.toBeNull();
+            expect(overlay?.style.backdropFilter).toBeUndefined();
+            expect(overlay?.style.backgroundColor).toBeTruthy();
+            expect(overlay?.style.backgroundColor).not.toBe('rgba(0, 0, 0, 0.45)');
+        } finally {
+            backdropBlurEnabled = true;
+            await act(async () => {
+                rendered.root.unmount();
+            });
+            rendered.container.remove();
+        }
+    });
+
     it('renders a drop overlay when files are dragged over the composer panel', async () => {
+        backdropBlurEnabled = true;
         const rendered = await renderAgentInput({ onAttachmentsAdded: () => { } });
 
         try {
@@ -297,6 +325,34 @@ describe('AgentInput (attachments drag overlay)', () => {
                 rendered.dropSurface.dispatchEvent(createFileDragEvent('dragenter', [file]));
                 rendered.dropSurface.dispatchEvent(createFileDragEvent('dragover', [file]));
                 rendered.dropSurface.dispatchEvent(createFileDragEvent('drop', [file]));
+            });
+
+            expect(onAttachmentsAdded).toHaveBeenCalledWith([file]);
+        } finally {
+            await act(async () => {
+                rendered.root.unmount();
+            });
+            rendered.container.remove();
+        }
+    });
+
+    it('uses DataTransfer item files when dropped FileList is empty', async () => {
+        const onAttachmentsAdded = vi.fn();
+        const rendered = await renderAgentInput({ onAttachmentsAdded });
+        const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' });
+        const event = new Event('drop', { bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'dataTransfer', {
+            configurable: true,
+            value: {
+                files: [],
+                items: [{ kind: 'file', getAsFile: () => file }],
+                types: ['Files'],
+            },
+        });
+
+        try {
+            await act(async () => {
+                rendered.dropSurface.dispatchEvent(event);
             });
 
             expect(onAttachmentsAdded).toHaveBeenCalledWith([file]);

@@ -62,7 +62,7 @@ describe('SessionsListStorageChrome', () => {
         const { SessionsListStorageChrome } = await import('./SessionsListStorageChrome');
         const screen = await renderScreen(
             <SessionsListStorageChrome
-                directSessionsEnabled={true}
+                externalSessionsEnabled={true}
                 storageKind="direct"
                 onSelectStorageKind={() => {}}
             />,

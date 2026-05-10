@@ -986,7 +986,7 @@ describe('RemoteSshChecklistStep', () => {
         await act(async () => {
             requireSkip().onPress?.();
         });
-        expect(runnerHarness.cancelSpy).toHaveBeenCalledTimes(0);
+        expect(runnerHarness.cancelSpy).toHaveBeenCalledTimes(1);
     });
 
     it('answers remote background service replacement prompts through wizard chrome actions', async () => {

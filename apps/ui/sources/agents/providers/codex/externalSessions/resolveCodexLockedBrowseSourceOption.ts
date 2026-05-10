@@ -1,13 +1,13 @@
-import type { DirectBrowseSourceOption } from '@/agents/registry/registryUiBehavior';
+import type { ExternalSessionBrowseSourceOption } from '@/agents/registry/registryUiBehavior';
 import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 
 const CODEX_CONNECTED_SERVICE_ID = 'openai-codex';
 
-function isCodexUserHomeOption(option: DirectBrowseSourceOption): boolean {
+function isCodexUserHomeOption(option: ExternalSessionBrowseSourceOption): boolean {
     return option.source.kind === 'codexHome' && option.source.home === 'user';
 }
 
-function matchesCodexConnectedServiceProfile(option: DirectBrowseSourceOption, profileId: string): boolean {
+function matchesCodexConnectedServiceProfile(option: ExternalSessionBrowseSourceOption, profileId: string): boolean {
     return option.source.kind === 'codexHome'
         && option.source.home === 'connectedService'
         && option.source.connectedServiceId === CODEX_CONNECTED_SERVICE_ID
@@ -15,9 +15,9 @@ function matchesCodexConnectedServiceProfile(option: DirectBrowseSourceOption, p
 }
 
 export function resolveCodexLockedBrowseSourceOption(params: Readonly<{
-    sourceOptions: readonly DirectBrowseSourceOption[];
+    sourceOptions: readonly ExternalSessionBrowseSourceOption[];
     agentOptionState: Record<string, unknown> | null | undefined;
-}>): DirectBrowseSourceOption | null {
+}>): ExternalSessionBrowseSourceOption | null {
     const options = params.sourceOptions;
     if (options.length === 0) return null;
 

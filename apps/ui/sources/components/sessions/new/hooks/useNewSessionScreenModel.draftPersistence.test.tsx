@@ -151,7 +151,7 @@ const platformOsState = vi.hoisted(() => ({
 }));
 const modalShowMock = vi.hoisted(() => vi.fn());
 const modalAlertMock = vi.hoisted(() => vi.fn());
-const openDirectSessionsResumeIdPickerModalMock = vi.hoisted(() => vi.fn<(args: unknown) => Promise<string | null>>(async () => 'session-picked'));
+const openExternalSessionsResumeIdPickerModalMock = vi.hoisted(() => vi.fn<(args: unknown) => Promise<string | null>>(async () => 'session-picked'));
 const fireAndForgetState = vi.hoisted(() => ({
     promises: [] as Promise<unknown>[],
 }));
@@ -161,7 +161,7 @@ const routerSetParamsMock = vi.hoisted(() => vi.fn());
 const featureFlags = vi.hoisted(() => ({
     mcpServersEnabled: false,
     automationsEnabled: false,
-    directSessionsEnabled: false,
+    externalSessionsEnabled: false,
 }));
 const persistDraftNowRef = vi.hoisted(() => ({
     current: null as null | (() => void),
@@ -477,8 +477,8 @@ installNewSessionScreenModelCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/sessions/external/browse/openDirectSessionsResumeIdPickerModal', () => ({
-    openDirectSessionsResumeIdPickerModal: (args: unknown) => openDirectSessionsResumeIdPickerModalMock(args),
+vi.mock('@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal', () => ({
+    openExternalSessionsResumeIdPickerModal: (args: unknown) => openExternalSessionsResumeIdPickerModalMock(args),
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -755,7 +755,7 @@ vi.mock('@/hooks/server/useAutomationsSupport', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => {
         if (featureId === 'mcp.servers') return featureFlags.mcpServersEnabled;
-        if (featureId === 'sessions.direct') return featureFlags.directSessionsEnabled;
+        if (featureId === 'sessions.direct') return featureFlags.externalSessionsEnabled;
         return false;
     },
 }));
@@ -895,8 +895,8 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         platformOsState.value = 'web';
         modalShowMock.mockReset();
         modalAlertMock.mockReset();
-        openDirectSessionsResumeIdPickerModalMock.mockReset();
-        openDirectSessionsResumeIdPickerModalMock.mockResolvedValue('session-picked');
+        openExternalSessionsResumeIdPickerModalMock.mockReset();
+        openExternalSessionsResumeIdPickerModalMock.mockResolvedValue('session-picked');
         fireAndForgetState.promises = [];
         tryShowDaemonUnavailableAlertForRpcErrorMock.mockReset();
         tryShowDaemonUnavailableAlertForRpcErrorMock.mockReturnValue(false);
@@ -907,7 +907,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         routerSetParamsMock.mockClear();
         featureFlags.mcpServersEnabled = false;
         featureFlags.automationsEnabled = false;
-        featureFlags.directSessionsEnabled = false;
+        featureFlags.externalSessionsEnabled = false;
         persistDraftNowRef.current = null;
         saveNewSessionDraftMock.mockClear();
         clearNewSessionDraftMock.mockClear();
@@ -2176,7 +2176,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
     it('opens the shared direct-sessions resume browser modal from the resume popover without navigating away', async () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
         const portalTarget = { tag: 'new-session-parent-modal-target' } as unknown as Element;
-        featureFlags.directSessionsEnabled = true;
+        featureFlags.externalSessionsEnabled = true;
 
         let model: any = null;
         function Probe() {
@@ -2202,8 +2202,8 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         await flushHookEffects({ cycles: 1, turns: 2 });
 
         expect(requestClose).toHaveBeenCalledTimes(1);
-        expect(openDirectSessionsResumeIdPickerModalMock).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'directSessions.browseTitle',
+        expect(openExternalSessionsResumeIdPickerModalMock).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'externalSessions.browseTitle',
             webPortalTarget: portalTarget,
             lockScope: expect.objectContaining({
                 machineId: 'machine-2',
@@ -2235,7 +2235,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
         const popoverScreen = await renderScreen(rendered);
         expect(popoverScreen.findByTestId('resume-id-browse-trigger')).toBeNull();
-        expect(openDirectSessionsResumeIdPickerModalMock).not.toHaveBeenCalled();
+        expect(openExternalSessionsResumeIdPickerModalMock).not.toHaveBeenCalled();
     });
 
     it('keeps the profile picker on the current route and exposes a shared profile popover in the simple panel', async () => {

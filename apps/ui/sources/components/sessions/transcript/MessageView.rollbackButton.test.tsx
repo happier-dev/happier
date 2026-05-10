@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -13,6 +14,12 @@ installMessageViewCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
+            Platform: {
+                get OS() {
+                    return messageViewRollbackTestState.platformOS;
+                },
+                select: (options: any) => options?.[messageViewRollbackTestState.platformOS] ?? options?.default ?? options?.native ?? options?.web,
+            },
             Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
             useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
             View: 'View',
@@ -30,7 +37,9 @@ installMessageViewCommonModuleMocks({
     },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock().module;
+        const modalMock = createModalModuleMock();
+        messageViewRollbackTestState.modalMock = modalMock;
+        return modalMock.module;
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -60,6 +69,13 @@ installMessageViewCommonModuleMocks({
         });
     },
 });
+
+const messageViewRollbackTestState = vi.hoisted(() => ({
+    platformOS: 'web',
+    modalMock: null as null | ReturnType<typeof import('@/dev/testkit/mocks/modal').createModalModuleMock>,
+}));
+const contextMenuPropsSpy = vi.fn();
+const executeSpy = vi.fn();
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -186,8 +202,25 @@ vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () =>
     TranscriptRollbackActionButton: (props: any) => React.createElement('TranscriptRollbackActionButton', props),
 }));
 
+vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
+    ContextMenu: (props: any) => {
+        contextMenuPropsSpy(props);
+        return React.createElement('ContextMenu', props);
+    },
+}));
+
+vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
+    createDefaultActionExecutor: () => ({
+        execute: (actionId: unknown, input: unknown, ctx: unknown) => executeSpy(actionId, input, ctx),
+    }),
+}));
+
 describe('MessageView (rollback button)', () => {
     afterEach(() => {
+        messageViewRollbackTestState.platformOS = 'web';
+        messageViewRollbackTestState.modalMock?.spies.show?.mockReset();
+        contextMenuPropsSpy.mockReset();
+        executeSpy.mockReset();
         standardCleanup();
     });
 
@@ -209,5 +242,103 @@ describe('MessageView (rollback button)', () => {
             (node: any) => node.type === 'TranscriptRollbackActionButton' && node.props.testID === 'transcript-message-rollback:a1',
         );
         expect(rollbackButtons).toHaveLength(1);
+    });
+
+    it('passes checkpoint code rollback evidence from MessageView into the rollback button', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = { kind: 'agent-text', id: 'a1', createdAt: 1, text: 'hello', isThinking: false, seq: 2 };
+
+        const screen = await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+                rollbackAction={{
+                    target: { type: 'latest_turn' },
+                    restoredDraftText: null,
+                    checkpointCodeRollback: {
+                        conversationRollbackSupported: true,
+                        turnId: 'turn-1',
+                        cwd: '/repo',
+                        expectedStartRef: 'refs/happier/checkpoints/czE/turn-start/turn-1',
+                        expectedFinalRef: 'refs/happier/checkpoints/czE/turn-final/turn-1',
+                    },
+                } as any}
+            />,
+        );
+
+        const rollbackButtons = screen.findAll(
+            (node: any) => node.type === 'TranscriptRollbackActionButton' && node.props.testID === 'transcript-message-rollback:a1',
+        );
+        expect(rollbackButtons[0]?.props.checkpointCodeRollback).toMatchObject({
+            conversationRollbackSupported: true,
+            turnId: 'turn-1',
+            cwd: '/repo',
+            expectedStartRef: 'refs/happier/checkpoints/czE/turn-start/turn-1',
+            expectedFinalRef: 'refs/happier/checkpoints/czE/turn-final/turn-1',
+        });
+    });
+
+    it('routes native context-menu rollback through the checkpoint dialog/action path when checkpoint evidence is present', async () => {
+        messageViewRollbackTestState.platformOS = 'ios';
+        executeSpy
+            .mockResolvedValueOnce({ ok: true, result: { ok: true } })
+            .mockResolvedValueOnce({ ok: true, result: { status: 'applied' } });
+        messageViewRollbackTestState.modalMock?.spies.show?.mockImplementationOnce(({ props }: any) => props?.onConfirm?.({
+            mode: 'conversation_and_code_without_stash',
+            backupMode: 'happier_checkpoint_only',
+        }));
+
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = { kind: 'agent-text', id: 'a1', createdAt: 1, text: 'hello', isThinking: false, seq: 2 };
+
+        const screen = await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="session-1"
+                rollbackAction={{
+                    target: { type: 'latest_turn' },
+                    restoredDraftText: null,
+                    checkpointCodeRollback: {
+                        conversationRollbackSupported: true,
+                        turnId: 'turn-1',
+                        cwd: '/repo',
+                        expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
+                        expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
+                    },
+                }}
+            />,
+        );
+
+        const longPressTargets = screen.findAll((node: any) => node.type === 'Pressable' && typeof node.props.onLongPress === 'function');
+        expect(longPressTargets.length).toBeGreaterThan(0);
+        await act(async () => {
+            longPressTargets[0]?.props.onLongPress();
+        });
+        const contextMenuProps = contextMenuPropsSpy.mock.calls.at(-1)?.[0];
+        expect(contextMenuProps?.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'rollback' }),
+        ]));
+
+        await act(async () => {
+            await contextMenuProps.onSelect('rollback');
+        });
+
+        expect(messageViewRollbackTestState.modalMock?.spies.show).toHaveBeenCalled();
+        expect(executeSpy).toHaveBeenNthCalledWith(1, 'session.rollback', expect.any(Object), expect.any(Object));
+        expect(executeSpy).toHaveBeenNthCalledWith(
+            2,
+            'session.checkpoint_code_rollback',
+            expect.objectContaining({
+                codeMode: 'code_only_without_stash',
+                codeOnlyTranscriptDivergenceConfirmed: true,
+            }),
+            expect.any(Object),
+        );
+
+        await screen.unmount();
     });
 });

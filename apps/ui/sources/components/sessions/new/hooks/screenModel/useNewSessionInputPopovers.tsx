@@ -10,8 +10,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { AgentId } from '@/agents/catalog/catalog';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { openDirectSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openDirectSessionsResumeIdPickerModal';
-import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/external/browse/resolveDirectBrowseLockedSourceOption';
+import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
+import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
 
 const LARGE_PICKER_LAYOUT: Pick<
     AgentInputContentPopoverConfig,
@@ -25,7 +25,7 @@ const LARGE_PICKER_LAYOUT: Pick<
     initialVisibility: { top: true, bottom: true },
 };
 
-type DirectBrowseLockContext = Parameters<typeof resolveDirectBrowseLockedSource>[0];
+type ExternalSessionBrowseLockContext = Parameters<typeof resolveExternalSessionBrowseLockedSource>[0];
 
 export function useNewSessionInputPopovers(params: Readonly<{
     selectedMachine: Machine | null;
@@ -51,13 +51,13 @@ export function useNewSessionInputPopovers(params: Readonly<{
     getBestPathForMachine: (machineId: string) => string;
     useMachinePickerSearch: boolean;
     targetServerId: string | null;
-    directSessionsFeatureEnabled: boolean;
+    externalSessionsFeatureEnabled: boolean;
     resumeSessionId: string;
     setResumeSessionId: React.Dispatch<React.SetStateAction<string>>;
     agentType: AgentId;
     agentLabel: string;
-    agentOptionState: DirectBrowseLockContext['agentOptionState'];
-    settings: DirectBrowseLockContext['settings'];
+    agentOptionState: ExternalSessionBrowseLockContext['agentOptionState'];
+    settings: ExternalSessionBrowseLockContext['settings'];
 }>): Readonly<{
     pathPopover: AgentInputContentPopoverConfig;
     machinePopover: AgentInputContentPopoverConfig;
@@ -159,9 +159,9 @@ export function useNewSessionInputPopovers(params: Readonly<{
     ]);
 
     const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => {
-        const browseEnabled = params.directSessionsFeatureEnabled
+        const browseEnabled = params.externalSessionsFeatureEnabled
             && Boolean(params.selectedMachineId)
-            && canBrowseDirectSessions(params.agentType);
+            && canBrowseExternalSessions(params.agentType);
         return {
             renderContent: ({ requestClose }) => (
                 <NewSessionResumeSelectionContent
@@ -184,7 +184,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
                         enabled: true,
                         onBrowse: async () => {
                             if (!params.selectedMachineId) return null;
-                            const source = resolveDirectBrowseLockedSource({
+                            const source = resolveExternalSessionBrowseLockedSource({
                                 providerId: params.agentType as any,
                                 agentOptionState: params.agentOptionState,
                                 profile: accountProfile,
@@ -192,8 +192,8 @@ export function useNewSessionInputPopovers(params: Readonly<{
                             });
                             if (!source) return null;
                             requestClose();
-                            const nextResumeSessionId = await openDirectSessionsResumeIdPickerModal({
-                                title: t('directSessions.browseTitle'),
+                            const nextResumeSessionId = await openExternalSessionsResumeIdPickerModal({
+                                title: t('externalSessions.browseTitle'),
                                 webPortalTarget: modalPortalTarget,
                                 lockScope: {
                                     machineId: params.selectedMachineId,
@@ -222,7 +222,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
         params.agentLabel,
         params.agentOptionState,
         params.agentType,
-        params.directSessionsFeatureEnabled,
+        params.externalSessionsFeatureEnabled,
         params.resumeSessionId,
         params.selectedMachineId,
         params.settings,

@@ -157,7 +157,7 @@ describe('SessionHandoffPickerModal', () => {
                     machineId: 'machine_source',
                     path: '~/projects/happier',
                     homeDir: '/Users/tester',
-                    directSessionV1: { source: 'claudeConfig' },
+                    externalSessionV1: { source: 'claudeConfig' },
                 },
             },
         };
@@ -171,7 +171,7 @@ describe('SessionHandoffPickerModal', () => {
                     // session record path for safety decisions (not the display string).
                     path: '~',
                     homeDir: '/Users/tester',
-                    directSessionV1: { source: 'claudeConfig' },
+                    externalSessionV1: { source: 'claudeConfig' },
                 },
             },
         ];
@@ -315,7 +315,7 @@ describe('SessionHandoffPickerModal', () => {
                     machineId: 'machine_source',
                     path: '/Users/tester',
                     homeDir: '/Users/tester',
-                    directSessionV1: { source: 'claudeConfig' },
+                    externalSessionV1: { source: 'claudeConfig' },
                 },
             },
         };
@@ -327,7 +327,7 @@ describe('SessionHandoffPickerModal', () => {
                     machineId: 'machine_source',
                     path: '/Users/tester',
                     homeDir: '/Users/tester',
-                    directSessionV1: { source: 'claudeConfig' },
+                    externalSessionV1: { source: 'claudeConfig' },
                 },
             },
         ];

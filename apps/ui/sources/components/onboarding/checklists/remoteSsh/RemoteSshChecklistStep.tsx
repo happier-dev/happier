@@ -173,9 +173,13 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     const styles = remoteSshChecklistStyles;
     const copy = React.useMemo(() => getRemoteSshChecklistCopy(props.mode), [props.mode]);
     const [phase, setPhase] = React.useState<RemoteSshChecklistPhase>('credentials');
+    const supportedAuthModes = props.runner?.mode === 'native'
+        ? (['keyfile', 'password'] as const)
+        : undefined;
     const [draft, setDraft] = React.useState<SshCredentialsDraft>(() => ({
         ...createDefaultSshCredentialsDraft(),
         ...(props.initialDraft ?? {}),
+        ...(props.runner?.mode === 'native' && !props.initialDraft?.authMode ? { authMode: 'password' as const } : {}),
     }));
     const remoteHostsV1 = useSetting('remoteHostsV1');
     const [hostPickerOpen, setHostPickerOpen] = React.useState(false);
@@ -188,6 +192,15 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         saveHost: boolean;
         saveSecretMaterial: boolean;
     }> | null>(null);
+
+    React.useEffect(() => {
+        if (props.runner?.mode !== 'native') {
+            return;
+        }
+        setDraft((current) => current.authMode === 'agent'
+            ? { ...current, authMode: 'password' }
+            : current);
+    }, [props.runner?.mode]);
 
     const remoteHostsManagementEnabled = useFeatureEnabled('remoteHosts.management');
     const remoteHostsSecretMaterialEnabled = useFeatureEnabled('remoteHosts.secretMaterial');
@@ -732,6 +745,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                     savedDraftRef.current = next;
                     setDraft(next);
                 }}
+                supportedAuthModes={supportedAuthModes}
                 remoteHostsManagementEnabled={remoteHostsManagementEnabled}
                 remoteHostsSecretMaterialEnabled={remoteHostsSecretMaterialEnabled}
                 saveHost={saveHost}

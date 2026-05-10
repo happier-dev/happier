@@ -10,7 +10,7 @@ import { Text } from '@/components/ui/text/Text';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName } from '@/utils/sessions/sessionUtils';
 import { LruMap } from '@/utils/cache/lruMap';
 
@@ -154,7 +154,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     }
 
     const session = input.session;
-    const directSessionLink = readDirectSessionLink(session.metadata);
+    const externalSessionLink = readExternalSessionLink(session.metadata);
     const shouldFoldHeaderIconActions = input.windowWidth < 520;
     const badgeLabel = input.sessionAutomationsEnabledCount > 99 ? '99+' : String(input.sessionAutomationsEnabledCount);
     const title = getSessionName(session);
@@ -169,13 +169,13 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     const avatarId = getSessionAvatarId(session);
     const isConnected = session.presence === 'online';
     const flavor = session.metadata?.flavor || null;
-    const resolvedStorageBadge = directSessionLink ? t('sessionsList.storageDirectTab') : t('sessionsList.storagePersistedTab');
-    const resolvedProviderBadge = directSessionLink
+    const resolvedStorageBadge = externalSessionLink ? t('sessionsList.storageDirectTab') : t('sessionsList.storagePersistedTab');
+    const resolvedProviderBadge = externalSessionLink
         ? [
-            t(getAgentCore(directSessionLink.providerId).displayNameKey),
+            t(getAgentCore(externalSessionLink.providerId).displayNameKey),
             typeof session.metadata?.host === 'string' && session.metadata.host.trim()
                 ? session.metadata.host.trim()
-                : directSessionLink.machineId,
+                : externalSessionLink.machineId,
         ].join(' · ')
         : null;
     const cacheKey = buildSessionViewHeaderPropsCacheKey({

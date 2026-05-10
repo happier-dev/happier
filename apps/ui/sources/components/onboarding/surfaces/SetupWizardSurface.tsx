@@ -7,6 +7,10 @@ import { type SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields'
 import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
 import { useRelayDriftBanner } from '@/components/settings/server/useRelayDriftBanner';
 import { Text } from '@/components/ui/text/Text';
+import {
+    resolveStepTransitionDirection,
+    type StepTransitionDirection,
+} from '@/components/ui/motion/StepTransitionFrame';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
@@ -178,6 +182,48 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
 
     const stepId = state.currentStepId;
     const progress = getWizardProgress(state.context, stepId);
+    const currentStepIndex = Math.max(0, progress.current - 1);
+    const transitionSnapshotRef = React.useRef<Readonly<{
+        stepId: WizardStepId;
+        stepIndex: number;
+        historyLength: number;
+        direction: StepTransitionDirection;
+    }>>({
+        stepId,
+        stepIndex: currentStepIndex,
+        historyLength: state.history.length,
+        direction: 'replace',
+    });
+    const previousTransition = transitionSnapshotRef.current;
+    let contentTransitionDirection = previousTransition.direction;
+    if (previousTransition.stepId !== stepId) {
+        const indexTransitionDirection = resolveStepTransitionDirection({
+            previousIndex: previousTransition.stepIndex,
+            nextIndex: currentStepIndex,
+        });
+        contentTransitionDirection = indexTransitionDirection !== 'replace'
+            ? indexTransitionDirection
+            : state.history.length > previousTransition.historyLength
+                ? 'forward'
+                : state.history.length < previousTransition.historyLength
+                    ? 'backward'
+                    : 'forward';
+        transitionSnapshotRef.current = {
+            stepId,
+            stepIndex: currentStepIndex,
+            historyLength: state.history.length,
+            direction: contentTransitionDirection,
+        };
+    } else if (
+        previousTransition.stepIndex !== currentStepIndex
+        || previousTransition.historyLength !== state.history.length
+    ) {
+        transitionSnapshotRef.current = {
+            ...previousTransition,
+            stepIndex: currentStepIndex,
+            historyLength: state.history.length,
+        };
+    }
     const action = state.context.setupAction;
     const relayCandidateUrl = state.context.relaySelection.serverUrl;
     const showSkip = canSkipWizardStep(state.context, stepId);
@@ -733,8 +779,10 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
     return (
         <WizardModalShell
             testID={props.testID ?? 'setupWizard.surface'}
-            stepIndex={Math.max(0, progress.current - 1)}
+            stepIndex={currentStepIndex}
             stepCount={Math.max(1, progress.total)}
+            contentTransitionKey={stepId}
+            contentTransitionDirection={contentTransitionDirection}
             title={title}
             subtitle={subtitle ?? undefined}
             scrollable={!props.useOuterScrollContainer}

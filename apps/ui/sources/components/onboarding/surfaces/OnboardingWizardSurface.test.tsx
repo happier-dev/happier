@@ -535,6 +535,38 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.next');
     });
 
+    it('passes backward transition direction when returning to an earlier wizard step', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        const startButton = screen.findByTestId('onboarding-wizard-primary')!;
+        await act(async () => {
+            await startButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findByType(WizardModalShell as never).props.contentTransitionDirection).toBe('forward');
+
+        const backButton = screen.findByTestId('onboarding-wizard-back')!;
+        await act(async () => {
+            await backButton.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(screen.findByType(WizardModalShell as never).props.contentTransitionDirection).toBe('backward');
+    });
+
     it('renders a shell chrome accessory when the pre-auth host provides one', async () => {
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(

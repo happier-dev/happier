@@ -85,12 +85,90 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 const openMachinePathBrowserModalMock = vi.fn();
+const capturedDropdown = vi.hoisted(() => ({
+    lastProps: null as any,
+    reset() {
+        this.lastProps = null;
+    },
+}));
 
 vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
     openMachinePathBrowserModal: (input: unknown) => openMachinePathBrowserModalMock(input),
 }));
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: any) => {
+        capturedDropdown.lastProps = props;
+        return React.createElement('DropdownMenu', props);
+    },
+}));
+
 describe('PathSelector', () => {
+    it('renders the path entry in an item group for wizard presentation', async () => {
+        const { PathSelector } = await import('./PathSelector');
+
+        const screen = await renderScreen(
+            <PathSelector
+                machineHomeDir="/Users/leeroy"
+                selectedPath="/Users/leeroy/project"
+                onChangeSelectedPath={() => {}}
+                recentPaths={[]}
+                usePickerSearch={false}
+                favoriteDirectories={[]}
+                onChangeFavoriteDirectories={() => {}}
+                pathEntryPresentation="itemGroup"
+            />,
+        );
+
+        const input = findTestInstanceByTypeWithProps(screen.tree, 'TextInput', { testID: 'path-selector-input' });
+        expect(input).toBeTruthy();
+
+        let current = input?.parent;
+        let insideItemGroup = false;
+        while (current) {
+            if ((current.type as unknown) === 'ItemGroup') {
+                insideItemGroup = true;
+                break;
+            }
+            current = current.parent;
+        }
+        expect(insideItemGroup).toBe(true);
+    });
+
+    it('renders saved paths as a dropdown with a stable title and selected path subtitle', async () => {
+        capturedDropdown.reset();
+        const { PathSelector } = await import('./PathSelector');
+
+        await renderScreen(
+            <PathSelector
+                machineHomeDir="/Users/leeroy"
+                selectedPath="/Users/leeroy/project"
+                onChangeSelectedPath={() => {}}
+                recentPaths={['/Users/leeroy/project', '/Users/leeroy/other']}
+                usePickerSearch={true}
+                favoriteDirectories={['/Users/leeroy/favorite']}
+                onChangeFavoriteDirectories={() => {}}
+                savedPathsPresentation="dropdown"
+                favoriteGroupPlacement="beforeRecent"
+            />,
+        );
+
+        expect(capturedDropdown.lastProps?.itemTrigger).toMatchObject({
+            title: 'newSession.selectPathTitle',
+            subtitle: '/Users/leeroy/project',
+            showSelectedDetail: false,
+            showSelectedSubtitle: false,
+        });
+        expect(capturedDropdown.lastProps?.itemTrigger?.itemProps).toMatchObject({
+            testID: 'path-selector-saved-paths-dropdown-trigger',
+        });
+        expect((capturedDropdown.lastProps?.items ?? []).map((item: any) => item.category)).toEqual([
+            'newSession.pathPicker.favoritesTitle',
+            'newSession.pathPicker.recentTitle',
+            'newSession.pathPicker.recentTitle',
+        ]);
+    });
+
     it('does not suggest a hardcoded /projects path (case-sensitive filesystems)', async () => {
         const { PathSelector } = await import('./PathSelector');
 

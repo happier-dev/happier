@@ -7,7 +7,7 @@ export const OH_MY_PI_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     mcpServers: {
         supportsDetectedConfigScan: true,
     },
-    directSessions: {
+    externalSessions: {
         supportsBackgroundFollow: true,
         browse: {
             order: 25,

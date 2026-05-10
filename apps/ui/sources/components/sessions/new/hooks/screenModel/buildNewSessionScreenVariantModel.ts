@@ -7,6 +7,7 @@ import type {
     NewSessionWizardLayoutProps,
     NewSessionWizardMachineProps,
     NewSessionWizardProfilesProps,
+    NewSessionWizardProps,
 } from '@/components/sessions/new/components/NewSessionWizard';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type {
@@ -21,6 +22,8 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     setCheckoutCreationDraft: React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>;
     wizardLayoutProps: NewSessionWizardLayoutProps;
+    wizardSectionPresentation?: NewSessionWizardProps['sectionPresentation'];
+    wizardUseColumnLayout?: NewSessionWizardProps['useColumnLayout'];
     wizardProfilesProps: NewSessionWizardProfilesProps;
     wizardAgentProps: NewSessionWizardAgentProps;
     wizardMachineProps: NewSessionWizardMachineProps;
@@ -45,6 +48,8 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
         popoverBoundaryRef: params.popoverBoundaryRef,
         wizardProps: {
             layout: params.wizardLayoutProps,
+            sectionPresentation: params.wizardSectionPresentation,
+            useColumnLayout: params.wizardUseColumnLayout,
             profiles: params.wizardProfilesProps,
             agent: params.wizardAgentProps,
             machine: params.wizardMachineProps,

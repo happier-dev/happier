@@ -6,7 +6,7 @@ import {
     SessionGettingStartedGuidance,
     type SessionGettingStartedGuidanceVariant,
 } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
-import { DirectSessionsEmptyState } from '@/components/sessions/shell/DirectSessionsEmptyState';
+import { ExternalSessionsEmptyState } from '@/components/sessions/shell/ExternalSessionsEmptyState';
 import { HiddenInactiveSessionsEmptyState } from '@/components/sessions/shell/HiddenInactiveSessionsEmptyState';
 import { SessionsListView } from '@/components/sessions/shell/SessionsList';
 import { SessionsListEmptyState } from '@/components/sessions/shell/SessionsListEmptyState';
@@ -77,7 +77,7 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
             return (
                 <View style={styles.emptyStateContainer}>
                     <View style={styles.emptyStateContentContainer}>
-                        <DirectSessionsEmptyState surface={props.fallbackGuidanceVariant === 'sidebar' ? 'sidebar' : 'default'} />
+                        <ExternalSessionsEmptyState surface={props.fallbackGuidanceVariant === 'sidebar' ? 'sidebar' : 'default'} />
                     </View>
                 </View>
             );

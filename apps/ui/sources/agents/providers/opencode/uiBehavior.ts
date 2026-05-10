@@ -80,7 +80,7 @@ export const OPENCODE_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
             }).sessionStorage.direct === true;
         },
     },
-    directSessions: {
+    externalSessions: {
         supportsBackgroundFollow: false,
         browse: {
             order: 30,

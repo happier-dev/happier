@@ -9,7 +9,7 @@ import {
     resolveEffectiveActionInputFields,
 } from '@happier-dev/protocol';
 
-import { buildResumeSessionExtrasFromUiState, getAgentCore, isAgentId, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { buildResumeSessionExtrasFromUiState, isAgentId, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
@@ -17,7 +17,6 @@ import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabiliti
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { Text } from '@/components/ui/text/Text';
-import { buildAvailableReviewEngineOptions } from '@/sync/domains/reviews/reviewEngineCatalog';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -210,16 +209,15 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     );
 
     const reviewEngineOptions = React.useMemo<readonly ActionFieldOption[]>(() => {
-        return buildAvailableReviewEngineOptions({
-            enabledAgentIds,
-            executionRunsBackends,
-            resolveAgentLabel: (id) => t(getAgentCore(id as any).displayNameKey),
-        }).map((option) => ({
-            value: option.id,
-            label: option.label ?? option.id,
-            ...(option.disabled === true ? { disabled: true as const } : {}),
+        if (intent !== 'review') {
+            return [];
+        }
+        return backendChoices.map((choice) => ({
+            value: choice.backendId,
+            label: choice.title,
+            ...(choice.disabled ? { disabled: true as const } : {}),
         }));
-    }, [enabledAgentIds, executionRunsBackends]);
+    }, [backendChoices, intent]);
 
     const executionBackendOptions = React.useMemo<readonly ActionFieldOption[]>(() => {
         return backendChoices.map((choice) => ({

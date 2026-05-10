@@ -1,4 +1,4 @@
-import type { DirectBrowseLinkEnsureRequestExtras } from '@/agents/registry/registryUiBehavior';
+import type { ExternalSessionBrowseLinkEnsureRequestExtras } from '@/agents/registry/registryUiBehavior';
 import {
     buildOpenCodeAgentRuntimeDescriptor,
     normalizeOpenCodeBackendMode,
@@ -17,7 +17,7 @@ function normalizeCandidateRuntimeDescriptorMetadata(details: Record<string, unk
 
 export function resolveOpenCodeLinkEnsureRequestExtras(params: Readonly<{
     candidate: Readonly<{ details?: Record<string, unknown> }>;
-}>): DirectBrowseLinkEnsureRequestExtras {
+}>): ExternalSessionBrowseLinkEnsureRequestExtras {
     const details = normalizeCandidateRuntimeDescriptorMetadata(params.candidate.details);
     const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(details ?? null, 'opencode');
     return runtimeDescriptor ? {

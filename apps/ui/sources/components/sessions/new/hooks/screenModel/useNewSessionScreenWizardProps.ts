@@ -33,6 +33,8 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'newSessionBottomPadding'
         | 'shouldBottomAnchor'
     >;
+    sectionPresentation?: NewSessionWizardParams['sectionPresentation'];
+    useColumnLayout?: NewSessionWizardParams['useColumnLayout'];
     profiles: Pick<
         NewSessionWizardParams,
         | 'useProfiles'
@@ -75,7 +77,10 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'setAgentType'
         | 'agentPickerOptions'
         | 'onAgentPickerSelect'
+        | 'selectedBackendEntry'
         | 'modelOptions'
+        | 'favoriteModelSelections'
+        | 'setFavoriteModelSelections'
         | 'acpSessionModeOptions'
         | 'acpSessionModeId'
         | 'setAcpSessionModeId'
@@ -151,6 +156,8 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         ...params.profiles,
         ...params.profileSecrets,
         ...params.installables,
+        sectionPresentation: params.sectionPresentation,
+        useColumnLayout: params.useColumnLayout,
         ...agentProps,
         ...params.machine,
         ...params.footer,

@@ -408,7 +408,7 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOrigin
         shouldRequestRemoteControlAfterPendingEnqueue: () => false,
     };
 });
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/ops/sessionSwitch', () => ({

@@ -143,8 +143,8 @@ describe('TranscriptRollbackActionButton', () => {
 
         expect(createDefaultActionExecutorSpy.mock.calls[0]?.[0]?.resolveServerIdForSessionId?.('s1')).toBe('server-explicit');
 
-        preferredSessionServerIdState.value = 'server-reactive';
         await act(async () => {
+            preferredSessionServerIdState.value = 'server-reactive';
             screen.tree.update(
                 <TranscriptRollbackActionButton
                     sessionId="session-1"
@@ -201,6 +201,154 @@ describe('TranscriptRollbackActionButton', () => {
             },
         );
         expect(updateSessionDraftSpy).toHaveBeenCalledWith('session-1', 'edit this prompt');
+        await screen.unmount();
+    });
+
+    it('runs advanced code-only rollback through production action after explicit confirmation', async () => {
+        executeSpy.mockResolvedValueOnce({ ok: true, result: { status: 'applied' } });
+
+        const { TranscriptRollbackActionButton } = await import('./TranscriptRollbackActionButton');
+        const screen = await renderScreen(
+            <TranscriptRollbackActionButton
+                sessionId="session-1"
+                testID="rollback-action"
+                checkpointCodeRollback={{
+                    conversationRollbackSupported: false,
+                    turnId: 'turn-1',
+                    cwd: '/repo',
+                    expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
+                    expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
+                }}
+            />,
+        );
+        getTranscriptModalMockRef().current?.spies.show?.mockImplementationOnce(({ props }: any) => props?.onConfirm?.({
+            mode: 'code_only_without_stash',
+            backupMode: 'happier_checkpoint_only',
+            codeOnlyTranscriptDivergenceConfirmed: true,
+        }));
+
+        await screen.pressByTestIdAsync('rollback-action');
+
+        expect(getTranscriptModalMockRef().current?.spies.show).toHaveBeenCalled();
+        expect(executeSpy).toHaveBeenCalledWith(
+            'session.checkpoint_code_rollback',
+            {
+                v: 1,
+                sessionId: 'session-1',
+                turnId: 'turn-1',
+                cwd: '/repo',
+                codeMode: 'code_only_without_stash',
+                backupMode: 'happier_checkpoint_only',
+                expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
+                expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
+                codeOnlyTranscriptDivergenceConfirmed: true,
+            },
+            {
+                defaultSessionId: 'session-1',
+                surface: 'ui',
+            },
+        );
+        await screen.unmount();
+    });
+
+    it('composes conversation rollback in UI before invoking code-only rollback action', async () => {
+        executeSpy
+            .mockResolvedValueOnce({ ok: true, result: { ok: true } })
+            .mockResolvedValueOnce({ ok: true, result: { status: 'applied' } });
+
+        const { TranscriptRollbackActionButton } = await import('./TranscriptRollbackActionButton');
+        const screen = await renderScreen(
+            <TranscriptRollbackActionButton
+                sessionId="session-1"
+                testID="rollback-action"
+                target={{ type: 'before_user_message', userMessageSeq: 7 }}
+                checkpointCodeRollback={{
+                    conversationRollbackSupported: true,
+                    turnId: 'turn-1',
+                    cwd: '/repo',
+                    expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
+                    expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
+                }}
+            />,
+        );
+        getTranscriptModalMockRef().current?.spies.show?.mockImplementationOnce(({ props }: any) => props?.onConfirm?.({
+            mode: 'conversation_and_code_without_stash',
+            backupMode: 'happier_checkpoint_only',
+        }));
+
+        await screen.pressByTestIdAsync('rollback-action');
+
+        expect(executeSpy).toHaveBeenNthCalledWith(
+            1,
+            'session.rollback',
+            {
+                sessionId: 'session-1',
+                target: { type: 'before_user_message', userMessageSeq: 7 },
+            },
+            {
+                defaultSessionId: 'session-1',
+                surface: 'ui',
+            },
+        );
+        expect(executeSpy).toHaveBeenNthCalledWith(
+            2,
+            'session.checkpoint_code_rollback',
+            {
+                v: 1,
+                sessionId: 'session-1',
+                turnId: 'turn-1',
+                cwd: '/repo',
+                codeMode: 'code_only_without_stash',
+                backupMode: 'happier_checkpoint_only',
+                expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
+                expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
+                codeOnlyTranscriptDivergenceConfirmed: true,
+            },
+            {
+                defaultSessionId: 'session-1',
+                surface: 'ui',
+            },
+        );
+        await screen.unmount();
+    });
+
+    it('surfaces checkpoint code rollback conflict after conversation rollback succeeds', async () => {
+        executeSpy
+            .mockResolvedValueOnce({ ok: true, result: { ok: true } })
+            .mockResolvedValueOnce({
+                ok: true,
+                result: {
+                    status: 'conflict',
+                    diagnostics: ['reverse patch did not apply cleanly'],
+                },
+            });
+
+        const { TranscriptRollbackActionButton } = await import('./TranscriptRollbackActionButton');
+        const screen = await renderScreen(
+            <TranscriptRollbackActionButton
+                sessionId="session-1"
+                testID="rollback-action"
+                target={{ type: 'before_user_message', userMessageSeq: 7 }}
+                checkpointCodeRollback={{
+                    conversationRollbackSupported: true,
+                    turnId: 'turn-1',
+                    cwd: '/repo',
+                    expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
+                    expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
+                }}
+            />,
+        );
+        getTranscriptModalMockRef().current?.spies.show?.mockImplementationOnce(({ props }: any) => props?.onConfirm?.({
+            mode: 'conversation_and_code_without_stash',
+            backupMode: 'happier_checkpoint_only',
+        }));
+
+        await screen.pressByTestIdAsync('rollback-action');
+
+        expect(getTranscriptModalMockRef().current?.spies.alert).toHaveBeenCalledWith(
+            'common.error',
+            expect.stringContaining('reverse patch did not apply cleanly'),
+        );
         await screen.unmount();
     });
 

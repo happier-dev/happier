@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Pressable, Platform } from 'react-native';
+import { View, Pressable, Platform, type View as RNView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Typography } from '@/constants/Typography';
 import { layout } from '@/components/ui/layout/layout';
 import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
@@ -30,8 +31,12 @@ type PathSelectorBaseProps = {
     recentPaths: ReadonlyArray<string>;
     usePickerSearch: boolean;
     searchVariant?: 'header' | 'group' | 'belowInput' | 'none';
+    pathEntryPresentation?: 'section' | 'itemGroup';
+    savedPathsPresentation?: 'list' | 'dropdown';
+    favoriteGroupPlacement?: 'beforeRecent' | 'afterRecent';
     favoriteDirectories: ReadonlyArray<string>;
     onChangeFavoriteDirectories: (dirs: string[]) => void;
+    popoverBoundaryRef?: React.RefObject<RNView> | null;
     /**
      * When true, clicking a path row will focus the input (and try to place cursor at the end).
      * Wizard UX generally wants this OFF; the dedicated picker screen wants this ON.
@@ -111,6 +116,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: 'transparent',
         borderBottomWidth: 0,
     },
+    pathEntryGroupContent: {
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+    },
     rightElementRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -131,10 +140,14 @@ export function PathSelector({
     recentPaths,
     usePickerSearch,
     searchVariant = 'header',
+    pathEntryPresentation = 'section',
+    savedPathsPresentation = 'list',
+    favoriteGroupPlacement = 'afterRecent',
     searchQuery: controlledSearchQuery,
     onChangeSearchQuery: onChangeSearchQueryProp,
     favoriteDirectories,
     onChangeFavoriteDirectories,
+    popoverBoundaryRef,
     onSubmitSelectedPath,
     onBeforeBrowseMachinePath,
     submitBehavior = 'showRow',
@@ -151,6 +164,7 @@ export function PathSelector({
     const searchWasFocusedRef = useRef(false);
     const isMountedRef = useRef(true);
     const [draftSelectedPath, setDraftSelectedPath] = useState(selectedPath);
+    const [savedPathsDropdownOpen, setSavedPathsDropdownOpen] = useState(false);
 
     useEffect(() => {
         setDraftSelectedPath(selectedPath);
@@ -405,6 +419,24 @@ export function PathSelector({
         );
     }, [renderIconNode, selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
 
+    const renderFavoriteToggle = React.useCallback((absolutePath: string, isFavorite: boolean) => {
+        return (
+            <Pressable
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                onPress={(e) => {
+                    e.stopPropagation();
+                    toggleFavorite(absolutePath);
+                }}
+            >
+                {renderIconNode(
+                    isFavorite ? 'star' : 'star-outline',
+                    24,
+                    isFavorite ? selectedIndicatorColor : theme.colors.textSecondary,
+                )}
+            </Pressable>
+        );
+    }, [renderIconNode, selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
+
     const renderCustomRightElement = React.useCallback((absolutePath: string) => {
         const isFavorite = favoritePaths.includes(absolutePath);
         return (
@@ -456,6 +488,77 @@ export function PathSelector({
         return trimmed;
     }, [filteredFavoritePaths, filteredRecentPaths, filteredSuggestedPaths, selectedPath, submittedCustomPath]);
 
+    const showSavedPathsDropdown = savedPathsPresentation === 'dropdown'
+        && (filteredFavoritePaths.length > 0 || filteredRecentPaths.length > 0);
+
+    const savedPathDropdownItems = React.useMemo((): DropdownMenuItem[] => {
+        const favoriteItems = filteredFavoritePaths.map((path) => ({
+            id: path,
+            title: path,
+            category: t('newSession.pathPicker.favoritesTitle'),
+            icon: renderIconNode('folder-outline', 20, theme.colors.textSecondary),
+            rightElement: renderFavoriteToggle(path, true),
+        }));
+        const recentItems = filteredRecentPaths.map((path) => ({
+            id: path,
+            title: path,
+            category: t('newSession.pathPicker.recentTitle'),
+            icon: renderIconNode('folder-outline', 20, theme.colors.textSecondary),
+            rightElement: renderFavoriteToggle(path, favoritePaths.includes(path)),
+        }));
+        return favoriteGroupPlacement === 'beforeRecent'
+            ? [...favoriteItems, ...recentItems]
+            : [...recentItems, ...favoriteItems];
+    }, [
+        favoriteGroupPlacement,
+        favoritePaths,
+        filteredFavoritePaths,
+        filteredRecentPaths,
+        renderFavoriteToggle,
+        renderIconNode,
+        theme.colors.textSecondary,
+    ]);
+
+    const handleBlurPathInput = React.useCallback(() => {
+        if (!commitDraftOnBlur) return;
+        const trimmed = draftSelectedPath.trim();
+        if (!trimmed || trimmed === selectedPath) return;
+        onChangeDraftSelectedPath?.(trimmed);
+        onChangeSelectedPath(trimmed);
+    }, [commitDraftOnBlur, draftSelectedPath, onChangeDraftSelectedPath, onChangeSelectedPath, selectedPath]);
+
+    const renderPathEntryContent = () => (
+        <View style={styles.pathInputContainer}>
+            <View style={styles.pathInput}>
+                <TextInput
+                    testID="path-selector-input"
+                    ref={inputRef}
+                    value={draftSelectedPath}
+                    onChangeText={handleChangeSelectedPath}
+                    placeholder={t('newSession.pathPicker.enterPathPlaceholder')}
+                    placeholderTextColor={theme.colors.input.placeholder}
+                    style={styles.pathTextInput}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="off"
+                    textContentType="none"
+                    importantForAutofill="no"
+                    returnKeyType="done"
+                    blurOnSubmit={true}
+                    multiline={false}
+                    onSubmitEditing={handleSubmitPath}
+                    onBlur={handleBlurPathInput}
+                />
+            </View>
+            {machineBrowse?.enabled ? (
+                <PathInputBrowseButton
+                    onPress={handleBrowseMachinePath}
+                    disabled={!machineBrowse.machineId}
+                />
+            ) : null}
+        </View>
+    );
+
     return (
         <>
             {usePickerSearch && searchVariant === 'header' && (
@@ -466,38 +569,19 @@ export function PathSelector({
                 />
             )}
 
-            <View style={styles.pathEntrySection}>
-                <View style={styles.pathEntryContent}>
-                    <View style={styles.pathInputContainer}>
-                        <View style={styles.pathInput}>
-                            <TextInput
-                                testID="path-selector-input"
-                                ref={inputRef}
-                                value={draftSelectedPath}
-                                onChangeText={handleChangeSelectedPath}
-                                placeholder={t('newSession.pathPicker.enterPathPlaceholder')}
-                                placeholderTextColor={theme.colors.input.placeholder}
-                                style={styles.pathTextInput}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                                autoComplete="off"
-                                textContentType="none"
-                                importantForAutofill="no"
-                                returnKeyType="done"
-                                blurOnSubmit={true}
-                                multiline={false}
-                                onSubmitEditing={handleSubmitPath}
-                            />
-                        </View>
-                        {machineBrowse?.enabled ? (
-                            <PathInputBrowseButton
-                                onPress={handleBrowseMachinePath}
-                                disabled={!machineBrowse.machineId}
-                            />
-                        ) : null}
+            {pathEntryPresentation === 'itemGroup' ? (
+                <ItemGroup title="">
+                    <View style={styles.pathEntryGroupContent}>
+                        {renderPathEntryContent()}
+                    </View>
+                </ItemGroup>
+            ) : (
+                <View style={styles.pathEntrySection}>
+                    <View style={styles.pathEntryContent}>
+                        {renderPathEntryContent()}
                     </View>
                 </View>
-            </View>
+            )}
 
             {usePickerSearch && searchVariant === 'belowInput' && (
                 <SearchHeader
@@ -505,6 +589,34 @@ export function PathSelector({
                     onChangeText={setSearchQuery}
                     placeholder={t('newSession.searchPathsPlaceholder')}
                 />
+            )}
+
+            {showSavedPathsDropdown && (
+                <ItemGroup title="">
+                    <DropdownMenu
+                        open={savedPathsDropdownOpen}
+                        onOpenChange={setSavedPathsDropdownOpen}
+                        items={savedPathDropdownItems}
+                        selectedId={selectedPath.trim() || null}
+                        onSelect={(path) => setPathAndFocus(path)}
+                        rowKind="item"
+                        variant="selectable"
+                        search={usePickerSearch}
+                        searchPlaceholder={t('newSession.searchPathsPlaceholder')}
+                        showCategoryTitles={filteredFavoritePaths.length > 0 && filteredRecentPaths.length > 0}
+                        matchTriggerWidth
+                        connectToTrigger
+                        popoverBoundaryRef={popoverBoundaryRef}
+                        itemTrigger={{
+                            title: t('newSession.selectPathTitle'),
+                            subtitle: selectedPath.trim() || t('newSession.pathPicker.emptyAll'),
+                            showSelectedDetail: false,
+                            showSelectedSubtitle: false,
+                            icon: renderIconNode('folder-outline', 24, theme.colors.textSecondary),
+                            itemProps: { testID: 'path-selector-saved-paths-dropdown-trigger' },
+                        }}
+                    />
+                </ItemGroup>
             )}
 
             {showSubmittedCustomPathRow && (
@@ -522,7 +634,48 @@ export function PathSelector({
                 </ItemGroup>
             )}
 
-            {usePickerSearch && searchVariant === 'group' && shouldRenderRecentGroup && (
+            {!showSavedPathsDropdown && favoriteGroupPlacement === 'beforeRecent' && shouldRenderFavoritesGroup && (
+                <ItemGroup title={t('newSession.pathPicker.favoritesTitle')}>
+                    {usePickerSearch && searchVariant === 'group' && effectiveGroupSearchPlacement === 'favorites' && (
+                        <SearchHeader
+                            value={searchQuery}
+                            onChangeText={setSearchQuery}
+                            placeholder={t('newSession.searchPathsPlaceholder')}
+                            inputRef={searchInputRef}
+                            onFocus={() => { searchWasFocusedRef.current = true; }}
+                            onBlur={() => { searchWasFocusedRef.current = false; }}
+                            containerStyle={styles.searchHeaderContainer}
+                        />
+                    )}
+                    {filteredFavoritePaths.length === 0
+                        ? (
+                            <Item
+                                title={showNoMatchesRow ? t('common.noMatches') : t('newSession.pathPicker.emptyFavorites')}
+                                showChevron={false}
+                                showDivider={false}
+                                disabled={true}
+                            />
+                        )
+                        : filteredFavoritePaths.map((path, index) => {
+                            const isSelected = selectedPath.trim() === path;
+                            const isLast = index === filteredFavoritePaths.length - 1;
+                            return (
+                                <Item
+                                    key={path}
+                                    title={path}
+                                    leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.textSecondary} />}
+                                    onPress={() => setPathAndFocus(path)}
+                                    selected={isSelected}
+                                    showChevron={false}
+                                    rightElement={renderRightElement(path, isSelected, true)}
+                                    showDivider={!isLast}
+                                />
+                            );
+                        })}
+                </ItemGroup>
+            )}
+
+            {!showSavedPathsDropdown && usePickerSearch && searchVariant === 'group' && shouldRenderRecentGroup && (
                 <ItemGroup title={t('newSession.pathPicker.recentTitle')}>
                     {effectiveGroupSearchPlacement === 'recent' && (
                         <SearchHeader
@@ -564,7 +717,7 @@ export function PathSelector({
                 </ItemGroup>
             )}
 
-            {shouldRenderFavoritesGroup && (
+            {!showSavedPathsDropdown && favoriteGroupPlacement !== 'beforeRecent' && shouldRenderFavoritesGroup && (
                 <ItemGroup title={t('newSession.pathPicker.favoritesTitle')}>
                     {usePickerSearch && searchVariant === 'group' && effectiveGroupSearchPlacement === 'favorites' && (
                         <SearchHeader
@@ -605,7 +758,7 @@ export function PathSelector({
                 </ItemGroup>
             )}
 
-            {filteredRecentPaths.length > 0 && searchVariant !== 'group' && (
+            {!showSavedPathsDropdown && filteredRecentPaths.length > 0 && searchVariant !== 'group' && (
                 <ItemGroup title={t('newSession.pathPicker.recentTitle')}>
                     {filteredRecentPaths.map((path, index) => {
                         const isSelected = selectedPath.trim() === path;
@@ -627,7 +780,7 @@ export function PathSelector({
                 </ItemGroup>
             )}
 
-            {usePickerSearch && searchVariant === 'group' && shouldRenderSuggestedGroup && (
+            {!showSavedPathsDropdown && usePickerSearch && searchVariant === 'group' && shouldRenderSuggestedGroup && (
                 <ItemGroup title={t('newSession.pathPicker.suggestedTitle')}>
                     {effectiveGroupSearchPlacement === 'suggested' && (
                         <SearchHeader
@@ -669,7 +822,7 @@ export function PathSelector({
                 </ItemGroup>
             )}
 
-            {filteredRecentPaths.length === 0 && filteredSuggestedPaths.length > 0 && searchVariant !== 'group' && (
+            {!showSavedPathsDropdown && filteredRecentPaths.length === 0 && filteredSuggestedPaths.length > 0 && searchVariant !== 'group' && (
                 <ItemGroup title={t('newSession.pathPicker.suggestedTitle')}>
                     {filteredSuggestedPaths.map((path, index) => {
                         const isSelected = selectedPath.trim() === path;
@@ -691,7 +844,7 @@ export function PathSelector({
                 </ItemGroup>
             )}
 
-            {usePickerSearch && searchVariant === 'group' && shouldRenderFallbackGroup && (
+            {!showSavedPathsDropdown && usePickerSearch && searchVariant === 'group' && shouldRenderFallbackGroup && (
                 <ItemGroup title={t('newSession.pathPicker.allTitle')}>
                     <SearchHeader
                         value={searchQuery}

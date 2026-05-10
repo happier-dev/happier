@@ -16,7 +16,7 @@ const stylesheet = StyleSheet.create(() => ({
 }));
 
 export type SessionsListStorageChromeProps = Readonly<{
-    directSessionsEnabled: boolean;
+    externalSessionsEnabled: boolean;
     storageKind: SessionStorageKind;
     onSelectStorageKind: (storageKind: SessionStorageKind) => void;
 }>;
@@ -25,22 +25,22 @@ export const SessionsListStorageChrome = React.memo((props: SessionsListStorageC
     const router = useRouter();
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const showDirectBrowseAction = props.directSessionsEnabled && props.storageKind === 'direct';
+    const showExternalSessionBrowseAction = props.externalSessionsEnabled && props.storageKind === 'direct';
 
     return (
         <>
-            {props.directSessionsEnabled ? (
+            {props.externalSessionsEnabled ? (
                 <SessionListStorageTabsBar
                     activeTabId={props.storageKind}
                     onSelectTab={props.onSelectStorageKind}
                 />
             ) : null}
-            {showDirectBrowseAction ? (
+            {showExternalSessionBrowseAction ? (
                 <ItemGroup style={styles.browseActionContainer}>
                     <Item
                         testID="direct-sessions-browse-button"
-                        title={t('directSessions.browseOpenExisting')}
-                        subtitle={t('directSessions.browseActionSubtitle')}
+                        title={t('externalSessions.browseOpenExisting')}
+                        subtitle={t('externalSessions.browseActionSubtitle')}
                         icon={<Ionicons name="folder-open-outline" size={22} color={theme.colors.textSecondary} />}
                         onPress={() => {
                             router.push('/direct/browse');

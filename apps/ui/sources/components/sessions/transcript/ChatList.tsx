@@ -61,6 +61,7 @@ import {
     type TranscriptRollbackAction,
     type SessionRollbackRangeV1,
 } from '@/sync/domains/sessionRollback/rollbackUiSupport';
+import { deriveTurnChangeSetsFromMessages } from '@/sync/domains/session/changes/derivation/deriveTurnChangeSetsFromMessages';
 import {
     getWebTranscriptDistanceFromBottom,
     isWebTranscriptScrollable,
@@ -291,14 +292,23 @@ export const ChatList = React.memo((props: {
         () => readSessionRollbackRangesV1((props.session.metadata as Record<string, unknown> | null | undefined) ?? null),
         [props.session.metadata],
     );
+    const turnChangeSets = React.useMemo(
+        () => deriveTurnChangeSetsFromMessages(
+            messageIdsOldestFirst
+                .map((messageId) => messagesById[messageId])
+                .filter((message): message is Message => message != null),
+        ),
+        [messageIdsOldestFirst, messagesById],
+    );
     const rollbackActionsByMessageId = React.useMemo(
         () => resolveTranscriptRollbackActions({
             session: props.session,
             messageIdsOldestFirst,
             messagesById,
             rollbackRanges,
+            turnChangeSets,
         }),
-        [messageIdsOldestFirst, messagesById, props.session, rollbackRanges],
+        [messageIdsOldestFirst, messagesById, props.session, rollbackRanges, turnChangeSets],
     );
 
     const latestThinkingMessageId = useSessionLatestThinkingMessageId(props.session.id);

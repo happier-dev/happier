@@ -34,13 +34,13 @@ import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgen
 import { useHasGlobalVoiceAgentConversation } from '@/voice/agent/useHasGlobalVoiceAgentConversation';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { machineDirectSessionFollowPolicySet } from '@/sync/ops/machineDirectSessions';
+import { machineExternalSessionFollowPolicySet } from '@/sync/ops/machineExternalSessions';
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
-import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import {
-  readDirectSessionFollowPolicy,
-  updateMetadataWithDirectSessionFollowPolicy,
-} from '@/sync/domains/session/external/directSessionFollowMetadata';
+  readExternalSessionFollowPolicy,
+  updateMetadataWithExternalSessionFollowPolicy,
+} from '@/sync/domains/session/external/externalSessionFollowMetadata';
 import { sync } from '@/sync/sync';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
@@ -132,19 +132,19 @@ export function SessionHeaderActionMenu(props: Readonly<{
     [props.sessionId, voice],
   );
   const showTeleportAction = teleportAvailability.ok && hasGlobalVoiceAgentConversation;
-  const directSessionLink = readDirectSessionLink(props.session.metadata);
-  const directSessionFollowPolicy = readDirectSessionFollowPolicy(props.session.metadata);
-  const directSessionAgentId = React.useMemo(
+  const externalSessionLink = readExternalSessionLink(props.session.metadata);
+  const externalSessionFollowPolicy = readExternalSessionFollowPolicy(props.session.metadata);
+  const externalSessionAgentId = React.useMemo(
     () => resolveAgentIdFromFlavor(
       typeof (props.session.metadata as Record<string, unknown> | null | undefined)?.flavor === 'string'
         ? String((props.session.metadata as Record<string, unknown>).flavor)
-        : directSessionLink?.providerId ?? null,
+        : externalSessionLink?.providerId ?? null,
     ),
-    [props.session.metadata, directSessionLink?.providerId],
+    [props.session.metadata, externalSessionLink?.providerId],
   );
-  const supportsDirectSessionBackgroundFollow =
-    directSessionAgentId != null
-      ? resolveAgentUiBehavior(directSessionAgentId).directSessions?.supportsBackgroundFollow === true
+  const supportsExternalSessionBackgroundFollow =
+    externalSessionAgentId != null
+      ? resolveAgentUiBehavior(externalSessionAgentId).externalSessions?.supportsBackgroundFollow === true
       : false;
   const actions = React.useMemo(() => {
     const actionItems: DropdownMenuItem[] = listActionSpecs()
@@ -165,11 +165,11 @@ export function SessionHeaderActionMenu(props: Readonly<{
 
     const out: DropdownMenuItem[] = [];
 
-    if (directSessionLink && supportsDirectSessionBackgroundFollow) {
+    if (externalSessionLink && supportsExternalSessionBackgroundFollow) {
       out.push({
-        id: 'session.directSession.backgroundFollow',
+        id: 'session.externalSession.backgroundFollow',
         title: t('session.actionMenu.backgroundFollow'),
-        subtitle: directSessionFollowPolicy === 'background_follow' ? t('common.enabled') : t('common.disabled'),
+        subtitle: externalSessionFollowPolicy === 'background_follow' ? t('common.enabled') : t('common.disabled'),
       });
     }
 
@@ -204,9 +204,9 @@ export function SessionHeaderActionMenu(props: Readonly<{
     settings,
     showTeleportAction,
     handoffAvailability,
-    directSessionLink,
-    directSessionFollowPolicy,
-    supportsDirectSessionBackgroundFollow,
+    externalSessionLink,
+    externalSessionFollowPolicy,
+    supportsExternalSessionBackgroundFollow,
     theme.colors.header.tint,
   ]);
 
@@ -220,28 +220,28 @@ export function SessionHeaderActionMenu(props: Readonly<{
       onSelect={(actionId) => {
         setOpen(false);
         if (props.onSelectExtraItem?.(actionId) === true) return;
-        if (actionId === 'session.directSession.backgroundFollow') {
+        if (actionId === 'session.externalSession.backgroundFollow') {
           fireAndForget((async () => {
-            if (!directSessionLink) return;
-            const nextPolicy = directSessionFollowPolicy === 'background_follow' ? 'attached_only' : 'background_follow';
-            const result = await machineDirectSessionFollowPolicySet({
-              machineId: directSessionLink.machineId,
+            if (!externalSessionLink) return;
+            const nextPolicy = externalSessionFollowPolicy === 'background_follow' ? 'attached_only' : 'background_follow';
+            const result = await machineExternalSessionFollowPolicySet({
+              machineId: externalSessionLink.machineId,
               sessionId: props.sessionId,
-              providerId: directSessionLink.providerId,
-              remoteSessionId: directSessionLink.remoteSessionId,
-              source: directSessionLink.source,
+              providerId: externalSessionLink.providerId,
+              remoteSessionId: externalSessionLink.remoteSessionId,
+              source: externalSessionLink.source,
               enabled: nextPolicy === 'background_follow',
             }, sessionServerId ? { serverId: sessionServerId } : undefined).catch(() => undefined);
             if (!result?.ok) {
               return;
             }
             sync.applySessionMetadataLocally(props.sessionId, (metadata) =>
-              updateMetadataWithDirectSessionFollowPolicy(metadata, {
+              updateMetadataWithExternalSessionFollowPolicy(metadata, {
                 policy: nextPolicy,
                 updatedAtMs: result.updatedAtMs,
               }),
             );
-          })(), { tag: 'SessionHeaderActionMenu.execute.directSessionBackgroundFollow' });
+          })(), { tag: 'SessionHeaderActionMenu.execute.externalSessionBackgroundFollow' });
           return;
         }
         if (actionId === 'header.openRuns') {

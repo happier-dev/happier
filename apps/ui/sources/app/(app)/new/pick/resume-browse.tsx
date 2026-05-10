@@ -9,8 +9,8 @@ import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } fr
 import { getResolvedBackendCatalogEntries, resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { DirectSessionsBrowseScreen } from '@/components/sessions/external/browse/DirectSessionsBrowseScreen';
-import { canBrowseDirectSessions, resolveDirectBrowseLockedSource } from '@/components/sessions/external/browse/resolveDirectBrowseLockedSourceOption';
+import { ExternalSessionsBrowseScreen } from '@/components/sessions/external/browse/ExternalSessionsBrowseScreen';
+import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
 import { NewSessionScreenPortalScope, createNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
@@ -156,7 +156,7 @@ export default function ResumeBrowsePickerScreen() {
     const agentType = React.useMemo<AgentId>(() => {
         return runtimeCarrierAgentId ?? explicitSelectedBuiltInAgentId ?? DEFAULT_AGENT_ID;
     }, [explicitSelectedBuiltInAgentId, runtimeCarrierAgentId]);
-    const directBrowseCarrierAgentId = React.useMemo<AgentId | null>(() => {
+    const externalSessionBrowseCarrierAgentId = React.useMemo<AgentId | null>(() => {
         return runtimeCarrierAgentId;
     }, [runtimeCarrierAgentId]);
     const agentOptionState = React.useMemo(() => {
@@ -190,10 +190,10 @@ export default function ResumeBrowsePickerScreen() {
 
     const lockScope = React.useMemo(() => {
         if (!effectiveMachineId) return null;
-        if (!directBrowseCarrierAgentId) return null;
-        if (!canBrowseDirectSessions(directBrowseCarrierAgentId)) return null;
-        const source = resolveDirectBrowseLockedSource({
-            providerId: directBrowseCarrierAgentId as any,
+        if (!externalSessionBrowseCarrierAgentId) return null;
+        if (!canBrowseExternalSessions(externalSessionBrowseCarrierAgentId)) return null;
+        const source = resolveExternalSessionBrowseLockedSource({
+            providerId: externalSessionBrowseCarrierAgentId as any,
             agentOptionState,
             profile: accountProfile,
             settings,
@@ -202,17 +202,17 @@ export default function ResumeBrowsePickerScreen() {
         return {
             machineId: effectiveMachineId,
             serverId: effectiveServerId,
-            providerId: directBrowseCarrierAgentId as any,
+            providerId: externalSessionBrowseCarrierAgentId as any,
             source,
         };
-    }, [accountProfile, agentOptionState, directBrowseCarrierAgentId, effectiveMachineId, effectiveServerId, settings]);
+    }, [accountProfile, agentOptionState, externalSessionBrowseCarrierAgentId, effectiveMachineId, effectiveServerId, settings]);
 
     React.useEffect(() => {
         if (lockScope || awaitingCarrierProjection) return;
         safeRouterBack({ router, navigation, fallbackHref: '/new' });
     }, [awaitingCarrierProjection, lockScope, navigation, router]);
 
-    const headerTitle = t('directSessions.browseTitle');
+    const headerTitle = t('externalSessions.browseTitle');
     const headerBackTitle = t('common.cancel');
     const screenOptions = React.useMemo(() => {
         return createNewSessionContainedModalScreenOptions({
@@ -226,7 +226,7 @@ export default function ResumeBrowsePickerScreen() {
             <Stack.Screen options={screenOptions} />
             <View style={{ flex: 1, minHeight: 0 }}>
                 {lockScope ? (
-                    <DirectSessionsBrowseScreen
+                    <ExternalSessionsBrowseScreen
                         interaction="pickRemoteSessionId"
                         lockScope={lockScope}
                         onPickRemoteSessionId={(remoteSessionId) => {

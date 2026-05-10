@@ -9,15 +9,6 @@ vi.mock('@/text', async () => {
 
 import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
 
-vi.mock('@/sync/domains/reviews/reviewEngineCatalog', () => ({
-    buildAvailableReviewEngineOptions: () => ([
-        {
-            id: 'review-engine-1',
-            label: 'Review Engine One',
-        },
-    ]),
-}));
-
 const acpCatalogSettingsV1 = {
     v: 2 as const,
     backends: [
@@ -43,19 +34,59 @@ const acpCatalogSettingsV1 = {
 };
 
 describe('resolveExecutionRunLauncherBackendChoices', () => {
-    it('uses the review engine label for review-intent launcher choices instead of the raw engine id', () => {
+    it('uses the review backend snapshot label for review-intent launcher choices instead of the raw engine id', () => {
         const choices = resolveExecutionRunLauncherBackendChoices({
             enabledAgentIds: ['claude'],
             executionRunsBackends: {
-                claude: { available: true, intents: ['review'] },
+                claude: { available: true, intents: ['review'], label: 'Claude Review' },
             },
             acpCatalogSettingsV1,
             intent: 'review',
         });
 
         expect(choices).toContainEqual(expect.objectContaining({
-            backendId: 'review-engine-1',
-            title: 'Review Engine One',
+            backendId: 'claude',
+            title: 'Claude Review',
+            disabled: false,
+        }));
+    });
+
+    it('uses merged daemon projection titles for source-backed review backends outside enabled canonical agents', () => {
+        const choices = resolveExecutionRunLauncherBackendChoices({
+            enabledAgentIds: ['claude'],
+            executionRunsBackends: {
+                claude: { available: true, intents: ['review'] },
+                'coderabbit.review.backend': { available: true, intents: ['review'] },
+            },
+            acpCatalogSettingsV1,
+            intent: 'review',
+            mergedBackendProjectionById: {
+                'coderabbit.review.backend': {
+                    backendId: 'coderabbit.review.backend',
+                    providerId: 'coderabbit.review.provider',
+                    title: 'CodeRabbit Review',
+                    subtitle: 'coderabbit.review.backend',
+                    providerAgentId: null,
+                    iconAgentId: null,
+                },
+            },
+            mergedProviderProjectionById: {
+                'coderabbit.review.provider': {
+                    providerId: 'coderabbit.review.provider',
+                    title: 'CodeRabbit Provider',
+                    subtitle: 'coderabbit.review.provider',
+                    channel: 'plugin',
+                    isBuiltIn: false,
+                    iconAgentId: null,
+                },
+            },
+        });
+
+        expect(choices).toContainEqual(expect.objectContaining({
+            backendTarget: { kind: 'backend', backendId: 'coderabbit.review.backend' },
+            targetKey: 'backend:coderabbit.review.backend',
+            backendId: 'coderabbit.review.backend',
+            title: 'CodeRabbit Review',
             disabled: false,
         }));
     });

@@ -59,7 +59,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     selectedMachineId: string | null;
     selectedMachine: Machine | null;
     capabilityServerId: string;
-    directSessionsFeatureEnabled: boolean;
+    externalSessionsFeatureEnabled: boolean;
     settings: Settings;
     agentType: AgentId;
     resumeSessionId: string | null;
@@ -177,10 +177,10 @@ export function useNewSessionAvailabilityState(params: Readonly<{
                 out[id as AgentId] = true;
                 continue;
             }
-            const supportsDirectSessionBrowse = params.directSessionsFeatureEnabled === true
+            const supportsExternalSessionBrowse = params.externalSessionsFeatureEnabled === true
                 && getAgentCore(id).sessionStorage.direct === true
-                && typeof getAgentBehavior(id).directSessions?.browse?.getSourceOptions === 'function';
-            out[id] = supportsDirectSessionBrowse || canSelectAgentWithoutDetectedCli({
+                && typeof getAgentBehavior(id).externalSessions?.browse?.getSourceOptions === 'function';
+            out[id] = supportsExternalSessionBrowse || canSelectAgentWithoutDetectedCli({
                 agentId: id,
                 settings: params.settings,
                 agentOptionState: params.backendNewSessionOptionStateByTargetKey[
@@ -191,7 +191,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         return out;
     }, [
         params.backendNewSessionOptionStateByTargetKey,
-        params.directSessionsFeatureEnabled,
+        params.externalSessionsFeatureEnabled,
         params.enabledAgentIds,
         params.settings,
     ]);

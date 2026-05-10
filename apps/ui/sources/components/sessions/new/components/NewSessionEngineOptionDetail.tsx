@@ -12,7 +12,7 @@ import {
     useNewSessionPreflightModelsState,
 } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
-import { computeAcpConfigOptionControlsForProvider } from '@/sync/acp/configOptionsControl';
+import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import {
     buildFavoriteModelAvailabilityById,
     resolveAvailableFavoriteModelsForBackend,

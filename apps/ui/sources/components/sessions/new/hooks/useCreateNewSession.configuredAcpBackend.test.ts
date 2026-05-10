@@ -14,10 +14,12 @@ import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScree
 type SpawnPayloadCapture = {
     backendTarget?:
         | { kind: 'backend'; backendId: string; configuredBackendId?: string; sourceKind?: 'built_in' | 'configured' };
+    accountSettingsVersionHint?: number;
 } | null;
 
 const applySettingsMock = vi.hoisted(() => vi.fn());
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
+const prepareAccountSettingsForDaemonSpawnMock = vi.hoisted(() => vi.fn(async () => ({})));
 
 async function setupHarness(options?: Readonly<{ deferFollowUp?: boolean; spawnSuccess?: boolean }>) {
     const captured: { value: SpawnPayloadCapture } = { value: null };
@@ -76,6 +78,7 @@ async function setupHarness(options?: Readonly<{ deferFollowUp?: boolean; spawnS
             refreshAutomations: vi.fn(async () => {}),
             refreshSessions: vi.fn(async () => {}),
             sendMessage: vi.fn(async () => {}),
+            prepareAccountSettingsForDaemonSpawn: prepareAccountSettingsForDaemonSpawnMock,
         },
     }));
     vi.doMock('@/sync/store/settingsWriters', () => ({
@@ -233,6 +236,8 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         vi.resetModules();
         applySettingsMock.mockReset();
         clearNewSessionDraftMock.mockClear();
+        prepareAccountSettingsForDaemonSpawnMock.mockReset();
+        prepareAccountSettingsForDaemonSpawnMock.mockResolvedValue({});
     });
 
     afterEach(() => {
@@ -309,6 +314,73 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
             backendId: 'custom-kiro-preset',
             configuredBackendId: 'custom-kiro-preset',
         });
+    });
+
+    it('delegates account settings preparation to the machine spawn boundary', async () => {
+        prepareAccountSettingsForDaemonSpawnMock.mockResolvedValue({ accountSettingsVersionHint: 14 });
+        const { useCreateNewSession, captured } = await setupHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = {
+            experiments: false,
+            lastUsedAgent: 'codex',
+        } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'customAcp',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'custom-kiro-preset',
+                    configuredBackendId: 'custom-kiro-preset',
+                    sourceKind: 'configured',
+                },
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
+            } as any);
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        expect(handleCreateSession).toBeTruthy();
+        await handleCreateSession!();
+
+        expect(prepareAccountSettingsForDaemonSpawnMock).not.toHaveBeenCalled();
+        expect(captured.value).not.toEqual(expect.objectContaining({
+            accountSettingsVersionHint: expect.any(Number),
+        }));
     });
 
     it('moves the launched machine path to the front without dropping other paths for the same machine', async () => {

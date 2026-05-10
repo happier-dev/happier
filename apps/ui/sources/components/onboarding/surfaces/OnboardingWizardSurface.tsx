@@ -5,6 +5,10 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { Text } from '@/components/ui/text/Text';
+import {
+    resolveStepTransitionDirection,
+    type StepTransitionDirection,
+} from '@/components/ui/motion/StepTransitionFrame';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -247,6 +251,48 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         urlDraft,
     ]);
     const progress = getWizardProgress(state.context, stepId);
+    const currentStepIndex = Math.max(0, progress.current - 1);
+    const transitionSnapshotRef = React.useRef<Readonly<{
+        stepId: WizardStepId;
+        stepIndex: number;
+        historyLength: number;
+        direction: StepTransitionDirection;
+    }>>({
+        stepId,
+        stepIndex: currentStepIndex,
+        historyLength: state.history.length,
+        direction: 'replace',
+    });
+    const previousTransition = transitionSnapshotRef.current;
+    let contentTransitionDirection = previousTransition.direction;
+    if (previousTransition.stepId !== stepId) {
+        const indexTransitionDirection = resolveStepTransitionDirection({
+            previousIndex: previousTransition.stepIndex,
+            nextIndex: currentStepIndex,
+        });
+        contentTransitionDirection = indexTransitionDirection !== 'replace'
+            ? indexTransitionDirection
+            : state.history.length > previousTransition.historyLength
+                ? 'forward'
+                : state.history.length < previousTransition.historyLength
+                    ? 'backward'
+                    : 'forward';
+        transitionSnapshotRef.current = {
+            stepId,
+            stepIndex: currentStepIndex,
+            historyLength: state.history.length,
+            direction: contentTransitionDirection,
+        };
+    } else if (
+        previousTransition.stepIndex !== currentStepIndex
+        || previousTransition.historyLength !== state.history.length
+    ) {
+        transitionSnapshotRef.current = {
+            ...previousTransition,
+            stepIndex: currentStepIndex,
+            historyLength: state.history.length,
+        };
+    }
     const welcomeHasExplicitRelaySelection = stepId === 'welcome'
         && (
             state.history.length > 0
@@ -1347,8 +1393,10 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
             ) : null}
             <WizardModalShell
                 testID={props.testID ?? 'onboarding-wizard'}
-                stepIndex={Math.max(0, progress.current - 1)}
+                stepIndex={currentStepIndex}
                 stepCount={Math.max(1, progress.total)}
+                contentTransitionKey={stepId}
+                contentTransitionDirection={contentTransitionDirection}
                 showScrim={props.wizardChromeMode === 'embedded' ? false : undefined}
                 layoutPresentation={props.wizardLayoutPresentation}
                 titleLeading={stepId === 'welcome' ? <WizardLogotype height={45} testID={`${props.testID ?? 'onboarding-wizard'}-logotype`} /> : undefined}

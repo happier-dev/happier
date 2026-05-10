@@ -183,6 +183,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     // Control A (false): Simpler AgentInput-driven layout
     // Variant B (true): Enhanced profile-first wizard with sections
     const useEnhancedSessionWizard = useSetting('useEnhancedSessionWizard');
+    const newSessionWizardSectionPresentationV1 = useSetting('newSessionWizardSectionPresentationV1');
+    const newSessionWizardColumnsEnabled = useSetting('newSessionWizardColumnsEnabled');
 
     useNewSessionHappyRouteFlag(pathname);
 
@@ -226,7 +228,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             activeServerId: activeServerSnapshot.serverId,
         });
     }, [activeServerSnapshot.serverId, targetServerId]);
-    const directSessionsFeatureEnabled = useFeatureEnabled('sessions.direct', { scopeKind: 'spawn', serverId: targetServerId });
+    const externalSessionsFeatureEnabled = useFeatureEnabled('sessions.direct', { scopeKind: 'spawn', serverId: targetServerId });
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
     const usePathPickerSearch = useSetting('usePathPickerSearch');
     const [profiles, setProfiles] = useSettingMutable('profiles');
@@ -590,7 +592,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         selectedMachine,
         capabilityServerId,
-        directSessionsFeatureEnabled,
+        externalSessionsFeatureEnabled,
         settings,
         agentType,
         resumeSessionId,
@@ -814,7 +816,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         agentType,
         backendTarget,
         settings,
-        directSessionsFeatureEnabled,
+        externalSessionsFeatureEnabled,
     });
     const {
         permissionMode,
@@ -907,7 +909,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         getBestPathForMachine,
         useMachinePickerSearch,
         targetServerId,
-        directSessionsFeatureEnabled,
+        externalSessionsFeatureEnabled,
         resumeSessionId,
         setResumeSessionId,
         agentType,
@@ -1121,7 +1123,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         targetServerId,
         targetServerName,
         mcpChip,
-        directSessionsFeatureEnabled,
+        externalSessionsFeatureEnabled,
         supportsDirectTranscriptStorage,
         transcriptStorage,
         hasUserSelectedTranscriptStorageRef,
@@ -1157,6 +1159,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const {
         layout: wizardLayoutProps,
+        useColumnLayout: wizardUseColumnLayout,
         profiles: wizardProfilesProps,
         agent: wizardAgentProps,
         machine: wizardMachineProps,
@@ -1173,6 +1176,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             newSessionBottomPadding,
             shouldBottomAnchor,
         },
+        sectionPresentation: newSessionWizardSectionPresentationV1,
+        useColumnLayout: newSessionWizardColumnsEnabled === true,
         profiles: {
             useProfiles,
             profiles,
@@ -1217,11 +1222,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             selectedBackendTargetKey,
             selectedBackendEntryTargetKey: selectedBackendEntry?.backendTargetKey,
             onAgentPickerSelect: handleAgentPickerSelect,
+            selectedBackendEntry,
             modelOptions,
             modelOptionsProbeState: {
                 phase: modelOptionsProbeState.phase,
                 onRefresh: modelOptionsProbeState.onRefresh,
             },
+            favoriteModelSelections,
+            setFavoriteModelSelections,
             acpSessionModeOptions,
             acpSessionModeProbeState: {
                 phase: acpSessionModeProbeState.phase,
@@ -1383,6 +1391,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         checkoutCreationDraft,
         setCheckoutCreationDraft,
         wizardLayoutProps,
+        wizardSectionPresentation: newSessionWizardSectionPresentationV1,
+        wizardUseColumnLayout,
         wizardProfilesProps,
         wizardAgentProps,
         wizardMachineProps,

@@ -11,13 +11,13 @@ const stylesheet = StyleSheet.create(() => ({
 }));
 
 export function SessionsListWrapper() {
-    const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const { externalSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
     const styles = stylesheet;
 
     return (
         <View style={styles.container}>
             <SessionsListStorageChrome
-                directSessionsEnabled={directSessionsEnabled}
+                externalSessionsEnabled={externalSessionsEnabled}
                 storageKind={storageKind}
                 onSelectStorageKind={setStorageKind}
             />

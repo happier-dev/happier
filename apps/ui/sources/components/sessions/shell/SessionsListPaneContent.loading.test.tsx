@@ -60,8 +60,8 @@ vi.mock('@/components/sessions/shell/SessionsListEmptyState', () => ({
     SessionsListEmptyState: (props: any) => React.createElement('SessionsListEmptyState', props),
 }));
 
-vi.mock('@/components/sessions/shell/DirectSessionsEmptyState', () => ({
-    DirectSessionsEmptyState: (props: any) => React.createElement('DirectSessionsEmptyState', props),
+vi.mock('@/components/sessions/shell/ExternalSessionsEmptyState', () => ({
+    ExternalSessionsEmptyState: (props: any) => React.createElement('ExternalSessionsEmptyState', props),
 }));
 vi.mock('@/components/sessions/shell/HiddenInactiveSessionsEmptyState', () => ({
     HiddenInactiveSessionsEmptyState: (props: any) => React.createElement('HiddenInactiveSessionsEmptyState', props),
@@ -98,7 +98,7 @@ describe('SessionsListPaneContent (loading)', () => {
             <SessionsListPaneContent storageKind="direct" fallbackGuidanceVariant="sidebar" />,
         );
 
-        expect(screen.findByType('DirectSessionsEmptyState' as any)).toBeTruthy();
+        expect(screen.findByType('ExternalSessionsEmptyState' as any)).toBeTruthy();
         expect(screen.findAllByType('SessionsListView' as any)).toHaveLength(0);
     });
 

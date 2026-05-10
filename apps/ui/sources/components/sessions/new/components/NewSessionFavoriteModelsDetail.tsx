@@ -11,7 +11,7 @@ import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hoo
 import {
     resolveNewSessionCapabilityProbeContext,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
-import { computeAcpConfigOptionControlsForProvider } from '@/sync/acp/configOptionsControl';
+import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type {
     SessionConfigOptionControl,

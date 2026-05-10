@@ -284,6 +284,181 @@ describe('ChatList rollback action', () => {
         await screen.unmount();
     });
 
+    it('projects checkpoint rollback evidence from canonical turn change sets through the normal ChatList resolver path', async () => {
+        legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+
+        const messages = [
+            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
+            { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'reply', seq: 2, isThinking: false },
+            {
+                kind: 'tool-call',
+                id: 'tool1',
+                localId: null,
+                createdAt: 3,
+                seq: 3,
+                children: [],
+                tool: {
+                    id: 'tool1',
+                    name: 'Diff',
+                    state: 'completed',
+                    input: {
+                        files: [{
+                            file_path: 'src/app.ts',
+                            change_kind: 'modified',
+                            source: 'scm_checkpoint',
+                            confidence: 'exact',
+                            provider: 'scm:git',
+                            unified_diff: 'diff --git a/src/app.ts b/src/app.ts\n',
+                        }],
+                        _happier: {
+                            v: 2,
+                            provider: 'scm:git',
+                            sessionChangeScope: 'turn',
+                            turnId: 'turn-1',
+                            sessionId: 'session-1',
+                            source: 'scm_checkpoint',
+                            confidence: 'exact',
+                            turnStatus: 'completed',
+                            seqRange: { startSeqInclusive: 1, endSeqInclusive: 3 },
+                            repositoryCheckpoint: {
+                                version: 1,
+                                scopeId: 'session-1:/repo',
+                                startRef: 'refs/happier/checkpoints/c2Vzc2lvbi0xOi9yZXBv/turn-start/turn-1',
+                                finalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0xOi9yZXBv/turn-final/turn-1',
+                                baseRefSource: 'turn_start',
+                                contentConfidence: 'exact',
+                                attributionScope: 'unknown',
+                                receipts: [{ id: 'checkpoint.diff_computed' }],
+                            },
+                        },
+                    },
+                    createdAt: 3,
+                    startedAt: 3,
+                    completedAt: 4,
+                    description: null,
+                    result: { status: 'completed' },
+                },
+            },
+        ];
+        legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
+        buildChatListItemsMock.mockImplementation((opts: any) => (
+            (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
+                kind: 'message',
+                id,
+                messageId: id,
+                createdAt: opts.messagesById[id]?.createdAt ?? 0,
+                seq: opts.messagesById[id]?.seq ?? null,
+            }))
+        ));
+
+        const screen = await renderLegacyChatList();
+
+        const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
+        expect(byId.get('u1')?.rollbackAction).toEqual({
+            target: { type: 'before_user_message', userMessageSeq: 1 },
+            restoredDraftText: 'first',
+            checkpointCodeRollback: {
+                conversationRollbackSupported: true,
+                turnId: 'turn-1',
+                cwd: '/repo',
+                expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0xOi9yZXBv/turn-start/turn-1',
+                expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0xOi9yZXBv/turn-final/turn-1',
+            },
+        });
+
+        await screen.unmount();
+    });
+
+    it('projects checkpoint code-only rollback through ChatList when conversation rollback is unsupported', async () => {
+        legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
+            metadata: { flavor: 'codex', codexBackendMode: 'mcp' },
+        };
+
+        const messages = [
+            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
+            { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'reply', seq: 2, isThinking: false },
+            {
+                kind: 'tool-call',
+                id: 'tool1',
+                localId: null,
+                createdAt: 3,
+                seq: 3,
+                children: [],
+                tool: {
+                    id: 'tool1',
+                    name: 'Diff',
+                    state: 'completed',
+                    input: {
+                        files: [{
+                            file_path: 'src/app.ts',
+                            change_kind: 'modified',
+                            source: 'scm_checkpoint',
+                            confidence: 'exact',
+                            provider: 'scm:git',
+                            unified_diff: 'diff --git a/src/app.ts b/src/app.ts\n',
+                        }],
+                        _happier: {
+                            v: 2,
+                            provider: 'scm:git',
+                            sessionChangeScope: 'turn',
+                            turnId: 'turn-1',
+                            sessionId: 'session-1',
+                            source: 'scm_checkpoint',
+                            confidence: 'exact',
+                            turnStatus: 'completed',
+                            seqRange: { startSeqInclusive: 1, endSeqInclusive: 3 },
+                            repositoryCheckpoint: {
+                                version: 1,
+                                scopeId: 'session-1:/repo',
+                                startRef: 'refs/happier/checkpoints/c2Vzc2lvbi0xOi9yZXBv/turn-start/turn-1',
+                                finalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0xOi9yZXBv/turn-final/turn-1',
+                                baseRefSource: 'turn_start',
+                                contentConfidence: 'exact',
+                                attributionScope: 'unknown',
+                                receipts: [{ id: 'checkpoint.diff_computed' }],
+                            },
+                        },
+                    },
+                    createdAt: 3,
+                    startedAt: 3,
+                    completedAt: 4,
+                    description: null,
+                    result: { status: 'completed' },
+                },
+            },
+        ];
+        legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
+        buildChatListItemsMock.mockImplementation((opts: any) => (
+            (opts.messageIdsOldestFirst ?? []).map((id: string) => ({
+                kind: 'message',
+                id,
+                messageId: id,
+                createdAt: opts.messagesById[id]?.createdAt ?? 0,
+                seq: opts.messagesById[id]?.seq ?? null,
+            }))
+        ));
+
+        const screen = await renderLegacyChatList();
+
+        const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
+        expect(byId.get('u1')?.rollbackAction ?? null).toBeNull();
+        expect(byId.get('a1')?.rollbackAction).toEqual({
+            target: { type: 'latest_turn' },
+            restoredDraftText: null,
+            checkpointCodeRollback: {
+                conversationRollbackSupported: false,
+                turnId: 'turn-1',
+                cwd: '/repo',
+                expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0xOi9yZXBv/turn-start/turn-1',
+                expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0xOi9yZXBv/turn-final/turn-1',
+            },
+        });
+
+        await screen.unmount();
+    });
+
     it('does not show rollback for inactive sessions even when Codex app-server metadata is present', async () => {
         legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
         legacyChatListHarnessState.sessionState = {

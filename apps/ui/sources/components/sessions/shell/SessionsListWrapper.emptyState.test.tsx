@@ -58,7 +58,7 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
 }));
 vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
     useSessionListStorageKind: () => ({
-        directSessionsEnabled: featureDecisionState.enabled,
+        externalSessionsEnabled: featureDecisionState.enabled,
         storageKind: featureDecisionState.enabled ? storageKindState.storageKind : 'persisted',
         setStorageKind: storageKindState.setStorageKind,
     }),
@@ -72,8 +72,8 @@ vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
 vi.mock('./SessionsListEmptyState', () => ({
     SessionsListEmptyState: 'SessionsListEmptyState',
 }));
-vi.mock('./DirectSessionsEmptyState', () => ({
-    DirectSessionsEmptyState: 'DirectSessionsEmptyState',
+vi.mock('./ExternalSessionsEmptyState', () => ({
+    ExternalSessionsEmptyState: 'ExternalSessionsEmptyState',
 }));
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
@@ -178,7 +178,7 @@ describe('SessionsListWrapper (empty state)', () => {
 
         expect(() => screen.findByType('SessionsListStorageChrome' as any)).not.toThrow();
         expect(screen.findByType('SessionsListStorageChrome' as any).props.storageKind).toBe('direct');
-        expect(() => screen.findByType('DirectSessionsEmptyState' as any)).not.toThrow();
+        expect(() => screen.findByType('ExternalSessionsEmptyState' as any)).not.toThrow();
         expect(() => screen.findByType('SessionGettingStartedGuidance' as any)).toThrow();
         expect(() => screen.findByType('SessionsList' as any)).toThrow();
 

@@ -69,6 +69,21 @@ function hasLegacyCompatExecutionRunAvailabilityCarrier(
     return Array.from(availableBackendIds).some((backendId) => readLegacyConfiguredAcpBackendId(backendId) === configuredBackendId);
 }
 
+function resolveReviewBackendLabel(params: Readonly<{
+    backendId: string;
+    executionRunBackend?: ExecutionRunsBackendSnapshotEntry | null;
+    mergedBackendProjectionById?: Readonly<Record<string, MergedBackendProjectionEntry>> | null;
+}>): string {
+    const projectedTitle = params.mergedBackendProjectionById?.[params.backendId]?.title;
+    if (typeof projectedTitle === 'string' && projectedTitle.trim().length > 0) {
+        return projectedTitle;
+    }
+    return params.executionRunBackend?.title
+        ?? params.executionRunBackend?.label
+        ?? params.executionRunBackend?.displayName
+        ?? params.backendId;
+}
+
 export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
     enabledAgentIds: readonly string[];
     executionRunsBackends: Readonly<Record<string, ExecutionRunsBackendSnapshotEntry>> | null | undefined;
@@ -93,7 +108,11 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
         return buildAvailableReviewEngineOptions({
             enabledAgentIds: [...params.enabledAgentIds],
             executionRunsBackends: params.executionRunsBackends,
-            resolveAgentLabel: (id) => id,
+            resolveAgentLabel: (id) => resolveReviewBackendLabel({
+                backendId: id,
+                executionRunBackend: params.executionRunsBackends?.[id] ?? null,
+                mergedBackendProjectionById: params.mergedBackendProjectionById ?? null,
+            }),
         }).map((option) => {
             const target: BackendTargetRefV2 = { kind: 'backend', backendId: option.id };
             return {

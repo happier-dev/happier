@@ -180,8 +180,8 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         const textKey = (() => {
             if (switchingToPersisted) return 'chatFooter.switchingToPersistedTakeover';
             if (switchingToDirect) return 'chatFooter.switchingToDirectTakeover';
-            if (!props.directControl.machineOnline) return 'chatFooter.directSessionMachineOffline';
-            return 'chatFooter.directSessionTakeoverAvailable';
+            if (!props.directControl.machineOnline) return 'chatFooter.externalSessionMachineOffline';
+            return 'chatFooter.externalSessionTakeoverAvailable';
         })();
 
         return (

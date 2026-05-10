@@ -75,13 +75,13 @@ import { useRenderedAgentInputControlRows } from './controls/useRenderedAgentInp
 import { buildAgentInputSelectionOverlayViewModel } from './selection/buildAgentInputSelectionOverlayViewModel';
 import { useAgentInputSelectionAnchors } from './selection/useAgentInputSelectionAnchors';
 import { useAgentInputSelectionOverlayController } from './selection/useAgentInputSelectionOverlayController';
-import { computeSessionModePickerControl } from '@/sync/acp/sessionModeControl';
+import { computeSessionModePickerControl } from '@/sync/domains/sessionControl/sessionModeControl';
 import {
     computeAcpConfigOptionControls,
     computeAcpConfigOptionControlsFromOverride,
     type AcpConfigOption,
     type AcpConfigOptionValueId,
-} from '@/sync/acp/configOptionsControl';
+} from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { Text } from '@/components/ui/text/Text';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
@@ -92,9 +92,11 @@ import {
 } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { buildSessionMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { useLocalSetting } from '@/sync/store/hooks';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
+import { extractWebAttachmentFilesFromDataTransfer } from '@/utils/files/webAttachmentDataTransfer';
 import type {
     AgentInputAttachment,
     AgentInputComposerAttachmentBadge,
@@ -124,7 +126,7 @@ interface AgentInputProps {
     placeholder: string;
     onChangeText: (text: string) => void;
     sessionId?: string;
-    onSend: () => void;
+    onSend: (options?: Readonly<{ forceImmediate?: boolean }>) => void;
     submitAccessibilityLabel?: string;
     sendIcon?: React.ReactNode;
     onMicPress?: () => void;
@@ -583,12 +585,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         borderWidth: 1,
         borderColor: theme.colors.divider,
         borderRadius: Platform.select({ default: 16, android: 20 }),
-        ...(Platform.OS === 'web'
-            ? ({
-                // RN-web supports `backdropFilter`; native platforms ignore it.
-                backdropFilter: 'blur(2px)',
-            } as any)
-            : null),
     },
     fileDropOverlayContent: {
         flexDirection: 'row',
@@ -620,6 +616,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     const keyboardHeight = useKeyboardHeight();
     const voiceEnabled = useFeatureEnabled('voice');
+    const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
     const renderIoniconNode = React.useCallback(
         (
             name: React.ComponentProps<typeof Ionicons>['name'],
@@ -662,8 +659,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const handleFilesDroppedToComposer = React.useCallback((event: any) => {
         const onAttachmentsAdded = props.onAttachmentsAdded;
         if (typeof onAttachmentsAdded !== 'function') return;
-        const droppedFiles = event?.dataTransfer?.files as FileList | readonly File[] | undefined;
-        const files = droppedFiles ? Array.from(droppedFiles) : [];
+        const files = extractWebAttachmentFilesFromDataTransfer(event?.dataTransfer);
         if (files.length === 0) return;
         onAttachmentsAdded(files);
     }, [props.onAttachmentsAdded]);
@@ -840,7 +836,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         ? agentInputEnterToSend === true
         : agentInputEnterToSendNative === true;
 
-    const handleSend = React.useCallback(() => {
+    const handleSend = React.useCallback((options?: Readonly<{ forceImmediate?: boolean }>) => {
         if (sendActionDisabled) {
             return;
         }
@@ -853,7 +849,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             props.onChangeText('');
         }
         messageHistory.reset();
-        props.onSend();
+        props.onSend(options?.forceImmediate === true ? { forceImmediate: true } : undefined);
     }, [messageHistory, props.hasSendableAttachments, props.onChangeText, props.onSend, props.sessionId, props.value, sendActionDisabled]);
 
     const effectiveChipDensity = React.useMemo<'auto' | 'labels' | 'icons'>(() => {
@@ -1635,6 +1631,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     // Handle keyboard navigation
     const handleKeyPress = React.useCallback((event: KeyPressEvent): boolean => {
+        const forceImmediateSend = event.key === 'Enter' && event.shiftKey !== true && (event.metaKey === true || event.ctrlKey === true);
+        if (forceImmediateSend) {
+            const hasSendableInput = Boolean(props.value.trim()) || props.hasSendableAttachments === true;
+            if (!sendActionDisabled && hasSendableInput) {
+                handleSend({ forceImmediate: true });
+                return true;
+            }
+        }
+
         // Handle autocomplete navigation first
         if (suggestions.length > 0) {
             if (event.key === 'ArrowUp') {
@@ -1898,7 +1903,19 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     onDrop={composerDropZoneHandlers.onDrop}
                 >
                     {fileDragActive && typeof props.onAttachmentsAdded === 'function' ? (
-                        <View testID="agent-input-drop-overlay" pointerEvents="none" style={styles.fileDropOverlay}>
+                        <View
+                            testID="agent-input-drop-overlay"
+                            pointerEvents="none"
+                            style={[
+                                styles.fileDropOverlay,
+                                Platform.OS === 'web' && !uiBackdropBlurEnabled
+                                    ? ({ backgroundColor: theme.colors.overlay.scrimStrong } as ViewStyle)
+                                    : null,
+                                Platform.OS === 'web' && uiBackdropBlurEnabled
+                                    ? ({ backdropFilter: 'blur(2px)' } as unknown as ViewStyle)
+                                    : null,
+                            ]}
+                        >
                             <View style={styles.fileDropOverlayContent}>
                                 {renderIoniconNode('attach-outline', 18, theme.colors.text)}
                                 <Text style={styles.fileDropOverlayText}>{t('agentInput.dropToAttach')}</Text>

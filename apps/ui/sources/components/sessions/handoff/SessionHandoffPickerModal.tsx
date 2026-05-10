@@ -158,7 +158,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         if (!resolvedSourceMachineId) return null;
         return allServerMachines.find((machine: any) => normalizeId(machine?.id) === resolvedSourceMachineId) ?? null;
     }, [allServerMachines, resolvedSourceMachineId]);
-    const isDirectSession = Boolean((currentSession as any)?.metadata?.directSessionV1);
+    const isExternalSession = Boolean((currentSession as any)?.metadata?.externalSessionV1);
     const workspaceTransferPathSafety = React.useMemo(
         () => {
             const sourceHomeDir = (currentSession as any)?.metadata?.homeDir;
@@ -263,12 +263,12 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         });
         onResolve({
             targetMachineId,
-            targetSessionStorageMode: isDirectSession
+            targetSessionStorageMode: isExternalSession
                 ? (directTargetMode === 'convert_to_persisted' ? 'persisted' : 'direct')
                 : 'persisted',
             ...(workspaceTransfer ? { workspaceTransfer } : {}),
         });
-    }, [conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isDirectSession, onResolve, selectedMachineId, workspaceTransferStrategy]);
+    }, [conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isExternalSession, onResolve, selectedMachineId, workspaceTransferStrategy]);
 
     const footer = React.useMemo(() => (
         <View style={styles.footer}>
@@ -471,7 +471,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             </View>
                         ) : null}
                     </ItemGroup>
-                    {isDirectSession ? (
+                    {isExternalSession ? (
                         <ItemGroup
                             title={t('settingsSession.handoff.directTargetMode.groupTitle')}
                             footer={t('settingsSession.handoff.directTargetMode.groupFooter')}

@@ -24,8 +24,8 @@ const sessionMachineReachabilityState = vi.hoisted(() => ({
     machineOnline: true,
     machineRpcTargetAvailable: true,
 }));
-const directSessionRuntimeState = vi.hoisted(() => ({
-    directSessionLink: null as null | {
+const externalSessionRuntimeState = vi.hoisted(() => ({
+    externalSessionLink: null as null | {
         v: 1;
         providerId: string;
         machineId: string;
@@ -190,8 +190,8 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
 }));
 
-vi.mock('@/components/sessions/model/useDirectSessionRuntime', () => ({
-    useDirectSessionRuntime: () => directSessionRuntimeState,
+vi.mock('@/components/sessions/model/useExternalSessionRuntime', () => ({
+    useExternalSessionRuntime: () => externalSessionRuntimeState,
 }));
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -218,8 +218,8 @@ describe('SessionRightPanelAgentsView', () => {
         sessionMachineReachabilityState.machineReachable = true;
         sessionMachineReachabilityState.machineOnline = true;
         sessionMachineReachabilityState.machineRpcTargetAvailable = true;
-        directSessionRuntimeState.directSessionLink = null;
-        directSessionRuntimeState.status = null;
+        externalSessionRuntimeState.externalSessionLink = null;
+        externalSessionRuntimeState.status = null;
     });
 
     it('renders active and recent sections and opens preview/full routes from agent rows', async () => {
@@ -501,7 +501,7 @@ describe('SessionRightPanelAgentsView', () => {
             active: true,
             metadata: {
                 flavor: 'claude',
-                directSessionV1: {
+                externalSessionV1: {
                     v: 1,
                     providerId: 'claude',
                     machineId: 'machine-1',
@@ -510,14 +510,14 @@ describe('SessionRightPanelAgentsView', () => {
                 },
             },
         };
-        directSessionRuntimeState.directSessionLink = {
+        externalSessionRuntimeState.externalSessionLink = {
             v: 1,
             providerId: 'claude',
             machineId: 'machine-1',
             remoteSessionId: 'remote-session-1',
             source: 'provider',
         };
-        directSessionRuntimeState.status = { runnerActive: false };
+        externalSessionRuntimeState.status = { runnerActive: false };
 
         const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
 

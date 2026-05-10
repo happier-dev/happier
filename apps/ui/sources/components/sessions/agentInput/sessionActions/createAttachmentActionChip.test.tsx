@@ -32,10 +32,12 @@ describe('createAttachmentActionChip', () => {
         try {
             const onPickFile = vi.fn();
             const onPickImage = vi.fn();
+            const onPasteImage = vi.fn();
 
             const chip = createAttachmentActionChip({
                 onPickFile,
                 onPickImage,
+                onPasteImage,
             } as any);
 
             expect(chip.collapsedContentPopover).toBeFalsy();
@@ -43,6 +45,7 @@ describe('createAttachmentActionChip', () => {
                 presentation: 'simple',
                 title: '',
                 options: [
+                    { id: 'paste-image', label: 'common.pasteImage' },
                     { id: 'add-image', label: 'common.addImage' },
                     { id: 'add-file', label: 'common.addFile' },
                 ],
@@ -67,6 +70,9 @@ describe('createAttachmentActionChip', () => {
             expect(screen.tree.toJSON()).not.toBeNull();
             await screen.pressByTestIdAsync('agent-input-attachments-chip');
             expect(toggleCollapsedPopover).toHaveBeenCalledWith('attachments-add');
+
+            chip.collapsedOptionsPopover?.onSelect?.('paste-image');
+            expect(onPasteImage).toHaveBeenCalledTimes(1);
 
             chip.collapsedOptionsPopover?.onSelect?.('add-image');
             expect(onPickImage).toHaveBeenCalledTimes(1);

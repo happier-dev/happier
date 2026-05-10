@@ -5,10 +5,10 @@ import { resolveSessionViewDirectControlFooter } from './resolveSessionViewDirec
 describe('resolveSessionViewDirectControlFooter', () => {
     it('normalizes unexpected status activity values to unknown', () => {
         const footer = resolveSessionViewDirectControlFooter({
-            directSessionLink: {
+            externalSessionLink: {
                 machineId: 'machine-1',
             },
-            directSessionRuntime: {
+            externalSessionRuntime: {
                 status: {
                     machineOnline: true,
                     runnerActive: false,
@@ -17,7 +17,7 @@ describe('resolveSessionViewDirectControlFooter', () => {
                     canTakeOverPersist: false,
                 },
             },
-            directSessionTakeover: {
+            externalSessionTakeover: {
                 takeoverInFlight: null,
                 requestTakeover: vi.fn(),
             },
@@ -32,10 +32,10 @@ describe('resolveSessionViewDirectControlFooter', () => {
         const secondRequestTakeover = vi.fn(async () => true);
 
         const firstFooter = resolveSessionViewDirectControlFooter({
-            directSessionLink: {
+            externalSessionLink: {
                 machineId: 'machine-1',
             },
-            directSessionRuntime: {
+            externalSessionRuntime: {
                 status: {
                     machineOnline: true,
                     runnerActive: false,
@@ -44,7 +44,7 @@ describe('resolveSessionViewDirectControlFooter', () => {
                     canTakeOverPersist: true,
                 },
             },
-            directSessionTakeover: {
+            externalSessionTakeover: {
                 takeoverInFlight: null,
                 requestTakeover: firstRequestTakeover,
             },
@@ -52,10 +52,10 @@ describe('resolveSessionViewDirectControlFooter', () => {
         });
 
         const secondFooter = resolveSessionViewDirectControlFooter({
-            directSessionLink: {
+            externalSessionLink: {
                 machineId: 'machine-1',
             },
-            directSessionRuntime: {
+            externalSessionRuntime: {
                 status: {
                     machineOnline: true,
                     runnerActive: false,
@@ -64,7 +64,7 @@ describe('resolveSessionViewDirectControlFooter', () => {
                     canTakeOverPersist: true,
                 },
             },
-            directSessionTakeover: {
+            externalSessionTakeover: {
                 takeoverInFlight: null,
                 requestTakeover: secondRequestTakeover,
             },
@@ -82,10 +82,10 @@ describe('resolveSessionViewDirectControlFooter', () => {
         const secondRequestTakeover = vi.fn(async () => true);
 
         const firstFooter = resolveSessionViewDirectControlFooter({
-            directSessionLink: {
+            externalSessionLink: {
                 machineId: 'machine-1',
             },
-            directSessionRuntime: {
+            externalSessionRuntime: {
                 status: {
                     machineOnline: true,
                     runnerActive: false,
@@ -94,7 +94,7 @@ describe('resolveSessionViewDirectControlFooter', () => {
                     canTakeOverPersist: true,
                 },
             },
-            directSessionTakeover: {
+            externalSessionTakeover: {
                 takeoverInFlight: null,
                 requestTakeover: firstRequestTakeover,
             },
@@ -102,10 +102,10 @@ describe('resolveSessionViewDirectControlFooter', () => {
         });
 
         const secondFooter = resolveSessionViewDirectControlFooter({
-            directSessionLink: {
+            externalSessionLink: {
                 machineId: 'machine-1',
             },
-            directSessionRuntime: {
+            externalSessionRuntime: {
                 status: {
                     machineOnline: true,
                     runnerActive: false,
@@ -114,7 +114,7 @@ describe('resolveSessionViewDirectControlFooter', () => {
                     canTakeOverPersist: true,
                 },
             },
-            directSessionTakeover: {
+            externalSessionTakeover: {
                 takeoverInFlight: null,
                 requestTakeover: secondRequestTakeover,
             },

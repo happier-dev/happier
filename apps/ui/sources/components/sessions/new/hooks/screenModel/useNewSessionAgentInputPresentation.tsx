@@ -62,7 +62,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     targetServerId: string | null;
     targetServerName: string;
     mcpChip?: AgentInputExtraActionChip | null;
-    directSessionsFeatureEnabled: boolean;
+    externalSessionsFeatureEnabled: boolean;
     supportsDirectTranscriptStorage: boolean;
     transcriptStorage: NewSessionTranscriptStorage;
     hasUserSelectedTranscriptStorageRef: React.MutableRefObject<boolean>;
@@ -167,7 +167,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         targetServerId: params.targetServerId,
         targetServerName: params.targetServerName,
         mcpChip: params.mcpChip,
-        directSessionsFeatureEnabled: params.directSessionsFeatureEnabled,
+        externalSessionsFeatureEnabled: params.externalSessionsFeatureEnabled,
         supportsDirectTranscriptStorage: params.supportsDirectTranscriptStorage,
         transcriptStorage: params.transcriptStorage,
         onTranscriptStorageChange: handleTranscriptStorageChange,

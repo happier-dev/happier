@@ -29,7 +29,7 @@ describe('useNewSessionPreflightConfigOptionsState (cache)', () => {
         vi.resetModules();
         machineCapabilitiesInvokeMock.mockClear();
 
-        const { resetDynamicConfigOptionsProbeCacheForTests } = await import('@/sync/acp/dynamicConfigOptionsProbeCache');
+        const { resetDynamicConfigOptionsProbeCacheForTests } = await import('@/sync/domains/sessionControl/dynamicConfigOptionsProbeCache');
         resetDynamicConfigOptionsProbeCacheForTests();
 
         const { useNewSessionPreflightConfigOptionsState } = await import('./useNewSessionPreflightConfigOptionsState');
@@ -63,7 +63,7 @@ describe('useNewSessionPreflightConfigOptionsState (cache)', () => {
         vi.resetModules();
         machineCapabilitiesInvokeMock.mockClear();
 
-        const { resetDynamicConfigOptionsProbeCacheForTests } = await import('@/sync/acp/dynamicConfigOptionsProbeCache');
+        const { resetDynamicConfigOptionsProbeCacheForTests } = await import('@/sync/domains/sessionControl/dynamicConfigOptionsProbeCache');
         resetDynamicConfigOptionsProbeCacheForTests();
 
         const { useNewSessionPreflightConfigOptionsState } = await import('./useNewSessionPreflightConfigOptionsState');

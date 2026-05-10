@@ -35,7 +35,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
     agentType: AgentId;
     backendTarget: BackendTargetRefV2;
     settings: Settings;
-    directSessionsFeatureEnabled: boolean;
+    externalSessionsFeatureEnabled: boolean;
 }>): Readonly<{
     transcriptStorage: NewSessionTranscriptStorage;
     setTranscriptStorage: React.Dispatch<React.SetStateAction<NewSessionTranscriptStorage>>;
@@ -67,7 +67,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
             requested: params.hydratedPersistedAuthoringDraft?.transcriptStorage ?? resolvedDefault,
             agentId: params.agentType,
             settings: params.settings,
-            directSessionsEnabled: params.directSessionsFeatureEnabled,
+            externalSessionsEnabled: params.externalSessionsFeatureEnabled,
         });
     });
 
@@ -116,7 +116,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
             requested,
             agentId: params.agentType,
             settings: params.settings,
-            directSessionsEnabled: params.directSessionsFeatureEnabled,
+            externalSessionsEnabled: params.externalSessionsFeatureEnabled,
         });
         if (coerced !== transcriptStorage) {
             setTranscriptStorage(coerced);
@@ -125,7 +125,7 @@ export function useNewSessionTranscriptStorageState(params: Readonly<{
         accountTranscriptStorageDefaults,
         params.agentType,
         params.backendTarget,
-        params.directSessionsFeatureEnabled,
+        params.externalSessionsFeatureEnabled,
         params.settings,
         selectedProfileTranscriptStorageDefaultsByTargetKey,
         transcriptStorage,

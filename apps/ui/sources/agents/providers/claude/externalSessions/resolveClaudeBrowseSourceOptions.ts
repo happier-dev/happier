@@ -1,10 +1,10 @@
-import type { DirectBrowseSourceOption } from '@/agents/registry/registryUiBehavior';
+import type { ExternalSessionBrowseSourceOption } from '@/agents/registry/registryUiBehavior';
 import { t } from '@/text';
 
-export function resolveClaudeBrowseSourceOptions(): readonly DirectBrowseSourceOption[] {
+export function resolveClaudeBrowseSourceOptions(): readonly ExternalSessionBrowseSourceOption[] {
     return [{
         key: 'claude:default',
-        label: t('directSessions.browseSourceClaudeDefault'),
+        label: t('externalSessions.browseSourceClaudeDefault'),
         source: { kind: 'claudeConfig' },
     }];
 }

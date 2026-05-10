@@ -250,7 +250,7 @@ vi.mock('@/sync/domains/input/slashCommands/expandPromptTemplateInvocation', () 
 vi.mock('@/sync/domains/permissions/permissionModeApply', () => ({
     applyPermissionModeSelection: vi.fn(),
 }));
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/track', () => ({

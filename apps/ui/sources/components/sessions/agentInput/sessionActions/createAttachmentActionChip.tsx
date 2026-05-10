@@ -13,6 +13,7 @@ const WEB_PICKER_DOUBLE_OPEN_COOLDOWN_MS = 500;
 export function createAttachmentActionChip(params: Readonly<{
     onPickFile: () => void;
     onPickImage: () => void;
+    onPasteImage?: () => void;
     disabled?: boolean;
 }>): AgentInputExtraActionChip {
     const showChooser = Platform.OS === 'ios' || Platform.OS === 'android';
@@ -52,10 +53,15 @@ export function createAttachmentActionChip(params: Readonly<{
                 icon: (tint: string) =>
                     normalizeNodeForView(<Ionicons name="attach-outline" size={16} color={tint} />),
                 options: [
+                    ...(params.onPasteImage ? [{ id: 'paste-image', label: t('common.pasteImage') }] : []),
                     { id: 'add-image', label: t('common.addImage') },
                     { id: 'add-file', label: t('common.addFile') },
                 ],
                 onSelect: (selectedId) => {
+                    if (selectedId === 'paste-image') {
+                        params.onPasteImage?.();
+                        return;
+                    }
                     if (selectedId === 'add-image') {
                         params.onPickImage();
                         return;

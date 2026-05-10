@@ -16,6 +16,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const enqueuePendingMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
+const submitMessageSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
 const resumeSessionSpy = vi.hoisted(() =>
     vi.fn<(..._args: any[]) => Promise<ResumeSessionResult>>(async (..._args: any[]) => ({
         type: 'error' as const,
@@ -43,6 +44,19 @@ const modalMockState = vi.hoisted(() => ({
 }));
 const settingsState = vi.hoisted(() => ({
     current: { experiments: true, featureToggles: {}, codexBackendMode: 'acp' } as Record<string, unknown>,
+}));
+const sessionMetadataOverrides = vi.hoisted(() => ({
+    current: {} as Record<string, unknown>,
+}));
+const machineEncryptionAvailable = vi.hoisted(() => ({
+    current: false,
+}));
+const inactiveSessionUiState = vi.hoisted(() => ({
+    current: { noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true } as {
+        noticeKind: 'none' | 'not-resumable' | 'machine-offline';
+        inactiveStatusTextKey: 'session.inactiveResumable' | 'session.inactiveMachineOffline' | 'session.inactiveNotResumable' | null;
+        shouldShowInput: boolean;
+    },
 }));
 const resolveSessionComposerSendMock = vi.hoisted(() =>
     vi.fn((...args: any[]) => {
@@ -195,6 +209,7 @@ installSessionShellCommonModuleMocks({
                 path: '/tmp/target',
                 homeDir: '/tmp',
                 codexSessionId: 'codex-session-1',
+                ...sessionMetadataOverrides.current,
             },
             agentState: {},
         };
@@ -327,7 +342,7 @@ vi.mock('@/hooks/session/useDraft', () => ({
     useDraft: () => ({ clearDraft: vi.fn() }),
 }));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
-    getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
+    getInactiveSessionUiState: () => inactiveSessionUiState.current,
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
     resolveSessionMachineReachability: () => true,
@@ -359,9 +374,9 @@ vi.mock('@/sync/sync', () => ({
         onSessionVisible: () => {},
         sendMessage: async () => {},
         enqueuePendingMessage: (...args: any[]) => enqueuePendingMessageSpy(...args),
-        submitMessage: async () => {},
+        submitMessage: (...args: any[]) => submitMessageSpy(...args),
         encryption: {
-            getMachineEncryption: () => null,
+            getMachineEncryption: () => (machineEncryptionAvailable.current ? { keyId: 'machine-key' } : null),
         },
     },
 }));
@@ -412,7 +427,7 @@ vi.mock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => (
 vi.mock('@/sync/domains/permissions/permissionModeApply', () => ({
     applyPermissionModeSelection: async () => {},
 }));
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
@@ -458,10 +473,14 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = false;
         authCredentials = { token: 't', secret: 's' };
         enqueuePendingMessageSpy.mockClear();
+        submitMessageSpy.mockClear();
         resumeCapabilityMachineIds.length = 0;
         resumeCapabilityServerIds.length = 0;
         cliDetectionServerIds.length = 0;
         settingsState.current = { experiments: true, featureToggles: {}, codexBackendMode: 'acp' };
+        sessionMetadataOverrides.current = {};
+        machineEncryptionAvailable.current = false;
+        inactiveSessionUiState.current = { noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true };
         canResumeSessionWithOptionsSpy.mockReset();
         canResumeSessionWithOptionsSpy.mockImplementation(
             (_metadata: unknown, options: { machineId?: string | null } | null | undefined) => options?.machineId === 'm-target',
@@ -525,6 +544,83 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
         expect(findAgentInput(screen).props.value).toBe('');
         expect(screen.findByTestId('session-pendingQueue-resumeFailed')).toBeTruthy();
+
+        await screen.unmount();
+    });
+
+    it('shows resuming connection status while pending-queue wake is in flight', async () => {
+        sessionMetadataOverrides.current = { version: '0.1.0' };
+        machineEncryptionAvailable.current = true;
+        inactiveSessionUiState.current = {
+            noticeKind: 'none',
+            inactiveStatusTextKey: 'session.inactiveResumable',
+            shouldShowInput: true,
+        };
+        let resolveResume: ((value: ResumeSessionResult) => void) | null = null;
+        resumeSessionSpy.mockImplementationOnce(async () => {
+            return await new Promise<ResumeSessionResult>((resolve) => {
+                resolveResume = resolve;
+            });
+        });
+
+        const screen = await renderSessionView();
+        pendingFireAndForget.length = 0;
+
+        const agentInput = findAgentInput(screen);
+
+        await act(async () => {
+            agentInput.props.onChangeText('hello');
+        });
+        await act(async () => {
+            agentInput.props.onSend();
+        });
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
+        expect(findAgentInput(screen).props.connectionStatus?.text).toBe('session.resuming');
+        expect(findAgentInput(screen).props.connectionStatus?.isPulsing).toBe(true);
+
+        await act(async () => {
+            resolveResume?.({ type: 'success' });
+            await pendingFireAndForget[0];
+        });
+
+        expect(findAgentInput(screen).props.connectionStatus?.text).not.toBe('session.resuming');
+
+        await screen.unmount();
+    });
+
+    it('bypasses server-pending enqueue when the send action is forced immediate', async () => {
+        sessionMetadataOverrides.current = { version: '0.1.0' };
+        inactiveSessionUiState.current = {
+            noticeKind: 'none',
+            inactiveStatusTextKey: null,
+            shouldShowInput: true,
+        };
+
+        const screen = await renderSessionView();
+        pendingFireAndForget.length = 0;
+
+        const agentInput = findAgentInput(screen);
+
+        await act(async () => {
+            agentInput.props.onChangeText('hello now');
+        });
+        await act(async () => {
+            agentInput.props.onSend({ forceImmediate: true });
+        });
+
+        expect(pendingFireAndForget.length).toBeGreaterThan(0);
+        await act(async () => {
+            await pendingFireAndForget[0];
+        });
+
+        expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+        expect(submitMessageSpy).not.toHaveBeenCalled();
+        expect(resumeSessionSpy).toHaveBeenCalledTimes(1);
+        expect(findAgentInput(screen).props.value).toBe('hello now');
 
         await screen.unmount();
     });

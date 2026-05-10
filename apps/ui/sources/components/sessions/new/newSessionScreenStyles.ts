@@ -52,6 +52,15 @@ export const newSessionScreenStyles = StyleSheet.create((theme, rt) => ({
         paddingHorizontal: 16,
         ...Typography.default()
     },
+    wizardSelectionPair: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 16,
+    },
+    wizardSelectionPairColumn: {
+        flex: 1,
+        minWidth: 0,
+    },
     profileListItem: {
         backgroundColor: theme.colors.input.background,
         borderRadius: 12,

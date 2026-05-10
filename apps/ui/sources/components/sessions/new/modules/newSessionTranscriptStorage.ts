@@ -23,10 +23,10 @@ export function coerceNewSessionTranscriptStorage(params: Readonly<{
     requested: NewSessionTranscriptStorage | null | undefined;
     agentId: AgentId;
     settings: DirectTranscriptStorageSettings;
-    directSessionsEnabled: boolean;
+    externalSessionsEnabled: boolean;
 }>): NewSessionTranscriptStorage {
     if (params.requested !== 'direct') return 'persisted';
-    if (!params.directSessionsEnabled) return 'persisted';
+    if (!params.externalSessionsEnabled) return 'persisted';
     return supportsDirectTranscriptStorageForNewSession({
         agentId: params.agentId,
         settings: params.settings,

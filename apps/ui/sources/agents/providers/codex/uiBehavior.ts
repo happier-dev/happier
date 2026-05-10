@@ -113,7 +113,7 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
         getPreflightIssues: getCodexNewSessionPreflightIssues,
         getRelevantInstallableDepKeys: getCodexNewSessionRelevantInstallableDepKeys,
     },
-    directSessions: {
+    externalSessions: {
         supportsBackgroundFollow: true,
         browse: {
             order: 10,

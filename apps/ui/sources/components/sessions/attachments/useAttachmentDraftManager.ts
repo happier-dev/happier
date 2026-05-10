@@ -11,6 +11,7 @@ import type { AttachmentDraft } from './attachmentDraftModel';
 
 function resolveSourceSizeBytes(source: AttachmentsUploadFileSource): number | null {
     if (source.kind === 'web') return source.file.size;
+    if (source.kind === 'memory') return source.bytes.byteLength;
     return typeof source.sizeBytes === 'number' && Number.isFinite(source.sizeBytes) ? source.sizeBytes : null;
 }
 
@@ -155,7 +156,13 @@ export function useAttachmentDraftManager(params: Readonly<{
         return drafts.map((d) => {
             const name = resolveSourceName(d.source);
             const imagePreviewUri = isImageSource(d.source)
-                ? (d.source.kind === 'native' ? d.source.uri : (webUrls.get(d.id) ?? null))
+                ? (
+                    d.source.kind === 'native'
+                        ? d.source.uri
+                        : d.source.kind === 'memory'
+                            ? d.source.previewUri ?? null
+                            : (webUrls.get(d.id) ?? null)
+                )
                 : null;
 
             return {

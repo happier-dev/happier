@@ -68,7 +68,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: 999,
-        backgroundColor: theme.colors.overlay.scrimStrong,
+        backgroundColor: theme.colors.overlay.scrim,
         zIndex: 1,
     },
     navButtonLeft: {

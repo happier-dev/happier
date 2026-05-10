@@ -9,10 +9,13 @@ import { AttachmentFilePicker } from '@/components/sessions/attachments/Attachme
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { PathSelector } from '@/components/sessions/new/components/PathSelector';
 import { WizardSectionHeaderRow } from '@/components/sessions/new/components/WizardSectionHeaderRow';
+import { NewSessionModelSelectionContent } from '@/components/sessions/new/components/NewSessionModelSelectionContent';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
+import { AdaptiveSelectionSection } from '@/components/ui/selection/AdaptiveSelectionSection';
 import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -26,6 +29,7 @@ import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
 import type { AgentId } from '@/agents/catalog/catalog';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { getAgentPickerOptions } from '@/agents/catalog/agentPickerOptions';
+import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { CliNotDetectedBanner, type CliNotDetectedBannerDismissScope } from '@/components/sessions/new/components/CliNotDetectedBanner';
 import { InstallableDepInstaller, type InstallableDepInstallerProps } from '@/components/machines/InstallableDepInstaller';
 import { Text } from '@/components/ui/text/Text';
@@ -40,6 +44,16 @@ import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayout
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { NewSessionComposerKeyboardHost } from './NewSessionComposerKeyboardHost';
 import { NewSessionKeyboardContainer } from './NewSessionKeyboardContainer';
+import {
+    NewSessionWizardDropdownSelectionItem,
+    NewSessionWizardPopoverItem,
+    resolveWizardAdaptivePresentation,
+} from './NewSessionWizardAdaptiveSelection';
+import type {
+    NewSessionWizardSectionPresentation,
+    NewSessionWizardSelectionSectionId,
+} from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 
 
 export interface NewSessionWizardLayoutProps {
@@ -94,8 +108,11 @@ export interface NewSessionWizardAgentProps {
     agentPickerSelectedOptionId?: React.ComponentProps<typeof AgentInput>['agentPickerSelectedOptionId'];
     onAgentPickerSelect?: React.ComponentProps<typeof AgentInput>['onAgentPickerSelect'];
     agentPickerProbe?: React.ComponentProps<typeof AgentInput>['agentPickerProbe'];
+    selectedBackendEntry?: ResolvedBackendCatalogEntry | null;
     modelOptions: ReadonlyArray<{ value: ModelMode; label: string; description: string }>;
     modelOptionsProbe?: React.ComponentProps<typeof AgentInput>['modelOptionsOverrideProbe'];
+    favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
+    setFavoriteModelSelections?: (favorites: FavoriteModelSelectionV1[]) => void;
     acpSessionModeOptions?: ReadonlyArray<Readonly<{ id: string; name: string; description?: string }>>;
     acpSessionModeProbe?: React.ComponentProps<typeof AgentInput>['acpSessionModeOptionsOverrideProbe'];
     acpSessionModeId?: string | null;
@@ -157,10 +174,43 @@ export interface NewSessionWizardFooterProps {
 export interface NewSessionWizardProps {
     popoverBoundaryRef: React.RefObject<RNView>;
     layout: NewSessionWizardLayoutProps;
+    sectionPresentation?: Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>>;
+    useColumnLayout?: boolean;
     profiles: NewSessionWizardProfilesProps;
     agent: NewSessionWizardAgentProps;
     machine: NewSessionWizardMachineProps;
     footer: NewSessionWizardFooterProps;
+}
+
+const WIZARD_AUTO_DROPDOWN_MIN_VISIBLE_ROWS = 5;
+
+function countVisibleWizardMachineRows(params: Readonly<{
+    machines: ReadonlyArray<Machine>;
+    recentMachines: ReadonlyArray<Machine>;
+    favoriteMachines: ReadonlyArray<Machine>;
+}>): number {
+    const visibleMachines = params.machines.filter((machine) => !machine.revokedAt);
+    const visibleRecentMachines = params.recentMachines.filter((machine) => !machine.revokedAt);
+    const visibleFavoriteMachines = params.favoriteMachines.filter((machine) => !machine.revokedAt);
+    const favoriteIds = new Set(visibleFavoriteMachines.map((machine) => machine.id));
+    const recentMachinesWithoutFavorites = visibleRecentMachines.filter((machine) => !favoriteIds.has(machine.id));
+    const pinnedIds = new Set<string>([
+        ...visibleFavoriteMachines.map((machine) => machine.id),
+        ...recentMachinesWithoutFavorites.map((machine) => machine.id),
+    ]);
+    const allMachinesWithoutPinned = visibleMachines.filter((machine) => !pinnedIds.has(machine.id));
+
+    return visibleFavoriteMachines.length + recentMachinesWithoutFavorites.length + allMachinesWithoutPinned.length;
+}
+
+function countVisibleWizardSavedPathRows(params: Readonly<{
+    recentPaths: ReadonlyArray<string>;
+    favoriteDirectories: ReadonlyArray<string>;
+}>): number {
+    return new Set([
+        ...params.favoriteDirectories.filter((path) => path.trim().length > 0),
+        ...params.recentPaths.filter((path) => path.trim().length > 0),
+    ]).size;
 }
 
 export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewSessionWizardProps) {
@@ -177,6 +227,10 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         shouldBottomAnchorOverride ?? (Platform.OS !== 'web' || isMobileLayoutWidth(windowWidth));
     const keyboardHeight = useKeyboardHeight();
     const webKeyboardInset = Platform.OS === 'web' && shouldBottomAnchor ? keyboardHeight : 0;
+    const useSelectionColumns = props.useColumnLayout === true
+        && Platform.OS === 'web'
+        && !isMobileLayoutWidth(windowWidth)
+        && windowWidth >= 1100;
 
     // Wizard-only scroll bookkeeping (keep it out of NewSessionScreen)
     const scrollViewRef = React.useRef<ScrollView>(null);
@@ -282,9 +336,15 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         isCliBannerDismissed,
         dismissCliBanner,
         agentType,
+        agentLabel,
+        agentPickerOptions,
+        onAgentPickerSelect,
+        selectedBackendEntry,
         setAgentType,
         modelOptions,
         modelOptionsProbe,
+        favoriteModelSelections,
+        setFavoriteModelSelections,
         modelMode,
         setModelMode,
         selectedIndicatorColor,
@@ -307,6 +367,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         setSelectedMachineId,
         getBestPathForMachine,
         setSelectedPath,
+        setDraftSelectedPath,
         favoriteMachines,
         setFavoriteMachines,
         selectedPath,
@@ -343,6 +404,61 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
             popoverBoundaryRef: props.popoverBoundaryRef,
         });
     }, [machineDisplayName, props.popoverBoundaryRef, props.profiles, serverId]);
+
+    const sectionPresentation = props.sectionPresentation ?? {};
+    const profilePresentation = resolveWizardAdaptivePresentation(
+        sectionPresentation.profiles,
+        profiles.length > 8 ? 'compact' : 'expanded',
+    );
+    const backendOptions = React.useMemo(() => getAgentPickerOptions(enabledAgentIds), [enabledAgentIds]);
+    const backendPresentation = resolveWizardAdaptivePresentation(
+        sectionPresentation.backends,
+        backendOptions.length > 6 ? 'compact' : 'expanded',
+    );
+    const modelPresentation = resolveWizardAdaptivePresentation(
+        sectionPresentation.models,
+        modelOptions.length > 8 ? 'compact' : 'expanded',
+    );
+    const machineVisibleRowCount = React.useMemo(() => countVisibleWizardMachineRows({
+        machines,
+        recentMachines,
+        favoriteMachines: favoriteMachineItems,
+    }), [favoriteMachineItems, machines, recentMachines]);
+    const pathVisibleRowCount = React.useMemo(() => countVisibleWizardSavedPathRows({
+        favoriteDirectories,
+        recentPaths,
+    }), [favoriteDirectories, recentPaths]);
+    const machinePresentation = resolveWizardAdaptivePresentation(
+        sectionPresentation.machines,
+        machineVisibleRowCount >= WIZARD_AUTO_DROPDOWN_MIN_VISIBLE_ROWS ? 'compact' : 'expanded',
+    );
+    const pathPresentation = resolveWizardAdaptivePresentation(
+        sectionPresentation.paths,
+        pathVisibleRowCount >= WIZARD_AUTO_DROPDOWN_MIN_VISIBLE_ROWS ? 'compact' : 'expanded',
+    );
+    const permissionOptions = React.useMemo(() => getPermissionModeOptionsForAgentType(agentType), [agentType]);
+    const permissionPresentation = resolveWizardAdaptivePresentation(
+        sectionPresentation.permissions,
+        permissionOptions.length > 6 ? 'compact' : 'expanded',
+    );
+    const modelOptionsProbePhase = modelOptionsProbe?.phase ?? 'idle';
+    const modelOptionsProbeIsBusy = modelOptionsProbePhase === 'loading' || modelOptionsProbePhase === 'refreshing';
+    const hasModelOptionsProbeAffordance = modelOptionsProbeIsBusy || typeof modelOptionsProbe?.onRefresh === 'function';
+    const shouldRenderModelSection = modelOptions.length > 0 || hasModelOptionsProbeAffordance;
+    const pairAgentAndModelSections = useSelectionColumns && shouldRenderModelSection;
+    const handleSelectMachine = React.useCallback((machine: Machine) => {
+        setSelectedMachineId(machine.id);
+        const bestPath = getBestPathForMachine(machine.id);
+        setSelectedPath(bestPath);
+    }, [getBestPathForMachine, setSelectedMachineId, setSelectedPath]);
+    const handleToggleFavoriteMachine = React.useCallback((machine: Machine) => {
+        const isInFavorites = favoriteMachines.includes(machine.id);
+        if (isInFavorites) {
+            setFavoriteMachines(favoriteMachines.filter(id => id !== machine.id));
+        } else {
+            setFavoriteMachines([...favoriteMachines, machine.id]);
+        }
+    }, [favoriteMachines, setFavoriteMachines]);
 
     const shellStyle = [
         styles.container,
@@ -390,15 +506,34 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         <Text style={styles.sectionDescription}>
                                             {t('newSession.selectAiProfileDescription')}
                                         </Text>
-                                        <NewSessionProfilesBrowserContent
-                                            profilesListProps={sharedProfilesListProps}
-                                            machineId={selectedMachineId}
-                                            serverId={serverId}
-                                            machineName={machineDisplayName}
-                                            previewDisplay="below-list"
-                                            inlinePreviewSpacingTop={16}
-                                            renderListContent={(profilesListProps) => (
-                                                <ProfilesList {...profilesListProps} />
+                                        <AdaptiveSelectionSection
+                                            presentation={profilePresentation}
+                                            expandedContent={(
+                                                <NewSessionProfilesBrowserContent
+                                                    profilesListProps={sharedProfilesListProps}
+                                                    machineId={selectedMachineId}
+                                                    serverId={serverId}
+                                                    machineName={machineDisplayName}
+                                                    previewDisplay="below-list"
+                                                    inlinePreviewSpacingTop={16}
+                                                    renderListContent={(profilesListProps) => (
+                                                        <ProfilesList {...profilesListProps} />
+                                                    )}
+                                                />
+                                            )}
+                                            compactContent={(
+                                                <NewSessionWizardPopoverItem
+                                                    testID="new-session-profile-dropdown-trigger"
+                                                    title={t('newSession.selectAiProfileTitle')}
+                                                    subtitle={
+                                                        selectedProfileId
+                                                            ? (resolvedProfileMap.get(selectedProfileId)?.name ?? getBuiltInProfile(selectedProfileId)?.name ?? selectedProfileId)
+                                                            : t('profiles.noProfile')
+                                                    }
+                                                    icon={renderIconNode('person-outline', 24, theme.colors.textSecondary)}
+                                                    popover={profilePopover}
+                                                    boundaryRef={props.popoverBoundaryRef}
+                                                />
                                             )}
                                         />
 
@@ -406,279 +541,344 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                     </>
                                 )}
 
-                                {/* Section: AI Backend */}
-                                <View onLayout={registerWizardSectionOffset('agent')}>
-                                    <View style={styles.wizardSectionHeaderRow}>
-                                        {renderIconNode('hardware-chip-outline', 18, theme.colors.text)}
-                                        <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>
-                                            {t('newSession.selectAiBackendTitle')}
-                                        </Text>
-                                    </View>
-                                </View>
-                                <Text style={styles.sectionDescription}>
-                                    {useProfiles && selectedProfileId
-                                        ? t('newSession.aiBackendLimitedByProfileAndMachineClis')
-                                        : t('newSession.aiBackendSelectWhichAiRuns')}
-                                </Text>
-
-                                {/* Missing CLI Installation Banners */}
-                                {selectedMachineId && tmuxRequested && cliAvailability.tmux === false && (
-                                    <View style={{
-                                        backgroundColor: theme.colors.box.warning.background,
-                                        borderRadius: 10,
-                                        padding: 12,
-                                        marginBottom: 12,
-                                        borderWidth: 1,
-                                        borderColor: theme.colors.box.warning.border,
-                                    }}>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                                            {renderIconNode('warning', 16, theme.colors.warning)}
-                                            <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text, ...Typography.default('semiBold') }}>
-                                                {t('machine.tmux.notDetectedSubtitle')}
-                                            </Text>
+                                <View style={pairAgentAndModelSections ? styles.wizardSelectionPair : undefined}>
+                                    <View style={pairAgentAndModelSections ? styles.wizardSelectionPairColumn : undefined}>
+                                        {/* Section: AI Backend */}
+                                        <View onLayout={registerWizardSectionOffset('agent')}>
+                                            <View style={styles.wizardSectionHeaderRow}>
+                                                {renderIconNode('hardware-chip-outline', 18, theme.colors.text)}
+                                                <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>
+                                                    {t('newSession.selectAiBackendTitle')}
+                                                </Text>
+                                            </View>
                                         </View>
-                                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default() }}>
-                                            {t('machine.tmux.notDetectedMessage')}
+                                        <Text style={styles.sectionDescription}>
+                                            {useProfiles && selectedProfileId
+                                                ? t('newSession.aiBackendLimitedByProfileAndMachineClis')
+                                                : t('newSession.aiBackendSelectWhichAiRuns')}
                                         </Text>
-                                    </View>
-                                )}
 
-                                {installableDepInstallers && installableDepInstallers.length > 0 ? (
-                                    <>
-                                        {installableDepInstallers.map((installer) => (
-                                            <InstallableDepInstaller key={installer.depId} {...installer} />
-                                        ))}
-                                    </>
-                                ) : null}
+                                        {/* Missing CLI Installation Banners */}
+                                        {selectedMachineId && tmuxRequested && cliAvailability.tmux === false && (
+                                            <View style={{
+                                                backgroundColor: theme.colors.box.warning.background,
+                                                borderRadius: 10,
+                                                padding: 12,
+                                                marginBottom: 12,
+                                                borderWidth: 1,
+                                                borderColor: theme.colors.box.warning.border,
+                                            }}>
+                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                                                    {renderIconNode('warning', 16, theme.colors.warning)}
+                                                    <Text style={{ fontSize: 13, fontWeight: '600', color: theme.colors.text, ...Typography.default('semiBold') }}>
+                                                        {t('machine.tmux.notDetectedSubtitle')}
+                                                    </Text>
+                                                </View>
+                                                <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default() }}>
+                                                    {t('machine.tmux.notDetectedMessage')}
+                                                </Text>
+                                            </View>
+                                        )}
 
-                                {selectedMachineId ? (
-                                    enabledAgentIds
-                                        .filter((agentId) => cliAvailability.available[agentId] === false)
-                                        .filter((agentId) => !isCliBannerDismissed(agentId))
-                                        .map((agentId) => (
-                                            <CliNotDetectedBanner
-                                                key={agentId}
-                                                agentId={agentId}
-                                                theme={theme}
-                                                onDismiss={(scope) => dismissCliBanner(agentId, scope)}
-                                            />
-                                        ))
-                                ) : null}
+                                        {installableDepInstallers && installableDepInstallers.length > 0 ? (
+                                            <>
+                                                {installableDepInstallers.map((installer) => (
+                                                    <InstallableDepInstaller key={installer.depId} {...installer} />
+                                                ))}
+                                            </>
+                                        ) : null}
 
-                                <ItemGroup title={<View />} headerStyle={{ paddingTop: 0, paddingBottom: 0 }}>
-                                    {(() => {
-                                        const selectedProfile = useProfiles && selectedProfileId
-                                            ? (resolvedProfileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId))
-                                            : null;
+                                        {selectedMachineId ? (
+                                            enabledAgentIds
+                                                .filter((agentId) => cliAvailability.available[agentId] === false)
+                                                .filter((agentId) => !isCliBannerDismissed(agentId))
+                                                .map((agentId) => (
+                                                    <CliNotDetectedBanner
+                                                        key={agentId}
+                                                        agentId={agentId}
+                                                        theme={theme}
+                                                        onDismiss={(scope) => dismissCliBanner(agentId, scope)}
+                                                    />
+                                                ))
+                                        ) : null}
 
-                                        const options = getAgentPickerOptions(enabledAgentIds);
+                                        {(() => {
+                                            const selectedProfile = useProfiles && selectedProfileId
+                                                ? (resolvedProfileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId))
+                                                : null;
 
-                                        return options.map((option, index) => {
-                                            const compatible = !selectedProfile || isProfileCompatibleWithAgent(selectedProfile, option.agentId);
-                                            const selectable = isAgentSelectable(option.agentId);
-                                            const disabledReason = !compatible
-                                                ? t('newSession.aiBackendNotCompatibleWithSelectedProfile')
-                                                : !selectable
-                                                    ? t('newSession.aiBackendCliNotDetectedOnMachine', { cli: t(option.titleKey) })
-                                                    : null;
+                                            const backendRows = backendOptions.map((option) => {
+                                                const compatible = !selectedProfile || isProfileCompatibleWithAgent(selectedProfile, option.agentId);
+                                                const selectable = isAgentSelectable(option.agentId);
+                                                const disabledReason = !compatible
+                                                    ? t('newSession.aiBackendNotCompatibleWithSelectedProfile')
+                                                    : !selectable
+                                                        ? t('newSession.aiBackendCliNotDetectedOnMachine', { cli: t(option.titleKey) })
+                                                        : null;
 
-                                            const isSelected = agentType === option.agentId;
+                                                return {
+                                                    option,
+                                                    compatible,
+                                                    disabledReason,
+                                                    isSelected: agentType === option.agentId,
+                                                };
+                                            });
+                                            const dropdownItems: DropdownMenuItem[] = backendRows.map(({ option, disabledReason }) => ({
+                                                id: option.agentId,
+                                                title: t(option.titleKey),
+                                                subtitle: disabledReason ?? t(option.subtitleKey),
+                                                disabled: Boolean(disabledReason),
+                                                icon: renderIconNode(option.iconName as any, 20, theme.colors.textSecondary),
+                                            }));
 
                                             return (
-                                                <Item
-                                                    key={option.agentId}
-                                                    testID={`new-session-agent:${option.agentId}`}
-                                                    title={t(option.titleKey)}
-                                                    subtitle={disabledReason ?? t(option.subtitleKey)}
-                                                    leftElement={renderIconNode(option.iconName as any, 24, theme.colors.textSecondary)}
-                                                    selected={isSelected}
-                                                    disabled={!!disabledReason}
-                                                    onPress={() => {
-                                                        if (disabledReason) {
-                                                            Modal.alert(
-                                                                t('profiles.aiBackend.title'),
-                                                                disabledReason,
-                                                                compatible
-                                                                    ? [{ text: t('common.ok'), style: 'cancel' }]
-                                                                    : [
-                                                                        { text: t('common.ok'), style: 'cancel' },
-                                                                        ...(useProfiles && selectedProfileId ? [{ text: t('newSession.changeProfile'), onPress: handleAgentInputProfileClick }] : []),
-                                                                    ],
-                                                            );
-                                                            return;
-                                                        }
-                                                        setAgentType(option.agentId);
-                                                    }}
-                                                    rightElement={(
-                                                        <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
-                                                            {renderIconNode(
-                                                                'checkmark-circle',
-                                                                24,
-                                                                selectedIndicatorColor,
-                                                                { opacity: isSelected ? 1 : 0 },
-                                                            )}
-                                                        </View>
+                                                <AdaptiveSelectionSection
+                                                    presentation={backendPresentation}
+                                                    expandedContent={(
+                                                        <ItemGroup title={<View />} headerStyle={{ paddingTop: 0, paddingBottom: 0 }}>
+                                                            {backendRows.map(({ option, compatible, disabledReason, isSelected }, index) => (
+                                                                <Item
+                                                                    key={option.agentId}
+                                                                    testID={`new-session-agent:${option.agentId}`}
+                                                                    title={t(option.titleKey)}
+                                                                    subtitle={disabledReason ?? t(option.subtitleKey)}
+                                                                    leftElement={renderIconNode(option.iconName as any, 24, theme.colors.textSecondary)}
+                                                                    selected={isSelected}
+                                                                    disabled={!!disabledReason}
+                                                                    onPress={() => {
+                                                                        if (disabledReason) {
+                                                                            Modal.alert(
+                                                                                t('profiles.aiBackend.title'),
+                                                                                disabledReason,
+                                                                                compatible
+                                                                                    ? [{ text: t('common.ok'), style: 'cancel' }]
+                                                                                    : [
+                                                                                        { text: t('common.ok'), style: 'cancel' },
+                                                                                        ...(useProfiles && selectedProfileId ? [{ text: t('newSession.changeProfile'), onPress: handleAgentInputProfileClick }] : []),
+                                                                                    ],
+                                                                            );
+                                                                            return;
+                                                                        }
+                                                                        setAgentType(option.agentId);
+                                                                    }}
+                                                                    rightElement={(
+                                                                        <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
+                                                                            {renderIconNode(
+                                                                                'checkmark-circle',
+                                                                                24,
+                                                                                selectedIndicatorColor,
+                                                                                { opacity: isSelected ? 1 : 0 },
+                                                                            )}
+                                                                        </View>
+                                                                    )}
+                                                                    showChevron={false}
+                                                                    showDivider={index < backendRows.length - 1}
+                                                                />
+                                                            ))}
+                                                        </ItemGroup>
                                                     )}
-                                                    showChevron={false}
-                                                    showDivider={index < options.length - 1}
+                                                    compactContent={(
+                                                        <NewSessionWizardDropdownSelectionItem
+                                                            testID="new-session-agent-dropdown-trigger"
+                                                            title={t('newSession.selectAiBackendTitle')}
+                                                            subtitle={agentLabel ?? dropdownItems.find((item) => item.id === agentType)?.title ?? t('newSession.aiBackendSelectWhichAiRuns')}
+                                                            icon={renderIconNode('hardware-chip-outline', 24, theme.colors.textSecondary)}
+                                                            items={dropdownItems}
+                                                            selectedId={agentType}
+                                                            onSelect={(id) => {
+                                                                if (onAgentPickerSelect && agentPickerOptions?.some((option) => option.id === id)) {
+                                                                    onAgentPickerSelect(id);
+                                                                    return;
+                                                                }
+                                                                setAgentType(id as AgentId);
+                                                            }}
+                                                            search={dropdownItems.length >= 10}
+                                                            searchPlaceholder={t('subAgentGuidance.ruleEditor.backendPicker.searchPlaceholder')}
+                                                            boundaryRef={props.popoverBoundaryRef}
+                                                        />
+                                                    )}
                                                 />
                                             );
-                                        });
-                                    })()}
-                                </ItemGroup>
+                                        })()}
+                                    </View>
 
-                                {modelOptions.length > 0 && (
-                                    <View style={{ marginTop: 24 }}>
+                                    {shouldRenderModelSection && (
+                                        <View style={pairAgentAndModelSections ? styles.wizardSelectionPairColumn : { marginTop: 24 }}>
                                         <View onLayout={registerWizardSectionOffset('model')}>
-                                            <View style={styles.wizardSectionHeaderRow}>
-                                                {renderIconNode('sparkles-outline', 18, theme.colors.text)}
-                                                <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>{t('newSession.selectModelTitle')}</Text>
-                                            </View>
+                                            <WizardSectionHeaderRow
+                                                rowStyle={styles.wizardSectionHeaderRow}
+                                                iconName="sparkles-outline"
+                                                iconColor={theme.colors.text}
+                                                title={t('newSession.selectModelTitle')}
+                                                titleStyle={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}
+                                                action={hasModelOptionsProbeAffordance ? {
+                                                    accessibilityLabel: modelOptionsProbe?.refreshAccessibilityLabel ?? t('common.refresh'),
+                                                    iconName: 'refresh-outline',
+                                                    iconColor: theme.colors.textSecondary,
+                                                    loading: modelOptionsProbeIsBusy,
+                                                    loadingAccessibilityLabel: modelOptionsProbePhase === 'loading'
+                                                        ? (modelOptionsProbe?.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
+                                                        : (modelOptionsProbe?.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y')),
+                                                    onPress: modelOptionsProbePhase === 'idle' ? modelOptionsProbe?.onRefresh : undefined,
+                                                    testID: 'new-session-model-refresh',
+                                                } : undefined}
+                                            />
                                         </View>
                                         <Text style={styles.sectionDescription}>
                                             {t('newSession.selectModelDescription')}
                                         </Text>
-                                        <ItemGroup title="">
-                                            {modelOptions.map((option, index, options) => {
-                                                const isSelected = modelMode === option.value;
-                                                return (
-                                                    <Item
-                                                        key={option.value}
-                                                        testID={`new-session-model:${option.value}`}
-                                                        title={option.label}
-                                                        subtitle={option.description}
-                                                        leftElement={renderIconNode('sparkles-outline', 24, theme.colors.textSecondary)}
-                                                        showChevron={false}
-                                                        selected={isSelected}
-                                                        onPress={() => setModelMode(option.value)}
-                                                        rightElement={(
-                                                            <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
-                                                                {renderIconNode(
-                                                                    'checkmark-circle',
-                                                                    24,
-                                                                    selectedIndicatorColor,
-                                                                    { opacity: isSelected ? 1 : 0 },
-                                                                )}
-                                                            </View>
-                                                        )}
-                                                        showDivider={index < options.length - 1}
-                                                    />
-                                                );
-                                            })}
-                                        </ItemGroup>
-                                    </View>
-                                )}
-
-                                <View style={{ height: 24 }} />
-
-                                {/* Section 2: Machine Selection */}
-                                <View onLayout={registerWizardSectionOffset('machine')}>
-                                    <WizardSectionHeaderRow
-                                        rowStyle={styles.wizardSectionHeaderRow}
-                                        iconName="desktop-outline"
-                                        iconColor={theme.colors.text}
-                                        title={t('newSession.selectMachineTitle')}
-                                        titleStyle={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}
-                                        action={onRefreshMachines ? {
-                                            accessibilityLabel: t('common.refresh'),
-                                            iconName: 'refresh-outline',
-                                            iconColor: theme.colors.textSecondary,
-                                            onPress: onRefreshMachines,
-                                        } : undefined}
-                                    />
-                                </View>
-                                <Text style={styles.sectionDescription}>
-                                    {t('newSession.selectMachineDescription')}
-                                </Text>
-
-                                <View style={{ marginBottom: 24 }}>
-                                    <MachineSelector
-                                        machines={machines}
-                                        serverId={serverId}
-                                        selectedMachine={selectedMachine || null}
-                                        recentMachines={recentMachines}
-                                        favoriteMachines={favoriteMachineItems}
-                                        testIdPrefix="new-session-machine"
-                                        showCliGlyphs={true}
-                                        autoDetectCliGlyphs={false}
-                                        showFavorites={true}
-                                        showSearch={useMachinePickerSearch}
-                                        searchPlacement="all"
-                                        searchPlaceholder="Search machines..."
-                                        onSelect={(machine) => {
-                                            setSelectedMachineId(machine.id);
-                                            const bestPath = getBestPathForMachine(machine.id);
-                                            setSelectedPath(bestPath);
-                                        }}
-                                        onToggleFavorite={(machine) => {
-                                            const isInFavorites = favoriteMachines.includes(machine.id);
-                                            if (isInFavorites) {
-                                                setFavoriteMachines(favoriteMachines.filter(id => id !== machine.id));
-                                            } else {
-                                                setFavoriteMachines([...favoriteMachines, machine.id]);
-                                            }
-                                        }}
-                                    />
-                                    {selectedMachineIsOffline && (
-                                        <View
-                                            style={{
-                                                marginTop: 12,
-                                                borderRadius: 10,
-                                                padding: 12,
-                                                borderWidth: 1,
-                                                backgroundColor: theme.colors.box.warning.background,
-                                                borderColor: theme.colors.box.warning.border,
-                                            }}
-                                        >
-                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                                                {renderIconNode(
-                                                    'warning-outline',
-                                                    16,
-                                                    theme.colors.warning ?? theme.colors.textDestructive,
-                                                )}
-                                                <Text style={{ color: theme.colors.text, fontWeight: '600', ...Typography.default('semiBold') }}>
-                                                    {t('newSession.machineOfflineInlineTitle')}
-                                                </Text>
-                                            </View>
-                                            <Text style={{ color: theme.colors.textSecondary, ...Typography.default() }}>
-                                                {t('newSession.machineOfflineInlineBody')}
-                                            </Text>
+                                        <NewSessionModelSelectionContent
+                                            presentation={modelPresentation}
+                                            modelOptions={modelOptions}
+                                            selectedModelId={modelMode}
+                                            selectedIndicatorColor={selectedIndicatorColor}
+                                            selectedBackendEntry={selectedBackendEntry}
+                                            popoverBoundaryRef={props.popoverBoundaryRef}
+                                            favoriteModelSelections={favoriteModelSelections}
+                                            onFavoriteModelSelectionsChange={setFavoriteModelSelections}
+                                            onSelectModel={setModelMode}
+                                        />
                                         </View>
                                     )}
                                 </View>
 
-                                {/* API key selection is now handled inline from the profile list (via the requirements badge). */}
+                                <View style={{ height: 24 }} />
 
-                                {/* Section 3: Working Directory */}
-                                <View onLayout={registerWizardSectionOffset('path')}>
-                                    <View style={styles.wizardSectionHeaderRow}>
-                                        {renderIconNode('folder-outline', 18, theme.colors.text)}
-                                        <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>{t('newSession.selectWorkingDirectoryTitle')}</Text>
+                                <View style={useSelectionColumns ? styles.wizardSelectionPair : undefined}>
+                                    <View style={useSelectionColumns ? styles.wizardSelectionPairColumn : undefined}>
+                                        {/* Section 2: Machine Selection */}
+                                        <View onLayout={registerWizardSectionOffset('machine')}>
+                                            <WizardSectionHeaderRow
+                                                rowStyle={styles.wizardSectionHeaderRow}
+                                                iconName="desktop-outline"
+                                                iconColor={theme.colors.text}
+                                                title={t('newSession.selectMachineTitle')}
+                                                titleStyle={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}
+                                                action={onRefreshMachines ? {
+                                                    accessibilityLabel: t('common.refresh'),
+                                                    iconName: 'refresh-outline',
+                                                    iconColor: theme.colors.textSecondary,
+                                                    onPress: onRefreshMachines,
+                                                } : undefined}
+                                            />
+                                        </View>
+                                        <Text style={styles.sectionDescription}>
+                                            {t('newSession.selectMachineDescription')}
+                                        </Text>
+
+                                        <View style={{ marginBottom: 24 }}>
+                                            <AdaptiveSelectionSection
+                                                presentation={machinePresentation}
+                                                expandedContent={(
+                                                    <MachineSelector
+                                                        machines={machines}
+                                                        serverId={serverId}
+                                                        selectedMachine={selectedMachine || null}
+                                                        recentMachines={recentMachines}
+                                                        favoriteMachines={favoriteMachineItems}
+                                                        testIdPrefix="new-session-machine"
+                                                        showCliGlyphs={true}
+                                                        autoDetectCliGlyphs={false}
+                                                        showFavorites={true}
+                                                        showSearch={useMachinePickerSearch}
+                                                        searchPlacement="all"
+                                                        favoriteGroupPlacement="beforeRecent"
+                                                        onSelect={handleSelectMachine}
+                                                        onToggleFavorite={handleToggleFavoriteMachine}
+                                                    />
+                                                )}
+                                                compactContent={(
+                                                    <MachineSelector
+                                                        presentation="dropdown"
+                                                        machines={machines}
+                                                        serverId={serverId}
+                                                        selectedMachine={selectedMachine || null}
+                                                        recentMachines={recentMachines}
+                                                        favoriteMachines={favoriteMachineItems}
+                                                        testIdPrefix="new-session-machine"
+                                                        showCliGlyphs={false}
+                                                        autoDetectCliGlyphs={false}
+                                                        showFavorites={true}
+                                                        showSearch={useMachinePickerSearch}
+                                                        searchPlacement="all"
+                                                        favoriteGroupPlacement="beforeRecent"
+                                                        dropdownTitle={t('newSession.selectMachineTitle')}
+                                                        dropdownSubtitle={machineDisplayName ?? t('newSession.selectMachineDescription')}
+                                                        dropdownTestID="new-session-machine-dropdown-trigger"
+                                                        popoverBoundaryRef={props.popoverBoundaryRef}
+                                                        onSelect={handleSelectMachine}
+                                                        onToggleFavorite={handleToggleFavoriteMachine}
+                                                    />
+                                                )}
+                                            />
+                                            {selectedMachineIsOffline && (
+                                                <View
+                                                    style={{
+                                                        marginTop: 12,
+                                                        borderRadius: 10,
+                                                        padding: 12,
+                                                        borderWidth: 1,
+                                                        backgroundColor: theme.colors.box.warning.background,
+                                                        borderColor: theme.colors.box.warning.border,
+                                                    }}
+                                                >
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                                        {renderIconNode(
+                                                            'warning-outline',
+                                                            16,
+                                                            theme.colors.warning ?? theme.colors.textDestructive,
+                                                        )}
+                                                        <Text style={{ color: theme.colors.text, fontWeight: '600', ...Typography.default('semiBold') }}>
+                                                            {t('newSession.machineOfflineInlineTitle')}
+                                                        </Text>
+                                                    </View>
+                                                    <Text style={{ color: theme.colors.textSecondary, ...Typography.default() }}>
+                                                        {t('newSession.machineOfflineInlineBody')}
+                                                    </Text>
+                                                </View>
+                                            )}
+                                        </View>
                                     </View>
-                                </View>
-                                <Text style={styles.sectionDescription}>
-                                    {t('newSession.selectWorkingDirectoryDescription')}
-                                </Text>
 
-                                <View style={{ marginBottom: 24 }}>
-                                    <PathSelector
-                                        machineHomeDir={selectedMachine?.metadata?.homeDir || '/home'}
-                                        selectedPath={selectedPath}
-                                        onChangeSelectedPath={setSelectedPath}
-                                        onChangeDraftSelectedPath={props.machine.setDraftSelectedPath}
-                                        commitDraftOnBlur={true}
-                                        recentPaths={recentPaths}
-                                        usePickerSearch={usePathPickerSearch}
-                                        searchVariant="group"
-                                        focusInputOnSelect={false}
-                                        favoriteDirectories={favoriteDirectories}
-                                        onChangeFavoriteDirectories={setFavoriteDirectories}
-                                        machineBrowse={{
-                                            enabled: true,
-                                            machineId: selectedMachine?.id ?? null,
-                                            serverId: serverId ?? null,
-                                        }}
-                                    />
+                                    <View style={useSelectionColumns ? styles.wizardSelectionPairColumn : undefined}>
+                                        {/* API key selection is now handled inline from the profile list (via the requirements badge). */}
+
+                                        {/* Section 3: Working Directory */}
+                                        <View onLayout={registerWizardSectionOffset('path')}>
+                                            <View style={styles.wizardSectionHeaderRow}>
+                                                {renderIconNode('folder-outline', 18, theme.colors.text)}
+                                                <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>{t('newSession.selectWorkingDirectoryTitle')}</Text>
+                                            </View>
+                                        </View>
+                                        <Text style={styles.sectionDescription}>
+                                            {t('newSession.selectWorkingDirectoryDescription')}
+                                        </Text>
+
+                                        <View style={{ marginBottom: 24 }}>
+                                            <PathSelector
+                                                machineHomeDir={selectedMachine?.metadata?.homeDir || '/home'}
+                                                selectedPath={selectedPath}
+                                                onChangeSelectedPath={setSelectedPath}
+                                                onChangeDraftSelectedPath={setDraftSelectedPath}
+                                                commitDraftOnBlur={true}
+                                                recentPaths={recentPaths}
+                                                usePickerSearch={usePathPickerSearch}
+                                                searchVariant="group"
+                                                pathEntryPresentation="itemGroup"
+                                                savedPathsPresentation={pathPresentation === 'compact' ? 'dropdown' : 'list'}
+                                                favoriteGroupPlacement="beforeRecent"
+                                                popoverBoundaryRef={props.popoverBoundaryRef}
+                                                focusInputOnSelect={false}
+                                                favoriteDirectories={favoriteDirectories}
+                                                onChangeFavoriteDirectories={setFavoriteDirectories}
+                                                machineBrowse={{
+                                                    enabled: true,
+                                                    machineId: selectedMachine?.id ?? null,
+                                                    serverId: serverId ?? null,
+                                                }}
+                                            />
+                                        </View>
+                                    </View>
                                 </View>
 
                                 {/* Section 4: Permission Mode */}
@@ -691,23 +891,45 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                 <Text style={styles.sectionDescription}>
                                     {t('newSession.selectPermissionModeDescription')}
                                 </Text>
-                                <ItemGroup title="">
-                                    {getPermissionModeOptionsForAgentType(agentType).map((option, index, array) => (
-                                        <Item
-                                            key={option.value}
-                                            title={option.label}
-                                            subtitle={option.description}
-                                            leftElement={renderIconNode(option.icon as any, 24, theme.colors.textSecondary)}
-                                            rightElement={permissionMode === option.value
-                                                ? renderIconNode('checkmark-circle', 24, selectedIndicatorColor)
-                                                : null}
-                                            onPress={() => handlePermissionModeChange(option.value)}
-                                            showChevron={false}
-                                            selected={permissionMode === option.value}
-                                            showDivider={index < array.length - 1}
+                                <AdaptiveSelectionSection
+                                    presentation={permissionPresentation}
+                                    expandedContent={(
+                                        <ItemGroup title="">
+                                            {permissionOptions.map((option, index, array) => (
+                                                <Item
+                                                    key={option.value}
+                                                    title={option.label}
+                                                    subtitle={option.description}
+                                                    leftElement={renderIconNode(option.icon as any, 24, theme.colors.textSecondary)}
+                                                    rightElement={permissionMode === option.value
+                                                        ? renderIconNode('checkmark-circle', 24, selectedIndicatorColor)
+                                                        : null}
+                                                    onPress={() => handlePermissionModeChange(option.value)}
+                                                    showChevron={false}
+                                                    selected={permissionMode === option.value}
+                                                    showDivider={index < array.length - 1}
+                                                />
+                                            ))}
+                                        </ItemGroup>
+                                    )}
+                                    compactContent={(
+                                        <NewSessionWizardDropdownSelectionItem
+                                            testID="new-session-permission-dropdown-trigger"
+                                            title={t('newSession.selectPermissionModeTitle')}
+                                            subtitle={permissionOptions.find((option) => option.value === permissionMode)?.label ?? t('newSession.selectPermissionModeDescription')}
+                                            icon={renderIconNode('shield-outline', 24, theme.colors.textSecondary)}
+                                            items={permissionOptions.map((option) => ({
+                                                id: option.value,
+                                                title: option.label,
+                                                subtitle: option.description,
+                                                icon: renderIconNode(option.icon as any, 20, theme.colors.textSecondary),
+                                            }))}
+                                            selectedId={permissionMode}
+                                            boundaryRef={props.popoverBoundaryRef}
+                                            onSelect={(id) => handlePermissionModeChange(id as PermissionMode)}
                                         />
-                                    ))}
-                                </ItemGroup>
+                                    )}
+                                />
 
                                 <View style={{ height: 24 }} />
 

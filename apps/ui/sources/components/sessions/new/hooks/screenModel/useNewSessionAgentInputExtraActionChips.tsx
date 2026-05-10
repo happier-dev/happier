@@ -30,7 +30,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     targetServerId: string | null;
     targetServerName: string;
     mcpChip?: AgentInputExtraActionChip | null;
-    directSessionsFeatureEnabled: boolean;
+    externalSessionsFeatureEnabled: boolean;
     supportsDirectTranscriptStorage: boolean;
     transcriptStorage: NewSessionTranscriptStorage;
     onTranscriptStorageChange: (next: NewSessionTranscriptStorage) => void;
@@ -67,13 +67,13 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
     }, [params.automationDraft, params.automationLabel, params.onAutomationChange]);
 
     const storageActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
-        if (!params.directSessionsFeatureEnabled || !params.supportsDirectTranscriptStorage) return null;
+        if (!params.externalSessionsFeatureEnabled || !params.supportsDirectTranscriptStorage) return null;
         return createTranscriptStorageActionChip({
             transcriptStorage: params.transcriptStorage,
             onStorageChange: params.onTranscriptStorageChange,
         });
     }, [
-        params.directSessionsFeatureEnabled,
+        params.externalSessionsFeatureEnabled,
         params.onTranscriptStorageChange,
         params.supportsDirectTranscriptStorage,
         params.transcriptStorage,

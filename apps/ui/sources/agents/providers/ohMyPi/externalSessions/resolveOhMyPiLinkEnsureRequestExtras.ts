@@ -1,4 +1,4 @@
-import type { DirectBrowseLinkEnsureRequestExtras } from '@/agents/registry/registryUiBehavior';
+import type { ExternalSessionBrowseLinkEnsureRequestExtras } from '@/agents/registry/registryUiBehavior';
 
 function readOhMyPiSource(details: Record<string, unknown> | undefined) {
     const source = details?.source;
@@ -17,7 +17,7 @@ export function resolveOhMyPiLinkEnsureRequestExtras(params: Readonly<{
         agentDir?: string | null;
     }>;
     candidate: Readonly<{ details?: Record<string, unknown> }>;
-}>): DirectBrowseLinkEnsureRequestExtras {
+}>): ExternalSessionBrowseLinkEnsureRequestExtras {
     const candidateSource = readOhMyPiSource(params.candidate.details);
     if (!candidateSource) return {};
 
