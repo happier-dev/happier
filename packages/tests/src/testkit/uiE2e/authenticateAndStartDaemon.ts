@@ -1,10 +1,11 @@
-import { expect, type Page } from '@playwright/test';
+import { type Page } from '@playwright/test';
 
 import { startTestDaemon, type StartedDaemon } from '../daemon/daemon';
 import { startCliAuthLoginForTerminalConnect } from './cliTerminalConnect';
 import { acknowledgeTerminalConnectSuccessIfPresent } from './acknowledgeTerminalConnectSuccessIfPresent';
 import { approveTerminalConnect } from './approveTerminalConnect';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries } from './pageNavigation';
+import { ensureAccountReadyForConnect } from './ensureAccountReadyForConnect';
 import { resolveTerminalConnectUrlForBrowser } from './resolveTerminalConnectUrlForBrowser';
 import { ensurePendingTerminalConnectReadyForApproval } from './terminalConnectApprovalFlow';
 
@@ -19,11 +20,11 @@ export async function authenticateAndStartDaemon(params: Readonly<{
 }>): Promise<StartedDaemon> {
   await gotoDomContentLoadedWithRetries(params.page, params.uiBaseUrl);
 
-  if (params.createAccount !== false) {
-    await params.page.getByTestId('welcome-create-account').click();
-  }
-
-  await expect(params.page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+  await ensureAccountReadyForConnect({
+    page: params.page,
+    timeoutMs: 120_000,
+    clickCreateAccount: params.createAccount !== false,
+  });
 
   const cliLogin = await startCliAuthLoginForTerminalConnect({
     testDir: params.testDir,
