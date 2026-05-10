@@ -13,6 +13,7 @@ describe('systemTasksCapability', () => {
           'local.ssh.discoverConfiguredHosts.v1',
           'daemon.sshTunnel.ensure.v1',
           'daemon.sshTunnel.list.v1',
+          'daemon.sshTunnel.release.v1',
           'daemon.sshTunnel.stop.v1',
           'remote.ssh.bootstrapMachine.v1',
           'relay.runtime.installOrUpdate.v1',

@@ -2,13 +2,16 @@ import { extname } from 'node:path';
 
 import {
   BackendRuntimeAdapterOperationCatalogV1,
+  BackendRuntimeAdapterV1Schema,
   isHookHandlerTargetV1,
+  isReservedHappierPluginId,
 } from '@happier-dev/protocol';
 import { compareVersions } from '@happier-dev/cli-common/update';
 
 import { configuration } from '../../configuration';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { normalizePluginBackendContributionAcpDefinition } from '@/agent/acp/runtime/definition/plugin';
 import { isSupportedBackendRuntimeAdapterOperation } from './adapters';
 import { readCanonicalPluginManifest } from './normalize';
 import type { CanonicalPluginManifest } from './types';
@@ -18,6 +21,10 @@ const SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']
 export type PluginManifestValidationResult =
   | Readonly<{ ok: true; manifest: CanonicalPluginManifest }>
   | Readonly<{ ok: false; diagnostics: readonly PluginCompatibilityDiagnostic[] }>;
+
+export type PluginManifestValidationOptions = Readonly<{
+  allowReservedHappierPluginId?: boolean;
+}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -152,7 +159,7 @@ function readUnsupportedHookTargetDiagnostics(input: unknown): PluginCompatibili
 function pushDuplicateIdDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   values: readonly string[],
-  kind: 'provider' | 'backend' | 'action' | 'tool' | 'command' | 'resource' | 'ui descriptor' | 'notification category' | 'notification channel' | 'SCM hosting provider' | 'installable' | 'hook' | 'lifecycle handler',
+  kind: 'provider' | 'backend' | 'action' | 'tool' | 'command' | 'resource' | 'ui descriptor' | 'notification category' | 'notification channel' | 'SCM hosting provider' | 'SCM backend' | 'installable' | 'hook' | 'lifecycle handler',
 ): void {
   const seen = new Set<string>();
   for (const value of values) {
@@ -176,6 +183,27 @@ function readDefinitionIds(definitions: readonly unknown[]): readonly string[] {
     const id = definition.id;
     return typeof id === 'string' ? [id] : [];
   });
+}
+
+function pushAmbiguousIdlessLifecycleHandlerDiagnostics(
+  diagnostics: PluginCompatibilityDiagnostic[],
+  manifest: CanonicalPluginManifest,
+): void {
+  const seenEvents = new Set<string>();
+  for (const definition of manifest.contributes.lifecycleHandlers) {
+    const hasId = typeof definition.id === 'string' && definition.id.trim().length > 0;
+    if (hasId) {
+      continue;
+    }
+    if (seenEvents.has(definition.event)) {
+      diagnostics.push({
+        code: 'plugin_manifest_semantic_invalid',
+        message: `Duplicate id-less lifecycle handler for event '${definition.event}' is ambiguous; add explicit lifecycle handler ids`,
+      });
+      continue;
+    }
+    seenEvents.add(definition.event);
+  }
 }
 
 function pushDuplicateRuntimeAdapterIdDiagnostics(
@@ -248,10 +276,24 @@ function backendSupportsExecutionRun(backend: CanonicalPluginManifest['contribut
 function hasExecutionRunRuntimeCoreLaunchProof(
   backend: CanonicalPluginManifest['contributes']['backends'][number],
 ): boolean {
-  return backend.runtimeCoreHooks.some((runtimeCoreHook) => (
-    runtimeCoreHook.kind === 'terminalRuntime'
-    && runtimeCoreHook.operation === BackendRuntimeAdapterOperationCatalogV1.terminalRuntime.launch
-  ));
+  try {
+    normalizePluginBackendContributionAcpDefinition({ backend });
+    return true;
+  } catch {
+    // Non-ACP backends still require explicit runtimeCore hook proof below.
+  }
+
+  return backend.runtimeCoreHooks.some((runtimeCoreHook) => {
+    const parsedRuntimeCoreHook = BackendRuntimeAdapterV1Schema.safeParse(runtimeCoreHook);
+    if (!parsedRuntimeCoreHook.success) {
+      return false;
+    }
+    return parsedRuntimeCoreHook.data.kind === 'terminalRuntime'
+      && parsedRuntimeCoreHook.data.operation === BackendRuntimeAdapterOperationCatalogV1.terminalRuntime.launch
+      && parsedRuntimeCoreHook.data.handler.target === 'daemon'
+      && typeof parsedRuntimeCoreHook.data.handler.exportName === 'string'
+      && parsedRuntimeCoreHook.data.handler.exportName.trim().length > 0;
+  });
 }
 
 function pushMissingExecutionRunRuntimeCoreDiagnostics(
@@ -341,7 +383,10 @@ function isCompatibleHappierEngineRange(range: string, currentVersion: string): 
     && compareVersions(normalizedCurrentVersion, upperBound) < 0;
 }
 
-export function validatePluginManifest(input: unknown): PluginManifestValidationResult {
+export function validatePluginManifest(
+  input: unknown,
+  options: PluginManifestValidationOptions = {},
+): PluginManifestValidationResult {
   const unsupportedTargetDiagnostics = [
     ...readUnsupportedPluginTargetDiagnostics(input),
     ...readUnsupportedBackendRuntimeAdapterTargetDiagnostics(input),
@@ -368,11 +413,19 @@ export function validatePluginManifest(input: unknown): PluginManifestValidation
   }
 
   const diagnostics: PluginCompatibilityDiagnostic[] = [];
+  if (isReservedHappierPluginId(manifest.id) && options.allowReservedHappierPluginId !== true) {
+    diagnostics.push({
+      code: 'plugin_manifest_semantic_invalid',
+      message: `Plugin id '${manifest.id}' uses the reserved happier.* namespace`,
+    });
+  }
+
   const hasExecutableContributes =
     manifest.contributes.backends.length > 0
     || manifest.contributes.actions.length > 0
     || manifest.contributes.tools.length > 0
     || manifest.contributes.commands.length > 0
+    || (manifest.contributes.scmBackends ?? []).length > 0
     || manifest.contributes.hooks.length > 0
     || manifest.contributes.lifecycleHandlers.length > 0;
 
@@ -400,6 +453,7 @@ export function validatePluginManifest(input: unknown): PluginManifestValidation
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.notifications ?? []), 'notification category');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.notificationChannels ?? []), 'notification channel');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.scmHostingProviders ?? []), 'SCM hosting provider');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.scmBackends ?? []), 'SCM backend');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.installables ?? []), 'installable');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.hooks), 'hook');
   pushDuplicateIdDiagnostics(
@@ -409,6 +463,7 @@ export function validatePluginManifest(input: unknown): PluginManifestValidation
     )),
     'lifecycle handler',
   );
+  pushAmbiguousIdlessLifecycleHandlerDiagnostics(diagnostics, manifest);
   pushDuplicateRuntimeAdapterIdDiagnostics(diagnostics, manifest);
   pushDuplicateRuntimeAdapterOperationDiagnostics(diagnostics, manifest);
   pushUnsupportedRuntimeAdapterOperationIdDiagnostics(diagnostics, manifest);

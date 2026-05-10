@@ -1,13 +1,27 @@
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
-import { createPluginMcpToolNamespaceRegistry, claimPluginMcpToolNamespace } from '@/mcp/pluginMcpToolNamespaces';
+import {
+    claimPluginMcpToolNamespace,
+    claimPluginMcpToolNamespacePrefix,
+    createPluginMcpToolNamespaceRegistry,
+} from '@/mcp/pluginMcpToolNamespaces';
 
 export const mcpProjectionFamily = definePluginProjectionFamilyV2({
     family: 'mcp',
     project({ registry }) {
         const toolNamespaceRegistry = createPluginMcpToolNamespaceRegistry();
+        for (const client of registry.mcpBackendClients ?? []) {
+            if (!client.pluginId) {
+                throw new Error(`MCP backend-client namespace claim requires plugin ownership for '${client.definition.id}'`);
+            }
+            claimPluginMcpToolNamespacePrefix(toolNamespaceRegistry, {
+                pluginId: client.pluginId,
+                registrationId: client.definition.id,
+                namespace: client.definition.toolNamespace,
+            });
+        }
         for (const tool of registry.mcpTools ?? []) {
             if (!tool.pluginId) {
-                continue;
+                throw new Error(`MCP tool namespace claim requires plugin ownership for '${tool.definition.id}'`);
             }
             claimPluginMcpToolNamespace(toolNamespaceRegistry, {
                 pluginId: tool.pluginId,

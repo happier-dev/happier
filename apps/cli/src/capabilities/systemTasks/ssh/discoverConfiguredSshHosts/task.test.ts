@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createDiscoverConfiguredSshHostsSystemTaskKind } from './discoverConfiguredSshHostsSystemTask';
+import { createDiscoverConfiguredSshHostsSystemTaskKind } from './task';
 
 function createHomeFixture(): string {
   const homeDir = join(tmpdir(), `happier-ssh-discovery-task-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);

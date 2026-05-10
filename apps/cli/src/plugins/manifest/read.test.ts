@@ -266,6 +266,60 @@ describe('readPluginManifest', () => {
     });
   });
 
+  it('accepts manifest-only ACP backends as runtimeCore-backed execution-run capable', async () => {
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
+    const manifestPath = await writeManifestFile(
+      pluginRoot,
+      JSON.stringify(createBaseManifestV2({
+        id: 'acme.manifest-only-acp',
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['backends'],
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributes: [
+          {
+            kind: 'provider',
+            kindVersion: 1,
+            id: 'acme.provider',
+            display: {
+              name: 'Acme Provider',
+            },
+            ownedBackendIds: ['acme.backend'],
+          },
+          {
+            kind: 'backend',
+            kindVersion: 1,
+            id: 'acme.backend',
+            providerId: 'acme.provider',
+            engine: {
+              kind: 'acp',
+              transport: {
+                kind: 'stdio',
+                launch: {
+                  kind: 'executable',
+                  command: 'acme-agent',
+                },
+              },
+            },
+          },
+        ],
+      })),
+    );
+
+    const result = await readPluginManifest({ manifestPath });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual({
+      executionRun: { supported: true },
+    });
+  });
+
   it('returns a semantic diagnostic when default execution-run backend support lacks runtimeCore launch proof', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
@@ -299,6 +353,128 @@ describe('readPluginManifest', () => {
             engine: {
               kind: 'custom',
             },
+          },
+        ],
+      })),
+    );
+
+    const result = await readPluginManifest({ manifestPath });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'plugin_manifest_semantic_invalid',
+        message: expect.stringMatching(/execution-run.*runtimeCore/i),
+      }),
+    ]));
+  });
+
+  it('returns a semantic diagnostic when execution-run runtimeCore launch proof is malformed', async () => {
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
+    const manifestPath = await writeManifestFile(
+      pluginRoot,
+      JSON.stringify(createBaseManifestV2({
+        id: 'acme.malformed-execution-run-runtime-core',
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['backends'],
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributes: [
+          {
+            kind: 'provider',
+            kindVersion: 1,
+            id: 'acme.provider',
+            display: {
+              name: 'Acme Provider',
+            },
+            ownedBackendIds: ['acme.backend'],
+          },
+          {
+            kind: 'backend',
+            kindVersion: 1,
+            id: 'acme.backend',
+            providerId: 'acme.provider',
+            engine: {
+              kind: 'custom',
+            },
+            capabilities: {
+              executionRun: {
+                supported: true,
+              },
+            },
+            runtimeCoreHooks: [
+              {
+                kind: 'terminalRuntime',
+                operation: 'launch',
+              },
+            ],
+          },
+        ],
+      })),
+    );
+
+    const result = await readPluginManifest({ manifestPath });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'plugin_manifest_semantic_invalid',
+        message: expect.stringMatching(/execution-run.*runtimeCore/i),
+      }),
+    ]));
+  });
+
+  it('returns a semantic diagnostic when execution-run runtimeCore launch proof lacks a daemon export', async () => {
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
+    const manifestPath = await writeManifestFile(
+      pluginRoot,
+      JSON.stringify(createBaseManifestV2({
+        id: 'acme.malformed-execution-run-runtime-core-handler',
+        runtime: {
+          apiVersion: 1,
+          capabilities: ['backends'],
+        },
+        targets: {
+          daemon: {
+            entry: './daemon.mjs',
+          },
+        },
+        contributes: [
+          {
+            kind: 'provider',
+            kindVersion: 1,
+            id: 'acme.provider',
+            display: {
+              name: 'Acme Provider',
+            },
+            ownedBackendIds: ['acme.backend'],
+          },
+          {
+            kind: 'backend',
+            kindVersion: 1,
+            id: 'acme.backend',
+            providerId: 'acme.provider',
+            engine: {
+              kind: 'custom',
+            },
+            runtimeCoreHooks: [
+              {
+                runtimeAdapterApiVersion: 1,
+                id: 'backend.terminalRuntime.launch',
+                kind: 'terminalRuntime',
+                operation: 'launch',
+                handler: {
+                  target: 'daemon',
+                },
+              },
+            ],
           },
         ],
       })),
@@ -506,8 +682,8 @@ describe('readPluginManifest', () => {
               runtimeCoreHooks: [
                 {
                   runtimeCoreHookApiVersion: 1,
-                  id: 'backend.directSessions.listCandidates',
-                  kind: 'directSessions',
+                  id: 'backend.externalSessions.listCandidates',
+                  kind: 'externalSessions',
                   operation: 'listCandidates',
                   handler: {
                     target: 'daemon',
@@ -920,7 +1096,7 @@ describe('readPluginManifest', () => {
                 {
                   runtimeCoreHookApiVersion: 1,
                   id: 'backend.attach.run',
-                  kind: 'directSessions',
+                  kind: 'externalSessions',
                   operation: 'run',
                   handler: {
                     target: 'daemon',

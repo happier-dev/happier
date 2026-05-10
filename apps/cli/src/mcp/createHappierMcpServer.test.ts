@@ -297,7 +297,7 @@ describe('createHappierMcpServer', () => {
     );
   });
 
-  it('treats session-agent metadata refresh after change_title as best-effort', async () => {
+  it('does not perform a redundant metadata write after change_title commits', async () => {
     const execute = vi.fn(async () => ({ ok: true, result: { ok: true } }));
     const updateMetadata = vi.fn(() => {
       throw new Error('local metadata sync failed');
@@ -339,7 +339,7 @@ describe('createHappierMcpServer', () => {
       success: true,
       title: 'New title',
     });
-    expect(updateMetadata).toHaveBeenCalledTimes(1);
+    expect(updateMetadata).not.toHaveBeenCalled();
   });
 
   it('routes execution_run_start through the shared action executor path', async () => {

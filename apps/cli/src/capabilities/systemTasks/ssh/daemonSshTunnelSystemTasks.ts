@@ -1,5 +1,6 @@
 import {
   SshTunnelEnsureRequestSchema,
+  SshTunnelReleaseRequestSchema,
   SshTunnelStopRequestSchema,
   SystemTaskJsonValueSchema,
   type SystemTaskJsonValue,
@@ -12,6 +13,7 @@ import {
 import {
   ensureDaemonSshTunnel,
   listDaemonSshTunnels,
+  releaseDaemonSshTunnel,
   stopDaemonSshTunnel,
 } from '@/daemon/controlClient';
 
@@ -68,6 +70,23 @@ export function createDaemonSshTunnelListTaskKind(deps: Readonly<{
   return {
     run: async () => {
       const response = await list();
+      throwIfControlError(response);
+      return toSystemTaskJsonValue(response);
+    },
+  };
+}
+
+export function createDaemonSshTunnelReleaseTaskKind(deps: Readonly<{
+  releaseDaemonSshTunnel?: typeof releaseDaemonSshTunnel;
+}> = {}): InteractiveSystemTaskKind<SystemTaskJsonValue> {
+  const release = deps.releaseDaemonSshTunnel ?? releaseDaemonSshTunnel;
+  return {
+    run: async (ctx) => {
+      const parsed = SshTunnelReleaseRequestSchema.safeParse(ctx.params);
+      if (!parsed.success) {
+        throw new SystemTaskExecutionError('invalid_params', 'Invalid SSH tunnel release request.');
+      }
+      const response = await release(parsed.data.leaseId);
       throwIfControlError(response);
       return toSystemTaskJsonValue(response);
     },

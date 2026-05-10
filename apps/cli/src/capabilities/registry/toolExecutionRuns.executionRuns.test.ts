@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { writeFile, chmod } from 'node:fs/promises';
+import { chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { executionRunsCapability } from './toolExecutionRuns';
@@ -44,7 +44,7 @@ function makeCliEngineRegistryMock(
     resolveForBackendId: async () => null,
     resolveExecutionSurfaces: async () => ({
       terminalRuntime: null,
-      directSessions: null,
+      externalSessions: null,
       attach: null,
       sessionHandoff: null,
     }),
@@ -57,7 +57,6 @@ describe('executionRunsCapability', () => {
   beforeEach(() => {
     envScope.restore();
     envScope.patch({
-      HAPPIER_CODERABBIT_REVIEW_CMD: 'coderabbit',
       HAPPIER_CODEX_BACKEND_MODE: undefined,
     });
   });
@@ -113,11 +112,8 @@ describe('executionRunsCapability', () => {
     expect(res.backends.ohMyPi).toMatchObject({ available: true });
   });
 
-  it('detects native coderabbit availability from process PATH even when cliSnapshot.path is empty', async () => {
-    // Ensure we test PATH detection (not the override).
+  it('does not synthesize a CodeRabbit backend from env overrides or PATH probes', async () => {
     await withTempDir('happier-coderabbit-path-test-', async (dir) => {
-      envScope.patch({ HAPPIER_CODERABBIT_REVIEW_CMD: undefined });
-
       const bin = join(dir, 'coderabbit');
       await writeFile(
         bin,
@@ -128,7 +124,10 @@ describe('executionRunsCapability', () => {
       await chmod(bin, 0o755);
 
       const pathLookup = process.env.PATH ?? '';
-      envScope.patch({ PATH: `${dir}${pathLookup ? `:${pathLookup}` : ''}` });
+      envScope.patch({
+        HAPPIER_CODERABBIT_REVIEW_CMD: 'coderabbit',
+        PATH: `${dir}${pathLookup ? `:${pathLookup}` : ''}`,
+      });
 
       const res = await executionRunsCapability.detect({
         context: {
@@ -141,7 +140,7 @@ describe('executionRunsCapability', () => {
       };
 
       expect(res?.available).toBe(true);
-      expect(res?.backends?.coderabbit?.available).toBe(true);
+      expect(res?.backends?.coderabbit).toBeUndefined();
     });
   });
 
@@ -181,15 +180,12 @@ describe('executionRunsCapability', () => {
     expect(res.backends.codex).toBeTruthy();
     expect(res.backends.customAcp).toBeTruthy();
     expect(res.backends.ohMyPi).toBeTruthy();
-    expect(res.backends.coderabbit).toBeTruthy();
+    expect(res.backends.coderabbit).toBeUndefined();
 
     expect(res.intents).toContain('memory_hints');
-    for (const backendId of Object.keys(res.backends).filter((backendId) => backendId !== 'coderabbit')) {
+    for (const backendId of Object.keys(res.backends)) {
       expect(res.backends[backendId]?.intents).toBe(res.intents);
     }
-
-    expect(res.backends.coderabbit?.intents).toEqual(['review']);
-    expect(res.backends.coderabbit?.intents).not.toBe(res.intents);
   });
 
   it('returns only protocol-defined execution-run intents', async () => {
@@ -207,8 +203,10 @@ describe('executionRunsCapability', () => {
     for (const intent of res.intents) {
       expect(ExecutionRunIntentSchema.safeParse(intent).success).toBe(true);
     }
-    for (const intent of res.backends.coderabbit?.intents ?? []) {
-      expect(ExecutionRunIntentSchema.safeParse(intent).success).toBe(true);
+    for (const backend of Object.values(res.backends)) {
+      for (const intent of backend.intents) {
+        expect(ExecutionRunIntentSchema.safeParse(intent).success).toBe(true);
+      }
     }
   });
 
@@ -328,7 +326,7 @@ describe('executionRunsCapability', () => {
     });
   });
 
-  it('treats plugin-contributed backends as available even without catalog entries or cli probes', async () => {
+  it('marks plugin-contributed backends unavailable when runtimeCore proof is missing', async () => {
     vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
       backendDefinitionsById: new Map([
         [
@@ -368,7 +366,65 @@ describe('executionRunsCapability', () => {
 
     expect(res.available).toBe(true);
     expect(res.backends['plugin.review']).toMatchObject({
-      available: true,
+      available: false,
+      supportsVendorResume: false,
+    });
+  });
+
+  it('marks plugin-contributed backends unavailable when execution-run support is explicitly disabled', async () => {
+    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
+      backendDefinitionsById: new Map([
+        [
+          'plugin.review',
+          {
+            id: 'plugin.review',
+            providerId: 'plugin.provider',
+            provenance: 'external',
+            source: { kind: 'path' },
+            definition: { kindVersion: 1, id: 'plugin.review', providerId: 'plugin.provider' },
+            capabilities: {
+              executionRun: { supported: false },
+            },
+            getRuntimeCore: async () => async () => ({
+              runtimeCore: {
+                createSessionRuntime: async () => {
+                  throw new Error('not reached');
+                },
+                createExecutionRunBackend: () => {
+                  throw new Error('not reached');
+                },
+              },
+            }),
+          },
+        ],
+      ]),
+      providerDefinitionsById: new Map([
+        [
+          'plugin.provider',
+          {
+            id: 'plugin.provider',
+            provenance: 'external',
+            source: { kind: 'path' },
+            definition: { kindVersion: 1, id: 'plugin.provider', ownedBackendIds: ['plugin.review'] },
+          },
+        ],
+      ]),
+      catalogEntriesById: {},
+    }));
+
+    const res = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: makeCliSnapshot({}),
+      },
+      request: { id: 'tool.executionRuns' },
+    }) as {
+      available: boolean;
+      backends: Record<string, { available?: boolean; supportsVendorResume?: boolean }>;
+    };
+
+    expect(res.available).toBe(true);
+    expect(res.backends['plugin.review']).toMatchObject({
+      available: false,
       supportsVendorResume: false,
     });
   });

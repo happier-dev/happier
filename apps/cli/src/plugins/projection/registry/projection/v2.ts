@@ -24,6 +24,7 @@ import {
 } from '@/plugins/projection/families';
 import { installablesProjectionFamily } from '../installables';
 import { mcpProjectionFamily } from '../mcp';
+import { scmBackendProjectionFamily } from '../scmBackends';
 import { scmHostingProviderProjectionFamily } from '../scmHostingProviders';
 
 function readOptionalString(value: unknown): string | undefined {
@@ -641,6 +642,7 @@ export function buildPluginProjectionV2(params: Readonly<{
     const pluginDiagnosticsByPluginId = params.pluginDiagnosticsByPluginId ?? params.registry.pluginDiagnosticsByPluginId;
     const familyDescriptors = [
         scmHostingProviderProjectionFamily,
+        scmBackendProjectionFamily,
         installablesProjectionFamily,
         mcpProjectionFamily,
         ...(params.familyDescriptors ?? []),

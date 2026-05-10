@@ -1,4 +1,8 @@
-import type { ResolvedHookRegistration } from '@/plugins/projection/registry/types';
+import type {
+    ResolvedContributionProvenance,
+    ResolvedContributionSource,
+    ResolvedHookRegistration,
+} from '@/plugins/projection/registry/types';
 
 import type {
     PluginApiActionRegistration,
@@ -22,14 +26,16 @@ export type ActivatedHandlerRegistry = Readonly<{
 
 function createSyntheticHookRegistration(params: Readonly<{
     pluginId: string;
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
     manifestPath: string;
     manifestDigest: string;
     daemonEntryPath: string;
     registration: PluginApiHookRegistration;
 }>): ResolvedHookRegistration {
     return {
-        provenance: 'external',
-        source: { kind: 'path' },
+        provenance: params.provenance,
+        source: params.source,
         pluginId: params.pluginId,
         manifestPath: params.manifestPath,
         manifestDigest: params.manifestDigest,
@@ -57,6 +63,8 @@ function createSyntheticHookRegistration(params: Readonly<{
 export function createActivatedHandlerRegistry(params: Readonly<{
     entries: readonly Readonly<{
         pluginId: string;
+        provenance: ResolvedContributionProvenance;
+        source: ResolvedContributionSource;
         manifestPath: string;
         manifestDigest: string;
         daemonEntryPath: string;
@@ -93,6 +101,8 @@ export function createActivatedHandlerRegistry(params: Readonly<{
                 exportName: '<activation>',
                 registration: createSyntheticHookRegistration({
                     pluginId: entry.pluginId,
+                    provenance: entry.provenance,
+                    source: entry.source,
                     manifestPath: entry.manifestPath,
                     manifestDigest: entry.manifestDigest,
                     daemonEntryPath: entry.daemonEntryPath,
@@ -120,6 +130,7 @@ export function createActivatedHandlerRegistry(params: Readonly<{
                 manifestPath: entry.manifestPath,
                 manifestDigest: entry.manifestDigest,
                 daemonEntryPath: entry.daemonEntryPath,
+                sourceKind: entry.source.kind,
                 handler: registration.handler,
             };
             const existing = lifecycleHandlersMutable.get(registration.event);

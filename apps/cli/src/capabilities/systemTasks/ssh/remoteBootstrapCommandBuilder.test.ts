@@ -140,4 +140,29 @@ describe('buildRemoteBootstrapCommand', () => {
     expect(command).not.toContain('hstack');
     expect(command).not.toContain('self-host');
   });
+
+  it('installs the relay runtime by asking the remote CLI to host locally', () => {
+    const command = buildRemoteBootstrapCommand({
+      label: 'relay.runtime.install',
+      serverUrl: 'https://relay.example.test',
+      channel: 'preview',
+      daemonServiceMode: 'user',
+      data: {
+        relayRuntimeMode: 'system',
+        relayRuntimeEnv: {
+          HAPPIER_SERVER_HOST: '127.0.0.1',
+        },
+      },
+    });
+
+    expect(command).toContain('$HOME/.happier/cli-preview/current/happier relay host install');
+    expect(command).toContain("--channel 'preview'");
+    expect(command).toContain('--mode system');
+    expect(command).toContain("--env 'HAPPIER_SERVER_HOST=127.0.0.1'");
+    expect(command).toContain('--preserve-active-server');
+    expect(command).toContain('--yes');
+    expect(command).toContain('--json');
+    expect(command).not.toContain('--ssh');
+    expect(command).not.toContain('scp');
+  });
 });

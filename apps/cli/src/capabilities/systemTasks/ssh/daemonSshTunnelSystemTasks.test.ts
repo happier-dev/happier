@@ -18,10 +18,11 @@ async function waitForResult(
 }
 
 describe('daemon SSH tunnel system tasks', () => {
-  it('routes ensure/list/stop through the local daemon control client surface', async () => {
+  it('routes ensure/list/release/stop through the local daemon control client surface', async () => {
     const loaded = await import('./daemonSshTunnelSystemTasks').catch(() => null);
     expect(loaded?.createDaemonSshTunnelEnsureTaskKind).toEqual(expect.any(Function));
     expect(loaded?.createDaemonSshTunnelListTaskKind).toEqual(expect.any(Function));
+    expect(loaded?.createDaemonSshTunnelReleaseTaskKind).toEqual(expect.any(Function));
     expect(loaded?.createDaemonSshTunnelStopTaskKind).toEqual(expect.any(Function));
 
     const ensureDaemonSshTunnel = vi.fn(async () => ({
@@ -55,12 +56,14 @@ describe('daemon SSH tunnel system tasks', () => {
         lastProbeAt: '2026-05-06T10:01:00.000Z',
       }],
     }));
+    const releaseDaemonSshTunnel = vi.fn(async () => ({ ok: true as const }));
     const stopDaemonSshTunnel = vi.fn(async () => ({ ok: true as const }));
 
     const runner = createSystemTasksRunner({
       kinds: {
         'daemon.sshTunnel.ensure.v1': loaded!.createDaemonSshTunnelEnsureTaskKind({ ensureDaemonSshTunnel }),
         'daemon.sshTunnel.list.v1': loaded!.createDaemonSshTunnelListTaskKind({ listDaemonSshTunnels }),
+        'daemon.sshTunnel.release.v1': loaded!.createDaemonSshTunnelReleaseTaskKind({ releaseDaemonSshTunnel }),
         'daemon.sshTunnel.stop.v1': loaded!.createDaemonSshTunnelStopTaskKind({ stopDaemonSshTunnel }),
       },
     });
@@ -81,6 +84,11 @@ describe('daemon SSH tunnel system tasks', () => {
       taskId: 'list',
       kind: 'daemon.sshTunnel.list.v1',
       params: { protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION },
+    });
+    await runner.start({
+      taskId: 'release',
+      kind: 'daemon.sshTunnel.release.v1',
+      params: { leaseId: 'lease-1' },
     });
     await runner.start({
       taskId: 'stop',
@@ -106,6 +114,12 @@ describe('daemon SSH tunnel system tasks', () => {
         }),
       }),
     });
+    await expect(waitForResult(runner, 'release')).resolves.toEqual({
+      result: expect.objectContaining({
+        ok: true,
+        data: { ok: true },
+      }),
+    });
     await expect(waitForResult(runner, 'stop')).resolves.toEqual({
       result: expect.objectContaining({
         ok: true,
@@ -117,6 +131,7 @@ describe('daemon SSH tunnel system tasks', () => {
       purpose: 'remote-host-access',
     }));
     expect(listDaemonSshTunnels).toHaveBeenCalledWith();
+    expect(releaseDaemonSshTunnel).toHaveBeenCalledWith('lease-1');
     expect(stopDaemonSshTunnel).toHaveBeenCalledWith('ssh-tunnel:host-a');
   });
 });

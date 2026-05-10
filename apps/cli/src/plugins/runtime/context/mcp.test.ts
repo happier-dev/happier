@@ -19,6 +19,8 @@ describe('createPluginMcpService', () => {
 
     it('creates stdio clients through ctx.exec.spawnClient and disposes them idempotently', async () => {
         const clientDispose = vi.fn(async () => undefined);
+        const request = vi.fn(async () => ({ ok: true }));
+        const notify = vi.fn(async () => undefined);
         const clientHandle: ExecClientHandleV1 = {
             process: {
                 pid: 123,
@@ -27,6 +29,8 @@ describe('createPluginMcpService', () => {
                 kill: () => undefined,
                 dispose: async () => undefined,
             },
+            request,
+            notify,
             dispose: clientDispose,
         };
         const exec: ExecRuntimeServiceV1 = {
@@ -52,7 +56,116 @@ describe('createPluginMcpService', () => {
             signal: undefined,
         }));
 
+        await expect(handle.request?.({ method: 'ping' })).resolves.toEqual({ ok: true });
+        await expect(handle.notify?.({ method: 'initialized' })).resolves.toBeUndefined();
+        expect(request).toHaveBeenCalledWith({ method: 'ping' });
+        expect(notify).toHaveBeenCalledWith({ method: 'initialized' });
+
         await handle.dispose();
+        await handle.dispose();
+
+        expect(clientDispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects stdio clients that do not expose MCP request and notify methods', async () => {
+        const clientDispose = vi.fn(async () => undefined);
+        const clientHandle: ExecClientHandleV1 = {
+            process: {
+                pid: 123,
+                exit: Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
+                writeStdin: async () => undefined,
+                kill: () => undefined,
+                dispose: async () => undefined,
+            },
+            dispose: clientDispose,
+        };
+        const exec: ExecRuntimeServiceV1 = {
+            run: async () => ({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
+            spawn: async () => clientHandle.process,
+            spawnClient: vi.fn(async () => clientHandle),
+        };
+        const service = createPluginMcpService({
+            pluginId: 'acme',
+            exec,
+            managedServer: {} as ManagedServerRuntimeServiceV1,
+        });
+
+        await expect(service.createClient({
+            id: 'acme.client',
+            transport: {
+                kind: 'stdio',
+                launch,
+            },
+        })).rejects.toThrow(/does not expose MCP request\/notify methods/);
+
+        expect(clientDispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects managed clients instead of returning server-only handles', async () => {
+        const managedServer: ManagedServerRuntimeServiceV1 = {
+            supervise: vi.fn(async () => {
+                throw new Error('managed clients must not supervise before rejection');
+            }),
+        };
+        const service = createPluginMcpService({
+            pluginId: 'acme',
+            exec: {} as ExecRuntimeServiceV1,
+            managedServer,
+        });
+
+        await expect(service.createClient({
+            id: 'acme.managed',
+            transport: {
+                kind: 'managed',
+                server: {
+                    id: 'acme.server',
+                    launch,
+                },
+            },
+        })).rejects.toThrow(/Unsupported MCP client transport 'managed'/);
+
+        expect(managedServer.supervise).not.toHaveBeenCalled();
+    });
+
+    it('disposes created stdio clients when the MCP service is aborted', async () => {
+        const abortController = new AbortController();
+        const clientDispose = vi.fn(async () => undefined);
+        const clientHandle: ExecClientHandleV1 = {
+            process: {
+                pid: 123,
+                exit: Promise.resolve({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
+                writeStdin: async () => undefined,
+                kill: () => undefined,
+                dispose: async () => undefined,
+            },
+            request: async () => ({ ok: true }),
+            notify: async () => undefined,
+            dispose: clientDispose,
+        };
+        const exec: ExecRuntimeServiceV1 = {
+            run: async () => ({ exitCode: 0, signal: null, stdout: '', stderr: '' }),
+            spawn: async () => clientHandle.process,
+            spawnClient: vi.fn(async () => clientHandle),
+        };
+        const service = createPluginMcpService({
+            pluginId: 'acme',
+            exec,
+            managedServer: {} as ManagedServerRuntimeServiceV1,
+            signal: abortController.signal,
+        });
+
+        const handle = await service.createClient({
+            id: 'acme.client',
+            transport: {
+                kind: 'stdio',
+                launch,
+            },
+        });
+
+        abortController.abort();
+        await Promise.resolve();
+        expect(clientDispose).toHaveBeenCalledTimes(1);
+
         await handle.dispose();
 
         expect(clientDispose).toHaveBeenCalledTimes(1);

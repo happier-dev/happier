@@ -17,6 +17,7 @@ import {
   type PluginResourceContributionV2,
   type PluginToolContributionV2,
   type PluginUiDescriptorContributionV2,
+  type ScmBackendContribution,
   type ScmHostingProviderContribution,
   type ProviderDefinitionV1,
 } from '@happier-dev/protocol';
@@ -114,6 +115,7 @@ function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalP
     executionRunProfiles?: readonly PluginExecutionRunProfileContributionV2[];
     mcp?: PluginMcpContributesV1;
     scmHostingProviders?: readonly ScmHostingProviderContribution[];
+    scmBackends?: readonly ScmBackendContribution[];
     installables?: readonly InstallableDependencyDescriptor[];
     hooks?: readonly PluginHookContributionV2[];
     lifecycleHandlers?: readonly PluginLifecycleHandlerContributionV2[];
@@ -160,6 +162,7 @@ function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalP
         discoveryProviders: Object.freeze([...(contributes.mcp?.discoveryProviders ?? [])]),
       }),
       scmHostingProviders: Object.freeze([...(contributes.scmHostingProviders ?? [])]),
+      scmBackends: Object.freeze([...(contributes.scmBackends ?? [])]),
       installables: Object.freeze([...(contributes.installables ?? [])]),
       hooks: Object.freeze([...(contributes.hooks ?? [])]),
       lifecycleHandlers: Object.freeze([...(contributes.lifecycleHandlers ?? [])]),

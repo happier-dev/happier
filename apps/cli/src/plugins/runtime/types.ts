@@ -61,6 +61,7 @@ export type ResolvedPluginLifecycleHandler = Readonly<{
     manifestPath: string;
     manifestDigest: string;
     daemonEntryPath: string;
+    sourceKind?: string;
     handler: PluginLifecycleHandler;
 }>;
 

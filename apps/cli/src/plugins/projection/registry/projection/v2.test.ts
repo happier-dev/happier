@@ -222,6 +222,77 @@ describe('buildPluginProjectionV2', () => {
         })).toThrow(/MCP tool namespace collision/);
     });
 
+    it('rejects backend-client namespace collisions with static MCP tool namespaces', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            mcpBackendClients: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'alpha.mcp',
+                    manifestPath: '/tmp/alpha/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:alpha',
+                    daemonEntryPath: '/tmp/alpha/daemon.mjs',
+                    definition: {
+                        id: 'alpha.client',
+                        kind: 'mcp.backendClient',
+                        version: '1.0.0',
+                        serverName: 'alpha-hosted',
+                        toolNamespace: 'provider.shared',
+                    },
+                },
+            ],
+            mcpTools: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'beta.mcp',
+                    manifestPath: '/tmp/beta/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:beta',
+                    daemonEntryPath: '/tmp/beta/daemon.mjs',
+                    definition: {
+                        id: 'beta.tool',
+                        kind: 'mcp.tool',
+                        version: '1.0.0',
+                        name: 'provider.shared.lookup',
+                    },
+                },
+            ],
+        } as unknown as ResolvedContributionRegistry;
+
+        expect(() => buildPluginProjectionV2({
+            registry,
+            generation: 8,
+        })).toThrow(/MCP tool namespace collision/);
+    });
+
+    it('fails closed for MCP namespace claims without plugin ownership', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            mcpBackendClients: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    manifestPath: '/tmp/alpha/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:alpha',
+                    daemonEntryPath: '/tmp/alpha/daemon.mjs',
+                    definition: {
+                        id: 'alpha.client',
+                        kind: 'mcp.backendClient',
+                        version: '1.0.0',
+                        serverName: 'alpha-hosted',
+                        toolNamespace: 'provider.shared',
+                    },
+                },
+            ],
+        } as unknown as ResolvedContributionRegistry;
+
+        expect(() => buildPluginProjectionV2({
+            registry,
+            generation: 9,
+        })).toThrow(/MCP backend-client namespace claim requires plugin ownership/);
+    });
+
     it('projects hook semantics from the canonical protocol hook catalog when normalized hook records omit raw v2 fields', () => {
         const registry: ResolvedContributionRegistry = {
             providers: [],

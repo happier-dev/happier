@@ -86,13 +86,15 @@ describe('resolveBuiltInContributions', () => {
       throw new Error('Expected built-in activation target contributions');
     }
         expect(activationTargets.map((target) => [target.pluginId, target.daemonEntryPath]).sort()).toEqual([
-      ['claude', '@happier-dev/plugins-claude'],
-      ['codex', '@happier-dev/plugins-codex'],
-      ['opencode', '@happier-dev/plugins-opencode'],
-      ['scm-azure-devops', '@happier-dev/plugins-scm-azure-devops'],
-      ['scm-bitbucket', '@happier-dev/plugins-scm-bitbucket'],
-      ['scm-github', '@happier-dev/plugins-scm-github'],
-      ['scm-gitlab', '@happier-dev/plugins-scm-gitlab'],
+      ['happier.agent.claude', '@happier-dev/plugins-claude'],
+      ['happier.agent.codex', '@happier-dev/plugins-codex'],
+      ['happier.agent.opencode', '@happier-dev/plugins-opencode'],
+      ['happier.scm.backend.git', '@happier-dev/plugins-scm-git'],
+      ['happier.scm.backend.sapling', '@happier-dev/plugins-scm-sapling'],
+      ['happier.scm.hosting.azure-devops', '@happier-dev/plugins-scm-azure-devops'],
+      ['happier.scm.hosting.bitbucket', '@happier-dev/plugins-scm-bitbucket'],
+      ['happier.scm.hosting.github', '@happier-dev/plugins-scm-github'],
+      ['happier.scm.hosting.gitlab', '@happier-dev/plugins-scm-gitlab'],
         ]);
     });
 
@@ -105,11 +107,55 @@ describe('resolveBuiltInContributions', () => {
             provider.definition.kind,
             provider.definition.baseUrl,
         ]).sort()).toEqual([
-            ['scm.azure-devops', 'scm-azure-devops', 'azure-devops', 'https://dev.azure.com'],
-            ['scm.bitbucket', 'scm-bitbucket', 'bitbucket', 'https://bitbucket.org'],
-            ['scm.github', 'scm-github', 'github', 'https://github.com'],
-            ['scm.gitlab', 'scm-gitlab', 'gitlab', 'https://gitlab.com'],
+            ['scm.azure-devops', 'happier.scm.hosting.azure-devops', 'azure-devops', 'https://dev.azure.com'],
+            ['scm.bitbucket', 'happier.scm.hosting.bitbucket', 'bitbucket', 'https://bitbucket.org'],
+            ['scm.github', 'happier.scm.hosting.github', 'github', 'https://github.com'],
+            ['scm.gitlab', 'happier.scm.hosting.gitlab', 'gitlab', 'https://gitlab.com'],
         ]);
+    });
+
+    it('projects bundled SCM backend and installable contributions from generated metadata', () => {
+        const contributes = resolveBuiltInContributions();
+        const generatedScmBackends = readGeneratedArray('BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS');
+        const generatedInstallables = readGeneratedArray('BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS');
+
+        expect(contributes.scmBackends).toEqual(generatedScmBackends);
+        expect(contributes.installables).toEqual(expect.arrayContaining(Array.from(generatedInstallables)));
+        expect((contributes.scmBackends ?? []).map((backend) => [
+            backend.id,
+            backend.pluginId,
+            backend.definition.installableDependencies,
+        ])).toEqual(expect.arrayContaining([
+            [
+                'git',
+                'happier.scm.backend.git',
+                ['dep.git'],
+            ],
+            [
+                'sapling',
+                'happier.scm.backend.sapling',
+                ['dep.sapling'],
+            ],
+        ]));
+        expect((contributes.installables ?? []).map((installable) => [
+            installable.pluginId,
+            installable.definition.key,
+            installable.definition.capabilityId,
+            installable.definition.defaultPolicy.autoInstallWhenNeeded,
+        ])).toEqual(expect.arrayContaining([
+            [
+                'happier.scm.backend.git',
+                'dep.git',
+                'dep.git',
+                false,
+            ],
+            [
+                'happier.scm.backend.sapling',
+                'dep.sapling',
+                'dep.sapling',
+                false,
+            ],
+        ]));
     });
 
     it('publishes a runtime kind for every built-in backend contribution', () => {

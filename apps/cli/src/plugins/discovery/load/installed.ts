@@ -48,6 +48,11 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
   const state = await stateStore.read();
   const loadedPlugins: LoadedPlugin[] = [];
   const diagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {};
+  const loadedByManifestId = new Map<string, {
+    statePluginId: string;
+    pluginRootPath: string;
+    loadedPlugin: LoadedPlugin | null;
+  }>();
 
   for (const [pluginId, record] of Object.entries(state.plugins)) {
     if (!record.state.enabled) {
@@ -88,6 +93,31 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
       continue;
     }
 
+    const existingLoaded = loadedByManifestId.get(resolvedSource.manifest.id);
+    if (existingLoaded) {
+      const message = `Duplicate plugin id '${resolvedSource.manifest.id}' from '${resolvedSource.pluginRootPath}' conflicts with '${existingLoaded.pluginRootPath}'`;
+      if (existingLoaded.loadedPlugin) {
+        const loadedIndex = loadedPlugins.indexOf(existingLoaded.loadedPlugin);
+        if (loadedIndex >= 0) {
+          loadedPlugins.splice(loadedIndex, 1);
+        }
+        existingLoaded.loadedPlugin = null;
+      }
+      diagnosticsByPluginId[existingLoaded.statePluginId] = [
+        {
+          code: 'plugin_manifest_duplicate_id',
+          message,
+        },
+      ];
+      diagnosticsByPluginId[pluginId] = [
+        {
+          code: 'plugin_manifest_duplicate_id',
+          message,
+        },
+      ];
+      continue;
+    }
+
     if (resolvedSource.manifest.id !== pluginId) {
       diagnosticsByPluginId[pluginId] = [
         {
@@ -107,7 +137,7 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
       continue;
     }
 
-    loadedPlugins.push({
+    const loadedPlugin: LoadedPlugin = {
       pluginId,
       pluginRootPath: resolvedSource.pluginRootPath,
       manifestPath: resolvedSource.manifestPath,
@@ -118,6 +148,12 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
         recordSource: record.source,
         resolvedSource,
       }),
+    };
+    loadedPlugins.push(loadedPlugin);
+    loadedByManifestId.set(resolvedSource.manifest.id, {
+      statePluginId: pluginId,
+      pluginRootPath: resolvedSource.pluginRootPath,
+      loadedPlugin,
     });
     diagnosticsByPluginId[pluginId] = [];
   }

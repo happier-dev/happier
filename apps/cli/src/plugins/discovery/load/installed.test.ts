@@ -336,6 +336,85 @@ describe('loadInstalledPlugins', () => {
     ]);
   });
 
+  it('rejects duplicate enabled plugin owner ids deterministically before projection', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
+    const firstPluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-duplicate-first-'));
+    const secondPluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-duplicate-second-'));
+    const store = createPluginStateStore({ happyHomeDir });
+
+    await writePluginManifest(firstPluginRoot, 'acme.duplicate');
+    await writePluginManifest(secondPluginRoot, 'acme.duplicate');
+
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.duplicate': {
+          source: {
+            kind: 'path',
+            locator: firstPluginRoot,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+            resolvedPath: firstPluginRoot,
+            manifestPath: join(firstPluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'unknown',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'link',
+            manifestVersion: '1.0.0',
+            manifestDigest: null,
+            installedPath: null,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+        'acme.duplicate-shadow': {
+          source: {
+            kind: 'path',
+            locator: secondPluginRoot,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+            resolvedPath: secondPluginRoot,
+            manifestPath: join(secondPluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'unknown',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'link',
+            manifestVersion: '1.0.0',
+            manifestDigest: null,
+            installedPath: null,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+      },
+    });
+
+    const result = await loadInstalledPlugins({ happyHomeDir });
+
+    expect(result.loadedPlugins).toEqual([]);
+    expect(result.diagnosticsByPluginId['acme.duplicate']).toEqual([
+      expect.objectContaining({
+        code: 'plugin_manifest_duplicate_id',
+        message: expect.stringContaining(firstPluginRoot),
+      }),
+    ]);
+    expect(result.diagnosticsByPluginId['acme.duplicate-shadow']).toEqual([
+      expect.objectContaining({
+        code: 'plugin_manifest_duplicate_id',
+        message: expect.stringContaining(secondPluginRoot),
+      }),
+    ]);
+  });
+
   it('rejects daemon entry paths that escape the plugin root', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-escape-'));

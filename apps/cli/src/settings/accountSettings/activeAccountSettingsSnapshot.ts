@@ -6,6 +6,7 @@ export type ActiveAccountSettingsSnapshot = Readonly<{
   settingsVersion: number;
   loadedAtMs: number;
   settingsSecretsReadKeys: readonly Uint8Array[];
+  scopeKey?: string;
 }>;
 
 export type ActiveAccountSettingsSnapshotListener = (snapshot: ActiveAccountSettingsSnapshot | null) => void;

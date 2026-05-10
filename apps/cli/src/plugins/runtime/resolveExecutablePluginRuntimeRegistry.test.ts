@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import type { ScmBackendContribution } from '@happier-dev/protocol';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 import { writePluginReloadStateSnapshot } from '@/plugins/runtime/reload/state';
@@ -138,6 +139,129 @@ async function writeActivationManifest(
     return manifestPath;
 }
 
+function createScmBackendContribution(id: string): ScmBackendContribution {
+    const supported = { support: 'supported' } as const;
+    const unsupported = { support: 'unsupported', reason: 'not_implemented' } as const;
+    return {
+        id,
+        displayName: 'Acme VCS',
+        repoModes: ['.git'],
+        detection: {
+            rootMarkers: ['.acme'],
+        },
+        capabilities: {
+            detection: {
+                repository: supported,
+                repoIdentity: unsupported,
+                ignoredPath: unsupported,
+                repoMode: supported,
+                executable: supported,
+            },
+            read: {
+                status: supported,
+                diffFile: unsupported,
+                diffCommit: unsupported,
+                log: unsupported,
+                branches: unsupported,
+                stash: unsupported,
+                defaultBranch: unsupported,
+                hostingProvider: unsupported,
+                pullRequestStatus: unsupported,
+            },
+            changeSet: {
+                model: 'working-copy',
+                diffAreas: ['pending'],
+                include: unsupported,
+                exclude: unsupported,
+                discard: unsupported,
+            },
+            commit: {
+                create: unsupported,
+                pathSelection: unsupported,
+                lineSelection: unsupported,
+                backout: unsupported,
+            },
+            remote: {
+                read: unsupported,
+                add: unsupported,
+                setUrl: unsupported,
+                remove: unsupported,
+                fetch: unsupported,
+                pull: unsupported,
+                push: unsupported,
+                publish: unsupported,
+            },
+            branch: {
+                list: unsupported,
+                create: unsupported,
+                checkout: unsupported,
+                merge: unsupported,
+                rebase: unsupported,
+                operationControl: unsupported,
+            },
+            worktree: {
+                create: unsupported,
+                remove: unsupported,
+                prune: unsupported,
+                prepare: unsupported,
+            },
+            lifecycle: {
+                init: unsupported,
+                clone: unsupported,
+                publish: unsupported,
+                identityRediscovery: unsupported,
+                removeIndexLock: unsupported,
+            },
+            hosting: {
+                providerDetection: unsupported,
+                repositoryPublishTargets: unsupported,
+                repositoryPublish: unsupported,
+                pullRequestRead: unsupported,
+                pullRequestStatus: unsupported,
+                pullRequestCreate: unsupported,
+                pullRequestReuse: unsupported,
+                pullRequestCheckout: unsupported,
+                pullRequestPrepareWorktree: unsupported,
+                pullRequestRunStacked: unsupported,
+            },
+            checkpoints: {
+                capture: unsupported,
+                aliasFinalize: unsupported,
+                diff: unsupported,
+                cleanup: unsupported,
+                backup: unsupported,
+                rollbackApply: unsupported,
+            },
+            workspaceIntegration: {
+                inspectLocation: unsupported,
+                checkoutMaterialization: unsupported,
+                workspaceTransfer: unsupported,
+                exportPortability: unsupported,
+                portablePathClassification: unsupported,
+            },
+            tooling: {
+                systemCliResolution: supported,
+                managedCliResolution: supported,
+                binarySafe: supported,
+            },
+            freshness: {
+                observed: unsupported,
+                expiry: unsupported,
+            },
+        },
+        installableDependencies: ['dep.acme-vcs'],
+        tooling: {
+            commands: [{ installableKey: 'dep.acme-vcs', command: 'acme' }],
+            systemFirst: true,
+            managedFallback: true,
+        },
+        safetyConstraints: {
+            mutatesWorkingTree: false,
+            requiresUserConfirmationForDestructiveWrites: false,
+        },
+    };
+}
+
 describe('resolveExecutablePluginRuntimeRegistry', () => {
     it('activates the bundled opencode plugin by default and exposes a backend engine registration', async () => {
         const contributes = createResolvedContributionRegistry(resolveBuiltInContributions());
@@ -146,7 +270,7 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
         });
 
         const engine = runtimeRegistry.backendEnginesByBackendId.get('opencode');
-        expect(engine?.pluginId).toBe('opencode');
+        expect(engine?.pluginId).toBe('happier.agent.opencode');
         expect(engine?.registration.backendId).toBe('opencode');
     });
 
@@ -159,6 +283,38 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             runtimeCapabilities: ['actions', 'resources', 'uiDescriptors', 'executionRunProfiles', 'hooks'],
             permissions: ['actions.register', 'resources.register', 'ui.descriptors', 'hooks.register'],
             contributes: {
+                actions: [
+                    {
+                        id: 'acme.activated.action',
+                        title: 'Activated Action',
+                        scopes: ['global'],
+                        surfaces: ['cli'],
+                        placement: 'commandPalette',
+                        dangerLevel: 'safe',
+                        handler: { target: 'daemon', registrationId: 'acme.activated.action' },
+                    },
+                ],
+                resources: [
+                    {
+                        id: 'acme.activated.prompt',
+                        resourceKind: 'prompt',
+                        path: 'resources/prompt.md',
+                    },
+                ],
+                uiDescriptors: [
+                    {
+                        id: 'acme.activated.settings',
+                        surface: 'settings',
+                        title: 'Activated Settings',
+                        fields: [
+                            {
+                                id: 'enabled',
+                                type: 'boolean',
+                                title: 'Enabled',
+                            },
+                        ],
+                    },
+                ],
                 executionRunProfiles: [
                     {
                         id: 'acme.activated.review-profile',
@@ -171,6 +327,15 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
                         redaction: 'none',
                         hidden: false,
                         actionIds: ['acme.activated.action'],
+                    },
+                ],
+                hooks: [
+                    {
+                        id: 'session.started',
+                        category: 'lifecycle',
+                        scope: 'session',
+                        executionKind: 'observe',
+                        handler: { target: 'plugin', registrationId: 'session.started' },
                     },
                 ],
             },
@@ -305,6 +470,120 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
         await expect(runtimeRegistry.hookHandlersByHookId.get('session.started')?.[0]?.handler()).resolves.toBe('activated-hook');
     });
 
+    it('keeps manifest lifecycle declarations canonical when id-less activation registers out of order', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-lifecycle-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-lifecycle-root-'));
+        const pluginId = 'acme.lifecycle.runtime';
+        const daemonEntryPath = join(pluginRoot, 'daemon.mjs');
+        const markerPath = join(pluginRoot, 'lifecycle.txt');
+        const manifestPath = await writeActivationManifest(pluginRoot, {
+            id: pluginId,
+            runtimeCapabilities: ['lifecycle'],
+            permissions: [],
+            contributes: {
+                lifecycleHandlers: [
+                    {
+                        event: 'activated',
+                        handler: { target: 'daemon', registrationId: 'activated' },
+                    },
+                    {
+                        event: 'deactivating',
+                        handler: { target: 'daemon', registrationId: 'deactivating' },
+                    },
+                ],
+            },
+        });
+
+        await writeFile(
+            daemonEntryPath,
+            [
+                'import { appendFile } from "node:fs/promises";',
+                '',
+                'export async function activate(api) {',
+                '  api.registerLifecycleHandler({',
+                '    event: "deactivating",',
+                `    handler: async () => appendFile(${JSON.stringify(markerPath)}, "deactivating\\n"),`,
+                '  });',
+                '  api.registerLifecycleHandler({',
+                '    event: "activated",',
+                `    handler: async () => appendFile(${JSON.stringify(markerPath)}, "activated\\n"),`,
+                '  });',
+                '}',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const contributes = createResolvedContributionRegistry({
+            providers: [],
+            backends: [],
+            activationTargets: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    manifestPath,
+                    manifestDigest: 'sha256:lifecycle',
+                    daemonEntryPath,
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: pluginRoot,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                },
+            ],
+            lifecycleHandlers: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    manifestPath,
+                    manifestDigest: 'sha256:lifecycle',
+                    daemonEntryPath,
+                    definition: {
+                        kindVersion: 1,
+                        id: `${pluginId}:activated:0`,
+                        event: 'activated',
+                        priority: 0,
+                    },
+                },
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    manifestPath,
+                    manifestDigest: 'sha256:lifecycle',
+                    daemonEntryPath,
+                    definition: {
+                        kindVersion: 1,
+                        id: `${pluginId}:deactivating:1`,
+                        event: 'deactivating',
+                        priority: 0,
+                    },
+                },
+            ],
+        });
+
+        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir,
+            contributes,
+        });
+
+        expect(runtimeRegistry.pluginDiagnosticsByPluginId[pluginId] ?? []).toEqual([]);
+        expect((runtimeRegistry.contributes.lifecycleHandlers ?? []).map((handler) => handler.definition.id)).toEqual([
+            `${pluginId}:activated:0`,
+            `${pluginId}:deactivating:1`,
+        ]);
+        expect(runtimeRegistry.contributes.lifecycleHandlersById?.get(`${pluginId}:deactivating:0`)).toBeUndefined();
+        expect(runtimeRegistry.contributes.lifecycleHandlersById?.get(`${pluginId}:activated:1`)).toBeUndefined();
+        await expect(readFile(markerPath, 'utf8')).resolves.toBe('activated\n');
+
+        await runtimeRegistry.dispose();
+
+        await expect(readFile(markerPath, 'utf8')).resolves.toBe('activated\ndeactivating\n');
+    });
+
     it('loads the ui-descriptor authoring example through the activation-time runtime contract', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-authoring-home-'));
         const pluginRoot = fileURLToPath(new URL('../testkit/fixtures/authoring-examples/ui-descriptor-plugin/', import.meta.url));
@@ -365,6 +644,25 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             id: 'acme.activated',
             runtimeCapabilities: ['tools', 'commands'],
             permissions: ['tools.register', 'commands.register'],
+            contributes: {
+                tools: [
+                    {
+                        id: 'acme.activated.tool',
+                        name: 'acme_activated_tool',
+                        title: 'Activated Tool',
+                        surfaces: { cli: true, mcp: true, session_agent: true },
+                        handler: { target: 'daemon', registrationId: 'acme.activated.tool' },
+                    },
+                ],
+                commands: [
+                    {
+                        id: 'acme.activated.command',
+                        command: 'activated-review',
+                        allowTmux: false,
+                        handler: { target: 'daemon', registrationId: 'acme.activated.command' },
+                    },
+                ],
+            },
         });
 
         await writeFile(
@@ -629,6 +927,83 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
         ]);
     });
 
+    it('merges catalog-time SCM backend activation diagnostics into plugin diagnostics', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-scm-root-'));
+        const pluginId = 'acme.scm.backend';
+        const daemonEntryPath = join(pluginRoot, 'daemon.mjs');
+        const manifestPath = await writeActivationManifest(pluginRoot, {
+            id: pluginId,
+            runtimeCapabilities: ['scmBackends'],
+            permissions: [],
+            contributes: {
+                scmBackends: [createScmBackendContribution('acme-vcs')],
+            },
+        });
+        await writeFile(
+            daemonEntryPath,
+            [
+                'export async function activate() {',
+                '  return undefined;',
+                '}',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const contributes = createResolvedContributionRegistry({
+            providers: [],
+            backends: [],
+            activationTargets: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    manifestPath,
+                    manifestDigest: 'sha256:scm',
+                    daemonEntryPath,
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: pluginRoot,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                },
+            ],
+            scmBackends: [
+                {
+                    id: 'acme-vcs',
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    manifestPath,
+                    manifestDigest: 'sha256:scm',
+                    daemonEntryPath,
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: pluginRoot,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                    definition: createScmBackendContribution('acme-vcs'),
+                },
+            ],
+        });
+
+        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir,
+            contributes,
+        });
+
+        expect(runtimeRegistry.pluginDiagnosticsByPluginId[pluginId]).toEqual([
+            expect.objectContaining({
+                code: 'plugin_scm_backend_missing_activation',
+            }),
+        ]);
+        expect(runtimeRegistry.pluginDiagnosticsByPluginId[pluginId]?.[0]?.message).toContain(`Plugin '${pluginId}'`);
+        expect(runtimeRegistry.pluginDiagnosticsByPluginId[pluginId]?.[0]?.message).toContain("SCM backend 'acme-vcs'");
+    });
+
     it('reuses caller-provided contribution ingress when resolving executable runtime hooks', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-root-'));
@@ -687,6 +1062,17 @@ describe('resolveExecutablePluginRuntimeRegistry', () => {
             id: 'acme.generation',
             runtimeCapabilities: ['hooks'],
             permissions: ['hooks.register'],
+            contributes: {
+                hooks: [
+                    {
+                        id: 'session.started',
+                        category: 'lifecycle',
+                        scope: 'session',
+                        executionKind: 'observe',
+                        handler: { target: 'plugin', registrationId: 'session.started' },
+                    },
+                ],
+            },
         });
 
         await writeFile(

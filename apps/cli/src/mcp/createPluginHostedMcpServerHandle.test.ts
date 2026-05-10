@@ -11,7 +11,7 @@ function makeSpec(id: string): McpServerSpecV1 {
     return Object.freeze({
         id,
         name: `name-${id}`,
-        transport: { kind: 'hosted' },
+        transport: { kind: 'hosted' as const },
     });
 }
 

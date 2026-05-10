@@ -12,6 +12,7 @@ import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import { activatePluginRuntimeRegistry } from './lifecycle/manager';
 import { resolvePluginHookHandlerRegistry } from './resolvePluginHookHandlerRegistry';
+import { createPluginScmBackendRegistryFromRuntimeRegistry } from '@/scm/scmBackendCatalog';
 import type {
     PluginActionHandler,
     PluginHookHandler,
@@ -32,6 +33,8 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     notificationCategoriesById?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['notificationCategoriesById'];
     notificationChannelsById?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['notificationChannelsById'];
     scmHostingProvidersById: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['scmHostingProvidersById'];
+    scmBackendsById?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['scmBackendsById'];
+    scmBackendRegistrations?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['scmBackendRegistrations'];
     requestInterceptors?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['requestInterceptors'];
     mcpServers?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpServers'];
     mcpBackendClients?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpBackendClients'];
@@ -82,6 +85,9 @@ function mergeActivatedContributes(
     base: ResolvedContributionRegistry,
     activated: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>,
 ): ResolvedContributionRegistry {
+    const baseLifecycleHandlerIds = new Set((base.lifecycleHandlers ?? []).map((handler) => handler.definition.id));
+    const activatedLifecycleHandlers = activated.lifecycleHandlers.filter((handler) => !baseLifecycleHandlerIds.has(handler.definition.id));
+
     if (
         activated.actions.length === 0
         && activated.tools.length === 0
@@ -89,7 +95,7 @@ function mergeActivatedContributes(
         && activated.resources.length === 0
         && activated.uiDescriptors.length === 0
         && activated.executionRunProfiles.length === 0
-        && activated.lifecycleHandlers.length === 0
+        && activatedLifecycleHandlers.length === 0
     ) {
         return base;
     }
@@ -121,13 +127,16 @@ function mergeActivatedContributes(
             ...(base.executionRunProfiles ?? []),
             ...activated.executionRunProfiles,
         ]),
+        installables: base.installables,
         settings: base.settings,
         scmHostingProviders: base.scmHostingProviders,
+        scmBackends: base.scmBackends,
+        connectedAccountDescriptors: base.connectedAccountDescriptors,
         activationTargets: base.activationTargets,
         hookRegistrations: base.hookRegistrations,
         lifecycleHandlers: Object.freeze([
             ...(base.lifecycleHandlers ?? []),
-            ...activated.lifecycleHandlers,
+            ...activatedLifecycleHandlers,
         ]),
         pluginDiagnosticsByPluginId: base.pluginDiagnosticsByPluginId,
     });
@@ -200,6 +209,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolveActivationSource: resolveBundledActivationSource,
     });
     const authoritativeContributes = mergeActivatedContributes(contributes, activatedRegistry);
+    const scmBackendRegistry = createPluginScmBackendRegistryFromRuntimeRegistry({
+        contributes: authoritativeContributes,
+        scmBackendsById: activatedRegistry.scmBackendsById,
+        scmBackendRegistrations: activatedRegistry.scmBackendRegistrations,
+    });
     const hookHandlersByHookId = new Map<string, readonly ResolvedPluginHookHandler[]>();
     for (const [hookId, handlers] of hookHandlerRegistry.handlersByHookId.entries()) {
         hookHandlersByHookId.set(hookId, handlers);
@@ -227,6 +241,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         notificationCategoriesById: activatedRegistry.notificationCategoriesById,
         notificationChannelsById: activatedRegistry.notificationChannelsById,
         scmHostingProvidersById: activatedRegistry.scmHostingProvidersById,
+        scmBackendsById: activatedRegistry.scmBackendsById,
+        scmBackendRegistrations: activatedRegistry.scmBackendRegistrations,
         requestInterceptors: activatedRegistry.requestInterceptors,
         mcpServers: activatedRegistry.mcpServers,
         mcpBackendClients: activatedRegistry.mcpBackendClients,
@@ -241,8 +257,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
         eventSubscriptionPermissionsByPluginId: activatedRegistry.eventSubscriptionPermissionsByPluginId,
         pluginDiagnosticsByPluginId: mergePluginDiagnostics(
             mergePluginDiagnostics(
-                authoritativeContributes.pluginDiagnosticsByPluginId,
-                hookHandlerRegistry.diagnosticsByPluginId,
+                mergePluginDiagnostics(
+                    authoritativeContributes.pluginDiagnosticsByPluginId,
+                    hookHandlerRegistry.diagnosticsByPluginId,
+                ),
+                scmBackendRegistry.diagnosticsByPluginId,
             ),
             activatedRegistry.pluginDiagnosticsByPluginId,
         ),

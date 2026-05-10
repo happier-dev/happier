@@ -21,16 +21,20 @@ import type {
     PluginApiRequestInterceptorRegistration,
     PluginApiResourceRegistration,
     PluginApiRegistrations,
+    PluginApiScmBackendRegistration,
     PluginApiScmHostingProviderRegistration,
     PluginApiToolRegistration,
     PluginApiUiDescriptorRegistration,
 } from './types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { createPluginDisposableRegistry } from '../lifecycle/disposables';
+import { isPluginApiScmBackendRegistration } from './scmBackends';
 import { isPluginApiScmHostingProviderRegistration } from './scmHostingProviders';
 import {
+    claimPluginMcpToolNamespacePrefix,
     claimPluginMcpToolNamespace,
     createPluginMcpToolNamespaceRegistry,
+    releasePluginMcpToolNamespacePrefix,
     releasePluginMcpToolNamespace,
 } from '@/mcp/pluginMcpToolNamespaces';
 
@@ -40,8 +44,62 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+const MCP_SENSITIVE_REGISTRATION_KEYS = new Set([
+    'authorization',
+    'proxyauthorization',
+    'apikey',
+    'token',
+    'accesstoken',
+    'refreshtoken',
+    'githubtoken',
+    'clientsecret',
+    'pat',
+    'password',
+    'secret',
+]);
+
+function normalizeMcpRegistrationKey(key: string): string {
+    return key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+}
+
+function isSensitiveMcpRegistrationKey(key: string): boolean {
+    const normalized = normalizeMcpRegistrationKey(key);
+    return MCP_SENSITIVE_REGISTRATION_KEYS.has(normalized)
+        || normalized.endsWith('token')
+        || normalized.endsWith('apikey')
+        || normalized.endsWith('secret');
+}
+
+function assertMcpRuntimeRegistrationSecretFree(value: unknown, path: readonly string[] = []): void {
+    if (Array.isArray(value)) {
+        value.forEach((entry, index) => assertMcpRuntimeRegistrationSecretFree(entry, [...path, String(index)]));
+        return;
+    }
+    if (!isRecord(value)) {
+        if (typeof value === 'string' && /\bbearer\s+\S+/i.test(value)) {
+            throw new Error(`MCP runtime registration contains raw secret material at '${path.join('.') || '<root>'}'`);
+        }
+        return;
+    }
+    for (const [key, child] of Object.entries(value)) {
+        if (typeof child === 'function') {
+            continue;
+        }
+        const childPath = [...path, key];
+        if (isSensitiveMcpRegistrationKey(key)) {
+            throw new Error(`MCP runtime registration contains raw secret material at '${childPath.join('.')}'`);
+        }
+        assertMcpRuntimeRegistrationSecretFree(child, childPath);
+    }
+}
+
 function formatPluginLabel(pluginId: string | undefined): string {
     return pluginId?.trim().length ? `Plugin '${pluginId}'` : 'Plugin activation';
+}
+
+function normalizeOptionalRegistrationId(value: string | undefined): string | null {
+    const normalized = value?.trim() ?? '';
+    return normalized.length > 0 ? normalized : null;
 }
 
 function isRequestInterceptorRegistration(value: unknown): value is PluginApiRequestInterceptorRegistration {
@@ -68,6 +126,7 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
     const notificationChannels: PluginApiNotificationChannelRegistration[] = [];
     const executionRunProfiles: PluginApiExecutionRunProfileRegistration[] = [];
     const scmHostingProviders: PluginApiScmHostingProviderRegistration[] = [];
+    const scmBackends: PluginApiScmBackendRegistration[] = [];
     const mcpServers: PluginApiMcpServerRegistration[] = [];
     const mcpBackendClients: PluginApiMcpBackendClientRegistration[] = [];
     const mcpTools: PluginApiMcpToolRegistration[] = [];
@@ -87,6 +146,24 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
     const declaredBackendIds = policy?.declaredBackendIds
         ? new Set(policy.declaredBackendIds)
         : null;
+    const declaredActionIds = policy?.declaredActionIds
+        ? new Set(policy.declaredActionIds)
+        : null;
+    const declaredToolIds = policy?.declaredToolIds
+        ? new Set(policy.declaredToolIds)
+        : null;
+    const declaredCommandIds = policy?.declaredCommandIds
+        ? new Set(policy.declaredCommandIds)
+        : null;
+    const declaredHookIds = policy?.declaredHookIds
+        ? new Set(policy.declaredHookIds)
+        : null;
+    const declaredLifecycleHandlerIds = policy?.declaredLifecycleHandlerIds
+        ? new Set(policy.declaredLifecycleHandlerIds)
+        : null;
+    const declaredLifecycleHandlers = policy?.declaredLifecycleHandlers
+        ? Object.freeze([...policy.declaredLifecycleHandlers])
+        : null;
     const declaredNotificationCategoryIds = policy?.declaredNotificationCategoryIds
         ? new Set(policy.declaredNotificationCategoryIds)
         : null;
@@ -98,6 +175,9 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
         : null;
     const declaredScmHostingProviderIds = policy?.declaredScmHostingProviderIds
         ? new Set(policy.declaredScmHostingProviderIds)
+        : null;
+    const declaredScmBackendIds = policy?.declaredScmBackendIds
+        ? new Set(policy.declaredScmBackendIds)
         : null;
 
     function addDisposable(disposable: PluginDisposable): PluginDisposable {
@@ -185,6 +265,13 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             if (blocked) {
                 return blocked;
             }
+            if (declaredActionIds && !declaredActionIds.has(registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_action_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register action '${registration.id}' because it is not a manifest-declared action id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register action '${registration.id}' because it is not a manifest-declared action id`);
+            }
             actions.push(registration);
             return addDisposable(() => {
                 const index = actions.indexOf(registration);
@@ -202,6 +289,13 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             if (blocked) {
                 return blocked;
             }
+            if (declaredToolIds && !declaredToolIds.has(registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_tool_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register tool '${registration.id}' because it is not a manifest-declared tool id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register tool '${registration.id}' because it is not a manifest-declared tool id`);
+            }
             tools.push(registration);
             return addDisposable(() => {
                 const index = tools.indexOf(registration);
@@ -218,6 +312,13 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             });
             if (blocked) {
                 return blocked;
+            }
+            if (declaredCommandIds && !declaredCommandIds.has(registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_command_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register command '${registration.id}' because it is not a manifest-declared command id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register command '${registration.id}' because it is not a manifest-declared command id`);
             }
             commands.push(registration);
             return addDisposable(() => {
@@ -399,6 +500,43 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 }
             });
         },
+        registerScmBackend(registration) {
+            const blocked = isRegistrationAllowed({
+                family: 'scmBackends',
+                methodName: 'registerScmBackend',
+            });
+            if (blocked) {
+                return blocked;
+            }
+            if (!isPluginApiScmBackendRegistration(registration)) {
+                appendDiagnostic({
+                    code: 'plugin_scm_backend_invalid_registration',
+                    message: `${formatPluginLabel(policy?.pluginId)} provided an invalid SCM backend registration`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} provided an invalid SCM backend registration`);
+            }
+            if (declaredScmBackendIds && !declaredScmBackendIds.has(registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_scm_backend_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register SCM backend '${registration.id}' because it is not a manifest-declared SCM backend id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register SCM backend '${registration.id}' because it is not a manifest-declared SCM backend id`);
+            }
+            if (scmBackends.some((entry) => entry.id === registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_scm_backend_duplicate_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} registered duplicate SCM backend '${registration.id}'`,
+                });
+                throw new Error(`Duplicate SCM backend '${registration.id}'`);
+            }
+            scmBackends.push(registration);
+            return addDisposable(() => {
+                const index = scmBackends.indexOf(registration);
+                if (index >= 0) {
+                    scmBackends.splice(index, 1);
+                }
+            });
+        },
         registerMcpServer(registration) {
             const blocked = isRegistrationAllowed({
                 family: 'mcp',
@@ -407,6 +545,7 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             if (blocked) {
                 return blocked;
             }
+            assertMcpRuntimeRegistrationSecretFree(registration);
             if (mcpServers.some((entry) => entry.id === registration.id || entry.name === registration.name)) {
                 appendDiagnostic({
                     code: 'plugin_manifest_semantic_invalid',
@@ -430,7 +569,18 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             if (blocked) {
                 return blocked;
             }
+            assertMcpRuntimeRegistrationSecretFree(registration);
+            claimPluginMcpToolNamespacePrefix(mcpToolNamespaces, {
+                pluginId: policy?.pluginId ?? '',
+                namespace: registration.toolNamespace,
+                registrationId: registration.id,
+            });
             if (mcpBackendClients.some((entry) => entry.id === registration.id)) {
+                releasePluginMcpToolNamespacePrefix(mcpToolNamespaces, {
+                    pluginId: policy?.pluginId ?? '',
+                    namespace: registration.toolNamespace,
+                    registrationId: registration.id,
+                });
                 appendDiagnostic({
                     code: 'plugin_manifest_semantic_invalid',
                     message: `${formatPluginLabel(policy?.pluginId)} registered duplicate MCP backend client '${registration.id}'`,
@@ -443,6 +593,11 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 if (index >= 0) {
                     mcpBackendClients.splice(index, 1);
                 }
+                releasePluginMcpToolNamespacePrefix(mcpToolNamespaces, {
+                    pluginId: policy?.pluginId ?? '',
+                    namespace: registration.toolNamespace,
+                    registrationId: registration.id,
+                });
             });
         },
         registerMcpTool(registration) {
@@ -453,6 +608,7 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             if (blocked) {
                 return blocked;
             }
+            assertMcpRuntimeRegistrationSecretFree(registration);
             claimPluginMcpToolNamespace(mcpToolNamespaces, {
                 pluginId: policy?.pluginId ?? '',
                 toolName: registration.name,
@@ -479,6 +635,7 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             if (blocked) {
                 return blocked;
             }
+            assertMcpRuntimeRegistrationSecretFree(registration);
             if (mcpDiscoveryProviders.some((entry) => entry.id === registration.id)) {
                 appendDiagnostic({
                     code: 'plugin_manifest_semantic_invalid',
@@ -533,6 +690,13 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             if (blocked) {
                 return blocked;
             }
+            if (declaredHookIds && !declaredHookIds.has(registration.hookId)) {
+                appendDiagnostic({
+                    code: 'plugin_hook_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register hook '${registration.hookId}' because it is not a manifest-declared hook id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register hook '${registration.hookId}' because it is not a manifest-declared hook id`);
+            }
             hooks.push(registration);
             return addDisposable(() => {
                 const index = hooks.indexOf(registration);
@@ -549,9 +713,41 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             if (blocked) {
                 return blocked;
             }
-            lifecycleHandlers.push(registration);
+            const registrationId = normalizeOptionalRegistrationId(registration.id);
+            let lifecycleHandlerRegistration = registration;
+            const isDeclaredLifecycleHandler = declaredLifecycleHandlers
+                ? (() => {
+                    const matchingDeclarations = declaredLifecycleHandlers.filter((declaration) => {
+                        const declarationId = normalizeOptionalRegistrationId(declaration.id);
+                        const canonicalId = normalizeOptionalRegistrationId(declaration.canonicalId);
+                        return declaration.event === registration.event
+                            && (registrationId === null
+                                ? declarationId === null
+                                : declarationId === registrationId || canonicalId === registrationId);
+                    });
+                    if (matchingDeclarations.length !== 1) {
+                        return false;
+                    }
+                    const canonicalId = normalizeOptionalRegistrationId(matchingDeclarations[0]!.canonicalId);
+                    if (registrationId === null && canonicalId !== null) {
+                        lifecycleHandlerRegistration = {
+                            ...registration,
+                            id: canonicalId,
+                        };
+                    }
+                    return true;
+                })()
+                : declaredLifecycleHandlerIds === null || (registrationId !== null && declaredLifecycleHandlerIds.has(registrationId));
+            if (!isDeclaredLifecycleHandler) {
+                appendDiagnostic({
+                    code: 'plugin_lifecycle_handler_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register lifecycle handler '${registrationId ?? '<missing>'}' because it is not a manifest-declared lifecycle handler id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register lifecycle handler '${registrationId ?? '<missing>'}' because it is not a manifest-declared lifecycle handler id`);
+            }
+            lifecycleHandlers.push(lifecycleHandlerRegistration);
             return addDisposable(() => {
-                const index = lifecycleHandlers.indexOf(registration);
+                const index = lifecycleHandlers.indexOf(lifecycleHandlerRegistration);
                 if (index >= 0) {
                     lifecycleHandlers.splice(index, 1);
                 }
@@ -579,6 +775,7 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             notificationChannels: Object.freeze([...notificationChannels]),
             executionRunProfiles: Object.freeze([...executionRunProfiles]),
             scmHostingProviders: Object.freeze([...scmHostingProviders]),
+            scmBackends: Object.freeze([...scmBackends]),
             mcpServers: Object.freeze([...mcpServers]),
             mcpBackendClients: Object.freeze([...mcpBackendClients]),
             mcpTools: Object.freeze([...mcpTools]),

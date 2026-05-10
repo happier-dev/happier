@@ -8,7 +8,6 @@ import {
   type BackendTargetRefV1,
 } from '@happier-dev/protocol';
 
-import { createHash } from 'node:crypto';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { Credentials } from '@/persistence';
 import { configuration } from '@/configuration';
@@ -28,6 +27,12 @@ import {
 } from './accountSettingsCache';
 import { setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
 import { resolveAccountSettingsHttpBaseUrl } from './resolveAccountSettingsHttpBaseUrl';
+import { AccountSettingsStaleError } from './accountSettingsRefreshError';
+import {
+  isAccountSettingsVersionAtLeast,
+  normalizeAccountSettingsVersionHint,
+} from './accountSettingsVersion';
+import { createAccountSettingsScopeKey } from './accountSettingsScopeKey';
 
 export type AccountSettingsBootstrapMode = 'blocking' | 'fast';
 export type AccountSettingsRefreshMode = 'auto' | 'force';
@@ -94,9 +99,8 @@ function shouldTreatCacheAsFresh(cache: AccountSettingsCache, nowMs: number, ttl
   return Number.isFinite(age) && age >= 0 && age < ttlMs;
 }
 
-function tokenScopeKey(token: string): string {
-  // Avoid keeping raw access tokens in memory map keys.
-  return createHash('sha256').update(token).digest('hex').slice(0, 16);
+function shouldTreatVersionAsFresh(current: number | null | undefined, minimum: number | null): boolean {
+  return isAccountSettingsVersionAtLeast(current, minimum);
 }
 
 const inMemoryByScopeKey = new Map<string, AccountSettingsContext>();
@@ -117,6 +121,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
    * may control process env).
    */
   honorAccountSettingsModeEnv?: boolean;
+  minSettingsVersion?: number;
   nowMs?: number;
   ttlMs?: number;
   deps?: Partial<BootstrapDeps>;
@@ -125,6 +130,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const ttlMs = typeof params.ttlMs === 'number' ? params.ttlMs : readTtlMsFromEnvOrDefault();
   const refresh = params.refresh ?? 'auto';
   const mode = params.mode ?? 'blocking';
+  const minSettingsVersion = normalizeAccountSettingsVersionHint(params.minSettingsVersion);
+  const effectiveMode = minSettingsVersion !== null ? 'blocking' : mode;
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
 
   const deps: BootstrapDeps = {
@@ -186,7 +193,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       return decryptAccountSettingsCiphertext({ credentials, ciphertext });
     }),
     applySideEffects: params.deps?.applySideEffects ?? (({ settings, agentId, backendTarget, source, settingsVersion, loadedAtMs }) => {
-      setActiveAccountSettingsSnapshot({ source, settings, settingsVersion, loadedAtMs, settingsSecretsReadKeys });
+      setActiveAccountSettingsSnapshot({ source, settings, settingsVersion, loadedAtMs, settingsSecretsReadKeys, scopeKey });
       if (agentId || backendTarget) {
         assertBackendEnabledByAccountSettings({ agentId, backendTarget, settings });
       }
@@ -195,11 +202,14 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   };
 
   const cachePath = deps.resolveCachePath(params.credentials);
-  const scopeKey = `${cachePath}::${tokenScopeKey(params.credentials.token)}`;
+  const scopeKey = createAccountSettingsScopeKey({ cachePath, token: params.credentials.token });
 
   const honorModeEnv = params.honorAccountSettingsModeEnv !== false;
   const modeFromEnv = honorModeEnv ? readAccountSettingsModeFromEnv() : 'auto';
   if (modeFromEnv === 'never') {
+    if (minSettingsVersion !== null && minSettingsVersion > 0) {
+      throw new AccountSettingsStaleError();
+    }
     const settings = accountSettingsParse({});
     const ctx: AccountSettingsContext = {
       source: 'none',
@@ -209,6 +219,9 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       settingsSecretsReadKeys,
       whenRefreshed: null,
     };
+    if (!shouldTreatVersionAsFresh(ctx.settingsVersion, minSettingsVersion)) {
+      throw new AccountSettingsStaleError();
+    }
     deps.applySideEffects({
       settings,
       agentId: params.agentId,
@@ -222,7 +235,12 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   }
 
   const existing = inMemoryByScopeKey.get(scopeKey) ?? null;
-  if (refresh === 'auto' && existing && shouldTreatCacheAsFresh({ version: 2, cachedAt: existing.loadedAtMs, settingsContent: null, settingsVersion: existing.settingsVersion }, nowMs, ttlMs)) {
+  if (
+    refresh === 'auto'
+    && existing
+    && shouldTreatCacheAsFresh({ version: 2, cachedAt: existing.loadedAtMs, settingsContent: null, settingsVersion: existing.settingsVersion }, nowMs, ttlMs)
+    && shouldTreatVersionAsFresh(existing.settingsVersion, minSettingsVersion)
+  ) {
     deps.applySideEffects({
       settings: existing.settings,
       agentId: params.agentId,
@@ -301,6 +319,9 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       settingsSecretsReadKeys,
       whenRefreshed: null,
     };
+    if (!shouldTreatVersionAsFresh(ctx.settingsVersion, minSettingsVersion)) {
+      throw new AccountSettingsStaleError();
+    }
     deps.applySideEffects({
       settings,
       agentId: params.agentId,
@@ -313,16 +334,21 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     return ctx;
   };
 
-  const cacheFresh = cache ? shouldTreatCacheAsFresh(cache, nowMs, ttlMs) : false;
+  const cacheFresh = cache
+    ? shouldTreatCacheAsFresh(cache, nowMs, ttlMs) && shouldTreatVersionAsFresh(cache.settingsVersion, minSettingsVersion)
+    : false;
   const shouldForceFetch = refresh === 'force';
 
-  if (mode === 'fast') {
+  if (effectiveMode === 'fast') {
     const base = await useCache();
     const needsRefresh = shouldForceFetch || !cacheFresh;
     if (!needsRefresh) return base;
 
     // Fire refresh immediately; expose promise for long-running processes.
     const whenRefreshed = fetchAndPersist().catch(async (err) => {
+      if (minSettingsVersion !== null) {
+        throw err;
+      }
       logger.debug('[accountSettings] background refresh failed; using cache', serializeAxiosErrorForLog(err));
       return base;
     });
@@ -337,6 +363,9 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   try {
     return await fetchAndPersist();
   } catch (err) {
+    if (minSettingsVersion !== null) {
+      throw err;
+    }
     logger.debug('[accountSettings] fetch failed; falling back to cache', serializeAxiosErrorForLog(err));
     return useCache();
   }

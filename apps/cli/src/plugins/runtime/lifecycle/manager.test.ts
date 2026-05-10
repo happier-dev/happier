@@ -4,7 +4,13 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ResolvedBackendContribution, ResolvedContributionRegistry, ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import type {
+    ResolvedBackendContribution,
+    ResolvedContributionProvenance,
+    ResolvedContributionRegistry,
+    ResolvedContributionSourceKind,
+    ResolvedProviderContribution,
+} from '@/plugins/projection/registry/types';
 import type { PluginApi } from '@/plugins/runtime/api/types';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
@@ -28,6 +34,11 @@ async function writeActivationModule(): Promise<Readonly<{
         runtimeCapabilities: ['actions', 'tools', 'commands', 'hooks', 'backends', 'lifecycle', 'notifications'],
         permissions: ['actions.register', 'tools.register', 'commands.register', 'hooks.register', 'notifications.register', 'network'],
         backendIds: ['acme.activated.backend'],
+        actionIds: ['acme.activated.action'],
+        toolIds: ['acme.activated.tool'],
+        commandIds: ['acme.activated.command'],
+        hookIds: ['session.started'],
+        lifecycleHandlerIds: ['acme.activated.lifecycleActivated', 'acme.activated.lifecycleDeactivating'],
         notificationCategoryIds: ['acme.activated.notification'],
         notificationChannelIds: ['acme.activated.notification.memory'],
     });
@@ -67,6 +78,7 @@ async function writeActivationModule(): Promise<Readonly<{
             '    handler: async () => "activated-hook",',
             '  });',
             '  api.registerLifecycleHandler({',
+            '    id: "acme.activated.lifecycleActivated",',
             '    event: "activated",',
             '    handler: async () => {',
             '      const { appendFile } = await import("node:fs/promises");',
@@ -74,6 +86,7 @@ async function writeActivationModule(): Promise<Readonly<{
             '    },',
             '  });',
             '  api.registerLifecycleHandler({',
+            '    id: "acme.activated.lifecycleDeactivating",',
             '    event: "deactivating",',
             '    handler: async () => {',
             '      const { appendFile } = await import("node:fs/promises");',
@@ -231,6 +244,15 @@ async function writeManifest(
         runtimeCapabilities: readonly string[];
         permissions: readonly TestPermissionDeclaration[];
         backendIds?: readonly string[];
+        actionIds?: readonly string[];
+        toolIds?: readonly string[];
+        commandIds?: readonly string[];
+        hookIds?: readonly string[];
+        lifecycleHandlerIds?: readonly string[];
+        lifecycleHandlers?: readonly Readonly<{
+            id?: string;
+            event: 'activated' | 'deactivating';
+        }>[];
         notificationCategoryIds?: readonly string[];
         notificationChannelIds?: readonly string[];
     }>,
@@ -269,7 +291,47 @@ async function writeManifest(
                     id: backendId,
                     agentId: params.id,
                     engine: { kind: 'custom' },
-                    capabilities: {},
+                    capabilities: { executionRun: { supported: false } },
+                })),
+                actions: (params.actionIds ?? []).map((actionId) => ({
+                    id: actionId,
+                    title: `${actionId} test action`,
+                    scopes: ['global'],
+                    surfaces: ['cli'],
+                    placement: 'commandPalette',
+                    dangerLevel: 'safe',
+                    handler: { target: 'daemon', registrationId: actionId },
+                })),
+                tools: (params.toolIds ?? []).map((toolId) => ({
+                    id: toolId,
+                    name: toolId.replaceAll('.', '_'),
+                    title: `${toolId} test tool`,
+                    surfaces: { cli: true, mcp: false, session_agent: false },
+                    handler: { target: 'daemon', registrationId: toolId },
+                })),
+                commands: (params.commandIds ?? []).map((commandId) => ({
+                    id: commandId,
+                    command: commandId,
+                    allowTmux: false,
+                    handler: { target: 'daemon', registrationId: commandId },
+                })),
+                hooks: (params.hookIds ?? []).map((hookId) => ({
+                    id: hookId,
+                    category: 'lifecycle',
+                    scope: 'session',
+                    executionKind: 'observe',
+                    handler: { target: 'plugin', registrationId: hookId },
+                })),
+                lifecycleHandlers: (params.lifecycleHandlers ?? (params.lifecycleHandlerIds ?? []).map((handlerId) => ({
+                    id: handlerId,
+                    event: handlerId.endsWith('Deactivating') ? 'deactivating' as const : 'activated' as const,
+                }))).map((handler) => ({
+                    ...(handler.id ? { id: handler.id } : {}),
+                    event: handler.event,
+                    handler: {
+                        target: 'daemon',
+                        registrationId: handler.id ?? `${params.id}.${handler.event}`,
+                    },
                 })),
                 notifications: (params.notificationCategoryIds ?? []).map((notificationId) => ({
                     id: notificationId,
@@ -295,12 +357,16 @@ function createContributes(params: Readonly<{
     manifestPath: string;
     daemonEntryPath: string;
     trustPolicy?: 'local_trusted' | 'prompt' | 'untrusted';
+    provenance?: ResolvedContributionProvenance;
+    sourceKind?: ResolvedContributionSourceKind;
 }>): ResolvedContributionRegistry {
     const pluginId = params.pluginId ?? 'acme.activated';
+    const provenance = params.provenance ?? 'external';
+    const sourceKind = params.sourceKind ?? 'path';
     const provider: ResolvedProviderContribution = {
         id: pluginId,
-        provenance: 'external',
-        source: { kind: 'path' },
+        provenance,
+        source: { kind: sourceKind },
         pluginId,
         manifestPath: params.manifestPath,
         manifestDigest: 'digest-activation',
@@ -320,8 +386,8 @@ function createContributes(params: Readonly<{
     const backend: ResolvedBackendContribution = {
         id: `${pluginId}.backend`,
         providerId: pluginId,
-        provenance: 'external',
-        source: { kind: 'path' },
+        provenance,
+        source: { kind: sourceKind },
         pluginId,
         manifestPath: params.manifestPath,
         manifestDigest: 'digest-activation',
@@ -637,6 +703,184 @@ describe('activatePluginRuntimeRegistry', () => {
         ]);
     });
 
+    it('rejects activation-time executable registrations absent from the same manifest', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-activation-declared-ids-'));
+        const manifestPath = await writeManifest(root, {
+            id: 'acme.declared',
+            runtimeCapabilities: ['tools', 'commands', 'hooks', 'lifecycle'],
+            permissions: ['tools.register', 'commands.register', 'hooks.register'],
+            toolIds: ['acme.declared.tool'],
+            commandIds: ['acme.declared.command'],
+            hookIds: ['acme.declared.hook'],
+            lifecycleHandlerIds: ['acme.declared.lifecycle'],
+        });
+        const daemonEntryPath = join(root, 'daemon.mjs');
+
+        await writeFile(
+            daemonEntryPath,
+            [
+                'export async function activate(api) {',
+                '  for (const bind of [',
+                '    () => api.registerTool({',
+                '      id: "acme.declared.shadowTool",',
+                '      name: "acme_declared_shadow_tool",',
+                '      title: "Shadow Tool",',
+                '      handler: async () => "shadow-tool",',
+                '    }),',
+                '    () => api.registerCommand({',
+                '      id: "acme.declared.shadowCommand",',
+                '      command: "shadow-command",',
+                '      allowTmux: false,',
+                '      handler: async () => "shadow-command",',
+                '    }),',
+                '    () => api.registerHook({',
+                '      id: "acme.declared.shadowHook",',
+                '      hookId: "session.started",',
+                '      handler: async () => "shadow-hook",',
+                '    }),',
+                '    () => api.registerLifecycleHandler({',
+                '      id: "acme.declared.shadowLifecycle",',
+                '      event: "activated",',
+                '      handler: async () => undefined,',
+                '    }),',
+                '  ]) {',
+                '    try { bind(); } catch {}',
+                '  }',
+                '}',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const activated = await activatePluginRuntimeRegistry({
+            contributes: createContributes({
+                pluginId: 'acme.declared',
+                manifestPath,
+                daemonEntryPath,
+            }),
+            generation: 14,
+        });
+
+        expect(activated.tools).toEqual([]);
+        expect(activated.commands).toEqual([]);
+        expect(activated.hookHandlersByHookId.size).toBe(0);
+        expect(activated.lifecycleHandlers).toEqual([]);
+        expect(activated.pluginDiagnosticsByPluginId['acme.declared']).toEqual([
+            expect.objectContaining({ code: 'plugin_tool_undeclared_id' }),
+            expect.objectContaining({ code: 'plugin_command_undeclared_id' }),
+            expect.objectContaining({ code: 'plugin_hook_undeclared_id' }),
+            expect.objectContaining({ code: 'plugin_lifecycle_handler_undeclared_id' }),
+        ]);
+    });
+
+    it('binds id-less lifecycle declarations through their synthetic projection id', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-idless-lifecycle-'));
+        const markerPath = join(root, 'activated.txt');
+        const manifestPath = await writeManifest(root, {
+            id: 'acme.lifecycle.idless',
+            runtimeCapabilities: ['lifecycle'],
+            permissions: [],
+            lifecycleHandlers: [
+                { event: 'activated' },
+            ],
+        });
+        const daemonEntryPath = join(root, 'daemon.mjs');
+
+        await writeFile(
+            daemonEntryPath,
+            [
+                'import { appendFile } from "node:fs/promises";',
+                '',
+                'export async function activate(api) {',
+                '  api.registerLifecycleHandler({',
+                '    event: "activated",',
+                `    handler: async () => appendFile(${JSON.stringify(markerPath)}, "activated\\n"),`,
+                '  });',
+                '}',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const activated = await activatePluginRuntimeRegistry({
+            contributes: createContributes({
+                pluginId: 'acme.lifecycle.idless',
+                manifestPath,
+                daemonEntryPath,
+            }),
+            generation: 15,
+        });
+
+        expect(activated.pluginDiagnosticsByPluginId['acme.lifecycle.idless']).toEqual([]);
+        expect(activated.lifecycleHandlers).toEqual([
+            expect.objectContaining({
+                definition: expect.objectContaining({
+                    id: 'acme.lifecycle.idless:activated:0',
+                    event: 'activated',
+                }),
+                pluginId: 'acme.lifecycle.idless',
+            }),
+        ]);
+        await expect(readFile(markerPath, 'utf8')).resolves.toBe('activated\n');
+    });
+
+    it('binds multiple id-less lifecycle declarations to manifest synthetic ids independent of registration order', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-idless-lifecycle-order-'));
+        const markerPath = join(root, 'lifecycle.txt');
+        const manifestPath = await writeManifest(root, {
+            id: 'acme.lifecycle.order',
+            runtimeCapabilities: ['lifecycle'],
+            permissions: [],
+            lifecycleHandlers: [
+                { event: 'activated' },
+                { event: 'deactivating' },
+            ],
+        });
+        const daemonEntryPath = join(root, 'daemon.mjs');
+
+        await writeFile(
+            daemonEntryPath,
+            [
+                'import { appendFile } from "node:fs/promises";',
+                '',
+                'export async function activate(api) {',
+                '  api.registerLifecycleHandler({',
+                '    event: "deactivating",',
+                `    handler: async () => appendFile(${JSON.stringify(markerPath)}, "deactivating\\n"),`,
+                '  });',
+                '  api.registerLifecycleHandler({',
+                '    event: "activated",',
+                `    handler: async () => appendFile(${JSON.stringify(markerPath)}, "activated\\n"),`,
+                '  });',
+                '}',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const activated = await activatePluginRuntimeRegistry({
+            contributes: createContributes({
+                pluginId: 'acme.lifecycle.order',
+                manifestPath,
+                daemonEntryPath,
+            }),
+            generation: 16,
+        });
+
+        expect(activated.pluginDiagnosticsByPluginId['acme.lifecycle.order']).toEqual([]);
+        expect(activated.lifecycleHandlers.map((handler) => handler.definition.id)).toEqual([
+            'acme.lifecycle.order:deactivating:1',
+            'acme.lifecycle.order:activated:0',
+        ]);
+        expect(activated.lifecycleHandlersByEvent.get('activated')?.[0]?.registrationId).toBe('acme.lifecycle.order:activated:0');
+        expect(activated.lifecycleHandlersByEvent.get('deactivating')?.[0]?.registrationId).toBe('acme.lifecycle.order:deactivating:1');
+        await expect(readFile(markerPath, 'utf8')).resolves.toBe('activated\n');
+
+        await activated.dispose();
+
+        await expect(readFile(markerPath, 'utf8')).resolves.toBe('activated\ndeactivating\n');
+    });
+
     it('rejects MCP tool namespace collisions across activated plugins', async () => {
         const first = await writeActivationModuleWithMcpTool({
             pluginId: 'acme.alpha',
@@ -712,7 +956,19 @@ describe('activatePluginRuntimeRegistry', () => {
                                 runtime: { apiVersion: 1, capabilities: ['actions'] },
                                 targets: {},
                                 permissions: [{ capability: 'actions.register' }],
-                                contributes: [],
+                                contributes: {
+                                    actions: [
+                                        {
+                                            id: 'acme.activated.action',
+                                            title: 'Activated Action',
+                                            scopes: ['global'],
+                                            surfaces: ['cli'],
+                                            placement: 'commandPalette',
+                                            dangerLevel: 'safe',
+                                            handler: { target: 'daemon', registrationId: 'acme.activated.action' },
+                                        },
+                                    ],
+                                },
                             }),
                             activate: async (api: PluginApi) => {
                                 api.registerAction({
@@ -751,6 +1007,166 @@ describe('activatePluginRuntimeRegistry', () => {
         await activated.dispose();
         const disposeMarker = await readFile(disposeMarkerPath, 'utf8');
         expect(disposeMarker.trim()).toBe('disposed');
+    });
+
+    it('preserves bundled first-party provenance for activation-time contributions', async () => {
+        const pluginRoot = join(tmpdir(), 'happier-plugin-first-party-missing');
+        const pluginId = 'happier.agent.activated';
+        const actionId = `${pluginId}.action`;
+        const toolId = `${pluginId}.tool`;
+        const commandId = `${pluginId}.command`;
+        const lifecycleHandlerId = `${pluginId}.lifecycle`;
+        const hookHandlerId = `${pluginId}.hook`;
+
+        const activated = await activatePluginRuntimeRegistry({
+            contributes: createContributes({
+                pluginId,
+                manifestPath: join(pluginRoot, 'plugin.json'),
+                daemonEntryPath: join(pluginRoot, 'daemon.mjs'),
+                provenance: 'first_party',
+                sourceKind: 'bundled',
+            }),
+            generation: 15,
+            resolveActivationSource(target) {
+                if (target.pluginId !== pluginId) {
+                    return null;
+                }
+                return {
+                    kind: 'bundled',
+                    moduleId: '@happier-dev/plugins-activated/daemon',
+                    load: async () => ({
+                        PLUGIN_MANIFEST: createPluginManifestV2Fixture({
+                            schemaVersion: 2,
+                            id: pluginId,
+                            version: '0.0.0',
+                            displayName: pluginId,
+                            engines: { happier: '^0.0.0' },
+                            runtime: { apiVersion: 1, capabilities: ['actions', 'tools', 'commands', 'hooks', 'lifecycle'] },
+                            targets: {},
+                            permissions: [
+                                { capability: 'actions.register' },
+                                { capability: 'tools.register' },
+                                { capability: 'commands.register' },
+                                { capability: 'hooks.register' },
+                            ],
+                            contributes: {
+                                actions: [
+                                    {
+                                        id: actionId,
+                                        title: 'Activated Action',
+                                        scopes: ['global'],
+                                        surfaces: ['cli'],
+                                        placement: 'commandPalette',
+                                        dangerLevel: 'safe',
+                                        handler: { target: 'daemon', registrationId: actionId },
+                                    },
+                                ],
+                                tools: [
+                                    {
+                                        id: toolId,
+                                        name: 'happier_agent_activated_tool',
+                                        title: 'Activated Tool',
+                                        surfaces: { cli: true, mcp: false, session_agent: false },
+                                        handler: { target: 'daemon', registrationId: toolId },
+                                    },
+                                ],
+                                commands: [
+                                    {
+                                        id: commandId,
+                                        command: 'activated-command',
+                                        allowTmux: false,
+                                        handler: { target: 'daemon', registrationId: commandId },
+                                    },
+                                ],
+                                hooks: [
+                                    {
+                                        id: 'session.started',
+                                        category: 'lifecycle',
+                                        scope: 'session',
+                                        executionKind: 'observe',
+                                        handler: { target: 'plugin', registrationId: hookHandlerId },
+                                    },
+                                ],
+                                lifecycleHandlers: [
+                                    {
+                                        id: lifecycleHandlerId,
+                                        event: 'activated',
+                                        handler: { target: 'daemon', registrationId: lifecycleHandlerId },
+                                    },
+                                ],
+                            },
+                        }),
+                        activate: async (api: PluginApi) => {
+                            api.registerAction({
+                                id: actionId,
+                                title: 'Activated Action',
+                                surface: 'cli',
+                                handler: async () => 'activated-action-result',
+                            });
+                            api.registerTool({
+                                id: toolId,
+                                name: 'happier_agent_activated_tool',
+                                title: 'Activated Tool',
+                                handler: async () => 'activated-tool-result',
+                            });
+                            api.registerCommand({
+                                id: commandId,
+                                command: 'activated-command',
+                                allowTmux: false,
+                                handler: async () => 'activated-command-result',
+                            });
+                            api.registerHook({
+                                hookId: 'session.started',
+                                handler: async () => 'activated-hook',
+                            });
+                            api.registerLifecycleHandler({
+                                id: lifecycleHandlerId,
+                                event: 'activated',
+                                handler: async () => undefined,
+                            });
+                        },
+                    }),
+                };
+            },
+        });
+
+        expect(activated.pluginDiagnosticsByPluginId[pluginId]).toEqual([]);
+        expect(activated.actions).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                provenance: 'first_party',
+                source: { kind: 'bundled' },
+                pluginId,
+            }),
+        ]));
+        expect(activated.tools).toEqual([
+            expect.objectContaining({
+                provenance: 'first_party',
+                source: { kind: 'bundled' },
+                pluginId,
+            }),
+        ]);
+        expect(activated.commands).toEqual([
+            expect.objectContaining({
+                provenance: 'first_party',
+                source: { kind: 'bundled' },
+                pluginId,
+            }),
+        ]);
+        expect(activated.lifecycleHandlers).toEqual([
+            expect.objectContaining({
+                provenance: 'first_party',
+                source: { kind: 'bundled' },
+                pluginId,
+            }),
+        ]);
+        expect(activated.hookHandlersByHookId.get('session.started')).toEqual([
+            expect.objectContaining({
+                registration: expect.objectContaining({
+                    provenance: 'first_party',
+                    source: { kind: 'bundled' },
+                }),
+            }),
+        ]);
     });
 
     it('records a diagnostic when multiple plugins register backend engines with the same backendId and keeps the first registration', async () => {

@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import { logger } from '@/ui/logger';
+import type { Metadata } from '@/api/types';
 
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
@@ -20,7 +21,47 @@ import {
   isActionSpecSurfacedOn,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1 } from '@happier-dev/protocol';
+import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1, type SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
+import { createSessionStateSyncEngine } from '@happier-dev/agents';
+
+const MCP_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
+  display: {
+    title: {
+      supported: true,
+      happierToProvider: { supported: false },
+      providerToHappier: { supported: false },
+    },
+  },
+};
+
+async function writeMcpSessionTitleMetadata(params: Readonly<{
+  client: HappyMcpSessionClient;
+  title: string;
+  metadataReason: string;
+}>): Promise<boolean> {
+  const engine = createSessionStateSyncEngine({
+    capabilities: MCP_SESSION_STATE_CAPABILITIES,
+    facet: null,
+    metadataPort: {
+      update: async (_sessionId, updater) => {
+        await Promise.resolve(params.client.updateMetadata((metadata) => updater(metadata) as Metadata));
+        return { ok: true, version: 0 };
+      },
+    },
+  });
+  const result = await engine.writeHappierField({
+    sessionId: params.client.sessionId,
+    fieldId: 'display.title',
+    value: {
+      title: params.title,
+      staleBehavior: 'bump-if-value-changed',
+    },
+    reason: 'user-mutation',
+    metadataReason: params.metadataReason,
+    mirrorToProvider: false,
+  });
+  return result.ok;
+}
 
 export function createHappierMcpServer(
   client: HappyMcpSessionClient,
@@ -99,13 +140,14 @@ export function createHappierMcpServer(
         }
 
         try {
-          await Promise.resolve(client.updateMetadata((current) => ({
-            ...current,
-            summary: {
-              text: normalizedTitle,
-              updatedAt: Date.now(),
-            },
-          })));
+          const ok = await writeMcpSessionTitleMetadata({
+            client,
+            title: normalizedTitle,
+            metadataReason: 'mcp-session-title-set',
+          });
+          if (!ok) {
+            return { ok: false as const, errorCode: 'metadata_update_failed' as const, error: 'metadata_update_failed' as const };
+          }
         } catch (error) {
           logger.debug('[mcp] Failed to update title metadata via session-scoped bridge', {
             sessionId: normalizedSessionId,
@@ -114,7 +156,12 @@ export function createHappierMcpServer(
           return { ok: false as const, errorCode: 'metadata_update_failed' as const, error: 'metadata_update_failed' as const };
         }
 
-        return { ok: true as const, sessionId: normalizedSessionId, title: normalizedTitle };
+        return {
+          ok: true as const,
+          sessionId: normalizedSessionId,
+          title: normalizedTitle,
+          metadataUpdated: true as const,
+        };
       },
       executionRunStart: executionRunStartRpc,
       executionRunList: async (_sessionId, request) => await executionRuns.list(request),
@@ -177,17 +224,6 @@ export function createHappierMcpServer(
       changeTitle: createChangeTitleToolHandler({
         executor,
         surface: toolSurface,
-        afterCommit: async ({ title }) => {
-          // Keep the in-memory session metadata snapshot in sync so the UI / session agent
-          // can reflect the new title immediately (without requiring a full server refresh).
-          await Promise.resolve(client.updateMetadata((current) => ({
-            ...current,
-            summary: {
-              text: title,
-              updatedAt: Date.now(),
-            },
-          })));
-        },
       }),
       executeActionByToolName: actionToolBridge.executeActionByToolName,
       resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, client.sessionId),

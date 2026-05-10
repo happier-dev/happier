@@ -19,6 +19,8 @@ import type {
     ResolvedActionContribution,
     ResolvedExecutionRunProfileContribution,
     ResolvedResourceContribution,
+    ResolvedContributionProvenance,
+    ResolvedContributionSource,
     ResolvedToolContribution,
     ResolvedUiDescriptorContribution,
 } from '@/plugins/projection/registry/types';
@@ -31,6 +33,7 @@ import type {
     PluginApiExecutionRunProfileRegistration,
     PluginDisposable,
     PluginApi,
+    PluginApiHostLifecycleHandlerDeclaration,
     PluginApiHookRegistration,
     PluginApiLifecycleHandlerRegistration,
     PluginApiMcpBackendClientRegistration,
@@ -41,6 +44,7 @@ import type {
     PluginApiNotificationChannelRegistration,
     PluginApiRequestInterceptorRegistration,
     PluginApiResourceRegistration,
+    PluginApiScmBackendRegistration,
     PluginApiScmHostingProviderRegistration,
     PluginApiToolRegistration,
     PluginApiUiDescriptorRegistration,
@@ -61,6 +65,8 @@ import {
 } from '@/mcp/pluginMcpToolNamespaces';
 
 type ActivationTarget = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -75,10 +81,17 @@ type ActivationPolicy = Readonly<{
     permissionDeclarations: readonly PluginPermissionDeclarationV1[];
     runtimeCapabilities: readonly PluginRuntimeCapabilityFamilyV1[];
     declaredBackendIds: readonly string[];
+    declaredActionIds: readonly string[];
+    declaredToolIds: readonly string[];
+    declaredCommandIds: readonly string[];
+    declaredHookIds: readonly string[];
+    declaredLifecycleHandlerIds: readonly string[];
+    declaredLifecycleHandlers: readonly PluginApiHostLifecycleHandlerDeclaration[];
     declaredNotificationCategoryIds: readonly string[];
     declaredNotificationChannelIds: readonly string[];
     declaredExecutionRunProfileIds: readonly string[];
     declaredScmHostingProviderIds: readonly string[];
+    declaredScmBackendIds: readonly string[];
 }>;
 
 function readBundledActivationPolicy(params: Readonly<{
@@ -118,10 +131,17 @@ function readBundledActivationPolicy(params: Readonly<{
         permissionDeclarations: Object.freeze([...manifest.capabilities.permissions]),
         runtimeCapabilities: Object.freeze([...manifest.runtime.capabilities]),
         declaredBackendIds: readDeclaredBackendIds(manifest.contributes),
+        declaredActionIds: readDeclaredContributionIds(manifest.contributes, 'actions'),
+        declaredToolIds: readDeclaredContributionIds(manifest.contributes, 'tools'),
+        declaredCommandIds: readDeclaredContributionIds(manifest.contributes, 'commands'),
+        declaredHookIds: readDeclaredContributionIds(manifest.contributes, 'hooks'),
+        declaredLifecycleHandlerIds: readDeclaredContributionIds(manifest.contributes, 'lifecycleHandlers'),
+        declaredLifecycleHandlers: readDeclaredLifecycleHandlers(manifest.id, manifest.contributes),
         declaredNotificationCategoryIds: readDeclaredContributionIds(manifest.contributes, 'notifications'),
         declaredNotificationChannelIds: readDeclaredContributionIds(manifest.contributes, 'notificationChannels'),
         declaredExecutionRunProfileIds: readDeclaredContributionIds(manifest.contributes, 'executionRunProfiles'),
         declaredScmHostingProviderIds: readDeclaredContributionIds(manifest.contributes, 'scmHostingProviders'),
+        declaredScmBackendIds: readDeclaredContributionIds(manifest.contributes, 'scmBackends'),
     });
 }
 
@@ -143,6 +163,14 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
         pluginId: string;
         registration: PluginApiScmHostingProviderRegistration;
     }>>;
+    scmBackendsById: ReadonlyMap<string, Readonly<{
+        pluginId: string;
+        registration: PluginApiScmBackendRegistration;
+    }>>;
+    scmBackendRegistrations: readonly Readonly<{
+        pluginId: string;
+        registration: PluginApiScmBackendRegistration;
+    }>[];
     requestInterceptors: readonly Readonly<{
         pluginId: string;
         registration: PluginApiRequestInterceptorRegistration;
@@ -227,6 +255,28 @@ function readDeclaredContributionIds(value: unknown, key: string): readonly stri
     }));
 }
 
+function readDeclaredLifecycleHandlers(pluginId: string, value: unknown): readonly PluginApiHostLifecycleHandlerDeclaration[] {
+    if (!isRecord(value) || !Array.isArray(value.lifecycleHandlers)) {
+        return Object.freeze([]);
+    }
+    return Object.freeze(value.lifecycleHandlers.flatMap((definition, index) => {
+        if (!isRecord(definition) || (definition.event !== 'activated' && definition.event !== 'deactivating')) {
+            return [];
+        }
+        const id = typeof definition.id === 'string' && definition.id.trim().length > 0
+            ? definition.id.trim()
+            : null;
+        const canonicalId = id ?? `${pluginId}:${definition.event}:${index}`;
+        return [
+            Object.freeze({
+                ...(id ? { id } : {}),
+                canonicalId,
+                event: definition.event,
+            }),
+        ];
+    }));
+}
+
 function resolveActivationExport(moduleNamespace: PluginDaemonModuleNamespace): Readonly<
     | { status: 'found'; activate: ActivationExport }
     | { status: 'missing' }
@@ -255,6 +305,8 @@ function resolveActivationExport(moduleNamespace: PluginDaemonModuleNamespace): 
 }
 
 function addActivationTarget(targets: Map<string, ActivationTarget>, raw: Readonly<{
+    provenance?: ResolvedContributionProvenance;
+    source?: ResolvedContributionSource;
     pluginId?: string;
     manifestPath?: string;
     manifestDigest?: string;
@@ -269,6 +321,8 @@ function addActivationTarget(targets: Map<string, ActivationTarget>, raw: Readon
         return;
     }
     targets.set(key, {
+        provenance: raw.provenance ?? 'external',
+        source: raw.source ?? { kind: raw.sourceSpec?.kind ?? 'path' },
         pluginId: raw.pluginId,
         manifestPath: raw.manifestPath,
         manifestDigest: raw.manifestDigest,
@@ -404,8 +458,8 @@ function collectScopedPermissionMap(
 }
 
 function resolveContributionMetadata(target: ActivationTarget): Readonly<{
-    provenance: 'external';
-    source: Readonly<{ kind: 'path' | 'archive' | 'marketplace' | 'package' }>;
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -413,8 +467,8 @@ function resolveContributionMetadata(target: ActivationTarget): Readonly<{
     sourceSpec?: PluginSourceSpecV1;
 }> {
     return {
-        provenance: 'external',
-        source: { kind: target.sourceSpec?.kind ?? 'path' },
+        provenance: target.provenance,
+        source: target.source,
         pluginId: target.pluginId,
         manifestPath: target.manifestPath,
         manifestDigest: target.manifestDigest,
@@ -493,10 +547,17 @@ async function resolveActivationPolicy(
         permissionDeclarations: Object.freeze([...manifestResult.manifest.permissions]),
         runtimeCapabilities: Object.freeze([...manifestResult.manifest.runtime.capabilities]),
         declaredBackendIds: readDeclaredBackendIds(manifestResult.manifest.contributes),
+        declaredActionIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'actions'),
+        declaredToolIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'tools'),
+        declaredCommandIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'commands'),
+        declaredHookIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'hooks'),
+        declaredLifecycleHandlerIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'lifecycleHandlers'),
+        declaredLifecycleHandlers: readDeclaredLifecycleHandlers(manifestResult.manifest.id, manifestResult.manifest.contributes),
         declaredNotificationCategoryIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'notifications'),
         declaredNotificationChannelIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'notificationChannels'),
         declaredExecutionRunProfileIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'executionRunProfiles'),
         declaredScmHostingProviderIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'scmHostingProviders'),
+        declaredScmBackendIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'scmBackends'),
     });
     cache.set(target.manifestPath, policy);
     return { ok: true, policy };
@@ -774,7 +835,7 @@ async function dispatchLifecycleHandlers(params: Readonly<{
                 provenance: {
                     manifestPath: handler.manifestPath,
                     manifestDigest: handler.manifestDigest,
-                    sourceKind: 'path',
+                    sourceKind: handler.sourceKind ?? 'path',
                 },
             });
         } catch (error) {
@@ -797,6 +858,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     const activationPolicyCache = new Map<string, ActivationPolicy>();
     const activatedEntries: Array<{
         pluginId: string;
+        provenance: ResolvedContributionProvenance;
+        source: ResolvedContributionSource;
         manifestPath: string;
         manifestDigest: string;
         daemonEntryPath: string;
@@ -808,6 +871,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         notificationCategories: readonly PluginApiNotificationCategoryRegistration[];
         notificationChannels: readonly PluginApiNotificationChannelRegistration[];
         scmHostingProviders: readonly PluginApiScmHostingProviderRegistration[];
+        scmBackends: readonly PluginApiScmBackendRegistration[];
         requestInterceptors: readonly PluginApiRequestInterceptorRegistration[];
         mcpServers: readonly PluginApiMcpServerRegistration[];
         mcpBackendClients: readonly PluginApiMcpBackendClientRegistration[];
@@ -881,6 +945,24 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             declaredBackendIds: activationSource.kind === 'bundled'
                 ? bundledPolicy!.declaredBackendIds
                 : activationPolicy!.policy.declaredBackendIds,
+            declaredActionIds: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredActionIds
+                : activationPolicy!.policy.declaredActionIds,
+            declaredToolIds: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredToolIds
+                : activationPolicy!.policy.declaredToolIds,
+            declaredCommandIds: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredCommandIds
+                : activationPolicy!.policy.declaredCommandIds,
+            declaredHookIds: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredHookIds
+                : activationPolicy!.policy.declaredHookIds,
+            declaredLifecycleHandlerIds: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredLifecycleHandlerIds
+                : activationPolicy!.policy.declaredLifecycleHandlerIds,
+            declaredLifecycleHandlers: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredLifecycleHandlers
+                : activationPolicy!.policy.declaredLifecycleHandlers,
             declaredNotificationCategoryIds: activationSource.kind === 'bundled'
                 ? bundledPolicy!.declaredNotificationCategoryIds
                 : activationPolicy!.policy.declaredNotificationCategoryIds,
@@ -893,6 +975,9 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             declaredScmHostingProviderIds: activationSource.kind === 'bundled'
                 ? bundledPolicy!.declaredScmHostingProviderIds
                 : activationPolicy!.policy.declaredScmHostingProviderIds,
+            declaredScmBackendIds: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredScmBackendIds
+                : activationPolicy!.policy.declaredScmBackendIds,
         });
         try {
             const disposable = await activationExport.activate(host.api);
@@ -918,6 +1003,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         appendDiagnostics(diagnosticsByPluginId, target.pluginId, registrations.diagnostics);
         activatedEntries.push({
             pluginId: target.pluginId,
+            provenance: target.provenance,
+            source: target.source,
             manifestPath: target.manifestPath,
             manifestDigest: target.manifestDigest,
             daemonEntryPath: target.daemonEntryPath,
@@ -929,6 +1016,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             notificationCategories: registrations.notificationCategories,
             notificationChannels: registrations.notificationChannels,
             scmHostingProviders: registrations.scmHostingProviders,
+            scmBackends: registrations.scmBackends,
             requestInterceptors: registrations.requestInterceptors,
             mcpServers: registrations.mcpServers,
             mcpBackendClients: registrations.mcpBackendClients,
@@ -974,6 +1062,14 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         pluginId: string;
         registration: PluginApiScmHostingProviderRegistration;
     }>>();
+    const scmBackendsById = new Map<string, Readonly<{
+        pluginId: string;
+        registration: PluginApiScmBackendRegistration;
+    }>>();
+    const scmBackendRegistrations: Readonly<{
+        pluginId: string;
+        registration: PluginApiScmBackendRegistration;
+    }>[] = [];
     for (const entry of activatedEntries) {
         for (const registration of entry.backendEngines) {
             const existing = backendEnginesByBackendId.get(registration.backendId) ?? null;
@@ -1039,6 +1135,24 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
 
             scmHostingProvidersById.set(registration.id, Object.freeze({ pluginId: entry.pluginId, registration }));
         }
+        for (const registration of entry.scmBackends) {
+            const ownerScopedRegistration = Object.freeze({ pluginId: entry.pluginId, registration });
+            scmBackendRegistrations.push(ownerScopedRegistration);
+            const existing = scmBackendsById.get(registration.id) ?? null;
+            if (existing) {
+                appendDiagnostic(diagnosticsByPluginId, entry.pluginId, {
+                    code: 'plugin_scm_backend_duplicate_id',
+                    message: `Plugin '${entry.pluginId}' registered SCM backend '${registration.id}', but it is already registered by plugin '${existing.pluginId}'`,
+                });
+                appendDiagnostic(diagnosticsByPluginId, existing.pluginId, {
+                    code: 'plugin_scm_backend_duplicate_id',
+                    message: `Plugin '${existing.pluginId}' registered SCM backend '${registration.id}', but it is also registered by plugin '${entry.pluginId}'`,
+                });
+                continue;
+            }
+
+            scmBackendsById.set(registration.id, ownerScopedRegistration);
+        }
     }
     const globalMcpToolNamespaces = createPluginMcpToolNamespaceRegistry();
     const mcpTools = Object.freeze(activatedEntries.flatMap((entry) => entry.mcpTools.flatMap((registration) => {
@@ -1097,6 +1211,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         notificationCategoriesById,
         notificationChannelsById,
         scmHostingProvidersById,
+        scmBackendsById,
+        scmBackendRegistrations: Object.freeze(scmBackendRegistrations),
         requestInterceptors: Object.freeze(activatedEntries.flatMap((entry) => entry.requestInterceptors.map((registration) => Object.freeze({
             pluginId: entry.pluginId,
             registration,

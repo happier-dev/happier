@@ -1,9 +1,5 @@
 import type { Capability, CapabilitiesDetectContext } from '../service';
 import { resolveCliFeatureDecision } from '../../features/featureDecisionService';
-import { access } from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
-import { join, delimiter as PATH_DELIMITER } from 'node:path';
-import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import {
   CANONICAL_AGENT_IDS,
   hasBuiltInAcpConfig,
@@ -19,8 +15,6 @@ import {
 } from '../../agent/executionRuns/profiles/intentRegistry';
 import { resolveCliEngineRegistry } from '../../agent/runtime/registry/engineRegistry';
 import type { ResolvedBackendContribution } from '../../plugins/projection/registry/types';
-
-const CODERABBIT_INTENTS = ['review'] as const;
 
 function isCliAvailable(context: CapabilitiesDetectContext, agentId: string): boolean {
   const clis = context?.cliSnapshot?.clis;
@@ -49,6 +43,10 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
   }> | null | undefined;
   backendContribution?: ResolvedBackendContribution;
 }>): boolean {
+  if (params.backendContribution?.capabilities?.executionRun?.supported === false) {
+    return false;
+  }
+
   if (params.backendId === 'customAcp') {
     // Compatibility backend id used as the UI "configured ACP" entrypoint.
     return true;
@@ -64,39 +62,7 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
     return true;
   }
 
-  if (params.backendContribution?.provenance === 'external') {
-    // Plugin-contributed backends are discovered from the merged contribution
-    // registry, not from PATH-backed CLI probing.
-    return true;
-  }
-
   return isCliAvailable(params.context, params.backendId);
-}
-
-async function resolveCommandOnPath(command: string, pathEnv: string | null | undefined): Promise<string | null> {
-  const pathRaw = typeof pathEnv === 'string' ? pathEnv.trim() : '';
-  if (!pathRaw) return null;
-
-  if (process.platform === 'win32') {
-    return resolveWindowsCommandOnPath(command, { ...process.env, PATH: pathRaw });
-  }
-
-  const segments = pathRaw
-    .split(PATH_DELIMITER)
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  for (const dir of segments) {
-    const candidate = join(dir, command);
-    try {
-      await access(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      // continue
-    }
-  }
-
-  return null;
 }
 
 export const executionRunsCapability: Capability = {
@@ -114,17 +80,6 @@ export const executionRunsCapability: Capability = {
     }
     const voiceEnabled = resolveCliFeatureDecision({ featureId: 'voice', env: process.env }).state === 'enabled';
 
-    const coderabbitOverride =
-      typeof process.env.HAPPIER_CODERABBIT_REVIEW_CMD === 'string' && process.env.HAPPIER_CODERABBIT_REVIEW_CMD.trim().length > 0;
-    const mergedPath = (() => {
-      const snapshotPath = typeof context?.cliSnapshot?.path === 'string' ? context.cliSnapshot.path.trim() : '';
-      const envPath = typeof process.env.PATH === 'string' ? process.env.PATH.trim() : '';
-      if (snapshotPath && envPath) return `${snapshotPath}${PATH_DELIMITER}${envPath}`;
-      return snapshotPath || envPath || '';
-    })();
-    const coderabbitOnPath = coderabbitOverride
-      ? true
-      : Boolean(await resolveCommandOnPath('coderabbit', mergedPath || null));
     const cliEngineRegistry = await resolveCliEngineRegistry();
     const executionRunProfileCatalog = buildExecutionRunProfileCatalog(
       (cliEngineRegistry.contributions.executionRunProfiles ?? []).map((profile) => profile.definition),
@@ -161,36 +116,26 @@ export const executionRunsCapability: Capability = {
     ) as Record<string, boolean>;
 
     const backends = Object.fromEntries(
-      [
-        ...backendIds.map((backendId) => {
-          const backendContribution = cliEngineRegistry.contributions.backendDefinitionsById.get(backendId);
-          const entry = cliEngineRegistry.contributions.catalogEntriesById[backendId];
-          const isKnownBuiltInAgentId = isAgentId(backendId);
-          const available = resolveExecutionRunBackendAvailability({
-            context,
-            backendId,
-            isKnownBuiltInAgentId,
-            entry,
-            backendContribution,
-          });
-          return [
-            backendId,
-            {
-              available,
-              intents,
-              supportsVendorResume: supportsVendorResumeByBackend[backendId] === true,
-            },
-          ] as const;
-        }),
-        [
-          'coderabbit',
+      backendIds.map((backendId) => {
+        const backendContribution = cliEngineRegistry.contributions.backendDefinitionsById.get(backendId);
+        const entry = cliEngineRegistry.contributions.catalogEntriesById[backendId];
+        const isKnownBuiltInAgentId = isAgentId(backendId);
+        const available = resolveExecutionRunBackendAvailability({
+          context,
+          backendId,
+          isKnownBuiltInAgentId,
+          entry,
+          backendContribution,
+        });
+        return [
+          backendId,
           {
-            available: coderabbitOnPath,
-            intents: CODERABBIT_INTENTS,
-            supportsVendorResume: false,
+            available,
+            intents,
+            supportsVendorResume: supportsVendorResumeByBackend[backendId] === true,
           },
-        ] as const,
-      ],
+        ] as const;
+      }),
     ) as Record<string, { available: boolean; intents: readonly string[]; supportsVendorResume: boolean }>;
 
     return {

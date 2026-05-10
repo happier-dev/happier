@@ -14,6 +14,7 @@ import type {
   PluginPermissionDeclarationV1,
   PluginRuntimeApiV1,
   InstallableDependencyDescriptor,
+  ScmBackendContribution,
   ScmHostingProviderContribution,
   PluginSourceSpecV1,
   PluginToolContributionV2,
@@ -47,6 +48,7 @@ export type CanonicalPluginManifestContributes = Readonly<{
     discoveryProviders: ReadonlyArray<PluginMcpContributesV1['discoveryProviders'][number]>;
   }>;
   scmHostingProviders?: readonly ScmHostingProviderContribution[];
+  scmBackends?: readonly ScmBackendContribution[];
   installables?: readonly InstallableDependencyDescriptor[];
   hooks: readonly PluginHookContributionV2[];
   lifecycleHandlers: readonly PluginLifecycleHandlerContributionV2[];

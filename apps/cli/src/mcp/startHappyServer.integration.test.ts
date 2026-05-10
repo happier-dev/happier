@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { request as httpRequest } from 'node:http';
-import { mkdtemp, chmod, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -97,31 +97,6 @@ function isTextResourceContentEntry(
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
   const record = entry as Record<string, unknown>;
   return typeof record.uri === 'string' && typeof record.text === 'string';
-}
-
-async function createFakeCodeRabbitReviewCommand(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-cmd-'));
-  const scriptPath = join(dir, 'coderabbit-fake.mjs');
-  await writeFile(
-    scriptPath,
-    [
-      '#!/usr/bin/env node',
-      "process.stdout.write([",
-      "  'File: src/foo.ts',",
-      "  'Line: 10 to 12',",
-      "  'Type: Bug',",
-      "  'Comment:',",
-      "  'Null deref risk when value is missing.',",
-      "  '',",
-      "  'Prompt for AI Agent:',",
-      "  'Add a guard and unit test.',",
-      "  '============================================================================',",
-      "].join('\\n'));",
-    ].join('\n'),
-    'utf8',
-  );
-  await chmod(scriptPath, 0o755);
-  return scriptPath;
 }
 
 async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 3_000): Promise<T> {
@@ -235,8 +210,6 @@ describe('startHappyServer (MCP integration)', () => {
   });
 
   it('exposes execution_run_* tools and can start/get/action a review run over HTTP transport', async () => {
-    const prevReviewLimit = process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
-    const prevReviewCmd = process.env.HAPPIER_CODERABBIT_REVIEW_CMD;
     const remote = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-remote-'));
     const workspace = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-workspace-'));
     runGit(remote, ['init', '--bare', '--initial-branch=main']);
@@ -251,8 +224,6 @@ describe('startHappyServer (MCP integration)', () => {
     await writeFile(join(workspace, 'a.txt'), 'base\nfeature\n', 'utf8');
     runGit(workspace, ['add', 'a.txt']);
     runGit(workspace, ['commit', '-m', 'feature']);
-    process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = '5000';
-    process.env.HAPPIER_CODERABBIT_REVIEW_CMD = await createFakeCodeRabbitReviewCommand();
     const sent: Array<{ body: ACPMessageData; meta?: Record<string, unknown> }> = [];
 
     const rpcHandlerManager = new RpcHandlerManager({
@@ -376,10 +347,6 @@ describe('startHappyServer (MCP integration)', () => {
     } finally {
       await (client as any)?.close?.();
       server.stop();
-      if (prevReviewLimit === undefined) delete process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES;
-      else process.env.HAPPIER_CODERABBIT_REVIEW_MAX_ELIGIBLE_FILES = prevReviewLimit;
-      if (prevReviewCmd === undefined) delete process.env.HAPPIER_CODERABBIT_REVIEW_CMD;
-      else process.env.HAPPIER_CODERABBIT_REVIEW_CMD = prevReviewCmd;
     }
   });
 

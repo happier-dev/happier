@@ -26,10 +26,11 @@ import {
 import {
   createDiscoverConfiguredSshHostsSystemTaskKind,
   DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND,
-} from './ssh/discoverConfiguredSshHosts/discoverConfiguredSshHostsSystemTask';
+} from './ssh/discoverConfiguredSshHosts/task';
 import {
   createDaemonSshTunnelEnsureTaskKind,
   createDaemonSshTunnelListTaskKind,
+  createDaemonSshTunnelReleaseTaskKind,
   createDaemonSshTunnelStopTaskKind,
 } from './ssh/daemonSshTunnelSystemTasks';
 import { createLiveRemoteSshBootstrapTaskKind } from './ssh/liveRemoteSshBootstrap';
@@ -268,6 +269,7 @@ export function getLiveSystemTasksRunnerAdapter(): SystemTasksRunnerAdapter {
       }),
       'daemon.sshTunnel.ensure.v1': createDaemonSshTunnelEnsureTaskKind(),
       'daemon.sshTunnel.list.v1': createDaemonSshTunnelListTaskKind(),
+      'daemon.sshTunnel.release.v1': createDaemonSshTunnelReleaseTaskKind(),
       'daemon.sshTunnel.stop.v1': createDaemonSshTunnelStopTaskKind(),
       'relay.runtime.installOrUpdate.v1': createRelayRuntimeInstallOrUpdateTaskKind({
         installOrUpdate: async (params) => {

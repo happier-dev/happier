@@ -14,13 +14,17 @@ import type {
   PluginResourceContributionV2,
   PluginSettingsContributionV2,
   ScmHostingProviderContribution,
+  PluginConnectedAccountDescriptorContributionV2,
   PluginSourceSpecV1,
   PluginToolContributionV2,
   PluginUiDescriptorContributionV2,
   HookRegistrationV1,
   InstallableDependencyDescriptor,
+  ScmBackendContribution,
   ProviderDefinitionV1,
 } from '@happier-dev/protocol';
+import { createPluginContributionIdentity } from '@happier-dev/protocol';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import type { CanonicalPluginBackendDefinition } from '@/plugins/manifest/types';
@@ -35,6 +39,7 @@ import type {
 
 export type PluginOwnedContribution<T> = Readonly<{
   pluginId: string;
+  identity?: PluginContributionIdentityV1;
   pluginRootPath: string;
   manifestPath: string;
   manifestDigest: string;
@@ -61,6 +66,8 @@ export type PluginContributionRegistry = Readonly<{
   mcpTools: readonly PluginOwnedContribution<PluginMcpToolContributionV1>[];
   mcpDiscoveryProviders: readonly PluginOwnedContribution<PluginMcpDiscoveryProviderContributionV1>[];
   scmHostingProviders: readonly PluginOwnedContribution<ScmHostingProviderContribution>[];
+  scmBackends: readonly PluginOwnedContribution<ScmBackendContribution>[];
+  connectedAccountDescriptors: readonly PluginOwnedContribution<PluginConnectedAccountDescriptorContributionV2>[];
   installables: readonly PluginOwnedContribution<InstallableDependencyDescriptor>[];
   lifecycleHandlers: readonly PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[];
 }>;
@@ -238,6 +245,8 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const mcpTools: PluginOwnedContribution<PluginMcpToolContributionV1>[] = [];
   const mcpDiscoveryProviders: PluginOwnedContribution<PluginMcpDiscoveryProviderContributionV1>[] = [];
   const scmHostingProviders: PluginOwnedContribution<ScmHostingProviderContribution>[] = [];
+  const scmBackends: PluginOwnedContribution<ScmBackendContribution>[] = [];
+  const connectedAccountDescriptors: PluginOwnedContribution<PluginConnectedAccountDescriptorContributionV2>[] = [];
   const installables: PluginOwnedContribution<InstallableDependencyDescriptor>[] = [];
   const lifecycleHandlers: PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[] = [];
 
@@ -463,6 +472,42 @@ export function buildPluginContributionRegistry(params: Readonly<{
     for (const definition of readContributionArray<ScmHostingProviderContribution>(plugin.manifest.contributes, 'scmHostingProviders')) {
       scmHostingProviders.push({
         pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({
+          pluginId: plugin.pluginId,
+          family: 'scmHostingProviders',
+          contributionId: definition.id,
+          provenance: 'external',
+        }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<ScmBackendContribution>(plugin.manifest.contributes, 'scmBackends')) {
+      scmBackends.push({
+        pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({
+          pluginId: plugin.pluginId,
+          family: 'scmBackends',
+          contributionId: definition.id,
+          provenance: 'external',
+        }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginConnectedAccountDescriptorContributionV2>(plugin.manifest.contributes, 'connectedAccountDescriptors')) {
+      connectedAccountDescriptors.push({
+        pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
@@ -518,6 +563,8 @@ export function buildPluginContributionRegistry(params: Readonly<{
     mcpTools: Object.freeze(mcpTools),
     mcpDiscoveryProviders: Object.freeze(mcpDiscoveryProviders),
     scmHostingProviders: Object.freeze(scmHostingProviders),
+    scmBackends: Object.freeze(scmBackends),
+    connectedAccountDescriptors: Object.freeze(connectedAccountDescriptors),
     installables: Object.freeze(installables),
     lifecycleHandlers: Object.freeze(lifecycleHandlers),
   });

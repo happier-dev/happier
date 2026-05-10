@@ -99,6 +99,12 @@ describe('SCM hosting-provider plugin contributions', () => {
         expect(registry.scmHostingProviders).toEqual([
             expect.objectContaining({
                 pluginId: 'acme.scm',
+                identity: {
+                    pluginId: 'acme.scm',
+                    family: 'scmHostingProviders',
+                    contributionId: 'acme.scm.github',
+                    provenance: 'external',
+                },
                 definition: expect.objectContaining({
                     id: 'acme.scm.github',
                     kind: 'github',
@@ -118,7 +124,7 @@ describe('SCM hosting-provider plugin contributions', () => {
                     id: 'scm.github',
                     provenance: 'first_party',
                     source: { kind: 'bundled' },
-                    pluginId: 'happier.scm.github',
+                    pluginId: 'happier.scm.hosting.github',
                     definition: {
                         id: 'scm.github',
                         kind: 'github',
@@ -161,11 +167,12 @@ describe('SCM hosting-provider plugin contributions', () => {
             ],
         });
 
-        expect(registry.scmHostingProvidersById?.get('scm.github')?.pluginId).toBe('happier.scm.github');
+        expect(registry.scmHostingProvidersById?.get('scm.github')?.pluginId).toBe('happier.scm.hosting.github');
         expect(registry.scmHostingProviders).toHaveLength(1);
         expect(registry.pluginDiagnosticsByPluginId['acme.shadow']).toEqual([
             expect.objectContaining({
                 code: 'scm_hosting_provider_duplicate',
+                message: expect.stringContaining('acme.shadow:scmHostingProviders:scm.github'),
             }),
         ]);
     });
@@ -237,7 +244,7 @@ describe('SCM hosting-provider plugin contributions', () => {
                     id: 'scm.github',
                     provenance: 'first_party',
                     source: { kind: 'bundled' },
-                    pluginId: 'happier.scm.github',
+                    pluginId: 'happier.scm.hosting.github',
                     definition: {
                         id: 'scm.github',
                         kind: 'github',
@@ -266,7 +273,7 @@ describe('SCM hosting-provider plugin contributions', () => {
         expect(registry.backends).toEqual([]);
         expect(projection.familiesById.scmHostingProviders?.entriesById['scm.github']).toEqual({
             id: 'scm.github',
-            pluginId: 'happier.scm.github',
+            pluginId: 'happier.scm.hosting.github',
             kind: 'github',
             displayName: 'GitHub',
             baseUrl: 'https://github.com',

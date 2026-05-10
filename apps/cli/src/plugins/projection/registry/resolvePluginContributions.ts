@@ -27,6 +27,7 @@ import type {
     ResolvedBackendContribution,
     ResolvedCatalogEntry,
     ResolvedCommandContribution,
+    ResolvedConnectedAccountDescriptorContribution,
     ResolvedContributionInputs,
     ResolvedExecutionRunProfileContribution,
     ResolvedHookRegistration,
@@ -38,6 +39,7 @@ import type {
     ResolvedMcpToolContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
+    ResolvedScmBackendContribution,
     ResolvedSettingsContribution,
     ResolvedScmHostingProviderContribution,
     ResolvedProviderContribution,
@@ -182,6 +184,15 @@ type PluginResolvedInstallableContribution = ResolvedInstallableContribution & R
     daemonEntryPath: string | null;
 }>;
 
+type PluginResolvedConnectedAccountDescriptorContribution =
+    ResolvedConnectedAccountDescriptorContribution & Readonly<{
+        provenance: 'external';
+        pluginId: string;
+        manifestPath: string;
+        manifestDigest: string;
+        daemonEntryPath: string | null;
+    }>;
+
 type PluginResolvedLifecycleHandlerContribution = ResolvedLifecycleHandlerContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
@@ -191,6 +202,14 @@ type PluginResolvedLifecycleHandlerContribution = ResolvedLifecycleHandlerContri
 }>;
 
 type PluginResolvedScmHostingProviderContribution = ResolvedScmHostingProviderContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedScmBackendContribution = ResolvedScmBackendContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
     manifestPath: string;
@@ -502,6 +521,8 @@ export async function resolvePluginContributes(
     const mcpToolCandidates: PluginResolvedMcpToolContribution[] = [];
     const mcpDiscoveryProviderCandidates: PluginResolvedMcpDiscoveryProviderContribution[] = [];
     const scmHostingProviderCandidates: PluginResolvedScmHostingProviderContribution[] = [];
+    const scmBackendCandidates: PluginResolvedScmBackendContribution[] = [];
+    const connectedAccountDescriptorCandidates: PluginResolvedConnectedAccountDescriptorContribution[] = [];
     const installableCandidates: PluginResolvedInstallableContribution[] = [];
     const lifecycleHandlerCandidates: PluginResolvedLifecycleHandlerContribution[] = [];
     const activationTargets: ResolvedActivationTarget[] = [];
@@ -842,6 +863,34 @@ export async function resolvePluginContributes(
         });
     }
 
+    for (const contribution of pluginRegistry.scmBackends) {
+        scmBackendCandidates.push({
+            id: contribution.definition.id,
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            identity: contribution.identity,
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.connectedAccountDescriptors) {
+        connectedAccountDescriptorCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
     for (const contribution of pluginRegistry.installables) {
         installableCandidates.push({
             provenance: 'external',
@@ -1006,6 +1055,8 @@ export async function resolvePluginContributes(
         mcpTools: Object.freeze(mcpToolCandidates),
         mcpDiscoveryProviders: Object.freeze(mcpDiscoveryProviderCandidates),
         scmHostingProviders: Object.freeze(scmHostingProviderCandidates),
+        scmBackends: Object.freeze(scmBackendCandidates),
+        connectedAccountDescriptors: Object.freeze(connectedAccountDescriptorCandidates),
         installables: Object.freeze(installableCandidates),
         activationTargets: Object.freeze(activationTargets),
         hookRegistrations: Object.freeze(hookRegistrations),

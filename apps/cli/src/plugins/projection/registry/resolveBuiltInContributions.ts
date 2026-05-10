@@ -3,7 +3,10 @@ import { CODEX_ACP_INSTALLABLE_DESCRIPTOR, GH_INSTALLABLE_DESCRIPTOR } from '@ha
 import {
     BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS,
     BUNDLED_FIRST_PARTY_BACKEND_CONTRIBUTIONS,
+    BUNDLED_FIRST_PARTY_CONNECTED_ACCOUNT_DESCRIPTOR_CONTRIBUTIONS,
+    BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS,
     BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS,
+    BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS,
     BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS,
 } from './sources/generatedBundledPlugins';
 import type { ResolvedContributionInputs } from './types';
@@ -30,9 +33,12 @@ export function resolveBuiltInContributions(): ResolvedContributionInputs {
                 pluginId: 'happier.core',
                 definition: GH_INSTALLABLE_DESCRIPTOR,
             },
+            ...BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS,
         ]),
         activationTargets: BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS,
         scmHostingProviders: BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS,
+        scmBackends: BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS,
+        connectedAccountDescriptors: BUNDLED_FIRST_PARTY_CONNECTED_ACCOUNT_DESCRIPTOR_CONTRIBUTIONS,
         hookRegistrations: EMPTY_CONTRIBUTIONS,
         pluginDiagnosticsByPluginId: EMPTY_DIAGNOSTICS,
     };

@@ -105,7 +105,7 @@ function createBindingFactory(params: Readonly<{
       terminalRuntime: {
         launch: params.launch,
       } as never,
-      directSessions: null,
+      externalSessions: null,
       attach: null,
       sessionHandoff: null,
     },

@@ -16,6 +16,7 @@ import type {
     PluginApiRequestInterceptorRegistrationV1,
     PluginApiRegisterMethodV1,
     PluginApiResourceRegistrationV1,
+    ScmBackendRuntimeRegistration,
     ScmHostingProviderRuntimeRegistration,
     PluginApiToolRegistrationV1,
     PluginApiUiDescriptorRegistrationV1,
@@ -40,15 +41,28 @@ export type PluginApiHostRegisterMethod = Readonly<{
     ) => PluginDisposable;
 }>;
 
+export type PluginApiHostLifecycleHandlerDeclaration = Readonly<{
+    id?: string;
+    canonicalId?: string;
+    event: PluginApiLifecycleHandlerRegistrationV1['event'];
+}>;
+
 export type PluginApiHostPolicy = Readonly<{
     pluginId?: string;
     runtimeCapabilities?: readonly (PluginRuntimeCapabilityFamilyV1 | string)[];
     permissions?: readonly PluginPermissionCapabilityV1[];
     declaredBackendIds?: readonly string[];
+    declaredActionIds?: readonly string[];
+    declaredToolIds?: readonly string[];
+    declaredCommandIds?: readonly string[];
+    declaredHookIds?: readonly string[];
+    declaredLifecycleHandlerIds?: readonly string[];
+    declaredLifecycleHandlers?: readonly PluginApiHostLifecycleHandlerDeclaration[];
     declaredNotificationCategoryIds?: readonly string[];
     declaredNotificationChannelIds?: readonly string[];
     declaredExecutionRunProfileIds?: readonly string[];
     declaredScmHostingProviderIds?: readonly string[];
+    declaredScmBackendIds?: readonly string[];
     registerMethods?: Readonly<Record<string, PluginApiHostRegisterMethod>>;
 }>;
 
@@ -69,6 +83,7 @@ export type PluginApiNotificationChannelRegistration = PluginApiNotificationChan
 export type PluginApiExecutionRunProfileRegistration = PluginApiExecutionRunProfileRegistrationV1;
 export type PluginApiRequestInterceptorRegistration = PluginApiRequestInterceptorRegistrationV1;
 export type PluginApiScmHostingProviderRegistration = ScmHostingProviderRuntimeRegistration;
+export type PluginApiScmBackendRegistration = ScmBackendRuntimeRegistration;
 export type PluginApiMcpServerRegistration = PluginApiMcpServerRegistrationV1;
 export type PluginApiMcpBackendClientRegistration = PluginApiMcpBackendClientRegistrationV1;
 export type PluginApiMcpToolRegistration = PluginApiMcpToolRegistrationV1;
@@ -85,6 +100,7 @@ export type PluginApiRegistrations = Readonly<{
     notificationChannels: readonly PluginApiNotificationChannelRegistration[];
     executionRunProfiles: readonly PluginApiExecutionRunProfileRegistration[];
     scmHostingProviders: readonly PluginApiScmHostingProviderRegistration[];
+    scmBackends: readonly PluginApiScmBackendRegistration[];
     mcpServers: readonly PluginApiMcpServerRegistration[];
     mcpBackendClients: readonly PluginApiMcpBackendClientRegistration[];
     mcpTools: readonly PluginApiMcpToolRegistration[];

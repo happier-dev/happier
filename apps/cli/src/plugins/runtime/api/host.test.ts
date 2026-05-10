@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginApiHost } from './host';
-import type { PluginDisposable } from './types';
+import type { PluginApiHostPolicy, PluginDisposable } from './types';
 
 async function disposePluginDisposable(disposable: PluginDisposable): Promise<void> {
     if (typeof disposable === 'function') {
@@ -12,6 +12,71 @@ async function disposePluginDisposable(disposable: PluginDisposable): Promise<vo
 }
 
 describe('createPluginApiHost', () => {
+    it('exposes manifest-declared SCM backend registration as a narrow runtime surface', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.scm.backend',
+            runtimeCapabilities: ['scmBackends'],
+            declaredScmBackendIds: ['acme-vcs'],
+        } as Parameters<typeof createPluginApiHost>[0] & {
+            declaredScmBackendIds: readonly string[];
+        });
+        const api = host.api as typeof host.api & {
+            registerScmBackend?: (registration: {
+                id: string;
+                handlers: {
+                    detection: {
+                        detectRepo: () => Promise<{ isRepo: boolean; rootPath: string | null; mode: '.git' | '.sl' | null }>;
+                    };
+                    read: {
+                        statusSnapshot: () => Promise<unknown>;
+                    };
+                };
+            }) => PluginDisposable;
+        };
+
+        expect(api.registerScmBackend).toBeTypeOf('function');
+        api.registerScmBackend?.({
+            id: 'acme-vcs',
+            handlers: {
+                detection: {
+                    detectRepo: async () => ({ isRepo: false, rootPath: null, mode: null }),
+                },
+                read: {
+                    statusSnapshot: async () => ({ ok: true, snapshot: null }),
+                },
+            },
+        });
+
+        expect((host.registrations() as ReturnType<typeof host.registrations> & {
+            scmBackends?: readonly { id: string }[];
+        }).scmBackends).toEqual([
+            expect.objectContaining({ id: 'acme-vcs' }),
+        ]);
+    });
+
+    it('rejects SCM backend activation without a matching manifest contribution', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.scm.backend',
+            runtimeCapabilities: ['scmBackends'],
+            declaredScmBackendIds: ['acme-vcs'],
+        } as Parameters<typeof createPluginApiHost>[0] & {
+            declaredScmBackendIds: readonly string[];
+        });
+        const api = host.api as typeof host.api & {
+            registerScmBackend?: (registration: { id: string; handlers: object }) => PluginDisposable;
+        };
+
+        expect(() => api.registerScmBackend?.({
+            id: 'shadow-vcs',
+            handlers: {},
+        })).toThrow(/not a manifest-declared SCM backend id/);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_scm_backend_undeclared_id',
+            }),
+        ]);
+    });
+
     it('does not expose legacy static contribution registration methods', () => {
         const host = createPluginApiHost();
         const legacyMethods = [
@@ -83,6 +148,194 @@ describe('createPluginApiHost', () => {
         expect(host.registrations().diagnostics).toEqual([
             expect.objectContaining({
                 code: 'plugin_backend_engine_undeclared_backend_id',
+            }),
+        ]);
+    });
+
+    it('rejects action registrations for ids absent from the same plugin manifest', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.actions',
+            runtimeCapabilities: ['actions'],
+            permissions: ['actions.register'],
+            declaredActionIds: ['acme.actions.allowed'],
+        });
+
+        host.api.registerAction({
+            id: 'acme.actions.allowed',
+            title: 'Allowed',
+            surface: 'cli',
+            handler: async () => null,
+        });
+
+        expect(() => host.api.registerAction({
+            id: 'acme.actions.shadow',
+            title: 'Shadow',
+            surface: 'cli',
+            handler: async () => null,
+        })).toThrow(/manifest-declared action id/);
+
+        expect(host.registrations().actions.map((entry) => entry.id)).toEqual([
+            'acme.actions.allowed',
+        ]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_action_undeclared_id',
+            }),
+        ]);
+    });
+
+    it('rejects tool registrations for ids absent from the same plugin manifest', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.tools',
+            runtimeCapabilities: ['tools'],
+            permissions: ['tools.register'],
+            declaredToolIds: ['acme.tools.allowed'],
+        });
+
+        host.api.registerTool({
+            id: 'acme.tools.allowed',
+            name: 'acme_tools_allowed',
+            title: 'Allowed',
+            surfaces: { cli: true, mcp: false, session_agent: false },
+            handler: async () => null,
+        });
+
+        expect(() => host.api.registerTool({
+            id: 'acme.tools.shadow',
+            name: 'acme_tools_shadow',
+            title: 'Shadow',
+            surfaces: { cli: true, mcp: false, session_agent: false },
+            handler: async () => null,
+        })).toThrow(/manifest-declared tool id/);
+
+        expect(host.registrations().tools.map((entry) => entry.id)).toEqual([
+            'acme.tools.allowed',
+        ]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_tool_undeclared_id',
+            }),
+        ]);
+    });
+
+    it('rejects command registrations for ids absent from the same plugin manifest', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.commands',
+            runtimeCapabilities: ['commands'],
+            permissions: ['commands.register'],
+            declaredCommandIds: ['acme.commands.allowed'],
+        });
+
+        host.api.registerCommand({
+            id: 'acme.commands.allowed',
+            command: 'allowed',
+            allowTmux: false,
+            handler: async () => null,
+        });
+
+        expect(() => host.api.registerCommand({
+            id: 'acme.commands.shadow',
+            command: 'shadow',
+            allowTmux: false,
+            handler: async () => null,
+        })).toThrow(/manifest-declared command id/);
+
+        expect(host.registrations().commands.map((entry) => entry.id)).toEqual([
+            'acme.commands.allowed',
+        ]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_command_undeclared_id',
+            }),
+        ]);
+    });
+
+    it('rejects hook registrations for ids absent from the same plugin manifest', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.hooks',
+            runtimeCapabilities: ['hooks'],
+            permissions: ['hooks.register'],
+            declaredHookIds: ['acme.hooks.allowed'],
+        });
+
+        host.api.registerHook({
+            hookId: 'acme.hooks.allowed',
+            handler: async () => null,
+        });
+
+        expect(() => host.api.registerHook({
+            hookId: 'acme.hooks.shadow',
+            handler: async () => null,
+        })).toThrow(/manifest-declared hook id/);
+
+        expect(host.registrations().hooks.map((entry) => entry.hookId)).toEqual([
+            'acme.hooks.allowed',
+        ]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_hook_undeclared_id',
+            }),
+        ]);
+    });
+
+    it('rejects lifecycle handler registrations for ids absent from the same plugin manifest', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.lifecycle',
+            runtimeCapabilities: ['lifecycle'],
+            declaredLifecycleHandlerIds: ['acme.lifecycle.allowed'],
+        });
+
+        host.api.registerLifecycleHandler({
+            id: 'acme.lifecycle.allowed',
+            event: 'activated',
+            handler: async () => undefined,
+        });
+
+        expect(() => host.api.registerLifecycleHandler({
+            id: 'acme.lifecycle.shadow',
+            event: 'deactivating',
+            handler: async () => undefined,
+        })).toThrow(/manifest-declared lifecycle handler id/);
+
+        expect(host.registrations().lifecycleHandlers.map((entry) => entry.id)).toEqual([
+            'acme.lifecycle.allowed',
+        ]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_lifecycle_handler_undeclared_id',
+            }),
+        ]);
+    });
+
+    it('allows id-less lifecycle handler registrations declared for the same event', () => {
+        const policy: PluginApiHostPolicy = {
+            pluginId: 'acme.lifecycle',
+            runtimeCapabilities: ['lifecycle'],
+            declaredLifecycleHandlers: [
+                { event: 'activated' },
+            ],
+        };
+        const host = createPluginApiHost(policy);
+
+        host.api.registerLifecycleHandler({
+            event: 'activated',
+            handler: async () => undefined,
+        });
+
+        expect(() => host.api.registerLifecycleHandler({
+            event: 'deactivating',
+            handler: async () => undefined,
+        })).toThrow(/manifest-declared lifecycle handler id/);
+
+        expect(host.registrations().lifecycleHandlers.map((entry) => ({
+            event: entry.event,
+            id: entry.id ?? null,
+        }))).toEqual([
+            { event: 'activated', id: null },
+        ]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_lifecycle_handler_undeclared_id',
             }),
         ]);
     });
@@ -303,7 +556,7 @@ describe('createPluginApiHost', () => {
         const backendClientDisposable = host.api.registerMcpBackendClient({
             id: 'acme.backendClient',
             serverName: 'acme-hosted',
-            toolNamespace: 'ext.acme',
+            toolNamespace: 'codex.github',
         });
         const toolDisposable = host.api.registerMcpTool({
             id: 'acme.tool',
@@ -354,5 +607,58 @@ describe('createPluginApiHost', () => {
             name: 'ext.acme.create',
             handler: async () => null,
         })).toThrow(/MCP tool namespace collision/);
+    });
+
+    it('rejects secret-shaped runtime MCP server registration fields before storing them', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+        });
+        const rawSecretServerRegistration = {
+            id: 'acme.remote',
+            name: 'acme-remote',
+            transport: { kind: 'http' as const, url: 'https://mcp.example.test' },
+            headers: { Authorization: 'Bearer raw-token' },
+        };
+
+        expect(() => host.api.registerMcpServer(rawSecretServerRegistration)).toThrow(/raw secret material/);
+
+        expect(host.registrations().mcpServers).toEqual([]);
+    });
+
+    it('rejects secret-shaped runtime MCP tool and discovery registrations before storing them', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+        });
+        const rawSecretToolRegistration = {
+            id: 'acme.tool',
+            name: 'ext.acme.search',
+            handler: async () => null,
+            headers: { Authorization: 'Bearer raw-token' },
+        };
+        const rawSecretDiscoveryRegistration = {
+            id: 'acme.discovery',
+            discover: async () => [],
+            token: 'raw-token',
+        };
+
+        expect(() => host.api.registerMcpTool(rawSecretToolRegistration)).toThrow(/raw secret material/);
+        expect(() => host.api.registerMcpDiscoveryProvider(rawSecretDiscoveryRegistration)).toThrow(/raw secret material/);
+
+        expect(host.registrations().mcpTools).toEqual([]);
+        expect(host.registrations().mcpDiscoveryProviders).toEqual([]);
+    });
+
+    it('rejects invalid MCP backend-client namespaces at the runtime registration seam', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme',
+        });
+
+        expect(() => host.api.registerMcpBackendClient({
+            id: 'acme.backendClient',
+            serverName: 'acme-hosted',
+            toolNamespace: 'search',
+        })).toThrow(/canonical MCP tool namespace/);
+
+        expect(host.registrations().mcpBackendClients).toEqual([]);
     });
 });

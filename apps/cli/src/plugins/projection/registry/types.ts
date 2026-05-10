@@ -17,11 +17,14 @@ import type {
   PluginMcpServerContributionV1,
   PluginMcpToolContributionV1,
   InstallableDependencyDescriptor,
+  ScmBackendContribution,
   PluginSettingsContributionV2,
   ScmHostingProviderContribution,
+  PluginConnectedAccountDescriptorContributionV2,
   PluginSourceSpecV1,
-    HookRegistrationV1,
-    ProviderDefinitionV1,
+  PluginContributionIdentityV1,
+  HookRegistrationV1,
+  ProviderDefinitionV1,
 } from '@happier-dev/protocol';
 import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
 import type { CliRuntimeCoreGetter } from '@/agent/runtime/registry/engineRegistryTypes';
@@ -353,12 +356,37 @@ export type ResolvedScmHostingProviderContribution = Readonly<{
     id: string;
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
+    identity?: PluginContributionIdentityV1;
     pluginId?: string;
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ScmHostingProviderContribution;
+}>;
+
+export type ResolvedScmBackendContribution = Readonly<{
+    id: string;
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    identity?: PluginContributionIdentityV1;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: ScmBackendContribution;
+}>;
+
+export type ResolvedConnectedAccountDescriptorContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginConnectedAccountDescriptorContributionV2;
 }>;
 
 export type ResolvedBackendRuntimeAdapterContribution = Readonly<{
@@ -378,7 +406,7 @@ export type ResolvedBackendRuntimeAdapterContribution = Readonly<{
 }>;
 
 export type ResolvedHookRegistration = Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId: string;
     manifestPath: string;
@@ -389,7 +417,7 @@ export type ResolvedHookRegistration = Readonly<{
 }>;
 
 export type ResolvedActivationTarget = Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId: string;
     manifestPath: string;
@@ -417,6 +445,8 @@ export type ResolvedContributionInputs = Readonly<{
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
     installables?: readonly ResolvedInstallableContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
+    scmBackends?: readonly ResolvedScmBackendContribution[];
+    connectedAccountDescriptors?: readonly ResolvedConnectedAccountDescriptorContribution[];
     activationTargets?: readonly ResolvedActivationTarget[];
     hookRegistrations?: readonly ResolvedHookRegistration[];
     lifecycleHandlers?: readonly ResolvedLifecycleHandlerContribution[];
@@ -442,6 +472,8 @@ export type ResolvedContributionRegistry = Readonly<{
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
     installables?: readonly ResolvedInstallableContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
+    scmBackends?: readonly ResolvedScmBackendContribution[];
+    connectedAccountDescriptors?: readonly ResolvedConnectedAccountDescriptorContribution[];
     activationTargets: readonly ResolvedActivationTarget[];
     hookRegistrations: readonly ResolvedHookRegistration[];
     lifecycleHandlers?: readonly ResolvedLifecycleHandlerContribution[];
@@ -456,6 +488,8 @@ export type ResolvedContributionRegistry = Readonly<{
     executionRunProfilesById?: ReadonlyMap<string, ResolvedExecutionRunProfileContribution>;
     installablesByKey?: ReadonlyMap<string, ResolvedInstallableContribution>;
     scmHostingProvidersById?: ReadonlyMap<string, ResolvedScmHostingProviderContribution>;
+    scmBackendsById?: ReadonlyMap<string, ResolvedScmBackendContribution>;
+    connectedAccountDescriptorsById?: ReadonlyMap<string, ResolvedConnectedAccountDescriptorContribution>;
     lifecycleHandlersById?: ReadonlyMap<string, ResolvedLifecycleHandlerContribution>;
     runtimeCoreHooksByBackendId: ReadonlyMap<string, readonly ResolvedBackendRuntimeAdapterContribution[]>;
     catalogEntriesById: Readonly<Record<string, ResolvedCatalogEntry>>;

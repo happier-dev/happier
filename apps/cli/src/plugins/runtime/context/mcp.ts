@@ -15,6 +15,8 @@ type PluginMcpDisposable = Readonly<{
     dispose: () => void | Promise<void>;
 }>;
 
+type AsyncDispose = () => Promise<void>;
+
 export type CreatePluginMcpServiceParams = Readonly<{
     pluginId: string;
     exec: ExecRuntimeServiceV1;
@@ -53,6 +55,50 @@ function readSignal(params: CreatePluginMcpServiceParams, signal: AbortSignal | 
     return signal ?? params.signal;
 }
 
+function createAbortBoundDispose(
+    dispose: AsyncDispose,
+    signals: readonly (AbortSignal | undefined)[],
+): AsyncDispose {
+    let disposed = false;
+    const activeSignals = signals.filter((signal): signal is AbortSignal => signal !== undefined);
+    const removeAbortListeners = () => {
+        for (const signal of activeSignals) {
+            signal.removeEventListener('abort', disposeOnAbort);
+        }
+    };
+    const disposeBoundHandle = async () => {
+        if (disposed) {
+            return;
+        }
+        disposed = true;
+        removeAbortListeners();
+        await dispose();
+    };
+    const disposeOnAbort = () => {
+        void disposeBoundHandle().catch(() => undefined);
+    };
+    for (const signal of activeSignals) {
+        if (signal.aborted) {
+            disposeOnAbort();
+        } else {
+            signal.addEventListener('abort', disposeOnAbort, { once: true });
+        }
+    }
+    return disposeBoundHandle;
+}
+
+function assertMcpClientMethods(
+    client: McpClientHandleV1['client'],
+    pluginId: string,
+    clientId: string,
+): asserts client is NonNullable<McpClientHandleV1['client']> & Required<
+    Pick<NonNullable<McpClientHandleV1['client']>, 'request' | 'notify'>
+> {
+    if (typeof client?.request !== 'function' || typeof client.notify !== 'function') {
+        throw new Error(`Plugin '${pluginId}' MCP client '${clientId}' does not expose MCP request/notify methods`);
+    }
+}
+
 export function createPluginMcpService(params: CreatePluginMcpServiceParams): McpRuntimeServiceV1 {
     function addDisposable<T extends PluginMcpDisposable>(handle: T): T {
         params.addDisposable?.(handle);
@@ -82,17 +128,14 @@ export function createPluginMcpService(params: CreatePluginMcpServiceParams): Mc
                     }
                     return handle;
                 }));
-                let disposed = false;
+                const dispose = createAbortBoundDispose(
+                    () => disposeOnce(() => hostedHandle.dispose()),
+                    [params.signal],
+                );
                 const handle: McpServerHandleV1 = Object.freeze({
                     id: hostedHandle.id,
                     spec: hostedHandle.spec ?? spec,
-                    async dispose() {
-                        if (disposed) {
-                            return;
-                        }
-                        disposed = true;
-                        await disposeOnce(() => hostedHandle.dispose());
-                    },
+                    dispose,
                 });
                 return addDisposable(handle);
             }
@@ -100,18 +143,15 @@ export function createPluginMcpService(params: CreatePluginMcpServiceParams): Mc
                 throw createUnsupportedMcpTransportError(transport.kind, 'server');
             }
             const managedHandle = await runWithClassification(() => params.managedServer.supervise(transport.server));
-            let disposed = false;
+            const dispose = createAbortBoundDispose(
+                () => disposeOnce(() => managedHandle.dispose()),
+                [params.signal, transport.server.signal],
+            );
             const handle: McpServerHandleV1 = Object.freeze({
                 id: spec.id,
                 spec,
                 managedServer: managedHandle,
-                async dispose() {
-                    if (disposed) {
-                        return;
-                    }
-                    disposed = true;
-                    await disposeOnce(() => managedHandle.dispose());
-                },
+                dispose,
             });
             return addDisposable(handle);
         },
@@ -121,39 +161,28 @@ export function createPluginMcpService(params: CreatePluginMcpServiceParams): Mc
             assertNotAborted(signal);
             if (transport.kind === 'stdio') {
                 const client = await runWithClassification(() => params.exec.spawnClient(transport.launch, { signal }));
-                let disposed = false;
+                const dispose = createAbortBoundDispose(
+                    () => disposeOnce(() => client.dispose()),
+                    [signal],
+                );
+                try {
+                    assertMcpClientMethods(client, params.pluginId, spec.id);
+                } catch (error) {
+                    await dispose();
+                    throw error;
+                }
                 const handle: McpClientHandleV1 = Object.freeze({
                     id: spec.id,
                     spec,
                     client,
                     request: client.request,
                     notify: client.notify,
-                    async dispose() {
-                        if (disposed) {
-                            return;
-                        }
-                        disposed = true;
-                        await disposeOnce(() => client.dispose());
-                    },
+                    dispose,
                 });
                 return addDisposable(handle);
             }
             if (transport.kind === 'managed') {
-                const managedHandle = await runWithClassification(() => params.managedServer.supervise(transport.server));
-                let disposed = false;
-                const handle: McpClientHandleV1 = Object.freeze({
-                    id: spec.id,
-                    spec,
-                    managedServer: managedHandle,
-                    async dispose() {
-                        if (disposed) {
-                            return;
-                        }
-                        disposed = true;
-                        await disposeOnce(() => managedHandle.dispose());
-                    },
-                });
-                return addDisposable(handle);
+                throw createUnsupportedMcpTransportError(transport.kind, 'client');
             }
             throw createUnsupportedMcpTransportError(transport.kind, 'client');
         },
