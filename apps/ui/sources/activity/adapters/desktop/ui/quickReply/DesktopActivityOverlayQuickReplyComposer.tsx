@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Octicons } from '@expo/vector-icons';
+import { I18nManager, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -9,6 +10,16 @@ import {
     createDesktopActivityOverlayInteriorSurfaceStyle,
 } from '../DesktopActivityOverlayChrome';
 import type { DesktopActivityOverlayVisualMode } from '../DesktopActivityOverlayVisualMode';
+
+type StopPropagationEvent = Readonly<{
+    stopPropagation?: () => void;
+}>;
+
+type WebStopPropagationProps = Readonly<{
+    onClick: (event?: StopPropagationEvent) => void;
+    onMouseDown: (event?: StopPropagationEvent) => void;
+    onPointerDown: (event?: StopPropagationEvent) => void;
+}>;
 
 export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
     visualMode: DesktopActivityOverlayVisualMode;
@@ -31,6 +42,14 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
     const trimmedDraft = draft.trim();
     const targetUnavailable = props.targetAvailable === false;
     const canSendDraft = trimmedDraft.length > 0 && !targetUnavailable;
+    const stopEventPropagation = React.useCallback((event?: StopPropagationEvent) => {
+        event?.stopPropagation?.();
+    }, []);
+    const webStopPropagationProps = React.useMemo<WebStopPropagationProps>(() => ({
+        onClick: stopEventPropagation,
+        onMouseDown: stopEventPropagation,
+        onPointerDown: stopEventPropagation,
+    }), [stopEventPropagation]);
 
     const setInputLocked = React.useCallback((locked: boolean) => {
         onInputLockChange?.(locked);
@@ -135,8 +154,16 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                     ))}
                 </View>
             ) : null}
-            <View style={styles.inputRow}>
+            <Pressable
+                {...webStopPropagationProps}
+                testID="desktop-activity-overlay-quick-reply-input-shell"
+                onPress={stopEventPropagation}
+                onPressIn={stopEventPropagation}
+                onStartShouldSetResponder={() => true}
+                style={styles.inputShell}
+            >
                 <TextInput
+                    {...webStopPropagationProps}
                     testID="desktop-activity-overlay-quick-reply-input"
                     accessibilityLabel={t('common.message')}
                     placeholder={t('common.message')}
@@ -145,13 +172,17 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                     onChangeText={handleChangeText}
                     onFocus={handleFocus}
                     onBlur={handleBlur}
+                    onPress={stopEventPropagation}
+                    onPressIn={stopEventPropagation}
                     onKeyPress={(event) => handleKeyPress(event.nativeEvent.key)}
-                    onSubmitEditing={() => {
+                    onSubmitEditing={(event) => {
+                        stopEventPropagation(event);
                         void sendMessage(trimmedDraft);
                     }}
                     returnKeyType="send"
                     style={[
                         styles.input,
+                        I18nManager.isRTL ? styles.inputRtl : null,
                         {
                             color: theme.colors.overlay.text,
                             borderColor: theme.colors.overlay.textSecondary,
@@ -159,27 +190,28 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                     ]}
                 />
                 <Pressable
+                    {...webStopPropagationProps}
                     testID="desktop-activity-overlay-quick-reply-send"
                     accessibilityRole="button"
                     accessibilityLabel={t('common.send')}
                     disabled={!canSendDraft}
-                    onPress={() => {
+                    onPress={(event) => {
+                        event?.stopPropagation?.();
                         void sendMessage(trimmedDraft);
                     }}
                     style={[
-                        styles.sendButton,
                         createDesktopActivityOverlayInteriorSurfaceStyle(theme, {
                             visualMode: props.visualMode,
                             kind: 'action',
                         }),
+                        styles.sendButton,
+                        I18nManager.isRTL ? styles.sendButtonRtl : null,
                         !canSendDraft ? styles.disabledAction : null,
                     ]}
                 >
-                    <Text style={[styles.sendText, { color: theme.colors.overlay.text }]}>
-                        {t('common.send')}
-                    </Text>
+                    <Octicons name="arrow-up" size={15} color={theme.colors.overlay.text} />
                 </Pressable>
-            </View>
+            </Pressable>
             {targetUnavailable ? (
                 <Text
                     testID="desktop-activity-overlay-quick-reply-no-target"
@@ -223,33 +255,41 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '700',
     },
-    inputRow: {
+    inputShell: {
         minHeight: 34,
-        flexDirection: 'row',
-        alignItems: 'stretch',
-        gap: 6,
+        position: 'relative',
     },
     input: {
-        flex: 1,
+        width: '100%',
         minWidth: 0,
         borderWidth: 0.5,
-        borderRadius: 10,
-        paddingHorizontal: 10,
+        borderRadius: 17,
+        paddingLeft: 12,
+        paddingRight: 40,
         paddingVertical: 7,
         fontSize: 12,
     },
+    inputRtl: {
+        paddingLeft: 40,
+        paddingRight: 12,
+    },
     sendButton: {
-        minWidth: 58,
+        position: 'absolute',
+        right: 3,
+        top: 2,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 10,
+        paddingHorizontal: 0,
+    },
+    sendButtonRtl: {
+        right: undefined,
+        left: 2,
     },
     disabledAction: {
         opacity: 0.45,
-    },
-    sendText: {
-        fontSize: 11,
-        fontWeight: '800',
     },
     errorText: {
         fontSize: 11,

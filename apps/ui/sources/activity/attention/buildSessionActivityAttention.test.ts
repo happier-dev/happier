@@ -71,7 +71,7 @@ describe('buildSessionActivityAttention', () => {
         expect(attention.priority).toBe(0);
     });
 
-    it('treats queued user input as attention and preserves the shortened path subtitle', () => {
+    it('does not treat queued user input as attention', () => {
         const attention = buildSessionActivityAttention({
             session: createSessionFixture({
                 id: 'session-pending',
@@ -87,8 +87,8 @@ describe('buildSessionActivityAttention', () => {
 
         expect(attention).toMatchObject({
             sessionId: 'session-pending',
-            attentionState: 'pending',
-            hasAttention: true,
+            attentionState: 'quiet',
+            hasAttention: false,
             reasons: {
                 hasQueuedUserInput: true,
             },

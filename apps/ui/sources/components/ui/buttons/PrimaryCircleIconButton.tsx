@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Pressable, StyleProp, StyleSheet as ReactNativeStyleSheet, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Pressable, StyleProp, View, ViewStyle } from 'react-native';
 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -74,7 +74,7 @@ export const PrimaryCircleIconButton = React.memo(
               fallbackColor={backgroundColor}
               gradient={primary.gradient}
               borderRadius={16}
-              style={ReactNativeStyleSheet.absoluteFillObject}
+              style={StyleSheet.absoluteFillObject}
             />
           ) : null}
           {props.loading ? (

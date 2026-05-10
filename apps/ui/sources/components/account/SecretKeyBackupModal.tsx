@@ -106,6 +106,7 @@ export function SecretKeyBackupModal(props: Props) {
         title: t('settingsAccount.secretKey'),
         testID: 'secret-key-backup-modal',
         closeButtonTestID: 'secret-key-backup-close',
+        bodyScroll: 'auto' as const,
         footer,
         dimensions: { width: 360, maxHeightRatio: 0.85, size: 'dialog' as const },
     }), [footer]);

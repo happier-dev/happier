@@ -1,4 +1,6 @@
 import { sync } from '@/sync/sync';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { publishDisplayTitleMetadataMutation } from '@/sync/state/displayTitlePublish';
 import { normalizeNonEmptyString } from './shared';
 
 export async function postprocessSpawnedSession(params: Readonly<{
@@ -14,10 +16,14 @@ export async function postprocessSpawnedSession(params: Readonly<{
   if (tag) {
     try {
       await sync.refreshSessions();
-      await sync.patchSessionMetadataWithRetry(sessionId, (metadata: any) => ({
-        ...metadata,
-        summary: { text: metadata?.summary?.text ?? `Session ${tag}`, updatedAt: Date.now() },
-      }));
+      await publishDisplayTitleMetadataMutation({
+        sessionId,
+        title: `Session ${tag}`,
+        updateSessionMetadataWithRetry: (targetSessionId, updater) =>
+          sync.patchSessionMetadataWithRetry(targetSessionId, updater),
+        resolveTitle: (metadata: Metadata) =>
+          typeof metadata?.summary?.text === 'string' ? metadata.summary.text : `Session ${tag}`,
+      });
     } catch {
       // best-effort
     }

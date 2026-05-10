@@ -63,7 +63,7 @@ function resolveLastToolTitle(value: string): string {
 
 function priorityFromSnapshot(snapshot: DesktopActivityOverlaySnapshot): DesktopActivityOverlayCollapsedSlidePriority {
     if (snapshot.counts.permissionRequired > 0 || snapshot.counts.actionRequired > 0) return 'attention';
-    if (snapshot.counts.queuedInput > 0) return 'ready';
+    if (snapshot.completionStates.length > 0) return 'ready';
     if (snapshot.counts.thinking > 0) return 'running';
     return snapshot.sessions.length > 0 ? 'running' : 'idle';
 }
@@ -182,7 +182,7 @@ function buildTransitionCueKey(
         updatedAt,
         snapshot.counts.permissionRequired,
         snapshot.counts.actionRequired,
-        snapshot.counts.queuedInput,
+        snapshot.completionStates.length,
         snapshot.counts.thinking,
     ].join(':');
 }

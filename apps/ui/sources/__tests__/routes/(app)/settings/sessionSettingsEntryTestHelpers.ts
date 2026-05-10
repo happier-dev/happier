@@ -135,8 +135,10 @@ export function installSessionSettingsEntryModuleMocks(
                 props.itemTrigger
                     ? React.createElement('Item', {
                           title: props.itemTrigger.title,
+                          subtitle: props.itemTrigger.subtitle,
                           onPress: () => props.onOpenChange?.(!props.open),
                           disabled: props.itemTrigger?.itemProps?.disabled,
+                          testID: props.itemTrigger?.itemProps?.testID,
                       })
                     : typeof props.trigger === 'function'
                       ? props.trigger({

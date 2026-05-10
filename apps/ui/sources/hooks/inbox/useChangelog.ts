@@ -6,6 +6,7 @@ import {
     setLastViewedReleaseId,
     getLatestReleaseId,
 } from '@/changelog';
+import { setLegacyChangelogAutoSeenBaseline } from '@/changelog/releaseNotes/storage';
 
 const CHANGELOG_FEATURE_ID = 'app.ui.changelog' as const satisfies FeatureId;
 
@@ -22,6 +23,7 @@ export function useChangelog() {
 
         // On first install, mark as read so user doesn't see old entries
         if (lastViewedReleaseId === null) {
+            setLegacyChangelogAutoSeenBaseline(latestReleaseId);
             setLastViewedReleaseId(latestReleaseId);
             return false;
         }

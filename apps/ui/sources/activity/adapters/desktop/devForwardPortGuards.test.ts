@@ -27,33 +27,40 @@ function collectFiles(relativePath: string): string[] {
     });
 }
 
+function isProductionSourceFile(relativePath: string): boolean {
+    return !/\.(test|spec)\.[cm]?[tj]sx?$/.test(relativePath);
+}
+
 describe('Dev activity overlay forward-port guards', () => {
-    it('does not add a remote-dev pet overlay native stack or route', () => {
-        expect(existsSync(join(appRoot, 'src-tauri/src/pet_overlay.rs'))).toBe(false);
-        expect(existsSync(join(appRoot, 'src-tauri/src/pet_overlay'))).toBe(false);
-        expect(existsSync(join(appRoot, 'sources/app/(app)/desktop/pet-overlay.tsx'))).toBe(false);
+    it('keeps the pet overlay as a standalone native stack and route', () => {
+        expect(existsSync(join(appRoot, 'src-tauri/src/pet_overlay.rs'))).toBe(true);
+        expect(existsSync(join(appRoot, 'src-tauri/src/pet_overlay'))).toBe(true);
+        expect(existsSync(join(appRoot, 'sources/app/(app)/desktop/pet-overlay.tsx'))).toBe(true);
+        expect(existsSync(join(appRoot, 'sources/components/pets/desktop/route/DesktopPetOverlayRoute.tsx'))).toBe(true);
 
         const scannedFiles = [
-            'src-tauri/src/lib.rs',
             'src-tauri/src/activity_overlay.rs',
             ...collectFiles('src-tauri/src/activity_overlay'),
             ...collectFiles('sources/activity/adapters/desktop'),
-        ].filter((file) => file !== 'sources/activity/adapters/desktop/devForwardPortGuards.test.ts');
+        ].filter(isProductionSourceFile);
         const offenders = scannedFiles.filter((file) => {
             const contents = readAppFile(file);
-            return /\bpet_overlay\b|pet-overlay|desktop_pet_overlay/.test(contents);
+            return /\bpet_overlay\b|pet-overlay|desktop_pet_overlay|PetCompanion|pets\/desktop|pets\/render|pets\/tray|pets\/interaction/.test(contents);
         });
 
         expect(offenders).toEqual([]);
     });
 
-    it('keeps companion source and activity resolution out of the desktop adapter', () => {
-        const contents = readAppFile(
-            'sources/activity/adapters/desktop/presentation/snapshot/buildDesktopActivityOverlayCompanionSnapshot.ts',
-        );
+    it('does not let pet desktop overlay settings host or expand the activity overlay', () => {
+        const scannedFiles = [
+            ...collectFiles('sources/activity/adapters/desktop/runtime'),
+            ...collectFiles('sources/activity/adapters/desktop/presentation'),
+        ].filter(isProductionSourceFile);
+        const offenders = scannedFiles.filter((file) => {
+            const contents = readAppFile(file);
+            return /petsDesktopOverlayDefaultEnabled|desktopPetOverlayEnabledOverride|resolveDesktopOverlayPolicyWithCompanion/.test(contents);
+        });
 
-        expect(contents).not.toContain('BLINK_COMPANION_PET');
-        expect(contents).not.toContain('switch (candidate.attentionState)');
-        expect(contents).not.toContain('function sessionHasFailure');
+        expect(offenders).toEqual([]);
     });
 });

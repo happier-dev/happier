@@ -163,6 +163,7 @@ export async function showElevenLabsAgentReuseDialog(params: Readonly<{
                 kind: 'card',
                 title: t('settingsVoice.byo.agentReuseDialog.title'),
                 testID: 'elevenlabs-agent-reuse-dialog',
+                bodyScroll: 'auto',
                 dimensions: { width: 320, maxHeightRatio: 0.6, size: 'dialog' },
             },
             closeOnBackdrop: true,

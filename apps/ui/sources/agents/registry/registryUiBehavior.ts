@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import type {
     AccountProfile,
-    DirectSessionLinkEnsureRequest,
-    DirectSessionsSource,
+    ExternalSessionLinkEnsureRequest,
+    ExternalSessionsSource,
     RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
@@ -45,22 +45,22 @@ export type AgentPermissionFooterBehavior = Readonly<{
     stopHandling: AgentPermissionFooterStopHandling;
 }>;
 
-export type DirectBrowseSourceOption = Readonly<{
+export type ExternalSessionBrowseSourceOption = Readonly<{
     key: string;
     label: string;
     detail?: string;
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
 }>;
 
-export type DirectBrowseLinkEnsureRequestExtras = Readonly<
-    Partial<Omit<DirectSessionLinkEnsureRequest, 'machineId' | 'providerId' | 'remoteSessionId' | 'titleHint' | 'directoryHint'>>
+export type ExternalSessionBrowseLinkEnsureRequestExtras = Readonly<
+    Partial<Omit<ExternalSessionLinkEnsureRequest, 'machineId' | 'providerId' | 'remoteSessionId' | 'titleHint' | 'directoryHint'>>
 >;
 
 export type AgentSessionHandoffProviderPatch = Readonly<{
     clearMetadataKeys?: readonly string[];
     metadataPatch?: Record<string, unknown>;
     runtimeDescriptor?: RuntimeDescriptorV1 | null;
-    directSessionRuntimeDescriptor?: RuntimeDescriptorV1 | null;
+    externalSessionRuntimeDescriptor?: RuntimeDescriptorV1 | null;
 }>;
 
 export type AgentUiBehavior = Readonly<{
@@ -95,7 +95,7 @@ export type AgentUiBehavior = Readonly<{
         getPreflightIssues?: (ctx: NewSessionPreflightContext) => readonly NewSessionPreflightIssue[];
         getRelevantInstallableDepKeys?: (ctx: NewSessionRelevantInstallableDepsContext) => readonly string[];
     }>;
-    directSessions?: Readonly<{
+    externalSessions?: Readonly<{
         supportsBackgroundFollow?: boolean;
         browse?: Readonly<{
             order?: number;
@@ -103,19 +103,19 @@ export type AgentUiBehavior = Readonly<{
                 agentId: AgentLookupId;
                 profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
                 settings: Settings;
-            }) => readonly DirectBrowseSourceOption[];
+            }) => readonly ExternalSessionBrowseSourceOption[];
             resolveLockedSourceOption?: (ctx: {
                 agentId: AgentLookupId;
-                sourceOptions: readonly DirectBrowseSourceOption[];
+                sourceOptions: readonly ExternalSessionBrowseSourceOption[];
                 agentOptionState?: Record<string, unknown> | null;
                 profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
                 settings: Settings;
-            }) => DirectBrowseSourceOption | null;
+            }) => ExternalSessionBrowseSourceOption | null;
             buildLinkEnsureRequestExtras?: (ctx: {
                 agentId: AgentLookupId;
-                source: DirectSessionsSource;
+                source: ExternalSessionsSource;
                 candidate: Readonly<{ details?: Record<string, unknown> }>;
-            }) => DirectBrowseLinkEnsureRequestExtras;
+            }) => ExternalSessionBrowseLinkEnsureRequestExtras;
         }>;
     }>;
     sessionHandoff?: Readonly<{
@@ -124,7 +124,7 @@ export type AgentUiBehavior = Readonly<{
             metadata: Record<string, unknown>;
             sourceMetadataForHandoff?: Record<string, unknown>;
             targetRemoteSessionId: string;
-            targetDirectSource: DirectSessionsSource | Record<string, unknown>;
+            targetDirectSource: ExternalSessionsSource | Record<string, unknown>;
             targetRuntimeDescriptor?: RuntimeDescriptorV1;
         }) => AgentSessionHandoffProviderPatch;
     }>;
@@ -218,13 +218,13 @@ function mergeAgentUiBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBe
             : {}),
         ...(a.resume || b.resume ? { resume: { ...(a.resume ?? {}), ...(b.resume ?? {}) } } : {}),
         ...(a.newSession || b.newSession ? { newSession: { ...(a.newSession ?? {}), ...(b.newSession ?? {}) } } : {}),
-        ...(a.directSessions || b.directSessions
+        ...(a.externalSessions || b.externalSessions
             ? {
-                directSessions: {
-                    ...(a.directSessions ?? {}),
-                    ...(b.directSessions ?? {}),
-                    ...(a.directSessions?.browse || b.directSessions?.browse
-                        ? { browse: { ...(a.directSessions?.browse ?? {}), ...(b.directSessions?.browse ?? {}) } }
+                externalSessions: {
+                    ...(a.externalSessions ?? {}),
+                    ...(b.externalSessions ?? {}),
+                    ...(a.externalSessions?.browse || b.externalSessions?.browse
+                        ? { browse: { ...(a.externalSessions?.browse ?? {}), ...(b.externalSessions?.browse ?? {}) } }
                         : {}),
                 },
             }

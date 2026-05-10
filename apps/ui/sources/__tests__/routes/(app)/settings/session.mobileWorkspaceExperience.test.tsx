@@ -77,30 +77,42 @@ afterEach(() => {
     translationPrefix = 'en';
 });
 
+function findNearestItemGroupTitle(node: { parent?: unknown } | null | undefined): unknown {
+    let current = node?.parent as { type?: unknown; props?: { title?: unknown }; parent?: unknown } | undefined;
+    while (current) {
+        if (current.type === 'ItemGroup') return current.props?.title;
+        current = current.parent as typeof current;
+    }
+    return undefined;
+}
+
 describe('Session settings mobile workspace experience', () => {
-    it('surfaces cockpit/classic selection as a synced account setting', async () => {
+    it('surfaces cockpit mode as a synced account setting switch', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
         const SessionSettingsScreen = (mod.default as unknown as {
             type: React.ComponentType<Record<string, never>>;
         }).type;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
-        const dropdown = screen.findAllByType('DropdownMenu' as never).find(
-            (node) => node.props?.itemTrigger?.itemProps?.testID === 'settings-session-mobileWorkspaceExperience-trigger',
-        );
+        const item = screen.findRowByTitle('en:settingsSession.mobileWorkspaceExperience.title');
+        const switchElement = item?.props?.rightElement;
 
-        expect(dropdown).toBeTruthy();
-        expect(dropdown?.props?.selectedId).toBe('cockpit');
-        expect(dropdown?.props?.items?.map((item: { id: string }) => item.id)).toEqual(['cockpit', 'classic']);
+        expect(item).toBeTruthy();
+        expect(findNearestItemGroupTitle(item)).toBe('en:settingsSession.mobileWorkspaceExperience.groupTitle');
+        expect(screen.findAllByType('DropdownMenu' as never).some(
+            (node) => node.props?.itemTrigger?.itemProps?.testID === 'settings-session-mobileWorkspaceExperience-trigger',
+        )).toBe(false);
+        expect(switchElement?.type).toBe('Switch');
+        expect(switchElement?.props?.value).toBe(true);
 
         await act(async () => {
-            dropdown!.props.onSelect('classic');
+            switchElement!.props.onValueChange(false);
         });
 
         expect(setMobileWorkspaceExperience).toHaveBeenCalledWith('classic');
     });
 
-    it('refreshes the mobile workspace dropdown labels when the language changes and the screen rerenders', async () => {
+    it('refreshes the cockpit mode row labels when the language changes and the screen rerenders', async () => {
         translationPrefix = 'en';
         const mod = await import('../../../../app/(app)/settings/session');
         const SessionSettingsScreen = (mod.default as unknown as {
@@ -108,26 +120,27 @@ describe('Session settings mobile workspace experience', () => {
         }).type;
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
-        const readDropdownTitles = () => {
-            const dropdown = screen.findAllByType('DropdownMenu' as never).find(
-                (node) => node.props?.itemTrigger?.itemProps?.testID === 'settings-session-mobileWorkspaceExperience-trigger',
-            );
-            return dropdown?.props?.items?.map((item: { title: string }) => item.title) ?? [];
+        const readCockpitRowLabels = () => {
+            const item = screen.findRowByTitle(`${translationPrefix}:settingsSession.mobileWorkspaceExperience.title`);
+            return {
+                title: item?.props?.title,
+                subtitle: item?.props?.subtitle,
+            };
         };
 
-        expect(readDropdownTitles()).toEqual([
-            'en:settingsSession.mobileWorkspaceExperience.options.cockpitTitle',
-            'en:settingsSession.mobileWorkspaceExperience.options.classicTitle',
-        ]);
+        expect(readCockpitRowLabels()).toEqual({
+            title: 'en:settingsSession.mobileWorkspaceExperience.title',
+            subtitle: 'en:settingsSession.mobileWorkspaceExperience.options.cockpitSubtitle',
+        });
 
         translationPrefix = 'fr';
         await act(async () => {
             await screen.update(React.createElement(SessionSettingsScreen));
         });
 
-        expect(readDropdownTitles()).toEqual([
-            'fr:settingsSession.mobileWorkspaceExperience.options.cockpitTitle',
-            'fr:settingsSession.mobileWorkspaceExperience.options.classicTitle',
-        ]);
+        expect(readCockpitRowLabels()).toEqual({
+            title: 'fr:settingsSession.mobileWorkspaceExperience.title',
+            subtitle: 'fr:settingsSession.mobileWorkspaceExperience.options.cockpitSubtitle',
+        });
     });
 });

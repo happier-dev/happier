@@ -1,9 +1,7 @@
 import * as React from 'react';
-import { View, Platform, Pressable } from 'react-native';
-import { useRouter } from 'expo-router';
+import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Ionicons } from '@expo/vector-icons';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { FriendsView } from '@/components/navigation/shell/FriendsView';
 import { useHeaderHeight, useIsTablet } from '@/utils/platform/responsive';
@@ -26,9 +24,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     paddingHorizontal: 16,
   },
-  backButton: {
-    marginRight: 16,
-  },
   headerTitle: {
     fontSize: 17,
     color: theme.colors.header.tint,
@@ -38,8 +33,6 @@ const styles = StyleSheet.create((theme) => ({
 
 export default function FriendsPage() {
   const enabled = useRequireFriendsEnabled();
-  const router = useRouter();
-  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isTablet = useIsTablet();
   const headerHeight = useHeaderHeight();
@@ -54,19 +47,6 @@ export default function FriendsPage() {
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top }]}>
         <View style={[styles.headerContent, { height: headerHeight }]}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t('common.back')}
-            onPress={() => router.back()}
-            style={styles.backButton}
-            hitSlop={15}
-          >
-            <Ionicons
-              name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
-              size={24}
-              color={theme.colors.header.tint}
-            />
-          </Pressable>
           <Text style={styles.headerTitle}>{t('tabs.friends')}</Text>
         </View>
       </View>

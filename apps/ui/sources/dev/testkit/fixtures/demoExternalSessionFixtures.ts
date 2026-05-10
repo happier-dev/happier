@@ -1,21 +1,21 @@
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
-import type { DirectBrowseCandidate } from '@/components/sessions/external/browse/useDirectBrowseCandidates';
+import type { ExternalSessionBrowseCandidate } from '@/components/sessions/external/browse/useExternalSessionBrowseCandidates';
 
 const DEMO_MACHINE_ID = 'm-macbook-pro';
 const DEMO_PROJECT_PATH = '/Users/demo/code/happier';
 const DEMO_OPEN_CODE_VENDOR_SESSION_ID = 'sess_opencode_auth';
 const DEMO_NOW_MS = Date.parse('2026-04-24T12:00:00.000Z');
 
-export type CreateDemoDirectBrowseCandidateFixtureOptions = Partial<DirectBrowseCandidate> & Readonly<{
+export type CreateDemoExternalSessionBrowseCandidateFixtureOptions = Partial<ExternalSessionBrowseCandidate> & Readonly<{
     machineId?: string;
     path?: string;
-    source?: DirectSessionsSource;
+    source?: ExternalSessionsSource;
 }>;
 
-export function createDemoDirectBrowseCandidateFixture(
-    options: CreateDemoDirectBrowseCandidateFixtureOptions = {},
-): DirectBrowseCandidate {
+export function createDemoExternalSessionBrowseCandidateFixture(
+    options: CreateDemoExternalSessionBrowseCandidateFixtureOptions = {},
+): ExternalSessionBrowseCandidate {
     const {
         machineId = DEMO_MACHINE_ID,
         path = DEMO_PROJECT_PATH,

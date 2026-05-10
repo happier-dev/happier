@@ -19,7 +19,7 @@ enableReactActEnvironment();
 
 const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
-const openDirectSessionsResumeIdPickerModalMock = vi.hoisted(() => vi.fn<(args: unknown) => Promise<string | null>>(async () => 'session-picked'));
+const openExternalSessionsResumeIdPickerModalMock = vi.hoisted(() => vi.fn<(args: unknown) => Promise<string | null>>(async () => 'session-picked'));
 const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() =>
     vi.fn<(...args: unknown[]) => Promise<any>>(async () => ({ supported: false, reason: 'not-supported' })),
 );
@@ -36,7 +36,7 @@ const settingsState = vi.hoisted(() => ({
     value: {} as Record<string, unknown>,
 }));
 const featureState = vi.hoisted(() => ({
-    directSessionsEnabled: false,
+    externalSessionsEnabled: false,
 }));
 
 const resumeSelectionContentPropsRef = { current: null as NewSessionResumeSelectionContentProps | null };
@@ -84,12 +84,12 @@ vi.mock('@/components/sessions/new/components/NewSessionResumeSelectionContent',
     },
 }));
 
-vi.mock('@/components/sessions/external/browse/openDirectSessionsResumeIdPickerModal', () => ({
-    openDirectSessionsResumeIdPickerModal: (args: unknown) => openDirectSessionsResumeIdPickerModalMock(args),
+vi.mock('@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal', () => ({
+    openExternalSessionsResumeIdPickerModal: (args: unknown) => openExternalSessionsResumeIdPickerModalMock(args),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => featureId === 'sessions.direct' ? featureState.directSessionsEnabled : false,
+    useFeatureEnabled: (featureId: string) => featureId === 'sessions.direct' ? featureState.externalSessionsEnabled : false,
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
@@ -118,11 +118,11 @@ describe('ResumePickerScreen browse modal', () => {
         navigationMock.dispatch.mockClear();
         navigationMock.goBack.mockClear();
         navigationMock.setParams.mockClear();
-        openDirectSessionsResumeIdPickerModalMock.mockReset();
-        openDirectSessionsResumeIdPickerModalMock.mockResolvedValue('session-picked');
+        openExternalSessionsResumeIdPickerModalMock.mockReset();
+        openExternalSessionsResumeIdPickerModalMock.mockResolvedValue('session-picked');
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
-        featureState.directSessionsEnabled = false;
+        featureState.externalSessionsEnabled = false;
     });
 
     afterEach(() => {
@@ -130,7 +130,7 @@ describe('ResumePickerScreen browse modal', () => {
     });
 
     it('uses the shared resume browser modal instead of navigating to the resume browse route', async () => {
-        featureState.directSessionsEnabled = true;
+        featureState.externalSessionsEnabled = true;
         const ResumePickerScreen = (await import('@/app/(app)/new/pick/resume')).default;
 
         await renderScreen(React.createElement(ResumePickerScreen));
@@ -141,8 +141,8 @@ describe('ResumePickerScreen browse modal', () => {
         expect(typeof onBrowse).toBe('function');
         const result = await onBrowse?.();
 
-        expect(openDirectSessionsResumeIdPickerModalMock).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'directSessions.browseTitle',
+        expect(openExternalSessionsResumeIdPickerModalMock).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'externalSessions.browseTitle',
             lockScope: expect.objectContaining({
                 machineId: 'machine-2',
                 serverId: 'server-2',
@@ -163,7 +163,7 @@ describe('ResumePickerScreen browse modal', () => {
 
         const props = resumeSelectionContentPropsRef.current;
         expect(props?.resumeBrowse).toBeNull();
-        expect(openDirectSessionsResumeIdPickerModalMock).not.toHaveBeenCalled();
+        expect(openExternalSessionsResumeIdPickerModalMock).not.toHaveBeenCalled();
     });
 
     it('resolves configured ACP backend labels without reviving customAcp in the canonical agentType state', async () => {
@@ -257,7 +257,7 @@ describe('ResumePickerScreen browse modal', () => {
     });
 
     it('uses the projected runtime carrier when browsing direct sessions for a plugin backend', async () => {
-        featureState.directSessionsEnabled = true;
+        featureState.externalSessionsEnabled = true;
         routeParamsState.value = {
             backendTargetKey: 'backend:plugin-review-bot',
             currentResumeId: '',
@@ -302,7 +302,7 @@ describe('ResumePickerScreen browse modal', () => {
 
         const result = await props?.resumeBrowse?.onBrowse?.();
 
-        expect(openDirectSessionsResumeIdPickerModalMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(openExternalSessionsResumeIdPickerModalMock).toHaveBeenCalledWith(expect.objectContaining({
             lockScope: expect.objectContaining({
                 machineId: 'machine-plugin-3',
                 serverId: 'server-2',

@@ -6,6 +6,10 @@ import { useDesktopUpdater } from '@/desktop/updates/useDesktopUpdater';
 import { useChangelog } from '@/hooks/inbox/useChangelog';
 import { useUpdates } from '@/hooks/inbox/useUpdates';
 import { useNativeUpdate } from '@/hooks/ui/useNativeUpdate';
+import {
+    useReleaseNotesLauncher,
+    useReleaseNotesUnread,
+} from '@/changelog/releaseNotes';
 import { tLoose } from '@/text';
 
 import { buildAppUpdateStatusModel } from './buildAppUpdateStatusModel';
@@ -16,6 +20,8 @@ export function useAppUpdateStatus() {
     const desktop = useDesktopUpdater();
     const ota = useUpdates();
     const changelog = useChangelog();
+    const releaseNotes = useReleaseNotesUnread();
+    const releaseNotesLauncher = useReleaseNotesLauncher();
 
     const model = React.useMemo(
         () => buildAppUpdateStatusModel({
@@ -29,6 +35,9 @@ export function useAppUpdateStatus() {
             ota: {
                 isUpdatePending: ota.isUpdatePending,
             },
+            releaseNotes: {
+                hasUnread: releaseNotes.hasUnread,
+            },
             changelog: {
                 hasUnread: changelog.hasUnread,
             },
@@ -41,6 +50,7 @@ export function useAppUpdateStatus() {
             desktop.status,
             nativeUpdateUrl,
             ota.isUpdatePending,
+            releaseNotes.hasUnread,
         ],
     );
 
@@ -74,6 +84,12 @@ export function useAppUpdateStatus() {
             return;
         }
 
+        if (model.kind === 'release-notes') {
+            const opened = releaseNotesLauncher.open();
+            if (opened) return;
+            // Fall through to changelog if the modal could not open.
+        }
+
         router.push('/changelog');
         setTimeout(() => {
             changelog.markAsRead();
@@ -84,6 +100,7 @@ export function useAppUpdateStatus() {
         model,
         nativeUpdateUrl,
         ota.reloadApp,
+        releaseNotesLauncher,
         router,
     ]);
 

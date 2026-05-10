@@ -27,7 +27,6 @@ function createSnapshot(overrides: Partial<DesktopActivityOverlaySnapshot> = {})
         userQuestions: [],
         quotaSummaries: [],
         completionStates: [],
-        companion: createCompanionSnapshot(),
         primary: {
             serverId: 'server-1',
             sessionId: 'session-primary',
@@ -107,23 +106,6 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
 
     return {
         ...base,
-        ...overrides,
-    };
-}
-
-function createCompanionSnapshot(
-    overrides: Partial<DesktopActivityOverlaySnapshot['companion']> = {},
-): DesktopActivityOverlaySnapshot['companion'] {
-    return {
-        enabled: true,
-        pet: {
-            source: { kind: 'builtIn', petId: 'blink' },
-            displayName: 'Blink',
-        },
-        state: 'running',
-        attentionLevel: 'active',
-        reason: 'live_activity',
-        sessionId: 'session-primary',
         ...overrides,
     };
 }
@@ -255,29 +237,6 @@ describe('buildDesktopActivityOverlayModel', () => {
         expect(model.visible).toBe(false);
     });
 
-    it('carries companion state into the desktop overlay model', () => {
-        const model = buildDesktopActivityOverlayModel({
-            snapshot: createSnapshot({
-                companion: createCompanionSnapshot({
-                    state: 'waving',
-                    attentionLevel: 'needsAttention',
-                }),
-            } as Partial<DesktopActivityOverlaySnapshot>),
-            policy: createPolicy(),
-            isExpanded: true,
-        });
-
-        expect(model).toHaveProperty('companion', expect.objectContaining({
-            enabled: true,
-            state: 'waving',
-            attentionLevel: 'needsAttention',
-            interaction: 'expanded',
-            pet: expect.objectContaining({
-                source: { kind: 'builtIn', petId: 'blink' },
-            }),
-        }));
-    });
-
     it('stays hidden in active-session mode when only inactive attention counts remain', () => {
         const model = buildDesktopActivityOverlayModel({
             snapshot: createSnapshot({
@@ -383,6 +342,31 @@ describe('buildDesktopActivityOverlayModel', () => {
         });
 
         expect(model.visible).toBe(false);
+    });
+
+    it('does not auto-show for queued user input without real attention or completion state', () => {
+        const model = buildDesktopActivityOverlayModel({
+            snapshot: createSnapshot({
+                counts: {
+                    unread: 0,
+                    permissionRequired: 0,
+                    actionRequired: 0,
+                    queuedInput: 1,
+                    thinking: 0,
+                    totalAttention: 0,
+                },
+                completionStates: [],
+            }),
+            policy: createPolicy({
+                showWhenRunning: false,
+                showWhenAttentionRequired: false,
+                showWhenReady: true,
+            }),
+            isExpanded: false,
+        });
+
+        expect(model.visible).toBe(false);
+        expect(model.collapsed.slides?.[0]?.priority).not.toBe('ready');
     });
 
     it('stays visible in active-sessions mode when sessions exist even if every auto-show trigger is disabled', () => {
@@ -574,9 +558,9 @@ describe('buildDesktopActivityOverlayModel', () => {
                     unread: 0,
                     permissionRequired: 0,
                     actionRequired: 0,
-                    queuedInput: 1,
+                    queuedInput: 0,
                     thinking: 0,
-                    totalAttention: 1,
+                    totalAttention: 0,
                 },
                 completionStates: [
                     {

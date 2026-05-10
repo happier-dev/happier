@@ -47,6 +47,7 @@ import { configureBugReportUserActionTrail } from '@/utils/system/bugReportActio
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
+import { useWebBackdropBlurPreference } from '@/components/ui/overlays/useWebBackdropBlurPreference';
 import { usePierreDiffWorkerPoolWarmup } from '@/components/ui/code/diff/pierre/usePierreDiffWorkerPoolWarmup';
 import { initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
 import { t } from '@/text';
@@ -66,6 +67,8 @@ import { isTauriDesktop } from '@/utils/platform/tauri';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
+import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
+import { OnboardingShowcaseAutoShowMount } from '@/onboarding/showcase';
 
 initializeSentryOnce();
 installTauriMcpBridgeOnce();
@@ -670,6 +673,7 @@ function RootLayout() {
     const { theme } = useUnistyles();
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
     useWebUiFontScale();
+    useWebBackdropBlurPreference();
     usePierreDiffWorkerPoolWarmup();
     const navigationTheme = React.useMemo(() => {
         const background = isDesktopOverlayWindow ? 'transparent' : theme.colors.groupped.background;
@@ -822,6 +826,7 @@ function AppBoot(props: {
 
     const appShell = (
         <View style={{ flex: 1, position: 'relative' }}>
+            {!isDesktopOverlayWindow ? <OnboardingShowcaseAutoShowMount /> : null}
             {effectiveAppShellChromeHost === 'narrow-desktop-fallback' ? (
                 <DesktopFallbackShellChrome
                     chromeSafeArea={chromeSafeArea}
@@ -855,11 +860,13 @@ function AppBoot(props: {
                             <AppPaneModalProvider>
                                 <CommandPaletteProvider>
                                     <RealtimeProvider>
-                                        <HorizontalSafeAreaWrapper>
-                                            <MainAppTabStateProvider>
-                                                {appShell}
-                                            </MainAppTabStateProvider>
-                                        </HorizontalSafeAreaWrapper>
+                                        <ThemePreferenceTransitionHost>
+                                            <HorizontalSafeAreaWrapper>
+                                                <MainAppTabStateProvider>
+                                                    {appShell}
+                                                </MainAppTabStateProvider>
+                                            </HorizontalSafeAreaWrapper>
+                                        </ThemePreferenceTransitionHost>
                                     </RealtimeProvider>
                                 </CommandPaletteProvider>
                             </AppPaneModalProvider>

@@ -19,7 +19,7 @@ const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
 const localSettingsState = vi.hoisted(() => ({
     sessionsListStorageTab: 'persisted' as 'persisted' | 'direct',
 }));
-const directSessionsFeatureState = vi.hoisted(() => ({
+const externalSessionsFeatureState = vi.hoisted(() => ({
     enabled: false,
 }));
 
@@ -93,9 +93,9 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({
-        state: directSessionsFeatureState.enabled ? 'enabled' : 'disabled',
-        blockerCode: directSessionsFeatureState.enabled ? 'none' : 'feature_disabled',
-        blockedBy: directSessionsFeatureState.enabled ? null : 'local_policy',
+        state: externalSessionsFeatureState.enabled ? 'enabled' : 'disabled',
+        blockerCode: externalSessionsFeatureState.enabled ? 'none' : 'feature_disabled',
+        blockedBy: externalSessionsFeatureState.enabled ? null : 'local_policy',
         diagnostics: [],
         evaluatedAt: 0,
         featureId: 'sessions.direct',
@@ -118,8 +118,8 @@ vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
 }));
-vi.mock('@/components/sessions/shell/DirectSessionsEmptyState', () => ({
-    DirectSessionsEmptyState: 'DirectSessionsEmptyState',
+vi.mock('@/components/sessions/shell/ExternalSessionsEmptyState', () => ({
+    ExternalSessionsEmptyState: 'ExternalSessionsEmptyState',
 }));
 
 vi.mock('@/components/sessions/shell/SessionsList', () => ({
@@ -180,7 +180,7 @@ describe('MainView (tablet primary pane)', () => {
         buildPolicyState.decision = 'neutral';
         setSessionsListStorageTabSpy.mockReset();
         localSettingsState.sessionsListStorageTab = 'persisted';
-        directSessionsFeatureState.enabled = false;
+        externalSessionsFeatureState.enabled = false;
     });
 
     it('shows getting started guidance instead of a blank view', async () => {
@@ -194,13 +194,13 @@ describe('MainView (tablet primary pane)', () => {
 
     it('shows the direct sessions empty state in the primary pane when the direct tab is active', async () => {
         const { MainView } = await import('./MainView');
-        directSessionsFeatureState.enabled = true;
+        externalSessionsFeatureState.enabled = true;
         localSettingsState.sessionsListStorageTab = 'direct';
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="phone" />)).tree;
 
-        expect(() => tree!.findByType('DirectSessionsEmptyState')).not.toThrow();
+        expect(() => tree!.findByType('ExternalSessionsEmptyState')).not.toThrow();
         expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
     });
 

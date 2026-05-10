@@ -22,7 +22,7 @@ function getServerSourceGeneration(): string {
 }
 
 export function useActivityAttentionSource(): ActivityAttentionSource {
-    React.useSyncExternalStore(
+    const serverSourceGeneration = React.useSyncExternalStore(
         React.useCallback((listener) => {
             const unsubscribeProfiles = subscribeServerProfiles(listener);
             const unsubscribeActive = subscribeActiveServer(() => listener());
@@ -34,15 +34,20 @@ export function useActivityAttentionSource(): ActivityAttentionSource {
         getServerSourceGeneration,
         getServerSourceGeneration,
     );
-    const source = storage(useShallow((state) => ({
+    const storeSource = storage(useShallow((state) => ({
         isDataReady: state.isDataReady,
         sessionsById: state.sessions,
         sessionListRenderablesById: state.sessionListRenderables ?? EMPTY_RENDERABLES_BY_ID,
         sessionListIndexByServerId: state.sessionListIndexByServerId ?? EMPTY_INDEX_BY_SERVER_ID,
         concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId ?? EMPTY_CONCURRENT_CACHE_BY_SERVER_ID,
+    })));
+    const serverSource = React.useMemo(() => ({
         serverProfilesById: Object.fromEntries(listServerProfiles().map((profile) => [profile.id, profile])),
         activeServer: getActiveServerSnapshot(),
-    })));
+    }), [serverSourceGeneration]);
 
-    return React.useMemo(() => source, [source]);
+    return React.useMemo(() => ({
+        ...storeSource,
+        ...serverSource,
+    }), [serverSource, storeSource]);
 }

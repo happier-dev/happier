@@ -13,6 +13,7 @@ import {
     useOverlayPresence,
 } from '@/components/ui/overlays/motion/overlayMotion';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useLocalSetting } from '@/sync/domains/state/storage';
 import type {
     PopoverBackdropEffect,
     PopoverBackdropOptions,
@@ -164,6 +165,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     }
     const contentContainerRef = React.useRef<any>(null);
     const reducedMotion = useReducedMotionPreference();
+    const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
     const popoverMotionPreset = React.useMemo(
         () => resolveOverlayMotionPreset({ kind: 'popover' }),
         [],
@@ -1065,6 +1067,10 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         typeof backdrop === 'object' && backdrop
             ? (backdrop.effect ?? 'none')
             : 'none';
+    const resolvedBackdropEffect: PopoverBackdropEffect =
+        backdropEffect === 'blur' && !uiBackdropBlurEnabled
+            ? 'dim'
+            : backdropEffect;
     const backdropBlurOnWeb = typeof backdrop === 'object' && backdrop ? backdrop.blurOnWeb : undefined;
     const backdropSpotlight = typeof backdrop === 'object' && backdrop ? (backdrop.spotlight ?? false) : false;
     const backdropAnchorOverlay = typeof backdrop === 'object' && backdrop ? backdrop.anchorOverlay : undefined;
@@ -1143,7 +1149,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             <PopoverBackdrop
                 backdrop={backdropEnabled ? backdrop : false}
                 backdropBlocksOutsidePointerEvents={backdropBlocksOutsidePointerEvents}
-                backdropEffect={backdropEffect}
+                backdropEffect={resolvedBackdropEffect}
                 backdropBlurOnWeb={backdropBlurOnWeb}
                 backdropSpotlight={backdropSpotlight}
                 backdropAnchorOverlay={backdropAnchorOverlay}

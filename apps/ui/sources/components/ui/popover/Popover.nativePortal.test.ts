@@ -17,6 +17,21 @@ import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const localSettingState = vi.hoisted(() => ({
+    uiBackdropBlurEnabled: true,
+}));
+
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
+    return {
+        ...actual,
+        useLocalSetting: ((name: string) => {
+            if (name === 'uiBackdropBlurEnabled') return localSettingState.uiBackdropBlurEnabled;
+            return null;
+        }) as typeof import('@/sync/domains/state/storage')['useLocalSetting'],
+    };
+});
+
 const INITIAL_POSITIONING_TICKS = 3;
 
 async function flushInitialPositioning() {
@@ -64,6 +79,7 @@ describe('Popover (native portal)', () => {
         restorePopoverWebGlobals?.();
         restorePopoverWebGlobals = null;
         vi.useRealTimers();
+        localSettingState.uiBackdropBlurEnabled = true;
     });
 
     it('positions using anchor coordinates relative to the portal root when available (avoids iOS header/sheet offsets)', async () => {
@@ -677,6 +693,43 @@ describe('Popover (native portal)', () => {
         expect(overlayStyle.top).toBe(120);
         expect(overlayStyle.width).toBe(28);
         expect(overlayStyle.height).toBe(28);
+    });
+
+    it('falls back to a dim backdrop when blur is disabled in local appearance settings', async () => {
+        localSettingState.uiBackdropBlurEnabled = false;
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => {
+                    queueMicrotask(() => cb(100, 100, 20, 20));
+                },
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        tree = (await renderScreen(React.createElement(
+                    OverlayPortalProvider,
+                    null,
+                    React.createElement(Popover, {
+                        open: true,
+                        anchorRef,
+                        placement: 'bottom',
+                        portal: { native: true },
+                        onRequestClose: () => {},
+                        backdrop: { effect: 'blur' },
+                        children: () => React.createElement(PopoverChild),
+                    } as any),
+                    React.createElement(OverlayPortalHost),
+                ))).tree;
+
+        await act(async () => {
+            await flushInitialPositioning();
+        });
+
+        const blurNodes = tree?.root.findAllByType('BlurView' as any) ?? [];
+        expect(blurNodes).toHaveLength(0);
     });
 
 });

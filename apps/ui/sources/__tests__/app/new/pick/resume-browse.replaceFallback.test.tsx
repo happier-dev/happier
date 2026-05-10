@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type {
-    DirectSessionsBrowseInteraction,
-    DirectSessionsBrowseScopeLock,
-} from '@/components/sessions/external/browse/DirectSessionsBrowseScreen';
+    ExternalSessionsBrowseInteraction,
+    ExternalSessionsBrowseScopeLock,
+} from '@/components/sessions/external/browse/ExternalSessionsBrowseScreen';
 import {
     createNavigationMock,
     createRouterMock,
@@ -29,19 +29,19 @@ const routeParamsState = vi.hoisted(() => ({
 const settingsState = vi.hoisted(() => ({
     value: {} as Record<string, unknown>,
 }));
-const directBrowseSupportState = vi.hoisted(() => ({
+const externalSessionBrowseSupportState = vi.hoisted(() => ({
     supportedByProviderId: {} as Record<string, boolean>,
 }));
 const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() =>
     vi.fn<(...args: unknown[]) => Promise<any>>(async () => ({ supported: false, reason: 'not-supported' })),
 );
-type DirectSessionsBrowseScreenProps = Readonly<{
-    interaction?: DirectSessionsBrowseInteraction;
-    lockScope?: DirectSessionsBrowseScopeLock | null;
+type ExternalSessionsBrowseScreenProps = Readonly<{
+    interaction?: ExternalSessionsBrowseInteraction;
+    lockScope?: ExternalSessionsBrowseScopeLock | null;
     onPickRemoteSessionId?: (remoteSessionId: string) => void;
 }>;
 
-const browseScreenPropsRef = { current: null as DirectSessionsBrowseScreenProps | null };
+const browseScreenPropsRef = { current: null as ExternalSessionsBrowseScreenProps | null };
 
 installPickerCommonModuleMocks({
     reactNative: async () =>
@@ -79,17 +79,17 @@ installPickerCommonModuleMocks({
         }),
 });
 
-vi.mock('@/components/sessions/external/browse/DirectSessionsBrowseScreen', () => ({
-    DirectSessionsBrowseScreen: (props: Record<string, unknown>) => {
+vi.mock('@/components/sessions/external/browse/ExternalSessionsBrowseScreen', () => ({
+    ExternalSessionsBrowseScreen: (props: Record<string, unknown>) => {
         browseScreenPropsRef.current = props;
         return null;
     },
 }));
 
-vi.mock('@/components/sessions/external/browse/resolveDirectBrowseLockedSourceOption', () => ({
-    canBrowseDirectSessions: (providerId: string) => directBrowseSupportState.supportedByProviderId[providerId] ?? true,
-    resolveDirectBrowseLockedSource: (params: { providerId: string }) =>
-        (directBrowseSupportState.supportedByProviderId[params.providerId] ?? true) ? { kind: 'test' } : null,
+vi.mock('@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption', () => ({
+    canBrowseExternalSessions: (providerId: string) => externalSessionBrowseSupportState.supportedByProviderId[providerId] ?? true,
+    resolveExternalSessionBrowseLockedSource: (params: { providerId: string }) =>
+        (externalSessionBrowseSupportState.supportedByProviderId[params.providerId] ?? true) ? { kind: 'test' } : null,
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -113,7 +113,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
             spawnServerId: 'server-2',
         };
         settingsState.value = {};
-        directBrowseSupportState.supportedByProviderId = {};
+        externalSessionBrowseSupportState.supportedByProviderId = {};
         browseScreenPropsRef.current = null;
         routerMock.push.mockClear();
         routerMock.back.mockClear();
@@ -325,7 +325,7 @@ describe('ResumeBrowsePickerScreen replace fallback', () => {
                 'backend:plugin-review-bot': true,
             },
         };
-        directBrowseSupportState.supportedByProviderId = {
+        externalSessionBrowseSupportState.supportedByProviderId = {
             customAcp: false,
             claude: true,
         };

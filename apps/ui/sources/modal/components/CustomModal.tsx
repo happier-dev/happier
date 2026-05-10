@@ -49,6 +49,7 @@ function areChromeConfigsEqual(
             && areReactNodesStructurallyEqual(a.actions, b.actions)
             && areReactNodesStructurallyEqual(a.footer, b.footer)
             && a.scrollHost === b.scrollHost
+            && a.bodyScroll === b.bodyScroll
             && a.testID === b.testID
             && a.titleTestID === b.titleTestID
             && a.subtitleTestID === b.subtitleTestID
@@ -88,6 +89,7 @@ function mergeChromeConfig(
             actions: override.actions !== undefined ? override.actions : base.actions,
             footer: override.footer !== undefined ? override.footer : base.footer,
             scrollHost: override.scrollHost !== undefined ? override.scrollHost : base.scrollHost,
+            bodyScroll: override.bodyScroll !== undefined ? override.bodyScroll : base.bodyScroll,
             testID: override.testID !== undefined ? override.testID : base.testID,
             titleTestID: override.titleTestID !== undefined ? override.titleTestID : base.titleTestID,
             subtitleTestID: override.subtitleTestID !== undefined ? override.subtitleTestID : base.subtitleTestID,
@@ -142,6 +144,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, zIndexBase }
                     actions={chrome.actions}
                     footer={chrome.footer}
                     scrollHost={chrome.scrollHost}
+                    bodyScroll={chrome.bodyScroll ?? 'none'}
                     testID={chrome.testID}
                     titleTestID={chrome.titleTestID}
                     subtitleTestID={chrome.subtitleTestID}

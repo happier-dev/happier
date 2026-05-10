@@ -39,9 +39,9 @@ describe('control gradient theme tokens', () => {
 
     it('defines primary button gradients separately from color tokens used by non-fill consumers', () => {
         expect(lightTheme.colors.button.primary.background).toBe('#000000');
-        expect(lightTheme.colors.button.primary.gradient?.colors).toEqual(['#000000', '#171717']);
+        expect(lightTheme.colors.button.primary.gradient?.colors).toEqual(['#000000', '#020202']);
         expect(darkTheme.colors.button.primary.background).toBe('#1b1b1b');
-        expect(darkTheme.colors.button.primary.gradient?.colors).toEqual(['#1b1b1b', '#242424']);
+        expect(darkTheme.colors.button.primary.gradient?.colors).toEqual(['#1b1b1b', '#1d1d1d']);
     });
 
     it('keeps raised control gradients lighter at the top than the bottom', () => {
@@ -50,5 +50,10 @@ describe('control gradient theme tokens', () => {
             expectVerticalGradientToBeLighterAtTop(theme.colors.button.primary.gradient.colors);
             expectVerticalGradientToBeLighterAtTop(theme.colors.segmentedControl.activeGradient.colors);
         }
+    });
+
+    it('keeps wizard scrim aligned for modal and route overlays across light and dark themes', () => {
+        expect(lightTheme.colors.overlay.scrimWizard).toBe('rgba(255, 255, 255, 0.52)');
+        expect(darkTheme.colors.overlay.scrimWizard).toBe('rgba(0, 0, 0, 0.42)');
     });
 });

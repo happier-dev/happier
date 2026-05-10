@@ -121,6 +121,7 @@ describe('CustomModal', () => {
                 actions: chromeActions,
                 footer: chromeFooter,
                 scrollHost: 'body',
+                bodyScroll: 'auto',
                 closeButtonTestID: 'chrome-close',
                 dimensions: {
                     size: 'lg',
@@ -136,6 +137,7 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.actions).toBe(chromeActions);
         expect(modalCardFrame.props.footer).toBe(chromeFooter);
         expect(modalCardFrame.props.scrollHost).toBe('body');
+        expect(modalCardFrame.props.bodyScroll).toBe('auto');
         expect(modalCardFrame.props.closeButtonTestID).toBe('chrome-close');
         expect(screen.findByType(ChromeModal).props.label).toBe('browse');
 

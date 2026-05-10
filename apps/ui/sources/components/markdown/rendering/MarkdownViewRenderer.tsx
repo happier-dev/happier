@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 
 import type { Option } from '../MarkdownBlockView';
 import type { MarkdownStreamingMode } from '../streaming/useStreamingMarkdownBlocks';
@@ -37,7 +37,7 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
     }), [preparedMarkdown, props.streamingMode]);
     const streamingReveal = props.streamingMode === 'streaming' && props.streamingAnimated === true;
     const staticRenderPlaceholder = useDelayedStaticMarkdownRenderPlaceholder({
-        enabled: props.streamingMode === 'static' && props.markdown.trim().length > 0,
+        enabled: Platform.OS !== 'web' && props.streamingMode === 'static' && props.markdown.trim().length > 0,
         contentKey: props.markdown,
     });
 

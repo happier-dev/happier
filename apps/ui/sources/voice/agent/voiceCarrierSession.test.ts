@@ -741,7 +741,7 @@ describe('voiceConversationSession', () => {
       metadata: {
         path: '/tmp/.happier/voice-agent',
         machineId: 'm1',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'codex',
           machineId: 'm1',

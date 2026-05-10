@@ -29,7 +29,6 @@ type ActivityBadgeSessionOptions = Readonly<{
     showUnread: boolean;
     showPendingPermissionRequests: boolean;
     showPendingUserActionRequests: boolean;
-    showQueuedUserInput: boolean;
 }>;
 
 async function fetchServerBadgeCount(): Promise<number | null> {
@@ -49,8 +48,7 @@ async function fetchServerBadgeCount(): Promise<number | null> {
 function canUseServerBadgeSnapshot(options: ActivityBadgeSessionOptions): boolean {
     return options.showUnread
         && options.showPendingPermissionRequests
-        && options.showPendingUserActionRequests
-        && options.showQueuedUserInput;
+        && options.showPendingUserActionRequests;
 }
 
 export function ActivityBadgeRuntime(): React.ReactElement | null {
@@ -100,7 +98,6 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
                     showUnread: false,
                     showPendingPermissionRequests: false,
                     showPendingUserActionRequests: false,
-                    showQueuedUserInput: false,
                 },
                 localBadgeState: { count: 0, showNonNumericDot: false },
             };
@@ -111,7 +108,6 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
             showUnread: readyPlan.badgeBehavior.include,
             showPendingPermissionRequests: permissionPlan.badgeBehavior.include,
             showPendingUserActionRequests: userActionPlan.badgeBehavior.include,
-            showQueuedUserInput: deviceOverrides.badge.includeQueuedUserInput,
         };
         const overview = buildActivityOverviewFromSource({
             source: activitySource,

@@ -1,6 +1,6 @@
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol';
 
-import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 
 export const VOICE_CONVERSATION_SYSTEM_SESSION_KEY = 'voice_conversation';
@@ -28,7 +28,7 @@ export function resolveVoiceConversationSessionMetadataFromState(state: any, ses
 export function shouldRetireLegacyVoiceConversationSession(session: any): boolean {
     if (!session || typeof session !== 'object') return false;
     const metadata = 'metadata' in session ? session.metadata ?? null : session;
-    return readDirectSessionLink(metadata) !== null;
+    return readExternalSessionLink(metadata) !== null;
 }
 
 export function isReusableVoiceConversationRuntimeSession(session: any): boolean {

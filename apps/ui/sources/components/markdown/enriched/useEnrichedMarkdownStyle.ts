@@ -14,6 +14,7 @@ type ThemeColors = Readonly<{
     textLink: string;
     surfaceHigh: string;
     surfaceHighest: string;
+    surfaceSelected: string;
     divider: string;
 }>;
 
@@ -69,7 +70,7 @@ export function buildEnrichedMarkdownStyle(params: Readonly<{
 
     const baseFontSize = readNumber(flattenedTextStyle.fontSize, roundTo2(16 * uiFontScale));
     const baseLineHeight = readNumber(flattenedTextStyle.lineHeight, roundTo2(24 * uiFontScale));
-    const inlineCodeFontSize = roundTo2(baseFontSize * 0.92);
+    const inlineCodeFontSize = roundTo2(baseFontSize * 0.88);
     const baseColor = readString(flattenedTextStyle.color, params.colors.text);
     const defaultTypography = Typography.default();
     const semiBoldTypography = Typography.default('semiBold');
@@ -149,7 +150,7 @@ export function buildEnrichedMarkdownStyle(params: Readonly<{
             fontFamily: monoTypography.fontFamily,
             fontSize: inlineCodeFontSize,
             color: baseColor,
-            backgroundColor: params.profile === 'thinking' ? 'transparent' : params.colors.surfaceHigh,
+            backgroundColor: params.profile === 'thinking' ? 'transparent' : params.colors.surfaceSelected,
             borderColor: 'transparent',
         },
         codeBlock: {

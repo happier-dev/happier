@@ -7,7 +7,7 @@ import { useSessionMachineReachability } from '@/components/sessions/model/useSe
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useExecutionRunsBackendsForSession } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecutionRunsSupported';
-import { useSessionDirectSessionRuntime } from '@/components/sessions/model/useSessionDirectSessionRuntime';
+import { useSessionExternalSessionRuntime } from '@/components/sessions/model/useSessionExternalSessionRuntime';
 import { canLaunchExecutionRunsForSession } from '@/sync/domains/executionRuns/canLaunchExecutionRunsForSession';
 import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
@@ -33,7 +33,7 @@ export function useSessionExecutionRunLaunchability(
     const executionRunsSupported = useSessionExecutionRunsSupported(sessionId, sessionTargetServerId);
     const executionRunsBackends = useExecutionRunsBackendsForSession(sessionId, sessionTargetServerId);
     const { machineReachable } = useSessionMachineReachability(sessionId);
-    const directSessionRuntime = useSessionDirectSessionRuntime({
+    const externalSessionRuntime = useSessionExternalSessionRuntime({
         sessionId,
         metadata: session?.metadata,
     });
@@ -60,14 +60,14 @@ export function useSessionExecutionRunLaunchability(
         if (session?.active === false && allowWhileInactive !== true) {
             return false;
         }
-        if (directSessionRuntime.directSessionLink !== null && directSessionRuntime.status?.runnerActive !== true) {
+        if (externalSessionRuntime.externalSessionLink !== null && externalSessionRuntime.status?.runnerActive !== true) {
             return false;
         }
         return true;
     }, [
         allowWhileInactive,
-        directSessionRuntime.directSessionLink,
-        directSessionRuntime.status?.runnerActive,
+        externalSessionRuntime.externalSessionLink,
+        externalSessionRuntime.status?.runnerActive,
         executionRunsEnabled,
         session?.active,
     ]);
@@ -77,12 +77,12 @@ export function useSessionExecutionRunLaunchability(
         executionRunsSupported,
         executionRunsBackends,
         allowWhileInactive,
-        hasDirectSessionLink: directSessionRuntime.directSessionLink !== null,
-        directSessionRunnerActive: directSessionRuntime.status?.runnerActive,
+        hasExternalSessionLink: externalSessionRuntime.externalSessionLink !== null,
+        externalSessionRunnerActive: externalSessionRuntime.status?.runnerActive,
     }), [
         allowWhileInactive,
-        directSessionRuntime.directSessionLink,
-        directSessionRuntime.status?.runnerActive,
+        externalSessionRuntime.externalSessionLink,
+        externalSessionRuntime.status?.runnerActive,
         executionRunsBackends,
         executionRunsSupported,
         session,

@@ -29,11 +29,11 @@ const settingsState = vi.hoisted(() => ({
     } as Record<string, unknown>,
 }));
 
-type DirectSessionsBrowseScreenProps = Readonly<{
+type ExternalSessionsBrowseScreenProps = Readonly<{
     lockScope?: Record<string, unknown> | null;
 }>;
 
-const browseScreenPropsRef = { current: null as DirectSessionsBrowseScreenProps | null };
+const browseScreenPropsRef = { current: null as ExternalSessionsBrowseScreenProps | null };
 
 installPickerCommonModuleMocks({
     reactNative: async () =>
@@ -71,16 +71,16 @@ installPickerCommonModuleMocks({
     unistyles: async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 });
 
-vi.mock('@/components/sessions/external/browse/DirectSessionsBrowseScreen', () => ({
-    DirectSessionsBrowseScreen: (props: Record<string, unknown>) => {
+vi.mock('@/components/sessions/external/browse/ExternalSessionsBrowseScreen', () => ({
+    ExternalSessionsBrowseScreen: (props: Record<string, unknown>) => {
         browseScreenPropsRef.current = props;
         return null;
     },
 }));
 
-vi.mock('@/components/sessions/external/browse/resolveDirectBrowseLockedSourceOption', () => ({
-    canBrowseDirectSessions: () => true,
-    resolveDirectBrowseLockedSource: () => ({ kind: 'test' }),
+vi.mock('@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption', () => ({
+    canBrowseExternalSessions: () => true,
+    resolveExternalSessionBrowseLockedSource: () => ({ kind: 'test' }),
 }));
 
 vi.mock('@/sync/store/hooks', () => ({

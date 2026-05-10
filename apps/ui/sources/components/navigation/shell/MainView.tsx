@@ -11,7 +11,7 @@ import { InboxView } from '@/components/navigation/shell/InboxView';
 import { FriendsView } from '@/components/navigation/shell/FriendsView';
 import { SessionsListWrapper } from '@/components/sessions/shell/SessionsListWrapper';
 import { ProjectsListView } from '@/components/projects/ProjectsListView';
-import { DirectSessionsEmptyState } from '@/components/sessions/shell/DirectSessionsEmptyState';
+import { ExternalSessionsEmptyState } from '@/components/sessions/shell/ExternalSessionsEmptyState';
 import { Header } from '@/components/navigation/Header';
 import { HeaderLogo } from '@/components/ui/navigation/HeaderLogo';
 import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
@@ -212,7 +212,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
 
 export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { theme } = useUnistyles();
-    const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const { externalSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
     const isTablet = useIsTablet();
     const router = useRouter();
 
@@ -223,7 +223,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     if (variant === 'sidebar') {
         const storageChrome = (
             <SessionsListStorageChrome
-                directSessionsEnabled={directSessionsEnabled}
+                externalSessionsEnabled={externalSessionsEnabled}
                 storageKind={storageKind}
                 onSelectStorageKind={setStorageKind}
             />
@@ -244,7 +244,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
 
     return (
         <PhoneMainView
-            directSessionsEnabled={directSessionsEnabled}
+            externalSessionsEnabled={externalSessionsEnabled}
             storageKind={storageKind}
             isTablet={isTablet}
             themeGroupedBackground={theme.colors.groupped.background}
@@ -253,7 +253,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
 });
 
 const PhoneMainView = React.memo((props: Readonly<{
-    directSessionsEnabled: boolean;
+    externalSessionsEnabled: boolean;
     storageKind: 'persisted' | 'direct';
     isTablet: boolean;
     themeGroupedBackground: string;
@@ -301,10 +301,10 @@ const PhoneMainView = React.memo((props: Readonly<{
     if (props.isTablet) {
         const buildPolicyDecision = getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID);
         if (buildPolicyDecision !== 'deny') {
-            if (props.directSessionsEnabled && props.storageKind === 'direct') {
+            if (props.externalSessionsEnabled && props.storageKind === 'direct') {
                 return (
                     <View style={styles.primaryPaneFallback}>
-                        <DirectSessionsEmptyState surface="primaryPane" />
+                        <ExternalSessionsEmptyState surface="primaryPane" />
                     </View>
                 );
             }

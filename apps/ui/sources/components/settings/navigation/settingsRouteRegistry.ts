@@ -79,6 +79,7 @@ const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefinition[
     { name: 'server', titleKey: 'server.serverConfiguration' },
     { name: 'session', titleKey: 'settings.sessions' },
     { name: 'session/handoff', titleKey: 'settingsSession.handoff.title' },
+    { name: 'session/new-session-wizard', titleKey: 'settingsSession.sessionCreation.wizardDispositionTitle' },
     { name: 'session/permissions', titleKey: 'settingsSession.permissions.title' },
     { name: 'session/tool-rendering', titleKey: 'settingsSession.toolRendering.title' },
     { name: 'session/transcript', titleKey: 'settingsSession.transcript.title' },

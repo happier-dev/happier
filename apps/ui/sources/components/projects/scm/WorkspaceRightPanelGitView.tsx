@@ -21,15 +21,22 @@ import { WorkspaceScmSubTabsBar, type GitSubTabId } from '@/components/workspace
 import { WorkspaceScmHistoryTab } from '@/components/workspaces/scm/WorkspaceScmHistoryTab';
 import { WorkspaceScmUpdateTab } from '@/components/workspaces/scm/WorkspaceScmUpdateTab';
 import { SourceControlBranchIntegrationSection } from '@/components/workspaces/scm/update/SourceControlBranchIntegrationSection';
+import { SourceControlPullRequestSection } from '@/components/workspaces/scm/update/SourceControlPullRequestSection';
+import { SourceControlPublishRepositorySection } from '@/components/workspaces/scm/update/SourceControlPublishRepositorySection';
 import { SourceControlRemotesSection } from '@/components/workspaces/scm/update/SourceControlRemotesSection';
 import {
+    machineScmBranchCreate,
     machineScmBranchMerge,
     machineScmBranchOperationAbort,
     machineScmBranchOperationContinue,
     machineScmBranchRebase,
+    machineScmHostingRepositoryDescribePublishTargets,
+    machineScmHostingRepositoryPublish,
+    machineScmPullRequestOpenOrReuse,
     machineScmRemoteAdd,
     machineScmRemoteRemove,
     machineScmRemoteSetUrl,
+    machineScmRepositoryInit,
 } from '@/sync/ops/scm/machineScm';
 import type { ScmOperationErrorCode } from '@happier-dev/protocol';
 import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
@@ -209,7 +216,9 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         snapshot,
     ]);
 
-    const showUpdateTab = remoteActions.length > 0;
+    const showUpdateTab = remoteActions.length > 0
+        || snapshot?.capabilities?.readPullRequestStatus === true
+        || snapshot?.capabilities?.readHostingRepositoryPublishTargets === true;
     const tabs = React.useMemo(() => {
         return [
             { id: 'commit' as const, label: t('files.toolbar.changedFiles') },
@@ -350,6 +359,38 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         }),
         [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
     );
+    const initializeRepository = React.useCallback(
+        () => machineScmRepositoryInit(scope.machineId, { cwd: scope.rootPath }),
+        [scope.machineId, scope.rootPath],
+    );
+    const openOrReusePullRequest = React.useCallback(
+        (request: { base: string; head: string }) => machineScmPullRequestOpenOrReuse(scope.machineId, {
+            cwd: scope.rootPath,
+            ...request,
+        }),
+        [scope.machineId, scope.rootPath],
+    );
+    const createFeatureBranch = React.useCallback(
+        (request: { name: string; checkout: true; startPoint?: string }) => machineScmBranchCreate(scope.machineId, {
+            cwd: scope.rootPath,
+            ...request,
+        }),
+        [scope.machineId, scope.rootPath],
+    );
+    const describePublishTargets = React.useCallback(
+        () => machineScmHostingRepositoryDescribePublishTargets(scope.machineId, {
+            cwd: scope.rootPath,
+            providerKind: 'github',
+        }),
+        [scope.machineId, scope.rootPath],
+    );
+    const publishRepository = React.useCallback(
+        (request: Parameters<typeof machineScmHostingRepositoryPublish>[1]) => machineScmHostingRepositoryPublish(scope.machineId, {
+            cwd: scope.rootPath,
+            ...request,
+        }),
+        [scope.machineId, scope.rootPath],
+    );
 
     if (error && !snapshot) {
         return (
@@ -372,7 +413,14 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         );
     }
     if (snapshot && snapshot.repo.isRepo === false) {
-        return <NotSourceControlRepositoryState />;
+        return (
+            <NotSourceControlRepositoryState
+                canInitializeRepository={scmWriteEnabled && snapshot.capabilities?.writeRepositoryInit === true}
+                initializeRepositoryBusy={scmOperationBusy}
+                onInitializeRepository={initializeRepository}
+                onRefresh={refresh}
+            />
+        );
     }
 
     return (
@@ -412,6 +460,24 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                         />
                     )}
                 >
+                    <SourceControlPullRequestSection
+                        theme={theme}
+                        snapshot={snapshot}
+                        disabled={scmOperationBusy}
+                        onOpenOrReuse={openOrReusePullRequest}
+                        onCreateFeatureBranch={createFeatureBranch}
+                        onRefresh={refresh}
+                    />
+                    <SourceControlPublishRepositorySection
+                        theme={theme}
+                        snapshot={snapshot}
+                        writeEnabled={scmWriteEnabled}
+                        disabled={scmOperationBusy}
+                        publishTargets={null}
+                        onDescribePublishTargets={describePublishTargets}
+                        onPublishRepository={publishRepository}
+                        onRefresh={refresh}
+                    />
                     <SourceControlRemotesSection
                         theme={theme}
                         snapshot={snapshot}

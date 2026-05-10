@@ -8,7 +8,6 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 import type { ConnectedServiceQuotaSummary } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 
 import { buildDesktopActivityOverlaySnapshot } from './buildDesktopActivityOverlaySnapshot';
-import type { DesktopActivityOverlayCompanionSnapshotInput } from './snapshot/buildDesktopActivityOverlayCompanionSnapshot';
 import type { DesktopActivityOverlaySource } from '../runtime/useDesktopActivityOverlaySource';
 
 function createDesktopPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOverlayPolicy {
@@ -63,21 +62,8 @@ function createOverlaySource(params: Readonly<{
     };
 }
 
-function createCompanionInput(
-    overrides: Partial<DesktopActivityOverlayCompanionSnapshotInput> = {},
-): DesktopActivityOverlayCompanionSnapshotInput {
-    return {
-        enabled: true,
-        pet: {
-            source: { kind: 'builtIn', petId: 'blink' },
-            displayName: 'Blink',
-        },
-        ...overrides,
-    };
-}
-
 describe('buildDesktopActivityOverlaySnapshot', () => {
-    it('does not synthesize a visible companion when the companion policy is omitted', () => {
+    it('keeps the activity snapshot focused on the selected desktop activity session', () => {
         const snapshot = buildDesktopActivityOverlaySnapshot({
             source: createOverlaySource({
                 sessions: [
@@ -96,12 +82,8 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             nowMs: 1_000,
         });
 
-        expect(snapshot.companion).toEqual(expect.objectContaining({
-            enabled: false,
-            state: 'idle',
-            attentionLevel: 'idle',
-            sessionId: null,
-        }));
+        expect(snapshot.primary?.sessionId).toBe('permission-without-companion-policy');
+        expect(snapshot.state).toBe('content');
     });
 
     it('keeps active-session overlays focused on active sessions even when auto-show triggers are disabled', () => {
@@ -311,7 +293,6 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             desktopPolicy: createDesktopPolicy({
                 visibilityMode: 'active_sessions',
             }),
-            companion: createCompanionInput(),
             nowMs: 1_000,
         });
 
@@ -470,7 +451,6 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             desktopPolicy: createDesktopPolicy({
                 visibilityMode: 'active_sessions',
             }),
-            companion: createCompanionInput(),
             nowMs: 1_000,
         });
         const model = buildDesktopActivityOverlayModel({
@@ -623,59 +603,4 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
         expect(snapshot.completionStates).toEqual([]);
     });
 
-    it('maps a selected permission request to a waiting companion state', () => {
-        const snapshot = buildDesktopActivityOverlaySnapshot({
-            source: createOverlaySource({
-                sessions: [
-                    createSessionFixture({
-                        id: 'permission-companion',
-                        active: true,
-                        presence: 'online',
-                        pendingPermissionRequestCount: 1,
-                        metadata: {
-                            path: '/Users/tester/project/permission-companion',
-                            host: 'tester.local',
-                            homeDir: '/Users/tester',
-                            summary: { text: 'Permission companion work', updatedAt: 3 },
-                        },
-                    }),
-                ],
-            }),
-            activityPolicy: resolveActivitySurfacePolicy({}),
-            desktopPolicy: createDesktopPolicy({
-                visibilityMode: 'active_sessions',
-            }),
-            companion: createCompanionInput(),
-            nowMs: 1_000,
-        });
-
-        expect(snapshot).toHaveProperty('companion', expect.objectContaining({
-            enabled: true,
-            state: 'waiting',
-            attentionLevel: 'needsAttention',
-            reason: 'waiting',
-            sessionId: 'permission-companion',
-        }));
-    });
-
-    it('keeps the companion idle when the overlay has no selected activity session', () => {
-        const snapshot = buildDesktopActivityOverlaySnapshot({
-            source: createOverlaySource({
-                sessions: [],
-            }),
-            activityPolicy: resolveActivitySurfacePolicy({}),
-            desktopPolicy: createDesktopPolicy({
-                visibilityMode: 'always_when_enabled',
-            }),
-            companion: createCompanionInput(),
-            nowMs: 1_000,
-        });
-
-        expect(snapshot).toHaveProperty('companion', expect.objectContaining({
-            enabled: true,
-            state: 'idle',
-            attentionLevel: 'idle',
-            sessionId: null,
-        }));
-    });
 });

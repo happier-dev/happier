@@ -3,6 +3,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { View, Platform } from 'react-native';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
+import {
+    DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
+    type CodingPromptBehaviorV1,
+} from '@happier-dev/protocol';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -18,7 +22,6 @@ import type { BusySteerSendPolicy, MessageSendMode } from '@/sync/domains/sessio
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
-import { normalizeMobileWorkspaceExperience } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
 
 export default React.memo(function SessionSettingsScreen() {
     const { theme } = useUnistyles();
@@ -36,6 +39,9 @@ export default React.memo(function SessionSettingsScreen() {
 
     const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
     const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
+    const [codingPromptBehavior, setCodingPromptBehavior] = useSettingMutable('codingPromptBehaviorV1');
+    const [rememberLastProjectSessionSelections, setRememberLastProjectSessionSelections] = useSettingMutable('rememberLastProjectSessionSelections');
+    const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
 
     const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
     const [agentInputEnterToSendNative, setAgentInputEnterToSendNative] = useSettingMutable('agentInputEnterToSendNative');
@@ -73,7 +79,6 @@ export default React.memo(function SessionSettingsScreen() {
     const [openGroupingMenu, setOpenGroupingMenu] = React.useState<null | 'active' | 'inactive'>(null);
     const [openSessionListDensityMenu, setOpenSessionListDensityMenu] = React.useState(false);
     const [openSessionListOrderingModeMenu, setOpenSessionListOrderingModeMenu] = React.useState(false);
-    const [openMobileWorkspaceExperienceMenu, setOpenMobileWorkspaceExperienceMenu] = React.useState(false);
     const [openWindowsRemoteSessionLaunchModeMenu, setOpenWindowsRemoteSessionLaunchModeMenu] = React.useState(false);
     const enterToSendEnabled = Platform.OS === 'web' ? agentInputEnterToSend : agentInputEnterToSendNative;
     const setEnterToSendEnabled = Platform.OS === 'web' ? setAgentInputEnterToSend : setAgentInputEnterToSendNative;
@@ -82,6 +87,26 @@ export default React.memo(function SessionSettingsScreen() {
             ? t('settingsFeatures.enterToSendEnabled')
             : t('settingsSession.inputBehavior.enterToSendEnabledNativeSubtitle')
         : t('settingsFeatures.enterToSendDisabled');
+    const rememberProjectSelectionsEnabled = rememberLastProjectSessionSelections !== false;
+    const normalizedCodingPromptBehavior = React.useMemo<CodingPromptBehaviorV1>(() => {
+        const raw = codingPromptBehavior && typeof codingPromptBehavior === 'object' && !Array.isArray(codingPromptBehavior)
+            ? codingPromptBehavior as Partial<CodingPromptBehaviorV1>
+            : {};
+        return {
+            ...DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
+            ...(raw.sessionTitleUpdates === 'disabled' ? { sessionTitleUpdates: 'disabled' as const } : {}),
+            ...(raw.responseOptions === 'disabled' ? { responseOptions: 'disabled' as const } : {}),
+        };
+    }, [codingPromptBehavior]);
+    const setCodingPromptBehaviorField = React.useCallback(
+        (key: keyof Pick<CodingPromptBehaviorV1, 'sessionTitleUpdates' | 'responseOptions'>, enabled: boolean) => {
+            setCodingPromptBehavior({
+                ...normalizedCodingPromptBehavior,
+                [key]: enabled ? 'agent' : 'disabled',
+            } as any);
+        },
+        [normalizedCodingPromptBehavior, setCodingPromptBehavior],
+    );
 
     const groupingMenuItems = React.useMemo(() => [
         {
@@ -127,24 +152,6 @@ export default React.memo(function SessionSettingsScreen() {
         if (itemId !== 'detailed' && itemId !== 'cozy' && itemId !== 'narrow') return;
         setSessionListDensity(itemId);
     }, [setSessionListDensity]);
-
-    const mobileWorkspaceExperienceItems = React.useMemo(() => [
-        {
-            id: 'cockpit',
-            title: t('settingsSession.mobileWorkspaceExperience.options.cockpitTitle'),
-            subtitle: t('settingsSession.mobileWorkspaceExperience.options.cockpitSubtitle'),
-        },
-        {
-            id: 'classic',
-            title: t('settingsSession.mobileWorkspaceExperience.options.classicTitle'),
-            subtitle: t('settingsSession.mobileWorkspaceExperience.options.classicSubtitle'),
-        },
-    ], [preferredLanguage]);
-
-    const handleMobileWorkspaceExperienceSelect = React.useCallback((itemId: string) => {
-        if (itemId !== 'cockpit' && itemId !== 'classic') return;
-        setMobileWorkspaceExperience(itemId);
-    }, [setMobileWorkspaceExperience]);
 
     const sessionListOrderingModeItems = React.useMemo(() => [
         {
@@ -233,6 +240,52 @@ export default React.memo(function SessionSettingsScreen() {
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
+            <ItemGroup title={t('settingsSession.sessionCreation.title')} footer={t('settingsSession.sessionCreation.footer')}>
+                <Item
+                    testID="settings-new-session-wizard-mode"
+                    title={t('settingsSession.sessionCreation.wizardModeTitle')}
+                    subtitle={t(
+                        useEnhancedSessionWizard
+                            ? 'settingsSession.sessionCreation.wizardModeEnabledSubtitle'
+                            : 'settingsSession.sessionCreation.wizardModeDisabledSubtitle',
+                    )}
+                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.purple} />}
+                    rightElement={
+                        <Switch
+                            value={Boolean(useEnhancedSessionWizard)}
+                            onValueChange={(next) => setUseEnhancedSessionWizard(Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setUseEnhancedSessionWizard(!useEnhancedSessionWizard)}
+                />
+                {useEnhancedSessionWizard ? (
+                    <Item
+                        title={t('settingsSession.sessionCreation.wizardDispositionTitle')}
+                        subtitle={t('settingsSession.sessionCreation.wizardDispositionSubtitle')}
+                        icon={<Ionicons name="grid-outline" size={29} color={theme.colors.accent.indigo} />}
+                        onPress={() => router.push('/settings/session/new-session-wizard')}
+                    />
+                ) : null}
+                <Item
+                    title={t('settingsSession.sessionCreation.rememberLastProjectSelectionsTitle')}
+                    subtitle={t(
+                        rememberProjectSelectionsEnabled
+                            ? 'settingsSession.sessionCreation.rememberLastProjectSelectionsEnabledSubtitle'
+                            : 'settingsSession.sessionCreation.rememberLastProjectSelectionsDisabledSubtitle',
+                    )}
+                    icon={<Ionicons name="copy-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={rememberProjectSelectionsEnabled}
+                            onValueChange={(next) => setRememberLastProjectSessionSelections(Boolean(next) as any)}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setRememberLastProjectSessionSelections((!rememberProjectSelectionsEnabled) as any)}
+                />
+            </ItemGroup>
+
             <ItemGroup title={t('settingsSession.sessionList.title')} footer={t('settingsSession.sessionList.footer')}>
                 <Item
                     title={t('settingsSession.sessionList.tagsTitle')}
@@ -262,27 +315,6 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={sessionListDensityItems}
                     onSelect={handleSessionListDensitySelect}
-                />
-                <DropdownMenu
-                    open={openMobileWorkspaceExperienceMenu}
-                    onOpenChange={setOpenMobileWorkspaceExperienceMenu}
-                    variant="selectable"
-                    search={false}
-                    selectedId={normalizeMobileWorkspaceExperience(mobileWorkspaceExperience)}
-                    showCategoryTitles={false}
-                    matchTriggerWidth={true}
-                    connectToTrigger={true}
-                    rowKind="item"
-                    popoverBoundaryRef={popoverBoundaryRef}
-                    itemTrigger={{
-                        title: t('settingsSession.mobileWorkspaceExperience.title'),
-                        subtitle: t('settingsSession.mobileWorkspaceExperience.subtitle'),
-                        icon: <Ionicons name="phone-portrait-outline" size={29} color={theme.colors.accent.indigo} />,
-                        showSelectedSubtitle: false,
-                        itemProps: { testID: 'settings-session-mobileWorkspaceExperience-trigger' },
-                    }}
-                    items={mobileWorkspaceExperienceItems}
-                    onSelect={handleMobileWorkspaceExperienceSelect}
                 />
                 <DropdownMenu
                     open={openSessionListOrderingModeMenu}
@@ -365,6 +397,75 @@ export default React.memo(function SessionSettingsScreen() {
                     }
                     disabled={!panelsSupported || !uiMultiPanePanelsEnabled}
                     showChevron={false}
+                />
+            </ItemGroup>
+
+            <ItemGroup
+                title={t('settingsSession.mobileWorkspaceExperience.groupTitle')}
+                footer={t('settingsSession.mobileWorkspaceExperience.groupFooter')}
+            >
+                <Item
+                    title={t('settingsSession.mobileWorkspaceExperience.title')}
+                    subtitle={mobileWorkspaceExperience === 'classic'
+                        ? t('settingsSession.mobileWorkspaceExperience.options.classicSubtitle')
+                        : t('settingsSession.mobileWorkspaceExperience.options.cockpitSubtitle')}
+                    icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-mobileWorkspaceExperience-switch"
+                            value={mobileWorkspaceExperience !== 'classic'}
+                            onValueChange={(enabled) => setMobileWorkspaceExperience(enabled ? 'cockpit' : 'classic')}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setMobileWorkspaceExperience(mobileWorkspaceExperience === 'classic' ? 'cockpit' : 'classic')}
+                    testID="settings-session-mobileWorkspaceExperience-trigger"
+                />
+            </ItemGroup>
+
+            <ItemGroup
+                title={t('settingsSession.promptPersonalization.title')}
+                footer={t('settingsSession.promptPersonalization.footer')}
+            >
+                <Item
+                    title={t('settingsSession.promptPersonalization.askAgentToRenameSessionsTitle')}
+                    subtitle={t(
+                        normalizedCodingPromptBehavior.sessionTitleUpdates === 'agent'
+                            ? 'settingsSession.promptPersonalization.askAgentToRenameSessionsEnabledSubtitle'
+                            : 'settingsSession.promptPersonalization.askAgentToRenameSessionsDisabledSubtitle',
+                    )}
+                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            value={normalizedCodingPromptBehavior.sessionTitleUpdates === 'agent'}
+                            onValueChange={(next) => setCodingPromptBehaviorField('sessionTitleUpdates', Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setCodingPromptBehaviorField(
+                        'sessionTitleUpdates',
+                        normalizedCodingPromptBehavior.sessionTitleUpdates !== 'agent',
+                    )}
+                />
+                <Item
+                    title={t('settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsTitle')}
+                    subtitle={t(
+                        normalizedCodingPromptBehavior.responseOptions === 'agent'
+                            ? 'settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsEnabledSubtitle'
+                            : 'settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsDisabledSubtitle',
+                    )}
+                    icon={<Ionicons name="list-circle-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={normalizedCodingPromptBehavior.responseOptions === 'agent'}
+                            onValueChange={(next) => setCodingPromptBehaviorField('responseOptions', Boolean(next))}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setCodingPromptBehaviorField(
+                        'responseOptions',
+                        normalizedCodingPromptBehavior.responseOptions !== 'agent',
+                    )}
                 />
             </ItemGroup>
 

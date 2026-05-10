@@ -11,22 +11,18 @@ import { t } from '@/text';
 
 import type { DesktopActivityOverlaySource } from '../runtime/useDesktopActivityOverlaySource';
 import type { DesktopOverlayPolicy } from '../runtime/resolveDesktopOverlayPolicy';
-import { buildDesktopActivityOverlayCompanionSnapshot } from './snapshot/buildDesktopActivityOverlayCompanionSnapshot';
 import { resolveDesktopOverlaySelectionSpec } from '../runtime/resolveDesktopOverlaySelectionSpec';
 import { buildDesktopActivityOverlayCompletionSnapshots } from './snapshot/buildDesktopActivityOverlayCompletionSnapshots';
 import { buildDesktopActivityOverlayOverviewFromSource } from './snapshot/buildDesktopActivityOverlayOverviewFromSource';
 import { buildDesktopActivityOverlayQuotaSummarySnapshots } from './snapshot/buildDesktopActivityOverlayQuotaSummarySnapshots';
 import { buildDesktopActivityOverlayRequestSnapshots } from './snapshot/buildDesktopActivityOverlayRequestSnapshots';
 import type {
-    DesktopActivityOverlayCompanionSnapshot,
     DesktopActivityOverlaySnapshot,
     DesktopActivityOverlaySnapshotLabels,
     DesktopActivityOverlaySessionSnapshot,
 } from './snapshot/desktopActivityOverlaySnapshotTypes';
-import type { DesktopActivityOverlayCompanionSnapshotInput } from './snapshot/buildDesktopActivityOverlayCompanionSnapshot';
 
 export type {
-    DesktopActivityOverlayCompanionSnapshot,
     DesktopActivityOverlayCompletionStateSnapshot,
     DesktopActivityOverlayQuotaSummarySnapshot,
     DesktopActivityOverlayRequestSnapshot,
@@ -113,7 +109,6 @@ export function buildDesktopActivityOverlaySnapshot(params: Readonly<{
     sourceOverview?: ActivityOverviewSnapshot;
     activityPolicy: ActivitySurfacePolicy;
     desktopPolicy: DesktopOverlayPolicy;
-    companion?: DesktopActivityOverlayCompanionSnapshotInput;
     previousPrimarySessionId?: string | null;
     previousPrimaryChangedAtMs?: number | null;
     nowMs?: number;
@@ -160,10 +155,6 @@ export function buildDesktopActivityOverlaySnapshot(params: Readonly<{
         serverIdBySessionId,
         nowMs,
     });
-    const companion = buildDesktopActivityOverlayCompanionSnapshot({
-        selectedSessions: slots.selectedSessions,
-        companion: params.companion,
-    });
     const state = slots.selectedSessions.length > 0 ? 'content' : 'idle';
 
     return {
@@ -178,7 +169,6 @@ export function buildDesktopActivityOverlaySnapshot(params: Readonly<{
         userQuestions: requestSnapshots.userQuestions,
         quotaSummaries,
         completionStates,
-        companion,
         defaultTarget: resolvePrimaryActivitySurfaceTarget(
             params.activityPolicy,
             desktopSessions[0]?.sessionId ?? null,

@@ -38,6 +38,9 @@ export const Platform = {
     OS: 'node',
     select: (x: any) => x?.default ?? x?.web ?? x?.native ?? x?.ios ?? x?.android,
 } as const;
+export const I18nManager = {
+    isRTL: false,
+} as const;
 export const AppState = {
     currentState: 'active',
     addEventListener: () => ({ remove: () => {} }),

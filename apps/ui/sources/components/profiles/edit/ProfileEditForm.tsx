@@ -106,7 +106,7 @@ export function ProfileEditForm({
     const enabledAgentIds = useEnabledAgentIds();
     const machines = useAllMachines();
     const settings = useSettings();
-    const directSessionsEnabled = useFeatureEnabled('sessions.direct');
+    const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
     const [secrets, setSecrets] = useSettingMutable('secrets');
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
@@ -950,7 +950,7 @@ export function ProfileEditForm({
                     })}
             </ItemGroup>
 
-            {directSessionsEnabled && supportedDirectBackendEntries.filter((entry) => compatibilityByTargetKeyState[resolveProfileBackendTargetKeyForEntry(entry)] === true).length > 0 ? (
+            {externalSessionsEnabled && supportedDirectBackendEntries.filter((entry) => compatibilityByTargetKeyState[resolveProfileBackendTargetKeyForEntry(entry)] === true).length > 0 ? (
                 <ItemGroup
                     title={t('profiles.defaultStorage.title')}
                     footer={t('profiles.defaultStorage.footer')}

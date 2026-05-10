@@ -27,6 +27,7 @@ import {
     createInboxStackScreenOptions,
 } from '@/utils/navigation/createSocialStackScreenOptions';
 import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
+import { ReleaseNotesAutoShowMount } from '@/changelog/releaseNotes';
 import { ActivitySurfacesRuntime } from '@/activity/adapters/ios/runtime/ActivitySurfacesRuntime';
 import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
 import { DesktopActivityOverlayRuntime } from '@/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime';
@@ -40,6 +41,7 @@ import {
     clearPendingMobileSurfaceTransitionForPathname,
     resolvePendingMobileSurfaceTransitionStackOptions,
 } from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
+import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
 import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
 import { useEndpointConnectivity, useSyncError } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -489,8 +491,8 @@ export default function RootLayout() {
             </TouchableOpacity>
         ),
     }), [preferredLanguage, theme.colors.header.tint]);
-    const directBrowseScreenOptions = React.useMemo<StackScreenOptions>(() => ({
-        headerTitle: t('directSessions.browseTitle'),
+    const externalSessionBrowseScreenOptions = React.useMemo<StackScreenOptions>(() => ({
+        headerTitle: t('externalSessions.browseTitle'),
         headerShown: true,
         headerBackTitle: t('common.cancel'),
         presentation: 'modal',
@@ -527,7 +529,13 @@ export default function RootLayout() {
                     <ActivityBadgeRuntime />
                     <ActivitySurfacesRuntime />
                     <ActivityLocalNotificationRuntime />
+                    <DesktopPetOverlayRuntimeMount />
                     <PetAppShellCompanionMount />
+                    {isAuthenticated ? (
+                        <>
+                            <ReleaseNotesAutoShowMount />
+                        </>
+                    ) : null}
                     {isTauriDesktopHost ? (
                         <>
                             <DesktopTrayRuntime />
@@ -756,7 +764,7 @@ export default function RootLayout() {
                 />
                 <Stack.Screen
                     name="direct/browse"
-                    options={directBrowseScreenOptions}
+                    options={externalSessionBrowseScreenOptions}
                 />
                 <Stack.Screen
                     name="zen/index"

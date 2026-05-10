@@ -209,6 +209,60 @@ describe('buildActivityOverviewFromSource', () => {
         });
     });
 
+    it('excludes non-user-facing session rows from activity candidates', () => {
+        const visible = createSessionFixture({
+            id: 'visible-unread',
+            seq: 4,
+            lastViewedSessionSeq: 1,
+            updatedAt: 30,
+        });
+        const hidden = createSessionFixture({
+            id: 'hidden-system',
+            seq: 4,
+            lastViewedSessionSeq: 1,
+            updatedAt: 40,
+            metadata: {
+                path: '/tmp/hidden-system',
+                host: 'test-host',
+                systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true },
+            },
+        });
+        const unavailable = {
+            ...buildSessionListRenderableFromSession(createSessionFixture({
+                id: 'metadata-unavailable',
+                seq: 4,
+                lastViewedSessionSeq: 1,
+                updatedAt: 50,
+            })),
+            metadata: null,
+            metadataUnavailable: true,
+            hasUnreadMessages: true,
+        };
+
+        const overview = buildActivityOverviewFromSource({
+            source: {
+                ...createSource({ sessions: [visible, hidden] }),
+                sessionListRenderablesById: {
+                    [visible.id]: buildSessionListRenderableFromSession(visible),
+                    [hidden.id]: buildSessionListRenderableFromSession(hidden),
+                    [unavailable.id]: unavailable,
+                },
+                sessionListIndexByServerId: {
+                    'server-a': [
+                        { type: 'session', sessionId: visible.id, serverId: 'server-a', serverName: 'Server A' },
+                        { type: 'session', sessionId: hidden.id, serverId: 'server-a', serverName: 'Server A' },
+                        { type: 'session', sessionId: unavailable.id, serverId: 'server-a', serverName: 'Server A' },
+                    ],
+                },
+            },
+            nowMs: 1_000,
+        });
+
+        expect(overview.candidates.map((candidate) => candidate.sessionId)).toEqual(['visible-unread']);
+        expect(overview.counts.unread).toBe(1);
+        expect(overview.counts.totalAttention).toBe(1);
+    });
+
     it('builds a stable fingerprint that ignores generated time fields outside visible meaning', () => {
         const source = createSource({
             sessions: [

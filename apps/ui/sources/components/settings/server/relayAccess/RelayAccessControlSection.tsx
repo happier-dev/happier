@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { relayAccessProviderIds, type RelayAccessConfig, type RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
+import { AccessEndpointSettingsSection } from '@/components/settings/server/accessEndpoints/AccessEndpointSettingsSection';
+import type { AccessEndpointRemediationPressPayload } from '@/components/settings/server/accessEndpoints/AccessChannelChoiceCard';
 import { getDefaultSystemTaskRunner, SystemTaskProgressCard } from '@/components/systemTasks';
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
@@ -15,6 +17,8 @@ import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
+import type { AccessChannel } from '@/sync/domains/accessEndpoints/channels/model';
+import type { AccessEndpointRemediationAction } from '@/sync/domains/accessEndpoints/model';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { setActiveShareableServerUrl, setServerProfileShareableUrl } from '@/sync/domains/server/serverRuntime';
 import { t } from '@/text';
@@ -64,6 +68,10 @@ export type RelayAccessControlSectionProps = Readonly<{
     forcedProviderId?: RelayAccessProviderId | null;
     showProviderChoices?: boolean;
     allowWizardDetailsRedirect?: boolean;
+    accessChannels?: readonly AccessChannel[];
+    accessEndpointRemediationActions?: readonly AccessEndpointRemediationAction[];
+    accessEndpointsRefreshing?: boolean;
+    onAccessEndpointRemediationActionPress?: (payload: AccessEndpointRemediationPressPayload) => void;
 }>;
 
 export const RelayAccessControlSection = React.memo(function RelayAccessControlSection(props: RelayAccessControlSectionProps) {
@@ -168,6 +176,35 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     React.useEffect(() => {
         props.onShareUrlChange?.(resolvedShareUrl);
     }, [props.onShareUrlChange, resolvedShareUrl]);
+
+    const relayAccessChannel = React.useMemo<AccessChannel>(() => {
+        const providerId = resolvedProviderId ?? selectedProviderId;
+        return {
+            id: `access-channel:relay-access:${providerId}`,
+            label: relayAccessProviderUiCatalog[providerId]?.titleKey ?? 'settings.relayAccess.title',
+            direction: 'make-current-server-reachable',
+            kind: 'relay-access-provider',
+            endpointIds: [`relay-access:${providerId}`],
+            recommendedUse: resolvedState === 'enabled' ? 'multi-device' : 'diagnostic',
+            limitations: resolvedState === 'needs_auth'
+                ? [{
+                    id: `relay-access:${providerId}:requires-auth`,
+                    severity: 'warning',
+                    reason: 'requires-auth',
+                }]
+                : [],
+            remediationActionIds: [],
+        };
+    }, [resolvedProviderId, resolvedState, selectedProviderId]);
+
+    const visibleAccessChannels = React.useMemo(() => {
+        const channelsById = new Map<string, AccessChannel>();
+        channelsById.set(relayAccessChannel.id, relayAccessChannel);
+        for (const channel of props.accessChannels ?? []) {
+            channelsById.set(channel.id, channel);
+        }
+        return [...channelsById.values()];
+    }, [props.accessChannels, relayAccessChannel]);
 
     React.useEffect(() => {
         if (!snapshot) {
@@ -557,17 +594,16 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
 
     return (
         <>
+            <AccessEndpointSettingsSection
+                channels={visibleAccessChannels}
+                remediationActions={props.accessEndpointRemediationActions}
+                isRefreshing={props.accessEndpointsRefreshing}
+                onRemediationActionPress={props.onAccessEndpointRemediationActionPress}
+            />
             <ItemGroup
                 title={t('settings.relayAccess.title')}
                 footer={t('settings.relayAccess.footer')}
             >
-                <Item
-                    testID="settings.server.accessEndpoints.outwardScope"
-                    title={t('settings.accessEndpoints.scope.availableToOtherDevices')}
-                    subtitle={t('settings.accessEndpoints.direction.makeCurrentServerReachable')}
-                    showChevron={false}
-                    mode="info"
-                />
                 <Item
                     testID="settings.server.relayAccess.status"
                     title={t('settings.relayAccess.statusTitle')}

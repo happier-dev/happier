@@ -36,6 +36,28 @@ test('apps/ui Tauri public dev config enables the global Tauri bridge API for MC
   assert.equal(config?.app?.withGlobalTauri, true);
 });
 
+test('apps/ui Tauri channel configs use the expected desktop product names', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+
+  const stableRaw = await readFile(join(packageRoot, 'src-tauri', 'tauri.conf.json'), 'utf-8');
+  const previewRaw = await readFile(join(packageRoot, 'src-tauri', 'tauri.preview.conf.json'), 'utf-8');
+  const publicDevRaw = await readFile(join(packageRoot, 'src-tauri', 'tauri.publicdev.conf.json'), 'utf-8');
+
+  const stable = JSON.parse(stableRaw);
+  const preview = JSON.parse(previewRaw);
+  const publicDev = JSON.parse(publicDevRaw);
+
+  assert.equal(stable?.productName, 'Happier');
+  assert.equal(stable?.app?.windows?.[0]?.title, 'Happier');
+
+  assert.equal(preview?.productName, 'Happier (preview)');
+  assert.equal(preview?.app?.windows?.[0]?.title, 'Happier (preview)');
+
+  assert.equal(publicDev?.productName, 'Happier (dev)');
+  assert.equal(publicDev?.app?.windows?.[0]?.title, 'Happier (dev)');
+});
+
 test('apps/ui Tauri config runs beforeBuildCommand/beforeDevCommand via node wrapper (works on Windows CI)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir);

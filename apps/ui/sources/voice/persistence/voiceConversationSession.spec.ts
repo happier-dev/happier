@@ -46,8 +46,8 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe(...args),
 }));
 
-vi.mock('@/sync/domains/session/external/readDirectSessionLink', () => ({
-  readDirectSessionLink: () => null,
+vi.mock('@/sync/domains/session/external/readExternalSessionLink', () => ({
+  readExternalSessionLink: () => null,
 }));
 
 installVoiceStorageModuleMocks({
@@ -521,7 +521,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
         metadata: {
           machineId: 'machine-1',
           path: '/Users/test/.happier/voice-agent',
-          directSessionV1: {
+          externalSessionV1: {
             v: 1,
             providerId: 'codex',
             machineId: 'machine-1',

@@ -20,7 +20,7 @@ describe('layout.maxWidth (web)', () => {
         expect(layout.headerMaxWidth).toBe(1400);
     });
 
-    it('does not change Tauri desktop content width', async () => {
+    it('uses the compact web content width in Tauri desktop', async () => {
         vi.resetModules();
 
         vi.doMock('react-native', () => ({
@@ -35,7 +35,7 @@ describe('layout.maxWidth (web)', () => {
 
         const { layout } = await import('@/components/ui/layout/layout');
 
-        expect(layout.maxWidth).toBe(1400);
+        expect(layout.maxWidth).toBe(800);
         expect(layout.headerMaxWidth).toBe(Number.POSITIVE_INFINITY);
     });
 });

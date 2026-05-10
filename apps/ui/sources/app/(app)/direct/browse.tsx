@@ -1,7 +1,7 @@
 import * as React from 'react';
 
-import { DirectSessionsBrowseScreen } from '@/components/sessions/external/browse/DirectSessionsBrowseScreen';
+import { ExternalSessionsBrowseScreen } from '@/components/sessions/external/browse/ExternalSessionsBrowseScreen';
 
-export default React.memo(function DirectSessionsBrowseRoute() {
-    return <DirectSessionsBrowseScreen />;
+export default React.memo(function ExternalSessionsBrowseRoute() {
+    return <ExternalSessionsBrowseScreen />;
 });

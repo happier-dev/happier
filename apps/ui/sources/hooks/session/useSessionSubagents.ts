@@ -10,8 +10,8 @@ import { deriveSessionSubagentSidechainIds } from '@/sync/domains/session/subage
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
-import { useSessionDirectSessionRuntime } from '@/components/sessions/model/useSessionDirectSessionRuntime';
+import type { UseExternalSessionRuntimeResult } from '@/components/sessions/model/useExternalSessionRuntime';
+import { useSessionExternalSessionRuntime } from '@/components/sessions/model/useSessionExternalSessionRuntime';
 import { useSessionRunningExecutionRuns } from './useSessionRunningExecutionRuns';
 
 function normalizeSessionId(sessionId: string): string {
@@ -22,7 +22,7 @@ export function useSessionSubagents(params: Readonly<{
     sessionId: string;
     session: Session | null;
     messages: readonly Message[];
-    directSessionRuntime?: UseDirectSessionRuntimeResult;
+    externalSessionRuntime?: UseExternalSessionRuntimeResult;
 }>): Readonly<{
     subagents: readonly SessionSubagent[];
     participantTargets: ReturnType<typeof deriveSessionSubagentRecipients>;
@@ -47,12 +47,12 @@ export function useSessionSubagents(params: Readonly<{
         enabled: executionRunPollingEnabled,
         refreshKey: executionRunPollingRefreshKey,
     });
-    const internalDirectSessionRuntime = useSessionDirectSessionRuntime({
+    const internalExternalSessionRuntime = useSessionExternalSessionRuntime({
         sessionId: normalizedSessionId,
         metadata: params.session?.metadata,
-        enabled: params.directSessionRuntime == null,
+        enabled: params.externalSessionRuntime == null,
     });
-    const directSessionRuntime = params.directSessionRuntime ?? internalDirectSessionRuntime;
+    const externalSessionRuntime = params.externalSessionRuntime ?? internalExternalSessionRuntime;
 
     const subagents = React.useMemo(() => {
         if (!params.session) return [] as const;
@@ -63,12 +63,12 @@ export function useSessionSubagents(params: Readonly<{
         });
         return applyExecutionRunControlCapabilities(derivedSubagents, {
             canControlExecutionRuns:
-                directSessionRuntime.directSessionLink === null
-                || directSessionRuntime.status?.runnerActive === true,
+                externalSessionRuntime.externalSessionLink === null
+                || externalSessionRuntime.status?.runnerActive === true,
         });
     }, [
-        directSessionRuntime.directSessionLink,
-        directSessionRuntime.status?.runnerActive,
+        externalSessionRuntime.externalSessionLink,
+        externalSessionRuntime.status?.runnerActive,
         params.messages,
         params.session,
         runningExecutionRuns,

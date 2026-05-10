@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type ViewProps } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { useDesktopOverlayDragController } from '@/activity/adapters/desktop/positioning/useDesktopOverlayDragController';
@@ -12,25 +12,12 @@ import {
 import {
     emitDesktopActivityOverlayInteraction,
     executeDesktopActivityOverlayInteractionWithResult,
-    applyDesktopActivityOverlayDragDelta,
-    releaseDesktopActivityOverlayDragVelocity,
     setDesktopActivityOverlayExpanded,
     setDesktopActivityOverlayInputLocked,
-    showDesktopMainWindow,
 } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 import { useDesktopActivityOverlayState } from '@/activity/adapters/desktop/runtime/useDesktopActivityOverlayState';
-import { PET_VELOCITY_SAMPLE_WINDOW_MS } from '@/components/pets/interaction/petPointerDragConfig';
-import {
-    type PetPointerDragMove,
-    usePetPointerDragSession,
-} from '@/components/pets/interaction/usePetPointerDragSession';
-import { PetCompanionSurface } from '@/components/pets/render/PetCompanionSurface';
-import { usePetSpritesheetSource } from '@/components/pets/render/usePetSpritesheetSource';
 import { Text } from '@/components/ui/text/Text';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { normalizePetCompanionSizeScale } from '@/sync/domains/pets/companionSizeScale';
-import { useLocalSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -46,28 +33,6 @@ type DesktopActivityOverlayExpandedReason =
     | 'hover'
     | 'outside_hover'
     | 'keyboard_escape';
-
-type DesktopActivityOverlayCompanionDataProps = ViewProps & Readonly<{
-    dataSet: Readonly<{ petState: NonNullable<DesktopActivityOverlayUiModel['companion']>['state'] }>;
-    'data-pet-state': NonNullable<DesktopActivityOverlayUiModel['companion']>['state'];
-}>;
-
-const DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_WIDTH = 62;
-const DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_HEIGHT = 67;
-const DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_SCALE = 0.32;
-
-function resolveDesktopActivityOverlayCompanionMetrics(sizeScale: unknown): Readonly<{
-    width: number;
-    height: number;
-    scale: number;
-}> {
-    const resolvedSizeScale = normalizePetCompanionSizeScale(sizeScale);
-    return {
-        width: DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_WIDTH * resolvedSizeScale,
-        height: DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_HEIGHT * resolvedSizeScale,
-        scale: DESKTOP_ACTIVITY_OVERLAY_COMPANION_BASE_SCALE * resolvedSizeScale,
-    };
-}
 
 function emitInteraction(actionIdentifier: string, data: Record<string, unknown> = {}) {
     fireAndForget(
@@ -97,70 +62,6 @@ function readPhysicalNotchWidth(
 ): number | null {
     const width = state?.placementDiagnostics?.displayContext?.physicalNotchSize?.width;
     return typeof width === 'number' && Number.isFinite(width) && width > 0 ? width : null;
-}
-
-function DesktopActivityOverlayCompanion(props: Readonly<{
-    model: DesktopActivityOverlayUiModel;
-    dragState?: NonNullable<DesktopActivityOverlayUiModel['companion']>['state'] | null;
-    dragTargetRef?: ReturnType<typeof usePetPointerDragSession>['dragTargetRef'];
-    pointerHandlers?: ReturnType<typeof usePetPointerDragSession>['pointerHandlers'];
-    onActivate?: () => void | Promise<void>;
-    shouldSuppressPress?: () => boolean;
-}>): React.ReactElement | null {
-    const companion = props.model.companion;
-    const reducedMotion = useReducedMotionPreference();
-    const localSettings = useLocalSettings();
-    const metrics = React.useMemo(
-        () => resolveDesktopActivityOverlayCompanionMetrics(localSettings.petsCompanionSizeScale),
-        [localSettings.petsCompanionSizeScale],
-    );
-    const spritesheetSource = usePetSpritesheetSource(
-        companion?.pet.source,
-        'blink',
-    );
-    if (!companion?.enabled) {
-        return null;
-    }
-
-    const effectiveState = props.dragState ?? companion.state;
-    const dataProps: DesktopActivityOverlayCompanionDataProps = {
-        testID: 'desktop-activity-overlay-companion',
-        dataSet: { petState: effectiveState },
-        'data-pet-state': effectiveState,
-        style: [
-            styles.companion,
-            {
-                width: metrics.width,
-                height: metrics.height,
-            },
-        ],
-    };
-
-    return (
-        <View pointerEvents="box-none" style={styles.companionLayer}>
-            <View {...dataProps}>
-                <PetCompanionSurface
-                    state={effectiveState}
-                    stateStyle={[
-                        styles.companionState,
-                        {
-                            width: metrics.width,
-                            height: metrics.height,
-                        },
-                    ]}
-                    hitboxTestID="desktop-activity-overlay-companion-hitbox"
-                    spriteTestID="desktop-activity-overlay-companion-sprite"
-                    spritesheetSource={spritesheetSource}
-                    scale={metrics.scale}
-                    reducedMotion={reducedMotion}
-                    dragTargetRef={props.dragTargetRef}
-                    pointerHandlers={props.pointerHandlers}
-                    onActivate={props.onActivate}
-                    shouldSuppressPress={props.shouldSuppressPress}
-                />
-            </View>
-        </View>
-    );
 }
 
 export function DesktopActivityOverlayRoute(): React.ReactElement {
@@ -242,41 +143,6 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
             && !state.policy.lockPosition,
         ),
     });
-    const companionDragEnabled = Boolean(
-        state
-        && state.policy.enableDragReposition
-        && !state.policy.lockPosition,
-    );
-    const handleCompanionDragMove = React.useCallback((move: PetPointerDragMove) => {
-        if (move.coordinateSpace !== 'screen') return;
-        if (!companionDragEnabled) return;
-        fireAndForget(applyDesktopActivityOverlayDragDelta(move.deltaX, move.deltaY), {
-            tag: 'DesktopActivityOverlayRoute.companionDrag.applyDragDelta',
-        });
-    }, [companionDragEnabled]);
-    const companionDrag = usePetPointerDragSession({
-        coordinateSpace: 'screen',
-        onDragMove: handleCompanionDragMove,
-        onDragRelease: (release) => {
-            if (!companionDragEnabled) return;
-            fireAndForget(releaseDesktopActivityOverlayDragVelocity({
-                pointerId: release.pointerId,
-                vx: release.velocityX,
-                vy: release.velocityY,
-                sampleWindowMs: PET_VELOCITY_SAMPLE_WINDOW_MS,
-            }), {
-                tag: 'DesktopActivityOverlayRoute.companionDrag.releaseDragVelocity',
-            });
-        },
-        onActivate: () => {
-            fireAndForget(showDesktopMainWindow(), {
-                tag: 'DesktopActivityOverlayRoute.companionDrag.activateMainWindow',
-            });
-        },
-    });
-    const companionPointerHandlers = companionDragEnabled ? companionDrag.pointerHandlers : undefined;
-    const companionDragTargetRef = companionDragEnabled ? companionDrag.dragTargetRef : undefined;
-    const shouldSuppressCompanionPress = companionDragEnabled ? companionDrag.shouldSuppressPress : undefined;
 
     if (!inOverlayWindowContext) {
         return (
@@ -390,18 +256,6 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
                             setOverlayExpanded(false, 'keyboard_escape');
                         }}
                     />
-                    <DesktopActivityOverlayCompanion
-                        model={state.model}
-                        dragState={companionDrag.dragState}
-                        dragTargetRef={companionDragTargetRef}
-                        pointerHandlers={companionPointerHandlers}
-                        onActivate={() => {
-                            fireAndForget(showDesktopMainWindow(), {
-                                tag: 'DesktopActivityOverlayRoute.companion.activateMainWindow',
-                            });
-                        }}
-                        shouldSuppressPress={shouldSuppressCompanionPress}
-                    />
                 </DesktopActivityOverlayMotionFrame>
             </View>
         );
@@ -425,18 +279,6 @@ export function DesktopActivityOverlayRoute(): React.ReactElement {
                     onPress={onCollapsedPress}
                     onHoverIn={onCollapsedHoverIn}
                     onHoverOut={onCollapsedHoverOut}
-                />
-                <DesktopActivityOverlayCompanion
-                    model={state.model}
-                    dragState={companionDrag.dragState}
-                    dragTargetRef={companionDragTargetRef}
-                    pointerHandlers={companionPointerHandlers}
-                    onActivate={() => {
-                        fireAndForget(showDesktopMainWindow(), {
-                            tag: 'DesktopActivityOverlayRoute.companion.activateMainWindow',
-                        });
-                    }}
-                    shouldSuppressPress={shouldSuppressCompanionPress}
                 />
             </DesktopActivityOverlayMotionFrame>
         </View>
@@ -471,21 +313,5 @@ const styles = StyleSheet.create({
         opacity: 0,
         pointerEvents: 'none',
         fontSize: 1,
-    },
-    companionLayer: {
-        position: 'absolute',
-        right: 8,
-        bottom: 2,
-        backgroundColor: 'transparent',
-    },
-    companion: {
-        width: 62,
-        height: 67,
-        backgroundColor: 'transparent',
-    },
-    companionState: {
-        width: 62,
-        height: 67,
-        backgroundColor: 'transparent',
     },
 });

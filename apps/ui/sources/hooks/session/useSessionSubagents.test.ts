@@ -7,8 +7,8 @@ import { useSessionSubagents } from './useSessionSubagents';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const initialStorageState = getStorage().getState();
-const directSessionRuntimeState = {
-    directSessionLink: null as null | {
+const externalSessionRuntimeState = {
+    externalSessionLink: null as null | {
         v: 1;
         providerId: string;
         machineId: string;
@@ -19,7 +19,7 @@ const directSessionRuntimeState = {
     refreshNow: vi.fn(async () => null),
 };
 const useSessionRunningExecutionRunsSpy = vi.fn<(...args: any[]) => any>(() => []);
-const useDirectSessionRuntimeSpy = vi.fn<(...args: any[]) => any>(() => directSessionRuntimeState);
+const useExternalSessionRuntimeSpy = vi.fn<(...args: any[]) => any>(() => externalSessionRuntimeState);
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
@@ -29,16 +29,16 @@ vi.mock('@/hooks/session/useSessionRunningExecutionRuns', () => ({
     useSessionRunningExecutionRuns: (...args: any[]) => useSessionRunningExecutionRunsSpy(...args),
 }));
 
-vi.mock('@/components/sessions/model/useDirectSessionRuntime', () => ({
-    useDirectSessionRuntime: (...args: any[]) => useDirectSessionRuntimeSpy(...args),
+vi.mock('@/components/sessions/model/useExternalSessionRuntime', () => ({
+    useExternalSessionRuntime: (...args: any[]) => useExternalSessionRuntimeSpy(...args),
 }));
 
 beforeEach(() => {
     getStorage().setState(initialStorageState, true);
-    directSessionRuntimeState.directSessionLink = null;
-    directSessionRuntimeState.status = null;
+    externalSessionRuntimeState.externalSessionLink = null;
+    externalSessionRuntimeState.status = null;
     useSessionRunningExecutionRunsSpy.mockClear();
-    useDirectSessionRuntimeSpy.mockClear();
+    useExternalSessionRuntimeSpy.mockClear();
 });
 
 describe('useSessionSubagents', () => {
@@ -59,14 +59,14 @@ describe('useSessionSubagents', () => {
     });
 
     it('downgrades execution-run send and stop capabilities for linked direct sessions that are not locally controlled', async () => {
-        directSessionRuntimeState.directSessionLink = {
+        externalSessionRuntimeState.externalSessionLink = {
             v: 1,
             providerId: 'claude',
             machineId: 'machine-1',
             remoteSessionId: 'remote-session-1',
             source: 'provider',
         };
-        directSessionRuntimeState.status = { runnerActive: false };
+        externalSessionRuntimeState.status = { runnerActive: false };
 
         const now = Date.now();
         const seen = await renderHookAndCollectValues(() =>
@@ -76,7 +76,7 @@ describe('useSessionSubagents', () => {
                     id: 'session-1',
                     metadata: {
                         flavor: 'claude',
-                        directSessionV1: directSessionRuntimeState.directSessionLink,
+                        externalSessionV1: externalSessionRuntimeState.externalSessionLink,
                     },
                 } as any,
                 messages: [{
@@ -128,7 +128,7 @@ describe('useSessionSubagents', () => {
             sessionId: 'session-1',
             enabled: expect.any(Boolean),
         }));
-        expect(useDirectSessionRuntimeSpy).toHaveBeenCalledWith(expect.objectContaining({
+        expect(useExternalSessionRuntimeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'session-1',
             metadata: null,
         }));
@@ -141,7 +141,7 @@ describe('useSessionSubagents', () => {
 
     it('does not enable an internal direct-session runtime when one is already provided', async () => {
         const providedRuntime = {
-            directSessionLink: {
+            externalSessionLink: {
                 v: 1,
                 providerId: 'claude',
                 machineId: 'machine-1',
@@ -160,15 +160,15 @@ describe('useSessionSubagents', () => {
                     id: 'session-1',
                     metadata: {
                         flavor: 'claude',
-                        directSessionV1: providedRuntime.directSessionLink,
+                        externalSessionV1: providedRuntime.externalSessionLink,
                     },
                 } as any,
                 messages: [],
-                directSessionRuntime: providedRuntime as any,
+                externalSessionRuntime: providedRuntime as any,
             }),
         );
 
-        expect(useDirectSessionRuntimeSpy).toHaveBeenCalledWith(expect.objectContaining({
+        expect(useExternalSessionRuntimeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'session-1',
             enabled: false,
         }));

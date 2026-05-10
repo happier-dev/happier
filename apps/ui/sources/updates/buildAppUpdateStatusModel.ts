@@ -71,6 +71,19 @@ export function buildAppUpdateStatusModel(params: BuildAppUpdateStatusModelParam
         };
     }
 
+    if (params.releaseNotes.hasUnread) {
+        return {
+            visible: true,
+            kind: 'release-notes',
+            tone: 'accent',
+            iconName: 'sparkles-outline',
+            label: params.t('navigation.whatsNew'),
+            message: params.t('updateBanner.seeLatest'),
+            actionLabel: params.t('updateBanner.seeLatest'),
+            actionDisabled: false,
+        };
+    }
+
     if (params.changelog.hasUnread) {
         return {
             visible: true,

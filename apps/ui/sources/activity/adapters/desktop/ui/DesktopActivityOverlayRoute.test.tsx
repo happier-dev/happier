@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol';
 
 import { flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 
@@ -55,7 +54,9 @@ const serverFetchMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const localSettingsState = vi.hoisted(() => ({
     petsCompanionSizeScale: 1,
+    petsDismissedCompanionTrayItemKeys: [] as string[],
 }));
+const applyLocalSettingsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -98,10 +99,15 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
             useLocalSettings: () => ({
                 ...localSettingsDefaults,
                 petsCompanionSizeScale: localSettingsState.petsCompanionSizeScale,
+                petsDismissedCompanionTrayItemKeys: localSettingsState.petsDismissedCompanionTrayItemKeys,
             }),
         },
     });
 });
+
+vi.mock('@/sync/store/settingsWriters', () => ({
+    useApplyLocalSettings: () => applyLocalSettingsMock,
+}));
 
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => isTauriDesktopMock(),
@@ -223,20 +229,10 @@ async function renderRoute() {
     return screen;
 }
 
-function createPetSpritesheetResponse(body: string, mediaType: string) {
-    const bytes = new TextEncoder().encode(body);
-    return {
-        ok: true,
-        headers: {
-            get: (name: string) => (name.toLowerCase() === 'content-type' ? mediaType : null),
-        },
-        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-    };
-}
-
 describe('DesktopActivityOverlayRoute', () => {
     beforeEach(() => {
         localSettingsState.petsCompanionSizeScale = 1;
+        localSettingsState.petsDismissedCompanionTrayItemKeys = [];
         executeDesktopActivityOverlayInteractionWithResultMock.mockImplementation(
             async () => ({ requestId: 'test-request', ok: true }),
         );
@@ -254,6 +250,7 @@ describe('DesktopActivityOverlayRoute', () => {
         emitDesktopActivityOverlayInteractionMock.mockReset();
         executeDesktopActivityOverlayInteractionWithResultMock.mockReset();
         showDesktopMainWindowMock.mockReset();
+        applyLocalSettingsMock.mockReset();
         serverFetchMock.mockReset();
         machineRpcWithServerScopeMock.mockReset();
         vi.useRealTimers();
@@ -343,635 +340,6 @@ describe('DesktopActivityOverlayRoute', () => {
             actionIdentifier: 'overlay-set-expanded',
             data: { expanded: true, reason: 'click' },
         });
-    });
-
-    it('renders companion state inside the existing transparent collapsed route', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState(),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: { kind: 'builtIn', petId: 'blink' },
-                        displayName: 'Blink',
-                    },
-                    state: 'running',
-                    attentionLevel: 'active',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: 'session-1',
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-        const companion = screen.findByTestId('desktop-activity-overlay-companion');
-        const companionState = screen.findByTestId('pet-companion-state');
-        const companionSprite = screen.findByTestId('desktop-activity-overlay-companion-sprite');
-
-        expect(companion).toBeTruthy();
-        expect(companion?.props['data-pet-state']).toBe('running');
-        expect(flattenStyle(companion?.props.style).backgroundColor).toBe('transparent');
-        expect(companionState?.props['data-pet-state']).toBe('running');
-        expect(companionSprite?.props['data-pet-state']).toBe('running');
-        expect(screen.findByTestId('desktop-activity-overlay-collapsed')).toBeTruthy();
-        expect(screen.findByTestId('desktop-activity-overlay-expanded')).toBeNull();
-    });
-
-    it('applies the local companion size scale inside the existing activity overlay route', async () => {
-        localSettingsState.petsCompanionSizeScale = 1.5;
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState(),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: { kind: 'builtIn', petId: 'blink' },
-                        displayName: 'Blink',
-                    },
-                    state: 'running',
-                    attentionLevel: 'active',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: 'session-1',
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-        const companion = screen.findByTestId('desktop-activity-overlay-companion');
-        const companionState = screen.findByTestId('pet-companion-state');
-        const companionSprite = screen.findByTestId('desktop-activity-overlay-companion-sprite');
-
-        expect(flattenStyle(companion?.props.style).width).toBe(93);
-        expect(flattenStyle(companion?.props.style).height).toBe(100.5);
-        expect(flattenStyle(companionState?.props.style).width).toBe(93);
-        expect(flattenStyle(companionSprite?.props.style).width).toBeCloseTo(92.16);
-    });
-
-    it('keeps the companion idle frame still inside the existing transparent route', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState(),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: { kind: 'builtIn', petId: 'blink' },
-                        displayName: 'Blink',
-                    },
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: null,
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-
-        expect(screen.root.findAllByType('Image')[0]?.props.style.transform).toEqual([
-            { translateX: -0 },
-            { translateY: -0 },
-        ]);
-
-        await act(async () => {
-            vi.advanceTimersByTime(300);
-        });
-
-        expect(screen.root.findAllByType('Image')[0]?.props.style.transform).toEqual([
-            { translateX: -0 },
-            { translateY: -0 },
-        ]);
-    });
-
-    it('reacts to a companion tap with a short jumping state inside the existing transparent route', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(0);
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState(),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: { kind: 'builtIn', petId: 'blink' },
-                        displayName: 'Blink',
-                    },
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: null,
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-
-        await screen.pressByTestIdAsync('desktop-activity-overlay-companion-hitbox');
-
-        expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('jumping');
-        expect(screen.findByTestId('desktop-activity-overlay-companion-sprite')?.props['data-pet-state']).toBe('jumping');
-
-        await act(async () => {
-            vi.advanceTimersByTime(980);
-        });
-
-        expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('idle');
-    });
-
-    it('drags the companion through the existing activity overlay bridge', async () => {
-        const fakeWindow = new (globalThis as typeof globalThis & { EventTarget: typeof EventTarget }).EventTarget();
-        Object.assign(fakeWindow, { innerWidth: 340, innerHeight: 72 });
-        const originalWindow = (globalThis as { window?: unknown }).window;
-        const originalPointerEvent = (globalThis as { PointerEvent?: unknown }).PointerEvent;
-        (globalThis as { window?: unknown }).window = fakeWindow;
-        (globalThis as { PointerEvent?: unknown }).PointerEvent = class PointerEvent extends Event {
-            button: number;
-            clientX: number;
-            clientY: number;
-            screenX: number;
-            screenY: number;
-            constructor(type: string, init: { button?: number; clientX: number; clientY: number; screenX?: number; screenY?: number }) {
-                super(type);
-                this.button = init.button ?? 0;
-                this.clientX = init.clientX;
-                this.clientY = init.clientY;
-                this.screenX = init.screenX ?? init.clientX;
-                this.screenY = init.screenY ?? init.clientY;
-            }
-        };
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState({
-                policy: {
-                    ...createWindowState().policy,
-                    enableDragReposition: true,
-                    lockPosition: false,
-                },
-            }),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: { kind: 'builtIn', petId: 'blink' },
-                        displayName: 'Blink',
-                    },
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: null,
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        try {
-            const screen = await renderRoute();
-
-            invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-companion-hitbox'), 'onPointerDown', {
-                button: 0,
-                clientX: 160,
-                clientY: 42,
-                screenX: 160,
-                screenY: 42,
-                target: {
-                    closest: (selector: string) => selector.includes('mascot') ? {} : null,
-                },
-                preventDefault: vi.fn(),
-                stopPropagation: vi.fn(),
-            });
-
-            await act(async () => {
-                fakeWindow.dispatchEvent(new ((globalThis as typeof globalThis & { PointerEvent: typeof Event }).PointerEvent)('pointermove', {
-                    clientX: 175,
-                    clientY: 50,
-                }));
-            });
-
-            expect(applyDesktopActivityOverlayDragDeltaMock).toHaveBeenCalledWith(15, 8);
-            expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('running-right');
-        } finally {
-            (globalThis as { window?: unknown }).window = originalWindow;
-            (globalThis as { PointerEvent?: unknown }).PointerEvent = originalPointerEvent;
-        }
-    });
-
-    it('uses screen coordinates for companion drags in the moving desktop overlay window', async () => {
-        const fakeWindow = new (globalThis as typeof globalThis & { EventTarget: typeof EventTarget }).EventTarget();
-        Object.assign(fakeWindow, { innerWidth: 340, innerHeight: 72 });
-        const originalWindow = (globalThis as { window?: unknown }).window;
-        const originalPointerEvent = (globalThis as { PointerEvent?: unknown }).PointerEvent;
-        (globalThis as { window?: unknown }).window = fakeWindow;
-        (globalThis as { PointerEvent?: unknown }).PointerEvent = class PointerEvent extends Event {
-            button: number;
-            clientX: number;
-            clientY: number;
-            screenX: number;
-            screenY: number;
-            constructor(type: string, init: { button?: number; clientX: number; clientY: number; screenX: number; screenY: number }) {
-                super(type);
-                this.button = init.button ?? 0;
-                this.clientX = init.clientX;
-                this.clientY = init.clientY;
-                this.screenX = init.screenX;
-                this.screenY = init.screenY;
-            }
-        };
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState({
-                policy: {
-                    ...createWindowState().policy,
-                    enableDragReposition: true,
-                    lockPosition: false,
-                },
-            }),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: { kind: 'builtIn', petId: 'blink' },
-                        displayName: 'Blink',
-                    },
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: null,
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        try {
-            const screen = await renderRoute();
-
-            invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-companion-hitbox'), 'onPointerDown', {
-                button: 0,
-                clientX: 160,
-                clientY: 42,
-                screenX: 500,
-                screenY: 600,
-                target: {
-                    closest: (selector: string) => selector.includes('mascot') ? {} : null,
-                },
-                preventDefault: vi.fn(),
-                stopPropagation: vi.fn(),
-            });
-
-            await act(async () => {
-                fakeWindow.dispatchEvent(new ((globalThis as typeof globalThis & { PointerEvent: typeof Event }).PointerEvent)('pointermove', {
-                    clientX: 161,
-                    clientY: 43,
-                    screenX: 560,
-                    screenY: 612,
-                }));
-            });
-
-            expect(applyDesktopActivityOverlayDragDeltaMock).toHaveBeenCalledWith(60, 12);
-        } finally {
-            (globalThis as { window?: unknown }).window = originalWindow;
-            (globalThis as { PointerEvent?: unknown }).PointerEvent = originalPointerEvent;
-        }
-    });
-
-    it('captures companion pointer drags and releases bounded velocity through the activity overlay bridge', async () => {
-        class TestPointerEvent extends Event {
-            button: number;
-            clientX: number;
-            clientY: number;
-            pointerId: number;
-            screenX: number;
-            screenY: number;
-            timeStamp: number;
-
-            constructor(type: string, init: {
-                button?: number;
-                clientX: number;
-                clientY: number;
-                pointerId?: number;
-                screenX: number;
-                screenY: number;
-                timeStamp: number;
-            }) {
-                super(type);
-                this.button = init.button ?? 0;
-                this.clientX = init.clientX;
-                this.clientY = init.clientY;
-                this.pointerId = init.pointerId ?? 7;
-                this.screenX = init.screenX;
-                this.screenY = init.screenY;
-                this.timeStamp = init.timeStamp;
-            }
-        }
-        const fakeWindow = Object.assign(new EventTarget(), { innerWidth: 340, innerHeight: 72 });
-        vi.stubGlobal('window', fakeWindow);
-        vi.stubGlobal('PointerEvent', TestPointerEvent);
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState({
-                policy: {
-                    ...createWindowState().policy,
-                    enableDragReposition: true,
-                    lockPosition: false,
-                },
-            }),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: { kind: 'builtIn', petId: 'blink' },
-                        displayName: 'Blink',
-                    },
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: null,
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-        const setPointerCapture = vi.fn();
-        const releasePointerCapture = vi.fn();
-        const target = {
-            closest: vi.fn((selector: string) => selector.includes('mascot') ? {} : null),
-        };
-        const currentTarget = { setPointerCapture, releasePointerCapture };
-
-        const screen = await renderRoute();
-
-        await act(async () => {
-            invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-companion-hitbox'), 'onPointerDown', {
-                button: 0,
-                clientX: 160,
-                clientY: 42,
-                currentTarget,
-                pointerId: 7,
-                screenX: 500,
-                screenY: 600,
-                target,
-                timeStamp: 0,
-                preventDefault: vi.fn(),
-                stopPropagation: vi.fn(),
-            });
-        });
-
-        await act(async () => {
-            fakeWindow.dispatchEvent(new TestPointerEvent('pointermove', {
-                clientX: 161,
-                clientY: 43,
-                pointerId: 7,
-                screenX: 620,
-                screenY: 600,
-                timeStamp: 100,
-            }));
-            fakeWindow.dispatchEvent(new TestPointerEvent('pointerup', {
-                clientX: 161,
-                clientY: 43,
-                pointerId: 7,
-                screenX: 620,
-                screenY: 600,
-                timeStamp: 100,
-            }));
-        });
-
-        expect(setPointerCapture).toHaveBeenCalledWith(7);
-        expect(releasePointerCapture).toHaveBeenCalledWith(7);
-        expect(applyDesktopActivityOverlayDragDeltaMock).toHaveBeenCalledWith(120, 0);
-        expect(releaseDesktopActivityOverlayDragVelocityMock).toHaveBeenCalledWith({
-            pointerId: 7,
-            vx: 1200,
-            vy: 0,
-            sampleWindowMs: 100,
-        });
-    });
-
-    it('does not start companion drags from no-drag descendants', async () => {
-        const fakeWindow = Object.assign(new EventTarget(), { innerWidth: 340, innerHeight: 72 });
-        vi.stubGlobal('window', fakeWindow);
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState({
-                policy: {
-                    ...createWindowState().policy,
-                    enableDragReposition: true,
-                    lockPosition: false,
-                },
-            }),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: { kind: 'builtIn', petId: 'blink' },
-                        displayName: 'Blink',
-                    },
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: null,
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-
-        await act(async () => {
-            invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-companion-hitbox'), 'onPointerDown', {
-                button: 0,
-                clientX: 160,
-                clientY: 42,
-                currentTarget: { setPointerCapture: vi.fn() },
-                pointerId: 7,
-                screenX: 500,
-                screenY: 600,
-                target: {
-                    closest: (selector: string) => selector.includes('data-pet-no-drag') ? {} : null,
-                },
-                timeStamp: 0,
-                preventDefault: vi.fn(),
-                stopPropagation: vi.fn(),
-            });
-        });
-
-        expect(applyDesktopActivityOverlayDragDeltaMock).not.toHaveBeenCalled();
-        expect(releaseDesktopActivityOverlayDragVelocityMock).not.toHaveBeenCalled();
-    });
-
-    it('renders the selected account pet spritesheet in the existing transparent collapsed route', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        serverFetchMock.mockResolvedValue(createPetSpritesheetResponse('account-pet-atlas', 'image/webp'));
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState(),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: {
-                            kind: 'accountPet',
-                            accountPetId: 'account-pet-1',
-                            sourceKey: 'accountPet:account-pet-1',
-                        },
-                        displayName: 'Account Pet',
-                    },
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: null,
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-        await act(async () => {
-            await Promise.resolve();
-        });
-        await flushHookEffects();
-
-        expect(serverFetchMock).toHaveBeenCalledWith(
-            '/v1/account/pets/account-pet-1/spritesheet',
-            undefined,
-            { retry: 'none' },
-        );
-        const image = screen.root.findAllByType('Image')[0];
-        expect(image?.props.source).toBe('data:image/webp;base64,YWNjb3VudC1wZXQtYXRsYXM=');
-    });
-
-    it('renders a selected local pet spritesheet through the daemon preview asset route', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        machineRpcWithServerScopeMock.mockResolvedValue({
-            sourceKey: 'managed:blink',
-            mediaType: 'image/png',
-            digest: 'sha256:local',
-            dataBase64: 'bG9jYWwtcGV0LWF0bGFz',
-            sizeBytes: 15,
-        });
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue({
-            ...createWindowState(),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: {
-                            kind: 'happierManagedLocal',
-                            sourceKey: 'managed:blink',
-                            mediaType: 'image/png',
-                            digest: 'sha256:local',
-                            daemonTarget: {
-                                serverId: 'server-pets',
-                                machineId: 'machine-pets',
-                            },
-                        },
-                        displayName: 'Local Pet',
-                    },
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: null,
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        });
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const screen = await renderRoute();
-        await act(async () => {
-            await Promise.resolve();
-        });
-        await flushHookEffects();
-
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
-            machineId: 'machine-pets',
-            serverId: 'server-pets',
-            method: PET_DAEMON_RPC_METHODS.READ_PREVIEW_ASSET,
-            payload: { sourceKey: 'managed:blink' },
-        });
-        const image = screen.root.findAllByType('Image')[0];
-        expect(image?.props.source).toBe('data:image/png;base64,bG9jYWwtcGV0LWF0bGFz');
-    });
-
-    it('reuses a cached local pet preview for the same source key and digest', async () => {
-        isDesktopActivityOverlayWindowContextMock.mockReturnValue(true);
-        machineRpcWithServerScopeMock.mockResolvedValue({
-            sourceKey: 'managed:cached',
-            mediaType: 'image/webp',
-            digest: 'sha256:cached',
-            dataBase64: 'Y2FjaGVkLXBldC1hdGxhcw==',
-            sizeBytes: 16,
-        });
-        const state = {
-            ...createWindowState(),
-            model: {
-                ...createWindowState().model,
-                companion: {
-                    enabled: true,
-                    pet: {
-                        source: {
-                            kind: 'happierManagedLocal',
-                            sourceKey: 'managed:cached',
-                            mediaType: 'image/webp',
-                            digest: 'sha256:cached',
-                            daemonTarget: {
-                                serverId: 'server-pets',
-                                machineId: 'machine-pets',
-                            },
-                        },
-                        displayName: 'Cached Pet',
-                    },
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    interaction: 'none',
-                    reason: 'live_activity',
-                    sessionId: null,
-                },
-            } as DesktopActivityOverlayWindowStatePayload['model'],
-        };
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(state);
-        listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
-
-        const firstScreen = await renderRoute();
-        await act(async () => {
-            await Promise.resolve();
-        });
-        await flushHookEffects();
-        firstScreen.unmount();
-
-        getDesktopActivityOverlayWindowStateMock.mockResolvedValue(state);
-        const secondScreen = await renderRoute();
-        await act(async () => {
-            await Promise.resolve();
-        });
-        await flushHookEffects();
-
-        expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
-        const image = secondScreen.root.findAllByType('Image')[0];
-        expect(image?.props.source).toBe('data:image/webp;base64,Y2FjaGVkLXBldC1hdGxhcw==');
     });
 
     it('leaves collapsed notch hover to native hit-testing in notch mode', async () => {
@@ -1369,6 +737,22 @@ describe('DesktopActivityOverlayRoute', () => {
         listenDesktopActivityOverlayWindowStateMock.mockResolvedValue(() => {});
 
         const screen = await renderRoute();
+        const inputShell = screen.findByTestId('desktop-activity-overlay-quick-reply-input-shell');
+        const input = screen.findByTestId('desktop-activity-overlay-quick-reply-input');
+        const sendButton = screen.findByTestId('desktop-activity-overlay-quick-reply-send');
+        const inputShellStyle = flattenStyle(inputShell?.props.style);
+        const inputStyle = flattenStyle(input?.props.style);
+        const sendButtonStyle = flattenStyle(sendButton?.props.style);
+
+        expect(inputShellStyle.position).toBe('relative');
+        expect(inputStyle.paddingRight).toBeGreaterThan(36);
+        expect(sendButtonStyle.position).toBe('absolute');
+        expect(sendButtonStyle.right).toBeGreaterThanOrEqual(3);
+        expect(sendButtonStyle.top).toBeGreaterThan(0);
+        expect(sendButtonStyle.width).toBeLessThanOrEqual(28);
+        expect(sendButtonStyle.width).toBe(sendButtonStyle.height);
+        expect(sendButtonStyle.borderRadius).toBe((sendButtonStyle.width as number) / 2);
+        expect(screen.root.findAll((node) => node.props?.name === 'arrow-up')).toHaveLength(1);
 
         await act(async () => {
             screen.pressByTestId('desktop-activity-overlay-quick-reply-send');
@@ -1381,6 +765,17 @@ describe('DesktopActivityOverlayRoute', () => {
         await act(async () => {
             screen.changeTextByTestId('desktop-activity-overlay-quick-reply-input', '  Looks good  ');
         });
+        const stopPropagation = vi.fn();
+        await act(async () => {
+            invokeTestInstanceHandler(inputShell, 'onPress', { stopPropagation });
+            invokeTestInstanceHandler(input, 'onPress', { stopPropagation });
+            invokeTestInstanceHandler(input, 'onPressIn', { stopPropagation });
+        });
+        expect(stopPropagation).toHaveBeenCalled();
+        expect(emitDesktopActivityOverlayInteractionMock).not.toHaveBeenCalledWith(
+            expect.objectContaining({ actionIdentifier: 'session.open' }),
+        );
+
         await act(async () => {
             screen.pressByTestId('desktop-activity-overlay-quick-reply-send');
             await Promise.resolve();

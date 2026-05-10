@@ -34,7 +34,7 @@ describe('RoundButton', () => {
             throw new Error('Expected round button pressable to render');
         }
         expect(pressable.props.testID).toBe('round-button');
-        expect(pressable.findByType('LinearGradient' as never).props.colors).toEqual(['#000000', '#171717']);
+        expect(pressable.findByType('LinearGradient' as never).props.colors).toEqual(['#000000', '#020202']);
     });
 
     it('applies a reduced effective opacity when disabled', async () => {

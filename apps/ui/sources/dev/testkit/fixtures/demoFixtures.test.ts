@@ -9,20 +9,20 @@ const fixturesDir = path.dirname(fileURLToPath(import.meta.url));
 describe('UI demo fixtures', () => {
     it('provides truthful remote-launch and direct-session fixture builders', async () => {
         const sessionFixturesPath = path.join(fixturesDir, 'demoSessionFixtures.ts');
-        const directSessionFixturesPath = path.join(fixturesDir, 'demoDirectSessionFixtures.ts');
+        const externalSessionFixturesPath = path.join(fixturesDir, 'demoExternalSessionFixtures.ts');
         const newSessionFixturesPath = path.join(fixturesDir, 'demoNewSessionFixtures.ts');
 
         expect(fs.existsSync(sessionFixturesPath), 'demoSessionFixtures.ts should exist').toBe(true);
-        expect(fs.existsSync(directSessionFixturesPath), 'demoDirectSessionFixtures.ts should exist').toBe(true);
+        expect(fs.existsSync(externalSessionFixturesPath), 'demoExternalSessionFixtures.ts should exist').toBe(true);
         expect(fs.existsSync(newSessionFixturesPath), 'demoNewSessionFixtures.ts should exist').toBe(true);
 
         const { createDemoMachineFixture, createDemoOpenCodeSessionFixture } = await import('./demoSessionFixtures');
-        const { createDemoDirectBrowseCandidateFixture } = await import('./demoDirectSessionFixtures');
+        const { createDemoExternalSessionBrowseCandidateFixture } = await import('./demoExternalSessionFixtures');
         const { createDemoNewSessionFixture } = await import('./demoNewSessionFixtures');
 
         const machine = createDemoMachineFixture();
         const session = createDemoOpenCodeSessionFixture({ machineId: machine.id });
-        const candidate = createDemoDirectBrowseCandidateFixture({ machineId: machine.id });
+        const candidate = createDemoExternalSessionBrowseCandidateFixture({ machineId: machine.id });
         const newSession = createDemoNewSessionFixture({ machineId: machine.id });
         const machineMetadata = machine.metadata;
         const sessionMetadata = session.metadata;

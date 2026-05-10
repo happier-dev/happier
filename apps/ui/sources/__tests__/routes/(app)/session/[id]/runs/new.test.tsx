@@ -10,6 +10,7 @@ import {
     standardCleanup,
 } from '@/dev/testkit';
 import { installSessionRouteCommonModuleMocks } from '../sessionRouteTestHelpers';
+import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,8 +31,8 @@ let actionExecutorExecuteResultMock: any = {
     ok: true,
     result: { results: [{ ok: true }] },
 };
-let directSessionRuntimeMock: any = {
-    directSessionLink: null,
+let externalSessionRuntimeMock: any = {
+    externalSessionLink: null,
     status: null,
     refreshNow: vi.fn(async () => null),
 };
@@ -126,6 +127,7 @@ let executionRunsBackendsMock: Record<string, { available?: boolean; intents?: s
     codex: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
     coderabbit: { available: true, intents: ['review'] },
 };
+let daemonMergedProjectionInputsMock: DaemonMergedProjectionInputs | null = null;
 
 const startRunSpy = vi.fn(async (_sessionId: string, _request: any) => ({
     runId: 'run_1',
@@ -286,8 +288,8 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
     useSessionExecutionRunsSupported: () => sessionExecutionRunsSupportedMock,
 }));
-vi.mock('@/components/sessions/model/useDirectSessionRuntime', () => ({
-    useDirectSessionRuntime: () => directSessionRuntimeMock,
+vi.mock('@/components/sessions/model/useExternalSessionRuntime', () => ({
+    useExternalSessionRuntime: () => externalSessionRuntimeMock,
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => sessionMachineReachabilityMock,
@@ -301,20 +303,11 @@ vi.mock('@/sync/domains/settings/executionRunsGuidance', () => ({
         text: entries.map((entry) => entry.description ?? '').filter(Boolean).join('\n'),
     }),
 }));
-vi.mock('@/sync/domains/reviews/reviewEngineCatalog', () => ({
-    buildAvailableReviewEngineOptions: ({
-        enabledAgentIds,
-        executionRunsBackends,
-    }: {
-        enabledAgentIds: string[];
-        executionRunsBackends: Record<string, { available?: boolean; intents?: string[] }>;
-    }) => {
-        const capabilityIds = Object.entries(executionRunsBackends ?? {})
-            .filter(([, value]) => value?.available !== false && (value?.intents ?? []).includes('review'))
-            .map(([id]) => id);
-        const merged = Array.from(new Set([...enabledAgentIds, ...capabilityIds]));
-        return merged.map((id) => ({ id }));
-    },
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => ({
+        phase: daemonMergedProjectionInputsMock ? 'ready' : 'idle',
+        inputs: daemonMergedProjectionInputsMock,
+    }),
 }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
@@ -391,6 +384,7 @@ describe('Session New Run Screen', () => {
             codex: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
             coderabbit: { available: true, intents: ['review'] },
         };
+        daemonMergedProjectionInputsMock = null;
         enabledAgentIdsMock = ['claude', 'codex'];
         sessionMock = { id: 'session-1', metadata: { agent: 'claude', permissionMode: 'default' } };
         machineCapabilitiesStateMock = { status: 'idle' };
@@ -417,8 +411,8 @@ describe('Session New Run Screen', () => {
             ok: true,
             result: { results: [{ ok: true }] },
         };
-        directSessionRuntimeMock = {
-            directSessionLink: null,
+        externalSessionRuntimeMock = {
+            externalSessionLink: null,
             status: null,
             refreshNow: vi.fn(async () => null),
         };
@@ -646,7 +640,7 @@ describe('Session New Run Screen', () => {
             metadata: {
                 agent: 'claude',
                 permissionMode: 'default',
-                directSessionV1: {
+                externalSessionV1: {
                     v: 1,
                     providerId: 'claude',
                     machineId: 'machine-1',
@@ -655,8 +649,8 @@ describe('Session New Run Screen', () => {
                 },
             },
         };
-        directSessionRuntimeMock = {
-            directSessionLink: {
+        externalSessionRuntimeMock = {
+            externalSessionLink: {
                 v: 1,
                 providerId: 'claude',
                 machineId: 'machine-1',
@@ -711,7 +705,7 @@ describe('Session New Run Screen', () => {
         expect(screen.getTextContent()).toContain('Prefer Claude for UI changes');
     });
 
-    it('exposes the canonical review.start fields and submits advanced review options', async () => {
+    it('exposes the canonical generic review.start fields and submits advanced review options', async () => {
         startRunSpy.mockClear();
         enabledAgentIdsMock = ['claude', 'codex'];
         executionRunsBackendsMock = {
@@ -739,12 +733,11 @@ describe('Session New Run Screen', () => {
         await pressTestInstanceAsync(selectBaseBranch, 'review base branch');
 
         const textInputs = screen.findAllByType('TextInput');
-        expect(textInputs.length).toBeGreaterThanOrEqual(3);
+        expect(textInputs.length).toBeGreaterThanOrEqual(2);
 
         await act(async () => {
             screen.changeTextByTestId('execution-run-new-instructions-input', 'review everything deeply');
             changeTextTestInstance(textInputs[1], 'main');
-            changeTextTestInstance(textInputs[2], '.coderabbit.yaml, .coderabbit.local.yaml');
         });
 
         findStartButton(screen);
@@ -758,11 +751,6 @@ describe('Session New Run Screen', () => {
                 instructions: 'review everything deeply',
                 changeType: 'all',
                 base: { kind: 'branch', baseBranch: 'main' },
-                engines: {
-                    coderabbit: {
-                        configFiles: ['.coderabbit.yaml', '.coderabbit.local.yaml'],
-                    },
-                },
             }),
         );
     });
@@ -892,6 +880,63 @@ describe('Session New Run Screen', () => {
 
         const toggleCodeRabbit = findBackendToggle(screen, 'coderabbit');
         expect(toggleCodeRabbit).toBeDefined();
+    });
+
+    it('uses daemon projection labels for source-backed review backends outside enabled canonical agents', async () => {
+        startRunSpy.mockClear();
+        sessionMock = { id: 'session-1', metadata: { agent: 'claude', permissionMode: 'default', machineId: 'machine-1' } };
+        enabledAgentIdsMock = ['claude'];
+        localSearchParamsMock = { id: 'session-1', intent: 'review' };
+        executionRunsBackendsMock = {
+            claude: { available: true, intents: ['review', 'plan', 'delegate', 'voice_agent'] },
+            'coderabbit.review.backend': { available: true, intents: ['review'] },
+        };
+        daemonMergedProjectionInputsMock = {
+            mergedBackendProjectionById: {
+                'coderabbit.review.backend': {
+                    backendId: 'coderabbit.review.backend',
+                    providerId: 'coderabbit.review.provider',
+                    title: 'CodeRabbit Review',
+                    subtitle: 'Plugin-backed review engine',
+                    providerAgentId: null,
+                    iconAgentId: null,
+                },
+            },
+            mergedProviderProjectionById: {
+                'coderabbit.review.provider': {
+                    providerId: 'coderabbit.review.provider',
+                    title: 'CodeRabbit Provider',
+                    subtitle: 'Plugin-backed review provider',
+                    channel: 'plugin',
+                    isBuiltIn: false,
+                    iconAgentId: null,
+                },
+            },
+            discoveredBackendIds: ['coderabbit.review.backend'],
+            pluginProjectionById: {},
+            registryDiagnostics: [],
+        };
+
+        const screen = await renderNewRunScreen();
+
+        const selectProjectedReviewBackend = findBackendToggle(screen, 'CodeRabbit Review');
+        expect(selectProjectedReviewBackend).toBeDefined();
+        expect(screen.getTextContent()).toContain('CodeRabbit Review');
+
+        await pressTestInstanceAsync(selectProjectedReviewBackend, 'projected review backend');
+        await act(async () => {
+            screen.changeTextByTestId('execution-run-new-instructions-input', 'review this source-backed backend');
+        });
+        await screen.pressByTestIdAsync('execution-run-new-start-button');
+
+        expect(startRunSpy).toHaveBeenCalledWith(
+            'session-1',
+            expect.objectContaining({
+                intent: 'review',
+                backendId: 'coderabbit.review.backend',
+                instructions: 'review this source-backed backend',
+            }),
+        );
     });
 
     it('allows selecting a different intent before starting', async () => {

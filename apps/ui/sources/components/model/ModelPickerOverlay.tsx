@@ -7,12 +7,12 @@ import { Switch } from '@/components/ui/forms/Switch';
 import type {
     AcpConfigOptionControl,
     AcpConfigOptionValueId,
-} from '@/sync/acp/configOptionsControl';
+} from '@/sync/domains/sessionControl/configOptionsControl';
 import {
     isBooleanConfigOptionType,
     resolveBooleanConfigOptionNextValue,
     resolveBooleanConfigOptionValue,
-} from '@/sync/acp/configOptionsControl';
+} from '@/sync/domains/sessionControl/configOptionsControl';
 import { t } from '@/text';
 
 

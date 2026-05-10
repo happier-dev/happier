@@ -10,6 +10,7 @@ import {
 import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
 import type { ActivityAttentionDeliveryEventKind } from '@/activity/delivery/activityAttentionDeliveryPlanTypes';
 import { localSettingsParse } from '@/sync/domains/settings/localSettings';
+import { isTauriMainWindowActivelyViewed } from '@/desktop/window/isTauriMainWindowActivelyViewed';
 import { storage, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
 import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
@@ -60,6 +61,18 @@ function resolveExpoLocalNotificationSound(
     };
 }
 
+function isSessionActivelyViewedForLocalNotification(sessionId: string): boolean {
+    if (!isSessionSurfaceVisible(sessionId)) {
+        return false;
+    }
+
+    if (!isTauriDesktop()) {
+        return true;
+    }
+
+    return isTauriMainWindowActivelyViewed();
+}
+
 export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
     const localSettings = useLocalSettings();
     const accountSettings = useSettings();
@@ -72,7 +85,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 localSettings: parsedLocalSettings,
                 event: resolveLocalNotificationEventKind(event),
                 channel: 'local_notification',
-                sameSessionVisible: isSessionSurfaceVisible(event.sessionId),
+                sameSessionVisible: isSessionActivelyViewedForLocalNotification(event.sessionId),
                 now: new Date(),
             });
             if (deliveryPlan.delivery === 'suppress') {

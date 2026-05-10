@@ -1,6 +1,4 @@
 import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/resolveDesktopOverlayPolicy';
-import type { DesktopActivityOverlayCompanionSnapshot } from '../snapshot/desktopActivityOverlaySnapshotTypes';
-
 export type DesktopActivityOverlayActionTone = 'primary' | 'secondary' | 'danger';
 
 export type DesktopActivityOverlayActionDescriptor = Readonly<{
@@ -47,17 +45,6 @@ export type DesktopActivityOverlayCollapsedUrgency = Readonly<{
     level: 'idle' | 'running' | 'needs_you' | 'critical';
     unattendedMs: number;
     pollMs: number;
-}>;
-
-export type DesktopActivityOverlayCompanionInteraction =
-    | 'none'
-    | 'hovered'
-    | 'dragging'
-    | 'expanded'
-    | 'poked';
-
-export type DesktopActivityOverlayCompanionModel = DesktopActivityOverlayCompanionSnapshot & Readonly<{
-    interaction: DesktopActivityOverlayCompanionInteraction;
 }>;
 
 export type DesktopActivityOverlayCollapsedTransitionCue = Readonly<{
@@ -182,7 +169,6 @@ export type DesktopActivityOverlayModel = Readonly<{
             phrases: readonly string[];
         }> | null;
     }>;
-    companion?: DesktopActivityOverlayCompanionModel;
     window: Readonly<{
         collapsed: Readonly<{ width: number; height: number }>;
         expanded: Readonly<{ width: number; height: number }>;

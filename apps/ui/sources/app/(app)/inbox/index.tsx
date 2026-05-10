@@ -1,11 +1,9 @@
 import * as React from 'react';
-import { View, Platform, Pressable } from 'react-native';
-import { useRouter } from 'expo-router';
+import { View } from 'react-native';
 import { InboxView } from '@/components/navigation/shell/InboxView';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { useHeaderHeight, useIsTablet } from '@/utils/platform/responsive';
-import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useRequireInboxAvailable } from '@/hooks/inbox/useRequireInboxAvailable';
@@ -26,9 +24,6 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         paddingHorizontal: 16,
     },
-    backButton: {
-        marginRight: 16,
-    },
     headerTitle: {
         fontSize: 17,
         color: theme.colors.header.tint,
@@ -38,8 +33,6 @@ const styles = StyleSheet.create((theme) => ({
 
 export default function InboxPage() {
     const enabled = useRequireInboxAvailable();
-    const router = useRouter();
-    const { theme } = useUnistyles();
     const insets = useSafeAreaInsets();
     const isTablet = useIsTablet();
     const headerHeight = useHeaderHeight();
@@ -54,19 +47,6 @@ export default function InboxPage() {
         <View style={styles.container}>
             <View style={[styles.header, { paddingTop: insets.top }]}>
                 <View style={[styles.headerContent, { height: headerHeight }]}>
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common.back')}
-                        onPress={() => router.back()}
-                        style={styles.backButton}
-                        hitSlop={15}
-                    >
-                        <Ionicons
-                            name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
-                            size={24}
-                            color={theme.colors.header.tint}
-                        />
-                    </Pressable>
                     <Text style={styles.headerTitle}>{t('tabs.inbox')}</Text>
                 </View>
             </View>

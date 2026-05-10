@@ -23,6 +23,11 @@ const shared = vi.hoisted(() => ({
     setTheme: vi.fn(),
     setRootViewBackgroundColor: vi.fn(),
     setStatusBarStyle: vi.fn(),
+    startViewTransition: vi.fn((update: () => void) => {
+        update();
+        return { ready: Promise.resolve() };
+    }),
+    documentElementAnimate: vi.fn(),
 }));
 
 type MutableSettingHook = (key: string) => [unknown, (next: unknown) => void];
@@ -84,6 +89,9 @@ installSessionSettingsEntryModuleMocks({
 vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }));
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: shared.setStatusBarStyle }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn() }));
+vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
+    useReducedMotionPreference: () => false,
+}));
 vi.mock('@/theme', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/theme')>();
     return {
@@ -108,12 +116,18 @@ vi.mock('@/theme', async (importOriginal) => {
 afterEach(() => {
     standardCleanup();
     resetSessionSettingsEntryState();
+    Reflect.deleteProperty(globalThis, 'document');
     shared.settingsState.themePreference = 'adaptive';
     shared.settingsState.uiItemDensity = 'comfortable';
     shared.setAdaptiveThemes.mockClear();
     shared.setTheme.mockClear();
     shared.setRootViewBackgroundColor.mockClear();
     shared.setStatusBarStyle.mockClear();
+    shared.startViewTransition.mockImplementation((update: () => void) => {
+        update();
+        return { ready: Promise.resolve() };
+    });
+    shared.documentElementAnimate.mockClear();
 });
 
 describe('Appearance settings item density', () => {
@@ -132,6 +146,38 @@ describe('Appearance settings item density', () => {
         expect(shared.settingsState.themePreference).toBe('dark');
         expect(shared.setTheme).toHaveBeenCalledWith('dark');
         expect(shared.setStatusBarStyle).toHaveBeenCalledWith('light', true);
+    });
+
+    it('wraps web theme changes in a view transition', async () => {
+        shared.settingsState.themePreference = 'light';
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                documentElement: {
+                    animate: shared.documentElementAnimate,
+                },
+                startViewTransition: shared.startViewTransition,
+            } as unknown as Document,
+        });
+
+        const mod = await import('@/app/(app)/settings/appearance');
+        const screen = await renderSettingsView(React.createElement(mod.default));
+
+        const themePreferenceRow = screen.findRow('settings-appearance-themePreference-cycle');
+        expect(themePreferenceRow).toBeTruthy();
+
+        await act(async () => {
+            themePreferenceRow!.props.onPress();
+        });
+
+        expect(shared.settingsState.themePreference).toBe('dark');
+        expect(shared.startViewTransition).toHaveBeenCalledOnce();
+        expect(shared.documentElementAnimate).toHaveBeenCalledWith(
+            { clipPath: ['inset(0 0 100% 0)', 'inset(0)'] },
+            expect.objectContaining({
+                pseudoElement: '::view-transition-new(root)',
+            }),
+        );
     });
 
     it('renders the item density dropdown and updates the local setting', async () => {

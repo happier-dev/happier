@@ -14,7 +14,7 @@ const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
 }));
 
-const directSessionsFeatureState = vi.hoisted(() => ({
+const externalSessionsFeatureState = vi.hoisted(() => ({
     enabled: false,
 }));
 
@@ -81,9 +81,9 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: (featureId: string) => (
         featureId === 'sessions.direct'
             ? {
-                state: directSessionsFeatureState.enabled ? 'enabled' : 'disabled',
-                blockerCode: directSessionsFeatureState.enabled ? 'none' : 'feature_disabled',
-                blockedBy: directSessionsFeatureState.enabled ? null : 'local_policy',
+                state: externalSessionsFeatureState.enabled ? 'enabled' : 'disabled',
+                blockerCode: externalSessionsFeatureState.enabled ? 'none' : 'feature_disabled',
+                blockedBy: externalSessionsFeatureState.enabled ? null : 'local_policy',
                 diagnostics: [],
                 evaluatedAt: 0,
                 featureId: 'sessions.direct',
@@ -197,7 +197,7 @@ describe('MainView sidebar actions', () => {
         routerPushSpy.mockReset();
         setSessionsListStorageTabSpy.mockReset();
         sessionListState.data = [];
-        directSessionsFeatureState.enabled = false;
+        externalSessionsFeatureState.enabled = false;
         localSettingsState.sessionsListStorageTab = 'persisted';
         gettingStartedState.kind = 'create_session';
         mainAppTabStateMock.shouldThrow = false;
@@ -260,7 +260,7 @@ describe('MainView sidebar actions', () => {
     });
 
     it('renders direct session storage tabs in the sidebar empty state when direct sessions are enabled', async () => {
-        directSessionsFeatureState.enabled = true;
+        externalSessionsFeatureState.enabled = true;
         localSettingsState.sessionsListStorageTab = 'direct';
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -270,7 +270,7 @@ describe('MainView sidebar actions', () => {
     });
 
     it('renders the browse direct sessions action in the sidebar empty state when the direct tab is active', async () => {
-        directSessionsFeatureState.enabled = true;
+        externalSessionsFeatureState.enabled = true;
         localSettingsState.sessionsListStorageTab = 'direct';
 
         let tree: renderer.ReactTestRenderer | null = null;

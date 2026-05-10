@@ -35,6 +35,9 @@ export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
             subtitle: 'Plugin-backed review engine',
             providerAgentId: 'claude',
             iconAgentId: 'codex',
+            capabilities: {
+                executionRun: { supported: true },
+            },
         },
     },
     actionsById: {},

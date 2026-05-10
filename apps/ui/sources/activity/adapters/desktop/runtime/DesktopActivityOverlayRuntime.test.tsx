@@ -4,10 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import {
-    PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
-    PUSH_NOTIFICATION_ACTION_IDS,
-} from '@happier-dev/protocol';
+import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
 
 const isTauriDesktopMock = vi.hoisted(() => vi.fn(() => true));
 const isDesktopOverlayWindowContextMock = vi.hoisted(() => vi.fn(() => false));
@@ -52,22 +49,7 @@ const localSettingsState = vi.hoisted(() => ({
     } as Record<string, unknown>,
 }));
 const settingsState = vi.hoisted(() => ({
-    value: {
-        petsEnabled: true,
-        petsSelectedPetRef: { kind: 'builtIn', petId: 'blink' },
-        petsDesktopOverlayDefaultEnabled: true,
-        petsDesktopOverlayDefaultVisibilityMode: 'attentionOrActive',
-    } as Record<string, unknown>,
-}));
-const accountPetsState = vi.hoisted(() => ({
     value: {} as Record<string, unknown>,
-}));
-const localPetSourcesState = vi.hoisted(() => ({
-    value: {} as Record<string, unknown>,
-}));
-const featureDecisionState = vi.hoisted(() => ({
-    companion: 'enabled',
-    sync: 'disabled',
 }));
 
 const syncDesktopActivityOverlayMock = vi.hoisted(
@@ -117,8 +99,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
         concurrentSessionListCacheByServerId: {},
         localSettings: localSettingsState.value,
         settings: settingsState.value,
-        accountPetsById: accountPetsState.value,
-        localPetSourcesBySourceKey: localPetSourcesState.value,
     });
     const storage = Object.assign(
         ((selector?: (state: ReturnType<typeof storageState>) => unknown) =>
@@ -140,14 +120,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
         useSettings: () => settingsState.value,
     });
 });
-
-vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: (featureId: string) => {
-        if (featureId === 'pets.companion') return { state: featureDecisionState.companion };
-        if (featureId === 'pets.sync') return { state: featureDecisionState.sync };
-        return null;
-    },
-}));
 
 vi.mock('./desktopActivityOverlayBridge', async () => {
     const actual = await vi.importActual<typeof import('./desktopActivityOverlayBridge')>('./desktopActivityOverlayBridge');
@@ -225,15 +197,7 @@ describe('DesktopActivityOverlayRuntime', () => {
             desktopOverlayVisibilityMode: 'attention_only',
         };
         settingsState.value = {
-            petsEnabled: true,
-            petsSelectedPetRef: { kind: 'builtIn', petId: 'blink' },
-            petsDesktopOverlayDefaultEnabled: true,
-            petsDesktopOverlayDefaultVisibilityMode: 'attentionOrActive',
         };
-        accountPetsState.value = {};
-        localPetSourcesState.value = {};
-        featureDecisionState.companion = 'enabled';
-        featureDecisionState.sync = 'disabled';
     });
 
     afterEach(() => {
@@ -251,14 +215,7 @@ describe('DesktopActivityOverlayRuntime', () => {
             desktopOverlayEnabled: true,
         };
         settingsState.value = {
-            petsEnabled: true,
-            petsSelectedPetRef: { kind: 'builtIn', petId: 'blink' },
-            petsDesktopOverlayDefaultEnabled: true,
-            petsDesktopOverlayDefaultVisibilityMode: 'attentionOrActive',
         };
-        accountPetsState.value = {};
-        featureDecisionState.companion = 'enabled';
-        featureDecisionState.sync = 'disabled';
         syncDesktopActivityOverlayMock.mockReset();
         listenDesktopActivityOverlayInteractionMock.mockReset();
         setDesktopActivityOverlayExpandedMock.mockReset();
@@ -277,11 +234,10 @@ describe('DesktopActivityOverlayRuntime', () => {
             visible: true,
             model: expect.objectContaining({
                 visible: true,
-                companion: expect.objectContaining({
-                    enabled: true,
-                    state: 'waiting',
-                    attentionLevel: 'needsAttention',
-                    sessionId: 'session-1',
+                expanded: expect.objectContaining({
+                    cards: expect.arrayContaining([
+                        expect.objectContaining({ sessionId: 'session-1' }),
+                    ]),
                 }),
             }),
         }));
@@ -317,10 +273,6 @@ describe('DesktopActivityOverlayRuntime', () => {
             ...localSettingsState.value,
             desktopOverlayEnabled: false,
         };
-        settingsState.value = {
-            ...settingsState.value,
-            petsDesktopOverlayDefaultEnabled: false,
-        };
 
         await act(async () => {
             screen.tree.update(React.createElement(DesktopActivityOverlayRuntime));
@@ -334,25 +286,7 @@ describe('DesktopActivityOverlayRuntime', () => {
         }));
     }, 120_000);
 
-    it('disables the companion when the pets companion feature is disabled', async () => {
-        featureDecisionState.companion = 'disabled';
-
-        const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');
-        await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
-
-        expect(syncDesktopActivityOverlayMock).toHaveBeenCalledWith(expect.objectContaining({
-            model: expect.objectContaining({
-                companion: expect.objectContaining({
-                    enabled: false,
-                    state: 'idle',
-                    attentionLevel: 'idle',
-                    sessionId: null,
-                }),
-            }),
-        }));
-    }, 120_000);
-
-    it('uses pet desktop overlay settings to host the activity overlay when the generic desktop overlay is off', async () => {
+    it('does not use pet desktop overlay settings to host the activity overlay', async () => {
         localSettingsState.value = {
             ...localSettingsState.value,
             desktopOverlayEnabled: false,
@@ -364,150 +298,12 @@ describe('DesktopActivityOverlayRuntime', () => {
         await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
 
         expect(syncDesktopActivityOverlayMock).toHaveBeenCalledWith(expect.objectContaining({
-            visible: true,
+            visible: false,
             policy: expect.objectContaining({
-                enabled: true,
-                visibilityMode: 'always_when_enabled',
+                enabled: false,
             }),
             model: expect.objectContaining({
-                visible: true,
-                companion: expect.objectContaining({
-                    enabled: true,
-                }),
-            }),
-        }));
-    }, 120_000);
-
-    it('shows the pet-hosted overlay while idle when only the pet desktop overlay is enabled', async () => {
-        sessionsState.value = [];
-        sessionListIndexState.value = { 'server-1': [] };
-        localSettingsState.value = {
-            ...localSettingsState.value,
-            desktopOverlayEnabled: false,
-        };
-        settingsState.value = {
-            petsEnabled: true,
-            petsSelectedPetRef: { kind: 'builtIn', petId: 'blink' },
-            petsDesktopOverlayDefaultEnabled: true,
-        };
-
-        const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');
-        await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
-
-        expect(syncDesktopActivityOverlayMock).toHaveBeenCalledWith(expect.objectContaining({
-            visible: true,
-            policy: expect.objectContaining({
-                enabled: true,
-                visibilityMode: 'always_when_enabled',
-            }),
-            model: expect.objectContaining({
-                visible: true,
-                companion: expect.objectContaining({
-                    enabled: true,
-                    state: 'idle',
-                }),
-            }),
-        }));
-    }, 120_000);
-
-    it('passes the selected account pet metadata into the companion model when pets sync is enabled', async () => {
-        featureDecisionState.sync = 'enabled';
-        settingsState.value = {
-            ...settingsState.value,
-            petsSelectedPetRef: { kind: 'accountPet', accountPetId: 'account-pet-1' },
-        };
-        accountPetsState.value = {
-            'account-pet-1': {
-                accountPetId: 'account-pet-1',
-                packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
-                manifest: {
-                    id: 'milo',
-                    displayName: 'Milo',
-                    spritesheetPath: 'spritesheet.webp',
-                },
-                spritesheetAssetRef: {
-                    assetId: 'asset-account-pet-1',
-                    mediaType: 'image/webp',
-                    digest: 'sha256:asset',
-                    sizeBytes: 128,
-                },
-                digest: 'sha256:account',
-                sizeBytes: 128,
-                createdAt: 1,
-                updatedAt: 1,
-                origin: { kind: 'manualImport' },
-            },
-        };
-
-        const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');
-        await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
-
-        expect(syncDesktopActivityOverlayMock).toHaveBeenCalledWith(expect.objectContaining({
-            model: expect.objectContaining({
-                companion: expect.objectContaining({
-                    enabled: true,
-                    pet: expect.objectContaining({
-                        displayName: 'Milo',
-                        source: expect.objectContaining({
-                            kind: 'accountPet',
-                            accountPetId: 'account-pet-1',
-                        }),
-                    }),
-                }),
-            }),
-        }));
-    }, 120_000);
-
-    it('passes selected local pet source metadata into the companion model', async () => {
-        localSettingsState.value = {
-            ...localSettingsState.value,
-            petsSelectedPetOverride: { kind: 'happierManagedLocal', sourceKey: 'managed:blink' },
-        };
-        localPetSourcesState.value = {
-            'managed:blink': {
-                sourceKey: 'managed:blink',
-                source: {
-                    kind: 'happierManagedLocal',
-                    packagePath: '/Users/tester/.happy-dev/pets/imports/blink',
-                    sourceKey: 'managed:blink',
-                },
-                displayName: 'Blink local',
-                manifest: {
-                    id: 'blink-local',
-                    displayName: 'Blink local',
-                    spritesheetPath: 'spritesheet.webp',
-                },
-                mediaType: 'image/webp',
-                digest: 'sha256:local',
-                sizeBytes: 256,
-                daemonTarget: {
-                    serverId: 'server-pets',
-                    machineId: 'machine-pets',
-                },
-            },
-        };
-
-        const { DesktopActivityOverlayRuntime } = await import('./DesktopActivityOverlayRuntime');
-        await renderScreen(React.createElement(DesktopActivityOverlayRuntime));
-
-        expect(syncDesktopActivityOverlayMock).toHaveBeenCalledWith(expect.objectContaining({
-            model: expect.objectContaining({
-                companion: expect.objectContaining({
-                    enabled: true,
-                    pet: expect.objectContaining({
-                        displayName: 'Blink local',
-                        source: expect.objectContaining({
-                            kind: 'happierManagedLocal',
-                            sourceKey: 'managed:blink',
-                            mediaType: 'image/webp',
-                            digest: 'sha256:local',
-                            daemonTarget: {
-                                serverId: 'server-pets',
-                                machineId: 'machine-pets',
-                            },
-                        }),
-                    }),
-                }),
+                visible: false,
             }),
         }));
     }, 120_000);

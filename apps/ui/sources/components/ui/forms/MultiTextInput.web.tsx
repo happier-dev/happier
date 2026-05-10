@@ -3,12 +3,15 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import TextareaAutosize from 'react-textarea-autosize';
 import { Typography } from '@/constants/Typography';
+import { extractWebAttachmentFilesFromDataTransfer } from '@/utils/files/webAttachmentDataTransfer';
 
 export type SupportedKey = 'Enter' | 'Escape' | 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Tab';
 
 export interface KeyPressEvent {
     key: SupportedKey;
     shiftKey: boolean;
+    ctrlKey?: boolean;
+    metaKey?: boolean;
 }
 
 export type OnKeyPressCallback = (event: KeyPressEvent) => boolean;
@@ -101,7 +104,9 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         if (normalizedKey) {
             const keyEvent: KeyPressEvent = {
                 key: normalizedKey,
-                shiftKey: e.shiftKey
+                shiftKey: e.shiftKey,
+                ctrlKey: e.ctrlKey,
+                metaKey: e.metaKey,
             };
             
             const handled = onKeyPress(keyEvent);
@@ -145,15 +150,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
 
     const handlePaste = React.useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
         const cb = props.onFilesPasted;
-        const items = e.clipboardData?.items;
-        if (!cb || !items) return;
-
-        const files: File[] = [];
-        for (const item of Array.from(items)) {
-            if (item.kind !== 'file') continue;
-            const file = item.getAsFile();
-            if (file) files.push(file);
-        }
+        if (!cb) return;
+        const files = extractWebAttachmentFilesFromDataTransfer(e.clipboardData);
         if (files.length > 0) cb(files);
         if (files.length > 0) {
             e.preventDefault();

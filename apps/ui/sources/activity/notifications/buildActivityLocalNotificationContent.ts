@@ -8,6 +8,7 @@ import {
 import { buildActivityPreviewText } from '@/activity/attention/buildActivityPreviewText';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { t } from '@/text';
 import type { AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
@@ -24,9 +25,7 @@ type ActivityLocalNotificationContent = Readonly<{
 }>;
 
 function resolveSessionNotificationTitle(session: Session | null | undefined): string {
-    const summaryText = typeof session?.metadata?.summary?.text === 'string'
-        ? session.metadata.summary.text.trim()
-        : '';
+    const summaryText = readSessionDisplayTitleField(session).value ?? '';
     if (summaryText) return summaryText;
 
     return t('notifications.activity.defaultSessionTitle');

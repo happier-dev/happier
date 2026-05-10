@@ -30,6 +30,7 @@ export const SETTINGS_ROUTES = {
     memory: '/settings/memory',
     session: '/settings/session',
     actions: '/settings/actions',
+    newSessionWizard: '/settings/session/new-session-wizard',
     transcript: '/settings/session/transcript',
     permissions: '/settings/session/permissions',
     toolRendering: '/settings/session/tool-rendering',

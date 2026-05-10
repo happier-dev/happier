@@ -63,9 +63,9 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSes
     },
 }));
 
-vi.mock('@/components/sessions/model/useSessionDirectSessionRuntime', () => ({
-    useSessionDirectSessionRuntime: () => ({
-        directSessionLink: null,
+vi.mock('@/components/sessions/model/useSessionExternalSessionRuntime', () => ({
+    useSessionExternalSessionRuntime: () => ({
+        externalSessionLink: null,
         status: { runnerActive: true },
     }),
 }));

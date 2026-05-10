@@ -129,6 +129,8 @@ export default defineConfig({
             { find: 'expo-constants', replacement: resolve('./sources/dev/expoConstantsStub.ts') },
             // `expo-localization` depends on Expo modules that don't exist in Vitest's node env.
             { find: 'expo-localization', replacement: resolve('./sources/dev/expoLocalizationStub.ts') },
+            // `expo-video` uses native/web view modules that Vitest cannot parse under Node.
+            { find: 'expo-video', replacement: resolve('./sources/dev/expoVideoStub.ts') },
             { find: 'expo-router/drawer', replacement: resolve('./sources/dev/expoRouterDrawerStub.ts') },
             // `expo-router` pulls in RN internals via its native dev-server helpers.
             { find: 'expo-router', replacement: resolve('./sources/dev/expoRouterStub.ts') },

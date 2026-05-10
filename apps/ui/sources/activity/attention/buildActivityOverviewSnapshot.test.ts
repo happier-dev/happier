@@ -86,7 +86,7 @@ describe('buildActivityOverviewSnapshot', () => {
         expect(snapshot.counts).toMatchObject({
             unread: 1,
             permissionRequired: 1,
-            queuedInput: 1,
+            queuedInput: 0,
             totalAttention: 1,
         });
     });

@@ -12,8 +12,8 @@ const EMPTY_EXECUTION_RUN_REFRESH_KEY = 'subagent:|started:|stopped:';
 export function useSessionExecutionRunsSupported(sessionId: string, sessionServerId?: string | null): boolean {
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const session = useSession(sessionId);
-    const directSessionServerId = sessionServerId ?? session?.serverId;
-    const preferredSessionServerId = usePreferredServerIdForSession(sessionId, directSessionServerId);
+    const externalSessionServerId = sessionServerId ?? session?.serverId;
+    const preferredSessionServerId = usePreferredServerIdForSession(sessionId, externalSessionServerId);
     const resolvedSessionServerId = sessionServerId ?? preferredSessionServerId;
     const backends = useExecutionRunsBackendsForSession(sessionId, resolvedSessionServerId);
     const { messages } = useSessionMessages(sessionId);

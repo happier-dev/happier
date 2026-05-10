@@ -240,7 +240,7 @@ describe('buildWakeResumeExtras', () => {
             resumeCapabilityOptions: { accountSettings: makeSettings({ codexBackendMode: 'acp' }) },
             session: {
                 metadata: {
-                    directSessionV1: {
+                    externalSessionV1: {
                         codexBackendMode: 'appServer',
                     },
                 },

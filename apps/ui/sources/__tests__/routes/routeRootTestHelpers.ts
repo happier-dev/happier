@@ -57,11 +57,14 @@ export function installRouteRootCommonModuleMocks(
         const actual = await importOriginal<typeof import('@/modal')>();
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         const modalMock = createModalModuleMock().module;
+        const modalMockWithUseModal = modalMock as typeof modalMock & {
+            useModal?: typeof actual.useModal;
+        };
         return {
             ...actual,
-            ...modalMock,
+            ...modalMockWithUseModal,
             useModal:
-                modalMock.useModal ??
+                modalMockWithUseModal.useModal ??
                 (() => ({
                     state: { modals: [] },
                     pushModal: vi.fn(),
@@ -80,16 +83,6 @@ export function installRouteRootCommonModuleMocks(
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock().module;
     });
-
-    vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
-        useAppPaneScope: () => ({
-            scopeState: {
-                right: { activeTabId: null },
-                details: { isOpen: false, tabs: [] },
-            },
-            openDetailsTab: vi.fn(),
-        }),
-    }));
 
     vi.mock('@/text', async () => {
         const activeOptions = routeRootModuleState.options;

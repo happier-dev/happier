@@ -27,6 +27,10 @@ const changelogState = vi.hoisted(() => ({
     hasUnread: false,
     markAsRead: vi.fn(),
 }));
+const releaseNotesState = vi.hoisted(() => ({
+    hasUnread: false,
+    open: vi.fn(() => true),
+}));
 const routerState = vi.hoisted(() => ({
     push: vi.fn(),
 }));
@@ -86,6 +90,15 @@ vi.mock('@/hooks/inbox/useChangelog', () => ({
     }),
 }));
 
+vi.mock('@/changelog/releaseNotes', () => ({
+    useReleaseNotesUnread: () => ({
+        hasUnread: releaseNotesState.hasUnread,
+    }),
+    useReleaseNotesLauncher: () => ({
+        open: releaseNotesState.open,
+    }),
+}));
+
 vi.mock('@/hooks/ui/useNativeUpdate', () => ({
     useNativeUpdate: () => nativeUpdateState.updateUrl,
 }));
@@ -125,6 +138,9 @@ describe('useAppUpdateStatus', () => {
         otaUpdateState.reloadApp.mockReset();
         changelogState.hasUnread = false;
         changelogState.markAsRead.mockReset();
+        releaseNotesState.hasUnread = false;
+        releaseNotesState.open.mockReset();
+        releaseNotesState.open.mockReturnValue(true);
         routerState.push.mockReset();
         linkingState.canOpenURL.mockReset();
         linkingState.canOpenURL.mockResolvedValue(true);

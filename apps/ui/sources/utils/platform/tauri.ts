@@ -17,6 +17,13 @@ export function isTauriDesktop(): boolean {
     return true;
   }
 
+  const tauriHostFlag =
+    (globalThis as { isTauri?: unknown }).isTauri ??
+    (typeof window !== 'undefined' ? (window as { isTauri?: unknown }).isTauri : undefined);
+  if (tauriHostFlag === true) {
+    return true;
+  }
+
   // In some desktop boot phases the global invoke bridge is not yet ready, but the WebView is
   // already identifiable as a Tauri host. This keeps desktop-only UI (settings/overlay) stable
   // during early navigation and native-e2e capture.

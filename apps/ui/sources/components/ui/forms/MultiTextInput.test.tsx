@@ -79,4 +79,35 @@ describe('MultiTextInput', () => {
         expect(preventDefault).toHaveBeenCalledTimes(1);
         expect(onFilesPasted).toHaveBeenCalledWith([file]);
     });
+
+    it('falls back to clipboardData.files when pasted file items cannot be materialized', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const onFilesPasted = vi.fn();
+
+        const tree = (await renderScreen(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {
+            testID: 'composer-input',
+            value: 'Inspect this image',
+            onChangeText: () => {},
+            onFilesPasted,
+        }))).tree;
+
+        const input = tree.findByType('TextareaAutosize' as any);
+        const preventDefault = vi.fn();
+        const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' });
+        const pasteEvent = {
+            preventDefault,
+            clipboardData: {
+                items: [{
+                    kind: 'file',
+                    getAsFile: () => null,
+                }],
+                files: [file],
+            },
+        };
+
+        input.props.onPaste(pasteEvent);
+
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(onFilesPasted).toHaveBeenCalledWith([file]);
+    });
 });

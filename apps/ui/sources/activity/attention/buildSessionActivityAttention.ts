@@ -40,7 +40,7 @@ export function buildSessionActivityAttention(params: Readonly<{
         : null;
     const derivedAttentionState = deriveSessionListAttentionState({
         hasUnreadMessages: reasons.hasUnread,
-        pendingCount: params.session.pendingCount ?? 0,
+        pendingCount: 0,
         sessionState: status.state,
         latestTurnStatus: params.session.latestTurnStatus ?? null,
         lastRuntimeIssue: params.session.lastRuntimeIssue ?? null,

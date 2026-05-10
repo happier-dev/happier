@@ -15,6 +15,7 @@ import { requireReactDOM } from '@/utils/web/reactDomCjs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
+import { useLocalSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import {
@@ -155,6 +156,7 @@ export function BaseModal({
     webPortalTarget = null,
 }: BaseModalProps) {
     const { theme } = useUnistyles();
+    const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
     const insets = useChromeSafeAreaInsets();
     const baseZ = zIndexBase ?? 100000;
     const [modalPortalTarget, setModalPortalTarget] = React.useState<HTMLElement | null>(null);
@@ -263,14 +265,22 @@ export function BaseModal({
             zIndex: baseZ,
             transition: [
                 `background-color ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
-                `backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
-                `-webkit-backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+                ...(uiBackdropBlurEnabled
+                    ? [
+                        `backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+                        `-webkit-backdrop-filter ${visible ? motionTokens.overlay.modal.enterMs : motionTokens.overlay.modal.exitMs}ms cubic-bezier(0.2, 0, 0, 1)`,
+                    ]
+                    : []),
             ].join(', '),
             ...createBackdropWebStyle({
                 backgroundColor: visible
                     ? ((theme.colors.overlay.scrimWizard ?? theme.colors.overlay.scrim) as unknown as string)
                     : 'transparent',
                 blurPx: visible ? 2 : 0,
+                enableBlur: uiBackdropBlurEnabled,
+                fallbackBackgroundColorWhenBlurDisabled: visible
+                    ? ((theme.colors.overlay.scrimStrong ?? theme.colors.overlay.scrim) as unknown as string)
+                    : 'transparent',
             }),
         };
 

@@ -76,6 +76,7 @@ export type CustomModalChromeCardConfig = Readonly<{
      *   to provide its own internal scroll region when needed
      */
     scrollHost?: 'overlay' | 'body';
+    bodyScroll?: 'none' | 'auto';
     testID?: string;
     titleTestID?: string;
     subtitleTestID?: string;

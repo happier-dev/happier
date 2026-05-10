@@ -76,4 +76,22 @@ describe('useModalCardDimensions', () => {
             maxHeight: 578,
         });
     });
+
+    it('does not hard-cap dialog max height to 320 when maxHeightRatio allows larger cards', async () => {
+        const { renderHook } = await import('@/dev/testkit');
+        const { useModalCardDimensions } = await import('./useModalCardDimensions');
+
+        windowState.width = 1200;
+        windowState.height = 1000;
+
+        const hook = await renderHook(() => useModalCardDimensions({
+            size: 'dialog',
+            maxHeightRatio: 0.85,
+        }));
+
+        expect(hook.getCurrent()).toEqual({
+            width: 360,
+            maxHeight: 850,
+        });
+    });
 });

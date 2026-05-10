@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleProp, StyleSheet as ReactNativeStyleSheet, TextStyle, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleProp, TextStyle, View, ViewStyle } from 'react-native';
 import { iOSUIKit } from 'react-native-typography';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -124,7 +124,7 @@ export const RoundButton = React.memo((props: {
                         fallbackColor={display.backgroundColor}
                         gradient={display.gradient}
                         borderRadius={10}
-                        style={ReactNativeStyleSheet.absoluteFillObject}
+                        style={StyleSheet.absoluteFillObject}
                     />
                 ) : null}
                 {doLoading && (

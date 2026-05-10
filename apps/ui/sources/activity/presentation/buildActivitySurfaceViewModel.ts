@@ -10,6 +10,7 @@ import {
     createActivitySurfaceSessionTarget,
 } from '@/activity/actions/activitySurfaceTargets';
 import type { ActivitySurfaceSessionViewModel } from '@/activity/presentation/activitySurfaceViewModels';
+import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 
 function resolveViewModelTitle(params: Readonly<{
     candidate: SessionActivityAttention;
@@ -58,10 +59,8 @@ function resolveViewModelPreviewText(params: Readonly<{
         return null;
     }
 
-    const previewText = params.candidate.session.metadata?.summary?.text;
-    if (typeof previewText !== 'string') {
-        return null;
-    }
+    const previewText = readSessionDisplayTitleField(params.candidate.session).value;
+    if (!previewText) return null;
 
     const normalizedPreviewText = normalizeActivityPreviewText(previewText);
     return normalizedPreviewText.length > 0 ? normalizedPreviewText : null;

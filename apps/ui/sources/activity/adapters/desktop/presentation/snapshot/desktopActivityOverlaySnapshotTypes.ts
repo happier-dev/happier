@@ -1,51 +1,7 @@
 import type { ActivityOverviewSnapshot, SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 import type { ActivitySurfaceSessionViewModel } from '@/activity/presentation/activitySurfaceViewModels';
-import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';
 
 export type DesktopActivityOverlaySnapshotState = 'idle' | 'content';
-
-export type DesktopActivityOverlayCompanionAnimationState =
-    | 'idle'
-    | 'running-right'
-    | 'running-left'
-    | 'waving'
-    | 'jumping'
-    | 'failed'
-    | 'waiting'
-    | 'running'
-    | 'review';
-
-export type DesktopActivityOverlayCompanionAttentionLevel =
-    | 'idle'
-    | 'active'
-    | 'needsAttention'
-    | 'failed';
-
-export type DesktopActivityOverlayCompanionReason =
-    | 'idle'
-    | 'waiting'
-    | 'failed'
-    | 'review'
-    | 'running'
-    | 'queued'
-    | 'live_activity'
-    | 'attention_required'
-    | 'unread_activity'
-    | 'failure';
-
-export type DesktopActivityOverlayCompanionPet = Readonly<{
-    source: SelectedPetPackageSource;
-    displayName: string;
-}>;
-
-export type DesktopActivityOverlayCompanionSnapshot = Readonly<{
-    enabled: boolean;
-    pet: DesktopActivityOverlayCompanionPet;
-    state: DesktopActivityOverlayCompanionAnimationState;
-    attentionLevel: DesktopActivityOverlayCompanionAttentionLevel;
-    reason: DesktopActivityOverlayCompanionReason;
-    sessionId: string | null;
-}>;
 
 export type DesktopActivityOverlaySessionSnapshot = Pick<
     ActivitySurfaceSessionViewModel,
@@ -119,7 +75,6 @@ export type DesktopActivityOverlaySnapshot = Readonly<{
     userQuestions: readonly DesktopActivityOverlayRequestSnapshot[];
     quotaSummaries: readonly DesktopActivityOverlayQuotaSummarySnapshot[];
     completionStates: readonly DesktopActivityOverlayCompletionStateSnapshot[];
-    companion: DesktopActivityOverlayCompanionSnapshot;
     defaultTarget: string;
     labels: DesktopActivityOverlaySnapshotLabels;
 }>;

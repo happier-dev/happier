@@ -3,7 +3,7 @@ import {
     SPAWN_SESSION_ERROR_CODES,
     type BackendTargetRefV2,
 } from '@happier-dev/protocol';
-import type { AgentId } from '@happier-dev/agents';
+import { type AgentId } from '@happier-dev/agents';
 
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -12,9 +12,11 @@ import { listPreferredMachineIds } from '@/components/settings/pickers/resolvePr
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { machineSpawnNewSession } from '@/sync/ops/machines';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
+import { publishDisplayTitleMetadataMutation } from '@/sync/state/displayTitlePublish';
 import { sync } from '@/sync/sync';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
@@ -348,19 +350,23 @@ async function touchVoiceConversationSessionWithScope(
     sessionId: string,
     scope: VoiceConversationScopeMetadata,
 ): Promise<void> {
-    await sync.patchSessionMetadataWithRetry(sessionId, (metadata: any) =>
-        writeVoiceConversationScopeMetadata(
-            {
+    await publishDisplayTitleMetadataMutation({
+        sessionId,
+        title: 'Voice conversation (system)',
+        updateSessionMetadataWithRetry: (targetSessionId, updater) =>
+            sync.patchSessionMetadataWithRetry(targetSessionId, updater),
+        resolveTitle: (metadata: Metadata) =>
+            typeof metadata?.summary?.text === 'string'
+                ? metadata.summary.text
+                : 'Voice conversation (system)',
+        transformAfterTitle: (metadata: Metadata) => {
+            const systemMetadata = {
                 ...metadata,
                 ...buildVoiceConversationSystemSessionMetadata(),
-                summary: {
-                    text: typeof metadata?.summary?.text === 'string' ? metadata.summary.text : 'Voice conversation (system)',
-                    updatedAt: Date.now(),
-                },
-            },
-            scope,
-        ),
-    );
+            };
+            return writeVoiceConversationScopeMetadata(systemMetadata, scope);
+        },
+    });
 }
 
 function resolveConversationRetentionLimit(state: any): number {

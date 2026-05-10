@@ -1,23 +1,9 @@
-import 'react';
+import * as React from 'react';
 import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 import { installVitestRnShim } from './vitestRnShim';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
-
-// `@expo/vector-icons` ships JSX in `.js` files under `build/`, which Vite may not always
-// prebundle as JSX in the Vitest environment. Mock it globally so tests never attempt to
-// parse the real implementation.
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-    Octicons: 'Octicons',
-    FontAwesome: 'FontAwesome',
-    FontAwesome5: 'FontAwesome5',
-    Feather: 'Feather',
-    MaterialIcons: 'MaterialIcons',
-    MaterialCommunityIcons: 'MaterialCommunityIcons',
-}));
-vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Ionicons' }));
 
 // UI tests should not inherit embedded build-policy gating (set in CI).
 // Clear it by default so feature tests can opt-in explicitly per case.
@@ -282,37 +268,6 @@ installVitestRnShim({ traceFile: process.env.VITEST_TRACE_LOAD ?? null });
 // resolve it via Node's CJS loader, so we mock it explicitly here as well.
 vi.mock('react-native', async () => await import('./reactNativeStub'));
 
-// `react-native-svg` relies on React Native touchable internals that aren't available in our
-// Node + react-test-renderer environment. Provide a lightweight host-component stub so SVG-backed
-// icons can render in tests without crashing.
-vi.mock('react-native-svg', async () => {
-    const React = await import('react');
-    const createHost = (tag: string) => (props: any) => React.createElement(tag, props, props.children);
-
-    const Svg = createHost('Svg');
-
-    return {
-        __esModule: true,
-        default: Svg,
-        Svg,
-        SvgXml: createHost('SvgXml'),
-        Path: createHost('Path'),
-        Circle: createHost('Circle'),
-        Rect: createHost('Rect'),
-        G: createHost('G'),
-        Defs: createHost('Defs'),
-        ClipPath: createHost('ClipPath'),
-        LinearGradient: createHost('LinearGradient'),
-        RadialGradient: createHost('RadialGradient'),
-        Stop: createHost('Stop'),
-        Polygon: createHost('Polygon'),
-        Polyline: createHost('Polyline'),
-        Line: createHost('Line'),
-        Text: createHost('SvgText'),
-        TSpan: createHost('TSpan'),
-    };
-});
-
 // Vitest runs in Node; `react-native-mmkv` depends on React Native internals and can fail to parse.
 // Provide a minimal in-memory implementation for tests.
 const store = new Map<string, unknown>();
@@ -477,22 +432,61 @@ vi.mock('@expo/vector-icons', () => ({
 // `@shopify/react-native-skia` requires native bindings; stub it for node/Vitest.
 vi.mock('@shopify/react-native-skia', () => ({
     Canvas: 'Canvas',
+    Circle: 'Circle',
+    Image: 'SkiaImage',
     Rect: 'Rect',
     Group: 'Group',
+    LinearGradient: 'LinearGradient',
+    RadialGradient: 'RadialGradient',
     Path: 'Path',
     RoundedRect: 'RoundedRect',
     DiffRect: 'DiffRect',
-    Skia: {},
+    Skia: {
+        Path: {
+            Make: () => ({
+                addRect: () => undefined,
+                addRRect: () => undefined,
+            }),
+        },
+        XYWHRect: () => ({}),
+        RRectXY: () => ({}),
+    },
+    FilterMode: {
+        Nearest: 'nearest',
+        Linear: 'linear',
+    },
+    MipmapMode: {
+        None: 'none',
+        Nearest: 'nearest',
+        Linear: 'linear',
+    },
     rect: () => ({}),
     rrect: () => ({}),
+    useImage: (source: unknown) => source == null ? null : `skia-image:${String(source)}`,
+    vec: (x: number, y: number) => ({ x, y }),
 }));
 
 // `react-native-reanimated` requires native bindings; provide a lightweight mock for node/Vitest.
 vi.mock('react-native-reanimated', () => {
     type SharedValue<T> = { value: T };
 
-    const useSharedValue = <T,>(initial: T): SharedValue<T> => ({ value: initial });
-    const useDerivedValue = <T,>(factory: () => T): SharedValue<T> => ({ value: factory() });
+    const useSharedValue = <T,>(initial: T): SharedValue<T> => {
+        const ref = React.useRef<SharedValue<T> | null>(null);
+        if (!ref.current) {
+            ref.current = { value: initial };
+        }
+        return ref.current;
+    };
+    const useDerivedValue = <T,>(factory: () => T): SharedValue<T> => {
+        const ref = React.useRef<SharedValue<T> | null>(null);
+        const value = factory();
+        if (!ref.current) {
+            ref.current = { value };
+        } else {
+            ref.current.value = value;
+        }
+        return ref.current;
+    };
 
     const runOnJS = <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) => fn;
     const runOnUI = <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) => fn;
@@ -516,8 +510,6 @@ vi.mock('react-native-reanimated', () => {
     const withSpring = (value: any) => value;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const withRepeat = (value: any) => value;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const withSequence = (...values: any[]) => values.at(-1);
     const cancelAnimation = () => {};
 
     const Animated = {
@@ -540,7 +532,6 @@ vi.mock('react-native-reanimated', () => {
         useDerivedValue,
         useSharedValue,
         withRepeat,
-        withSequence,
         withSpring,
         withTiming,
     };
@@ -576,35 +567,31 @@ vi.mock('expo-constants', () => ({
 // source entrypoints that Vitest cannot transform safely under Node.
 vi.mock('expo-modules-core', async () => await import('./expoModulesCoreStub'));
 
-// Some Expo modules import native-bridge helpers from `expo` directly (e.g. `expo-widgets`).
-// Stub `expo` so those packages can load in Vitest/node without executing native side effects.
-vi.mock('expo', async () => await import('./expoStub'));
-
 // `expo-updates` is native-oriented and pulls in platform-specific modules that Node/Vitest can't parse.
 vi.mock('expo-updates', () => ({
-    checkForUpdateAsync: async () => ({ isAvailable: false }),
-    fetchUpdateAsync: async () => {},
-    reloadAsync: async () => {},
     useUpdates: () => ({
-        currentlyRunning: null,
-        availableUpdate: null,
-        downloadedUpdate: null,
+        currentlyRunning: {},
         isChecking: false,
         isDownloading: false,
         isRestarting: false,
+        isStartupProcedureRunning: false,
         isUpdateAvailable: false,
         isUpdatePending: false,
-        downloadProgress: undefined,
-        checkError: null,
-        downloadError: null,
-        lastCheckForUpdateTimeSinceRestart: null,
+        restartCount: 0,
     }),
+    checkForUpdateAsync: async () => ({ isAvailable: false }),
+    fetchUpdateAsync: async () => {},
+    reloadAsync: async () => {},
 }));
 
 // `expo-image` uses native view managers; stub it for Vitest.
 vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
+
+// `expo-video` ships native/web entrypoints that Vitest cannot parse under Node.
+// Product tests assert story-deck video behavior through focused local mocks.
+vi.mock('expo-video', async () => await import('./expoVideoStub'));
 
 // FlashList v2 depends on React Native new architecture internals that do not exist in node/Vitest.
 // Most unit tests only need a stable host component shape.
@@ -675,10 +662,21 @@ vi.mock('react-native-unistyles', () => {
             shadowPopoverArrowBoxShadow: '0 0 0 rgba(0, 0, 0, 0)',
             overlay: {
                 scrim: 'rgba(0, 0, 0, 0.45)',
-                scrimStrong: '#050505',
-                scrimWizard: 'rgba(0, 0, 0, 0.03)',
+                scrimSoft: 'rgba(0, 0, 0, 0.18)',
+                scrimStrong: 'rgba(255, 255, 255, 0.68)',
+                scrimWizard: 'rgba(255, 255, 255, 0.52)',
                 text: '#FFFFFF',
                 textSecondary: 'rgba(255, 255, 255, 0.9)',
+            },
+            desktopPetOverlay: {
+                bubble: {
+                    background: '#FFFFFF',
+                    backgroundPressed: '#F7F7F7',
+                    text: '#1C1C1E',
+                    textSecondary: '#5F6368',
+                    controlBackground: 'rgba(255, 255, 255, 0.96)',
+                    controlBackgroundPressed: '#F2F2F7',
+                },
             },
 
             //
@@ -689,28 +687,9 @@ vi.mock('react-native-unistyles', () => {
             switch: { track: { inactive: '#dddddd', active: '#34C759' }, thumb: { active: '#FFFFFF', inactive: '#767577' } },
             radio: { active: '#007AFF', inactive: '#C0C0C0', dot: '#007AFF' },
             modal: { border: 'rgba(0, 0, 0, 0.1)' },
-            segmentedControl: {
-                trackBackground: '#f0f0f0',
-                trackGradient: {
-                    colors: ['#f0f0f0', '#f5f5f5'],
-                    start: { x: 0.5, y: 1 },
-                    end: { x: 0.5, y: 0 },
-                },
-                activeBackground: '#ffffff',
-                activeGradient: {
-                    colors: ['#fafafa', '#ffffff'],
-                    start: { x: 0.5, y: 1 },
-                    end: { x: 0.5, y: 0 },
-                },
-            },
             button: {
                 primary: { background: '#000000', tint: '#FFFFFF', disabled: '#C0C0C0' },
                 secondary: { tint: '#666666', surface: '#ffffff' },
-            },
-            feed: {
-                card: {
-                    background: '#f8f8f8',
-                },
             },
             input: { background: '#F5F5F5', text: '#000000', placeholder: '#999999' },
 
@@ -753,44 +732,19 @@ vi.mock('react-native-unistyles', () => {
             md: 8,
             lg: 10,
             xl: 12,
-            modalCard: 14,
             xxl: 16,
+            modalCard: 14,
         },
+        iconSize: { small: 12, medium: 16, large: 20, xlarge: 24 },
     };
-
-    const rt = {
-        themeName: 'light',
-        colorScheme: 'light',
-        breakpoint: 'lg',
-        insets: { top: 0, right: 0, bottom: 0, left: 0, ime: 0 },
-        screen: { width: 1200, height: 800 },
-        orientation: 'portrait',
-        fontScale: 1,
-        pixelRatio: 2,
-        rtl: false,
-        statusBar: { height: 0 },
-    } as const;
-
-    function flattenMockStyle(style: unknown): unknown {
-        if (!style) return style;
-        if (Array.isArray(style)) {
-            return style.reduce<Record<string, unknown>>((acc, entry) => ({
-                ...acc,
-                ...(flattenMockStyle(entry) as Record<string, unknown> | undefined),
-            }), {});
-        }
-        if (typeof style === 'object') return style;
-        return {};
-    }
 
     return {
         StyleSheet: {
-            create: (styles: any) => (typeof styles === 'function' ? styles(theme, rt) : styles),
-            flatten: flattenMockStyle,
+            create: (styles: any) => (typeof styles === 'function' ? styles(theme) : styles),
             configure: () => {},
             absoluteFillObject: {},
         },
-        useUnistyles: () => ({ theme, rt }),
+        useUnistyles: () => ({ theme }),
         UnistylesRuntime: {
             setRootViewBackgroundColor: () => {},
             setAdaptiveThemes: () => {},

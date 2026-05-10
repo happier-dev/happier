@@ -141,6 +141,13 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
                 allowTailscale: { enabled: true },
                 allowCloudflareTunnel: { enabled: true },
             },
+            machine: {
+                allowLocalMachineSetup: { enabled: true },
+                allowRemoteSshMachineSetup: { enabled: true },
+            },
+            ssh: {
+                nativeTransport: { enabled: false },
+            },
         },
         terminal: {
             embeddedPty: { enabled: false },
@@ -234,6 +241,9 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
                 },
             },
             misconfig: [],
+        },
+        session: {
+            state: {},
         },
         liveActivities: {
             remoteUpdates: DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,

@@ -14,6 +14,7 @@ import {
     type SessionServerLookupStateLike,
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
     createActivitySurfaceSessionRoute,
@@ -171,12 +172,14 @@ function collectSourceSessions(
     for (const sessionId of collectLookupSessionIds(source, includeWarmSourceWhenNotReady)) {
         const session = source.sessionsById[sessionId];
         if (session) {
-            sessions.push(session);
+            if (isUserFacingSession(session)) {
+                sessions.push(session);
+            }
             continue;
         }
         const lookupEntry = findSessionListLookupSession(lookupState, sessionId);
         const renderable = lookupEntry?.session ?? source.sessionListRenderablesById[sessionId];
-        if (renderable) {
+        if (renderable && isUserFacingSession(renderable)) {
             sessions.push(buildSessionFromRenderable(renderable, lookupEntry?.serverId ?? null));
         }
     }
@@ -299,7 +302,6 @@ export function buildActivityOverviewFromSource(params: Readonly<{
         if (candidate.reasons.hasUnread) unread += 1;
         if (candidate.reasons.hasPendingPermissionRequests) permissionRequired += 1;
         if (candidate.reasons.hasPendingUserActionRequests) actionRequired += 1;
-        if (candidate.reasons.hasQueuedUserInput) queuedInput += 1;
         if (candidate.reasons.isThinking) thinking += 1;
         if (candidate.hasAttention) totalAttention += 1;
     }

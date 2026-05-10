@@ -147,6 +147,13 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                     allowTailscale: { enabled: true },
                     allowCloudflareTunnel: { enabled: true },
                 },
+                machine: {
+                    allowLocalMachineSetup: { enabled: true },
+                    allowRemoteSshMachineSetup: { enabled: true },
+                },
+                ssh: {
+                    nativeTransport: { enabled: false },
+                },
             },
             terminal: {
                 embeddedPty: { enabled: false },
@@ -243,6 +250,9 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 },
                 providers: authProvidersWithDetails,
                 misconfig: [],
+            },
+            session: {
+                state: {},
             },
             liveActivities: {
                 remoteUpdates: DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,

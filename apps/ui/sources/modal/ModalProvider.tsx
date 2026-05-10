@@ -21,6 +21,10 @@ export function useModal() {
     return context;
 }
 
+export function useOptionalModal() {
+    return useContext(ModalContext);
+}
+
 export function ModalProvider({ active = true, children }: ModalProviderProps) {
     const [state, setState] = useState<ModalState>({
         modals: []

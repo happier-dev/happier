@@ -18,8 +18,7 @@ import { buildStableActivityOverviewFingerprint } from '@/activity/source/buildA
 import { isUnsafeNotificationServerUrl } from '@/activity/notifications/notificationRouting';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import type { ActionId } from '@happier-dev/protocol';
-import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
-import { storage, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import { useLocalSettings } from '@/sync/domains/state/storage';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -32,10 +31,6 @@ import {
 } from './desktopActivityOverlayBridge';
 import { readDesktopActivityOverlayQaSyncOverride } from './desktopActivityOverlayQaSyncOverride';
 import { isDesktopActivityOverlayWindowContext } from './isDesktopActivityOverlayWindowContext';
-import {
-    resolveDesktopActivityOverlayCompanionPolicy,
-    resolveDesktopOverlayPolicyWithCompanion,
-} from './resolveDesktopActivityOverlayCompanionPolicy';
 import { resolveDesktopOverlayPolicy } from './resolveDesktopOverlayPolicy';
 import { buildDesktopActivityOverlayOverviewFromSource } from '../presentation/snapshot/buildDesktopActivityOverlayOverviewFromSource';
 import { useDesktopActivityOverlaySource } from './useDesktopActivityOverlaySource';
@@ -293,8 +288,7 @@ function buildDesktopOverlaySyncFingerprint(params: Readonly<{
     visible: boolean;
     expanded: boolean;
     snapshot: DesktopActivityOverlaySnapshot;
-    policy: ReturnType<typeof resolveDesktopOverlayPolicyWithCompanion>;
-    companionPolicy: ReturnType<typeof resolveDesktopActivityOverlayCompanionPolicy>;
+    policy: ReturnType<typeof resolveDesktopOverlayPolicy>;
     window: ReturnType<typeof buildDesktopActivityOverlayModel>['window'];
     qaSyncOverride: unknown;
 }>): string {
@@ -311,7 +305,6 @@ function buildDesktopOverlaySyncFingerprint(params: Readonly<{
         expanded: params.expanded,
         snapshot: stableSnapshot,
         policy: params.policy,
-        companionPolicy: params.companionPolicy,
         window: params.window,
     });
 }
@@ -328,12 +321,7 @@ function isRouteCommand(command: ActivityInteractionCommand): command is Extract
 
 export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null {
     const source = useDesktopActivityOverlaySource();
-    const settings = useSettings();
     const localSettings = useLocalSettings();
-    const accountPetsById = storage((state) => state.accountPetsById);
-    const localPetSourcesBySourceKey = storage((state) => state.localPetSourcesBySourceKey);
-    const companionDecision = useFeatureDecision('pets.companion', { scopeKind: 'runtime' });
-    const syncDecision = useFeatureDecision('pets.sync', { scopeKind: 'runtime' });
     const [isExpanded, setIsExpanded] = React.useState(false);
     const [inputLocked, setInputLocked] = React.useState(false);
     const [surfaceEngaged, setSurfaceEngaged] = React.useState(false);
@@ -352,21 +340,6 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
     const desktopPolicy = React.useMemo(
         () => resolveDesktopOverlayPolicy((localSettings ?? {}) as Record<string, unknown>),
         [localSettings],
-    );
-    const companionPolicy = React.useMemo(
-        () => resolveDesktopActivityOverlayCompanionPolicy({
-            companionDecision,
-            syncDecision,
-            accountSettings: (settings ?? {}) as Record<string, unknown>,
-            localSettings: (localSettings ?? {}) as Record<string, unknown>,
-            accountPetsById,
-            localPetSourcesBySourceKey,
-        }),
-        [accountPetsById, companionDecision, localPetSourcesBySourceKey, localSettings, settings, syncDecision],
-    );
-    const effectiveDesktopPolicy = React.useMemo(
-        () => resolveDesktopOverlayPolicyWithCompanion(desktopPolicy, companionPolicy),
-        [companionPolicy, desktopPolicy],
     );
     const activityPolicy = React.useMemo(
         () => resolveActivitySurfacePolicy((localSettings ?? {}) as Record<string, unknown>),
@@ -388,15 +361,11 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
             source,
             sourceOverview,
             activityPolicy,
-            desktopPolicy: effectiveDesktopPolicy,
-            companion: {
-                enabled: companionPolicy.enabled,
-                pet: companionPolicy.pet,
-            },
+            desktopPolicy,
             previousPrimarySessionId: previousPrimaryRef.current.sessionId,
             previousPrimaryChangedAtMs: previousPrimaryRef.current.changedAtMs,
         }),
-        [activityPolicy, companionPolicy.enabled, companionPolicy.pet, effectiveDesktopPolicy, source, sourceOverview],
+        [activityPolicy, desktopPolicy, source, sourceOverview],
     );
     const snapshotPrimarySessionId = snapshot.primary?.sessionId ?? null;
     if (snapshotPrimarySessionId !== previousPrimaryRef.current.sessionId) {
@@ -410,10 +379,10 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
     const model = React.useMemo(
         () => buildDesktopActivityOverlayModel({
             snapshot,
-            policy: effectiveDesktopPolicy,
+            policy: desktopPolicy,
             isExpanded,
         }),
-        [effectiveDesktopPolicy, isExpanded, snapshot],
+        [desktopPolicy, isExpanded, snapshot],
     );
 
     React.useEffect(() => {
@@ -426,7 +395,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
             visible: model.visible,
             expanded: isExpanded,
             model,
-            policy: effectiveDesktopPolicy,
+            policy: desktopPolicy,
             window: model.window,
         };
         const nextSyncFingerprint = buildDesktopOverlaySyncFingerprint({
@@ -434,8 +403,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
             visible: model.visible,
             expanded: isExpanded,
             snapshot,
-            policy: effectiveDesktopPolicy,
-            companionPolicy,
+            policy: desktopPolicy,
             window: model.window,
             qaSyncOverride,
         });
@@ -448,8 +416,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
             tag: 'DesktopActivityOverlayRuntime.syncDesktopActivityOverlay',
         });
     }, [
-        companionPolicy,
-        effectiveDesktopPolicy,
+        desktopPolicy,
         isDesktop,
         isExpanded,
         isOverlayWindow,
@@ -471,7 +438,7 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
         if (surfaceEngaged || hasBlockingAutoCollapseCard(model)) {
             return;
         }
-        if (!effectiveDesktopPolicy.autoHideEnabled) {
+        if (!desktopPolicy.autoHideEnabled) {
             return;
         }
 
@@ -480,14 +447,14 @@ export function DesktopActivityOverlayRuntimeShared(): React.ReactElement | null
             fireAndForget(setDesktopActivityOverlayExpanded(false), {
                 tag: 'DesktopActivityOverlayRuntime.autoHideCollapse',
             });
-        }, effectiveDesktopPolicy.autoHideDelayMs);
+        }, desktopPolicy.autoHideDelayMs);
 
         return () => {
             clearTimeout(timeoutId);
         };
     }, [
-        effectiveDesktopPolicy.autoHideDelayMs,
-        effectiveDesktopPolicy.autoHideEnabled,
+        desktopPolicy.autoHideDelayMs,
+        desktopPolicy.autoHideEnabled,
         inputLocked,
         isDesktop,
         isExpanded,

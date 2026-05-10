@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { MMKV } from 'react-native-mmkv';
 
+import { getLegacyChangelogAutoSeenBaseline } from '@/changelog/releaseNotes/storage';
 import { renderScreen } from '@/dev/testkit';
 
 
@@ -68,6 +69,7 @@ describe('useChangelog', () => {
         expect(latestValue.hasUnread).toBe(false);
         expect(latestValue.latestReleaseId).toBe('0.2.1');
         expect(new MMKV().getString(CHANGELOG_LAST_VIEWED_RELEASE_ID_KEY)).toBe('0.2.1');
+        expect(getLegacyChangelogAutoSeenBaseline()).toBe('0.2.1');
     });
 
     it('reports unread changelog entries when the last viewed release id differs', async () => {

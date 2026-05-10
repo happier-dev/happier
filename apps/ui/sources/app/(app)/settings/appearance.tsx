@@ -17,6 +17,8 @@ import { darkTheme, lightTheme } from '@/theme';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { resolveStatusBarStyleForThemePreference } from '@/components/ui/layout/statusBarStyle';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { runThemePreferenceChange } from '@/components/settings/appearance/themePreferenceTransition';
 
 // Define known avatar styles for this version of the app
 type KnownAvatarStyle = 'pixelated' | 'gradient' | 'brutalist';
@@ -36,12 +38,14 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
     const [uiItemDensity, setUiItemDensity] = useLocalSettingMutable('uiItemDensity');
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
+    const [uiBackdropBlurEnabled, setUiBackdropBlurEnabled] = useLocalSettingMutable('uiBackdropBlurEnabled');
     const [detailsPaneTabsBehavior, setDetailsPaneTabsBehavior] = useLocalSettingMutable('detailsPaneTabsBehavior');
     const [settingsNavSidebarEnabled, setSettingsNavSidebarEnabled] = useLocalSettingMutable('settingsNavSidebarEnabled');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
     const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
     const [openItemDensityMenu, setOpenItemDensityMenu] = React.useState(false);
     const [openDetailsTabsMenu, setOpenDetailsTabsMenu] = React.useState(false);
+    const reduceMotion = useReducedMotionPreference();
 
     const uiFontScalePresets = React.useMemo(() => {
         return {
@@ -146,27 +150,31 @@ export default React.memo(function AppearanceSettingsScreen() {
                         const currentIndex = themePreference === 'adaptive' ? 0 : themePreference === 'light' ? 1 : 2;
                         const nextIndex = (currentIndex + 1) % 3;
                         const nextTheme = nextIndex === 0 ? 'adaptive' : nextIndex === 1 ? 'light' : 'dark';
-                        
-                        // Update the setting
-                        setThemePreference(nextTheme);
-                        
-                        // Apply the theme change immediately
                         const systemTheme = Appearance.getColorScheme() ?? 'light';
-                        if (nextTheme === 'adaptive') {
-                            // Enable adaptive themes and set to system theme
-                            UnistylesRuntime.setAdaptiveThemes(true);
-                            const color = systemTheme === 'dark' ? darkTheme.colors.groupped.background : lightTheme.colors.groupped.background;
-                            UnistylesRuntime.setRootViewBackgroundColor(color);
-                            SystemUI.setBackgroundColorAsync(color);
-                        } else {
-                            // Disable adaptive themes and set explicit theme
-                            UnistylesRuntime.setAdaptiveThemes(false);
-                            UnistylesRuntime.setTheme(nextTheme);
-                            const color = nextTheme === 'dark' ? darkTheme.colors.groupped.background : lightTheme.colors.groupped.background;
-                            UnistylesRuntime.setRootViewBackgroundColor(color);
-                            SystemUI.setBackgroundColorAsync(color);
-                        }
-                        setStatusBarStyle(resolveStatusBarStyleForThemePreference(nextTheme, systemTheme), true);
+                        void runThemePreferenceChange({
+                            currentPreference: themePreference,
+                            mutation: () => {
+                                setThemePreference(nextTheme);
+
+                                if (nextTheme === 'adaptive') {
+                                    UnistylesRuntime.setAdaptiveThemes(true);
+                                    const color = systemTheme === 'dark' ? darkTheme.colors.groupped.background : lightTheme.colors.groupped.background;
+                                    UnistylesRuntime.setRootViewBackgroundColor(color);
+                                    SystemUI.setBackgroundColorAsync(color);
+                                } else {
+                                    UnistylesRuntime.setAdaptiveThemes(false);
+                                    UnistylesRuntime.setTheme(nextTheme);
+                                    const color = nextTheme === 'dark' ? darkTheme.colors.groupped.background : lightTheme.colors.groupped.background;
+                                    UnistylesRuntime.setRootViewBackgroundColor(color);
+                                    SystemUI.setBackgroundColorAsync(color);
+                                }
+                                setStatusBarStyle(resolveStatusBarStyleForThemePreference(nextTheme, systemTheme), true);
+                            },
+                            nextPreference: nextTheme,
+                            platform: Platform.OS,
+                            reduceMotion,
+                            systemTheme,
+                        });
                     }}
                 />
             </ItemGroup>
@@ -277,6 +285,18 @@ export default React.memo(function AppearanceSettingsScreen() {
                         />
                     }
                     disabled={!panelsSupported}
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsAppearance.backdropBlur')}
+                    subtitle={t('settingsAppearance.backdropBlurDescription')}
+                    icon={<Ionicons name="layers-outline" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            value={uiBackdropBlurEnabled !== false}
+                            onValueChange={setUiBackdropBlurEnabled}
+                        />
+                    }
                     showChevron={false}
                 />
                 <DropdownMenu

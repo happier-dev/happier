@@ -15,6 +15,7 @@ import {
     readDisplayPathForSession,
     readMachineTargetForSession,
 } from '@/sync/ops/sessionMachineTarget';
+import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { t } from '@/text';
 import { formatPathRelativeToHome } from './formatPathRelativeToHome';
 export { formatPathRelativeToHome } from './formatPathRelativeToHome';
@@ -187,8 +188,8 @@ export function useSessionStatus(session: SessionStatusSource): SessionStatus {
  * Returns the last segment of the path, or 'unknown' if no path is available.
  */
 export function getSessionName(session: SessionStatusSource): string {
-    const summaryText = (session.metadata as any)?.summary?.text ?? (session.metadata as any)?.summaryText;
-    if (typeof summaryText === 'string' && summaryText.trim()) {
+    const summaryText = readSessionDisplayTitleField(session).value;
+    if (summaryText) {
         return summaryText;
     } else if (session.metadata?.name) {
         const name = session.metadata.name.trim();

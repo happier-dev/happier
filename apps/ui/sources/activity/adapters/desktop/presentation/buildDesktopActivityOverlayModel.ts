@@ -3,7 +3,6 @@ import type { DesktopOverlayPolicy } from '@/activity/adapters/desktop/runtime/r
 import { buildDesktopActivityOverlayCollapsedModel } from './model/buildDesktopActivityOverlayCollapsedModel';
 import { buildDesktopActivityOverlayExpandedCards } from './model/buildDesktopActivityOverlayExpandedCards';
 import type {
-    DesktopActivityOverlayCompanionModel,
     DesktopActivityOverlayModel,
     DesktopActivityOverlayWindowSizeParams,
 } from './model/desktopActivityOverlayModelTypes';
@@ -47,7 +46,7 @@ function resolveVisibility(params: Readonly<{
 
     const hasAttention = params.policy.showWhenAttentionRequired && params.snapshot.counts.totalAttention > 0;
     const hasRunning = params.policy.showWhenRunning && params.snapshot.counts.thinking > 0;
-    const hasReady = params.policy.showWhenReady && params.snapshot.counts.queuedInput > 0;
+    const hasReady = params.policy.showWhenReady && params.snapshot.completionStates.length > 0;
     const hasAnyTrigger = hasAttention || hasRunning || hasReady;
     if (params.policy.visibilityMode === 'attention_only') {
         return hasAnyTrigger;
@@ -122,16 +121,6 @@ function buildQuickReplyModel(params: Readonly<{
     };
 }
 
-function buildCompanionModel(params: Readonly<{
-    snapshot: DesktopActivityOverlaySnapshot;
-    isExpanded: boolean;
-}>): DesktopActivityOverlayCompanionModel {
-    return {
-        ...params.snapshot.companion,
-        interaction: params.isExpanded ? 'expanded' : 'none',
-    };
-}
-
 export function buildDesktopActivityOverlayModel(params: Readonly<{
     snapshot: DesktopActivityOverlaySnapshot;
     policy: DesktopOverlayPolicy;
@@ -172,10 +161,6 @@ export function buildDesktopActivityOverlayModel(params: Readonly<{
                 policy: params.policy,
             }),
         },
-        companion: buildCompanionModel({
-            snapshot: params.snapshot,
-            isExpanded: params.isExpanded,
-        }),
         window,
     };
 }

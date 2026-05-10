@@ -73,7 +73,7 @@ describe('useExecutionRunsBackendsForSession', () => {
     sessionState.value = {
       id: 'session-1',
       metadata: {
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           machineId: 'machine-direct',
@@ -100,7 +100,7 @@ describe('useExecutionRunsBackendsForSession', () => {
     sessionState.value = {
       id: 'session-1',
       metadata: {
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           machineId: 'machine-direct',
@@ -125,7 +125,7 @@ describe('useExecutionRunsBackendsForSession', () => {
     sessionState.value = {
       id: 'session-1',
       metadata: {
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           machineId: 'machine-direct',
@@ -158,7 +158,7 @@ describe('useExecutionRunsBackendsForSession', () => {
     sessionState.value = {
       id: 'session-1',
       metadata: {
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'claude',
           machineId: 'machine-direct',

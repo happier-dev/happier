@@ -101,6 +101,7 @@ export interface SearchableListSelectorProps<T> {
     showRecent?: boolean;
     showSearch?: boolean;
     searchPlacement?: 'header' | 'recent' | 'favorites' | 'all';
+    groupOrder?: 'recentFirst' | 'favoritesFirst';
 }
 
 const RECENT_ITEMS_DEFAULT_VISIBLE = 5;
@@ -131,6 +132,7 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
         showRecent = config.showRecent !== false,
         showSearch = config.showSearch !== false,
         searchPlacement = 'header',
+        groupOrder = 'recentFirst',
     } = props;
     const showAll = config.showAll !== false;
 
@@ -353,6 +355,21 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
         <>
             {effectiveSearchPlacement === 'header' && searchNodeHeader}
 
+            {groupOrder === 'favoritesFirst' && shouldRenderFavoritesGroup && (
+                <ItemGroup title={config.favoritesSectionTitle}>
+                    {effectiveSearchPlacement === 'favorites' && searchNodeEmbedded}
+                    {filteredFavoriteItems.length === 0
+                        ? renderEmptyRow(showNoMatches ? t('common.noMatches') : config.noItemsMessage)
+                        : filteredFavoriteItems.map((item, index) => {
+                            const itemId = config.getItemId(item);
+                            const selectedId = selectedItem ? config.getItemId(selectedItem) : null;
+                            const isSelected = itemId === selectedId;
+                            const isLast = index === filteredFavoriteItems.length - 1;
+                            return renderItem(item, isSelected, isLast, !isLast, false, true);
+                        })}
+                </ItemGroup>
+            )}
+
             {shouldRenderRecentGroup && (
                 <ItemGroup title={config.recentSectionTitle}>
                     {effectiveSearchPlacement === 'recent' && searchNodeEmbedded}
@@ -387,7 +404,7 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
                 </ItemGroup>
             )}
 
-            {shouldRenderFavoritesGroup && (
+            {groupOrder !== 'favoritesFirst' && shouldRenderFavoritesGroup && (
                 <ItemGroup title={config.favoritesSectionTitle}>
                     {effectiveSearchPlacement === 'favorites' && searchNodeEmbedded}
                     {filteredFavoriteItems.length === 0

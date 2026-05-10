@@ -1,4 +1,4 @@
-export type AppUpdateStatusKind = 'native-store' | 'desktop' | 'ota' | 'changelog';
+export type AppUpdateStatusKind = 'native-store' | 'desktop' | 'ota' | 'release-notes' | 'changelog';
 
 export type DesktopUpdateStatus =
     | 'idle'
@@ -37,6 +37,9 @@ export type BuildAppUpdateStatusModelParams = Readonly<{
     }>;
     ota: Readonly<{
         isUpdatePending: boolean;
+    }>;
+    releaseNotes: Readonly<{
+        hasUnread: boolean;
     }>;
     changelog: Readonly<{
         hasUnread: boolean;

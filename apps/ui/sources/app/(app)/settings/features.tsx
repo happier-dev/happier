@@ -39,7 +39,6 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
     const [embeddedTerminalDockLocation, setEmbeddedTerminalDockLocation] = useLocalSettingMutable('embeddedTerminalDockLocation');
     const [showEnvironmentBadge, setShowEnvironmentBadge] = useSettingMutable('showEnvironmentBadge');
-    const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
     const [useMachinePickerSearch, setUseMachinePickerSearch] = useSettingMutable('useMachinePickerSearch');
     const [usePathPickerSearch, setUsePathPickerSearch] = useSettingMutable('usePathPickerSearch');
     const [devModeEnabled] = useLocalSettingMutable('devModeEnabled');
@@ -305,21 +304,6 @@ export default React.memo(function FeaturesSettingsScreen() {
                     subtitle={t('settingsFeatures.environmentBadgeSubtitle')}
                     icon={<Ionicons name="pricetag-outline" size={29} color={theme.colors.accent.indigo} />}
                     rightElement={<Switch value={showEnvironmentBadge} onValueChange={setShowEnvironmentBadge} />}
-                    showChevron={false}
-                />
-                <Item
-                    title={t('settingsFeatures.enhancedSessionWizard')}
-                    subtitle={useEnhancedSessionWizard
-                        ? t('settingsFeatures.enhancedSessionWizardEnabled')
-                        : t('settingsFeatures.enhancedSessionWizardDisabled')}
-                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.purple} />}
-                    rightElement={
-                        <Switch
-                            testID="settings-feature-toggle-useEnhancedSessionWizard"
-                            value={useEnhancedSessionWizard}
-                            onValueChange={setUseEnhancedSessionWizard}
-                        />
-                    }
                     showChevron={false}
                 />
                 <Item

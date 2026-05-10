@@ -13,7 +13,7 @@ describe('resolveAgentUiBehaviorFromFlavor', () => {
     it('resolves provider behavior through shared flavor aliases', () => {
         const behavior = resolveAgentUiBehaviorFromFlavor('open-code');
 
-        expect(behavior?.directSessions?.browse?.getSourceOptions).toBeTypeOf('function');
+        expect(behavior?.externalSessions?.browse?.getSourceOptions).toBeTypeOf('function');
     });
 
     it('keeps codex-specific permission footer overrides on the native codex agent', () => {

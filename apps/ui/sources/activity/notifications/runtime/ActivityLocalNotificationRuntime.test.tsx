@@ -207,6 +207,41 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
     });
 
+    it('sends same-session Tauri notifications when the desktop window is not active', async () => {
+        const globalWithDocument = globalThis as unknown as { document?: unknown };
+        const originalDocument = globalWithDocument.document;
+        globalWithDocument.document = {
+            visibilityState: 'hidden',
+            hasFocus: () => false,
+        };
+        reactNativeRuntime.platformOs = 'web';
+        isTauriDesktopValue = true;
+        visibleSessionIdsValue = ['session-1'];
+
+        try {
+            const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
+            const { notifyActivityReady } = await import('./activityLocalNotificationBus');
+
+            let tree: renderer.ReactTestRenderer | null = null;
+            tree = (await renderScreen(<ActivityLocalNotificationRuntime />)).tree;
+
+            await act(async () => {
+                notifyActivityReady('session-1', []);
+            });
+
+            expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+            expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+                title: 'Ready session',
+            }));
+
+            await act(async () => {
+                tree?.unmount();
+            });
+        } finally {
+            globalWithDocument.document = originalDocument;
+        }
+    });
+
     it('suppresses reused ready notifications for the active direct-session view', async () => {
         visibleSessionIdsValue = ['session-1'];
         sessionsByIdValue = {
@@ -216,7 +251,7 @@ describe('ActivityLocalNotificationRuntime', () => {
                     summary: {
                         text: 'Direct session',
                     },
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                         machineId: 'machine-1',

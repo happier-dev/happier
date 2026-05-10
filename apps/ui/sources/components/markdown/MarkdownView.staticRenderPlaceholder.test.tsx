@@ -13,6 +13,7 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const animatedCapture = vi.hoisted(() => ({
+    platformOS: 'web' as 'web' | 'ios' | 'android',
     timingTargets: [] as unknown[],
     sequenceStepCounts: [] as number[],
     loopStartCount: 0,
@@ -30,6 +31,13 @@ installMarkdownCommonModuleMocks({
         const module = await createReactNativeWebMock();
         return {
             ...module,
+            Platform: {
+                get OS() {
+                    return animatedCapture.platformOS;
+                },
+                select: (values: Record<string, unknown>) =>
+                    values?.[animatedCapture.platformOS] ?? values?.default,
+            },
             Animated: {
                 ...module.Animated,
                 timing: (_value: unknown, config: { toValue?: unknown }): TestAnimation => {
@@ -73,6 +81,7 @@ installMarkdownCommonModuleMocks({
 
 describe('MarkdownView (static render placeholder)', () => {
     beforeEach(() => {
+        animatedCapture.platformOS = 'web';
         animatedCapture.timingTargets.length = 0;
         animatedCapture.sequenceStepCounts.length = 0;
         animatedCapture.loopStartCount = 0;
@@ -86,7 +95,8 @@ describe('MarkdownView (static render placeholder)', () => {
         vi.useRealTimers();
     });
 
-    it('shows a delayed placeholder for static markdown until content layout is reported', async () => {
+    it('shows a delayed placeholder for native static markdown until content layout is reported', async () => {
+        animatedCapture.platformOS = 'android';
         const { MarkdownView } = await import('./MarkdownView');
 
         const screen = await renderScreen(
@@ -113,7 +123,23 @@ describe('MarkdownView (static render placeholder)', () => {
         expect(animatedCapture.loopStopCount).toBe(1);
     });
 
+    it('does not show a placeholder for web static markdown because web renders immediate fallback content', async () => {
+        const { MarkdownView } = await import('./MarkdownView');
+
+        const screen = await renderScreen(
+            <MarkdownView markdown="Hello **world**" profile="transcript" />,
+        );
+
+        await act(async () => {
+            vi.advanceTimersByTime(1_000);
+        });
+
+        expect(screen.findByTestId('markdown-static-render-placeholder')).toBe(null);
+        expect(animatedCapture.loopStartCount).toBe(0);
+    });
+
     it('does not show a placeholder for streaming markdown', async () => {
+        animatedCapture.platformOS = 'android';
         const { MarkdownView } = await import('./MarkdownView');
 
         const screen = await renderScreen(

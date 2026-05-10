@@ -146,7 +146,7 @@ describe('collectResidualFamilyCounts', () => {
                 ].join('\n'),
             },
             {
-                path: 'apps/ui/sources/components/sessions/shell/SessionView.directSessions.test.tsx',
+                path: 'apps/ui/sources/components/sessions/shell/SessionView.externalSessions.test.tsx',
                 text: [
                     "import renderer from 'react-test-renderer';",
                     "import { vi } from 'vitest';",
@@ -173,17 +173,17 @@ describe('collectResidualFamilyCounts', () => {
         const formatted = formatResidualFileHotspots(fileSummaries, { limit: 2 });
 
         expect(fileSummaries.map((summary) => summary.path)).toEqual([
-            'apps/ui/sources/components/sessions/shell/SessionView.directSessions.test.tsx',
+            'apps/ui/sources/components/sessions/shell/SessionView.externalSessions.test.tsx',
             'apps/ui/sources/components/sessions/transcript/ChatList.flashListV2.test.tsx',
             'apps/ui/sources/components/sessions/transcript/ChatList.jumpToBottom.test.tsx',
         ]);
         expect(formatted).toContain('topFiles:');
         expect(formatted).toContain('ChatList.flashListV2.test.tsx');
-        expect(formatted).toContain('SessionView.directSessions.test.tsx');
+        expect(formatted).toContain('SessionView.externalSessions.test.tsx');
         expect(formatted).toContain('directory=apps/ui/sources/components/sessions/transcript');
         expect(formatted).toContain('directory=apps/ui/sources/components/sessions/shell');
         expect(formatted).toContain('family=ChatList.flashListV2');
-        expect(formatted).toContain('family=SessionView.directSessions');
+        expect(formatted).toContain('family=SessionView.externalSessions');
         expect(formatted).toContain('codemodEligible=false');
         expect(formatted).toContain('codemodBlockers=timerChoreography,selectorDrift');
         expect(formatted).toContain('microtaskFlush=1');
@@ -204,7 +204,7 @@ describe('collectResidualFamilyCounts', () => {
                 ].join('\n'),
             },
             {
-                path: 'apps/ui/sources/components/sessions/shell/SessionView.directSessions.test.tsx',
+                path: 'apps/ui/sources/components/sessions/shell/SessionView.externalSessions.test.tsx',
                 text: [
                     "import renderer from 'react-test-renderer';",
                     "import { vi } from 'vitest';",
@@ -220,7 +220,7 @@ describe('collectResidualFamilyCounts', () => {
 
         const summaries = collectResidualFileCounts(entries);
         const eligible = summaries.find((summary) => summary.path.endsWith('MessageView.copyButtonHitSlop.web.test.tsx'));
-        const blocked = summaries.find((summary) => summary.path.endsWith('SessionView.directSessions.test.tsx'));
+        const blocked = summaries.find((summary) => summary.path.endsWith('SessionView.externalSessions.test.tsx'));
 
         expect(eligible).toMatchObject({
             directory: 'apps/ui/sources/components/sessions/transcript',
@@ -230,7 +230,7 @@ describe('collectResidualFamilyCounts', () => {
         });
         expect(blocked).toMatchObject({
             directory: 'apps/ui/sources/components/sessions/shell',
-            family: 'SessionView.directSessions',
+            family: 'SessionView.externalSessions',
             codemodEligible: false,
             codemodBlockers: ['timerChoreography', 'selectorDrift'],
         });

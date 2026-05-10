@@ -48,8 +48,10 @@ export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Objec
   "@happier-dev/plugins-opencode",
   "@happier-dev/plugins-scm-azure-devops",
   "@happier-dev/plugins-scm-bitbucket",
+  "@happier-dev/plugins-scm-git",
   "@happier-dev/plugins-scm-github",
-  "@happier-dev/plugins-scm-gitlab"
+  "@happier-dev/plugins-scm-gitlab",
+  "@happier-dev/plugins-scm-sapling"
 ]);
 
 export const BUNDLED_CANONICAL_AGENTS_CORE: Readonly<Record<CanonicalAgentId, AgentCoreConfig>> = Object.freeze({
