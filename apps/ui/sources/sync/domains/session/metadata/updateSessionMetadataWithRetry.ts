@@ -1,9 +1,21 @@
 export type UpdateMetadataAck = {
-    result: 'success' | 'version-mismatch' | 'error';
+    result: 'success' | 'version-mismatch' | 'forbidden' | 'error';
     version?: number;
     metadata?: string;
     message?: string;
 };
+
+function createForbiddenMetadataUpdateError(): Error & { code: 'forbidden' } {
+    return Object.assign(new Error('Forbidden session metadata update'), {
+        code: 'forbidden' as const,
+    });
+}
+
+function createConflictMetadataUpdateError(maxAttempts: number): Error & { code: 'conflict' } {
+    return Object.assign(new Error(`Failed to update session metadata after ${maxAttempts} attempts`), {
+        code: 'conflict' as const,
+    });
+}
 
 export type SessionMetadataSnapshot<M> = {
     metadataVersion: number;
@@ -93,8 +105,12 @@ export async function updateSessionMetadataWithRetry<M>(params: {
             continue;
         }
 
+        if (result.result === 'forbidden') {
+            throw createForbiddenMetadataUpdateError();
+        }
+
         throw new Error(result.message || 'Failed to update session metadata');
     }
 
-    throw new Error(`Failed to update session metadata after ${maxAttempts} attempts`);
+    throw createConflictMetadataUpdateError(maxAttempts);
 }

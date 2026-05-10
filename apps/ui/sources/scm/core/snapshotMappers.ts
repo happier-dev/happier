@@ -3,6 +3,7 @@ import type { ScmWorkingSnapshot as ProtocolScmWorkingSnapshot } from '@happier-
 import type { ScmCapabilities, ScmWorkingEntry, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 export const EMPTY_SCM_CAPABILITIES: ScmCapabilities = {
+    capabilityScope: 'local-backend',
     readStatus: false,
     readDiffFile: false,
     readDiffCommit: false,
@@ -20,6 +21,17 @@ export const EMPTY_SCM_CAPABILITIES: ScmCapabilities = {
     writeRemoteAdd: false,
     writeRemoteSetUrl: false,
     writeRemoteRemove: false,
+    readHostingProvider: false,
+    readPullRequestStatus: false,
+    writePullRequestCreate: false,
+    writePullRequestCheckout: false,
+    writePullRequestPrepareWorktree: false,
+    writePullRequestRunStacked: false,
+    defaultBranchPushPolicy: 'deny',
+    writeRepositoryInit: false,
+    readHostingRepositoryPublishTargets: false,
+    writeHostingRepositoryPublish: false,
+    writeRepositoryRemoveIndexLock: false,
     readBranches: false,
     writeBranchCreate: false,
     writeBranchCheckout: false,
@@ -59,6 +71,12 @@ export function mapProtocolEntryToUiEntry(entry: ProtocolScmWorkingSnapshot['ent
     };
 }
 
+function mapProtocolScmBackendIdToUiBackendId(
+    backendId: ProtocolScmWorkingSnapshot['repo']['backendId'],
+): ScmWorkingSnapshot['repo']['backendId'] {
+    return backendId === 'git' || backendId === 'sapling' ? backendId : null;
+}
+
 export function mapProtocolSnapshotToUiSnapshot(
     snapshot: ProtocolScmWorkingSnapshot,
     projectKey: string
@@ -69,8 +87,9 @@ export function mapProtocolSnapshotToUiSnapshot(
         repo: {
             isRepo: snapshot.repo.isRepo,
             rootPath: snapshot.repo.rootPath,
-            backendId: snapshot.repo.backendId,
+            backendId: mapProtocolScmBackendIdToUiBackendId(snapshot.repo.backendId),
             mode: snapshot.repo.mode,
+            defaultBranch: snapshot.repo.defaultBranch ?? null,
             worktrees: snapshot.repo.worktrees,
             remotes: snapshot.repo.remotes ?? [],
         },
@@ -84,6 +103,8 @@ export function mapProtocolSnapshotToUiSnapshot(
         },
         stashCount: snapshot.stashCount ?? 0,
         operationState: snapshot.operationState ?? null,
+        hostingProvider: snapshot.hostingProvider ?? null,
+        pullRequestStatus: snapshot.pullRequestStatus ?? null,
         hasConflicts: snapshot.hasConflicts,
         entries: snapshot.entries.map(mapProtocolEntryToUiEntry),
         totals: {

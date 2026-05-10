@@ -1,4 +1,4 @@
-import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
+import type { AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
 
 export function parsePreflightModelListFromProbeModelsResult(raw: unknown): PreflightModelList | null {

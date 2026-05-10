@@ -472,7 +472,7 @@ describe('applyReachableTargetsToSessionListRenderables', () => {
                     machineId: null,
                     path: '/workspace/direct-repo',
                     homeDir: null,
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'codex',
                     },
@@ -489,7 +489,7 @@ describe('applyReachableTargetsToSessionListRenderables', () => {
                 updatedAt: 10,
                 metadata: {
                     path: '/workspace/direct-repo',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'codex',
                         machineId: 'm-direct',

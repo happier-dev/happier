@@ -14,7 +14,7 @@ function makeSessionRow(id: string, direct: boolean): SessionListRenderableSessi
         activeAt: 0,
         metadataVersion: 0,
         agentStateVersion: 0,
-        metadata: direct ? { path: '', directSessionV1: { v: 1, providerId: 'codex' } } : { path: '' },
+        metadata: direct ? { path: '', externalSessionV1: { v: 1, providerId: 'codex' } } : { path: '' },
         thinking: false,
         thinkingAt: 0,
         presence: 0,

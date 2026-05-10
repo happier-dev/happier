@@ -16,7 +16,7 @@ describe('sessionListRenderableMetadataComparison', () => {
             host: 'mbp',
             machineId: 'm1',
             flavor: 'pro',
-            directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
             systemSessionV1: { hidden: false },
         };
 
@@ -30,7 +30,7 @@ describe('sessionListRenderableMetadataComparison', () => {
         const comparison = readSessionListRenderableMetadataComparison({
             summary: { text: 'Summary' },
             path: '/home/u/repo',
-            directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
             systemSessionV1: { hidden: true },
         } as any);
 
@@ -42,7 +42,7 @@ describe('sessionListRenderableMetadataComparison', () => {
             host: null,
             machineId: null,
             flavor: null,
-            directSessionV1: { v: 1, providerId: 'provider-a' },
+            externalSessionV1: { v: 1, providerId: 'provider-a' },
             readStateV1: null,
             hiddenSystemSession: true,
         });
@@ -57,7 +57,7 @@ describe('sessionListRenderableMetadataComparison', () => {
             host: 'mbp',
             machineId: 'm1',
             flavor: 'pro',
-            directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
             readStateV1: null,
             hiddenSystemSession: false,
         });
@@ -70,7 +70,7 @@ describe('sessionListRenderableMetadataComparison', () => {
             host: 'mbp',
             machineId: 'm1',
             flavor: 'pro',
-            directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
             readStateV1: null,
             hiddenSystemSession: false,
         }, previous);

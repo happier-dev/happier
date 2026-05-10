@@ -28,6 +28,8 @@ import type {
     ScmPullRequestListResponse,
     ScmPullRequestOpenComposeRequest,
     ScmPullRequestOpenComposeResponse,
+    ScmPullRequestOpenOrReuseRequest,
+    ScmPullRequestOpenOrReuseResponse,
     ScmRemoteAddRequest,
     ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
@@ -36,6 +38,12 @@ import type {
     ScmRemoteRequest,
     ScmRemoteResponse,
     ScmRemoteSetUrlRequest,
+    ScmHostingRepositoryDescribePublishTargetsRequest,
+    ScmHostingRepositoryDescribePublishTargetsResponse,
+    ScmHostingRepositoryPublishRequest,
+    ScmHostingRepositoryPublishResponse,
+    ScmRepositoryInitRequest,
+    ScmRepositoryInitResponse,
     ScmRepositoryRemoveIndexLockRequest,
     ScmRepositoryRemoveIndexLockResponse,
     ScmStashApplyRequest,
@@ -370,6 +378,50 @@ export async function sessionScmPullRequestOpenCompose(
     return await callScmPreferMachine<ScmPullRequestOpenComposeResponse, ScmPullRequestOpenComposeRequest>(
         sessionId,
         RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
+        request
+    );
+}
+
+export async function sessionScmPullRequestOpenOrReuse(
+    sessionId: string,
+    request: ScmPullRequestOpenOrReuseRequest
+): Promise<ScmPullRequestOpenOrReuseResponse> {
+    return await callScmPreferMachine<ScmPullRequestOpenOrReuseResponse, ScmPullRequestOpenOrReuseRequest>(
+        sessionId,
+        RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE,
+        request
+    );
+}
+
+export async function sessionScmRepositoryInit(
+    sessionId: string,
+    request: ScmRepositoryInitRequest
+): Promise<ScmRepositoryInitResponse> {
+    return await callScmPreferMachine<ScmRepositoryInitResponse, ScmRepositoryInitRequest>(
+        sessionId,
+        RPC_METHODS.SCM_REPOSITORY_INIT,
+        request
+    );
+}
+
+export async function sessionScmHostingRepositoryDescribePublishTargets(
+    sessionId: string,
+    request: ScmHostingRepositoryDescribePublishTargetsRequest
+): Promise<ScmHostingRepositoryDescribePublishTargetsResponse> {
+    return await callScmPreferMachine<ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryDescribePublishTargetsRequest>(
+        sessionId,
+        RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS,
+        request
+    );
+}
+
+export async function sessionScmHostingRepositoryPublish(
+    sessionId: string,
+    request: ScmHostingRepositoryPublishRequest
+): Promise<ScmHostingRepositoryPublishResponse> {
+    return await callScmPreferMachine<ScmHostingRepositoryPublishResponse, ScmHostingRepositoryPublishRequest>(
+        sessionId,
+        RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH,
         request
     );
 }

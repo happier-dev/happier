@@ -44,4 +44,21 @@ describe('buildAvailableReviewEngineOptions', () => {
       { id: 'claude', label: 'agent:claude' },
     ]);
   });
+
+  it('includes discovered source-backed review backends that are not enabled canonical agents', () => {
+    const opts = buildAvailableReviewEngineOptions({
+      enabledAgentIds: ['claude'],
+      resolveAgentLabel: (id) => `agent:${id}`,
+      executionRunsBackends: {
+        claude: { available: true, intents: ['review'] },
+        'acme.review.backend': { available: true, intents: ['review'] },
+        'acme.delegate.backend': { available: true, intents: ['delegate'] },
+      },
+    });
+
+    expect(opts).toEqual([
+      { id: 'claude', label: 'agent:claude' },
+      { id: 'acme.review.backend', label: 'agent:acme.review.backend' },
+    ]);
+  });
 });

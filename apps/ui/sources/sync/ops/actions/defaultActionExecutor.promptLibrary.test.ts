@@ -84,7 +84,7 @@ vi.mock('@/sync/sync', () => ({
         updateArtifactWithHeader: updateArtifactWithHeaderMock,
     },
 }));
-vi.mock('@/sync/engine/overrides/acpSessionModeOverridePublish', () => ({ publishAcpSessionModeOverrideToMetadata: vi.fn() }));
+vi.mock('@/sync/state/acpSessionModeOverridePublish', () => ({ publishAcpSessionModeOverrideToMetadata: vi.fn() }));
 vi.mock('@/sync/ops/promptLibrary/promptDocs', () => ({ updatePromptDoc: vi.fn() }));
 vi.mock('@/sync/ops/promptLibrary/promptBundles', () => ({ updateSkillPromptBundle: vi.fn() }));
 vi.mock('./sessionModeActionSupport', () => ({

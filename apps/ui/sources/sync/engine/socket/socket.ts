@@ -50,7 +50,7 @@ import {
 import { applyAutomationSocketUpdate } from '@/sync/engine/automations/automationSocketApply';
 import { normalizeRelationshipUpdatedUpdateBody } from '@/sync/engine/social/relationshipUpdate';
 import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
-import type { DirectSessionTranscriptUpdatedEphemeralUpdate } from './socketParse';
+import type { ExternalSessionTranscriptUpdatedEphemeralUpdate } from './socketParse';
 import { FeedBodySchema } from '@/sync/domains/social/feedTypes';
 export { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 
@@ -817,7 +817,7 @@ export function handleEphemeralSocketUpdate(params: {
     getSessionEncryption: Encryption['getSessionEncryption'];
     getSession: (sessionId: string) => Session | undefined;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
-    updateDirectSessionTranscript?: (update: DirectSessionTranscriptUpdatedEphemeralUpdate) => Promise<void> | void;
+    updateExternalSessionTranscript?: (update: ExternalSessionTranscriptUpdatedEphemeralUpdate) => Promise<void> | void;
 }): Promise<void> {
     const {
         update,
@@ -827,7 +827,7 @@ export function handleEphemeralSocketUpdate(params: {
         getSessionEncryption,
         getSession,
         applyMessages,
-        updateDirectSessionTranscript,
+        updateExternalSessionTranscript,
     } = params;
 
     const updateData = parseEphemeralUpdate(update);
@@ -847,7 +847,7 @@ export function handleEphemeralSocketUpdate(params: {
         notifyExecutionRunActivity(updateData.sessionId);
     } else if (updateData.type === 'direct-session-transcript-delta') {
         if (!shouldContinue()) return Promise.resolve();
-        return Promise.resolve(updateDirectSessionTranscript?.(updateData as DirectSessionTranscriptUpdatedEphemeralUpdate));
+        return Promise.resolve(updateExternalSessionTranscript?.(updateData as ExternalSessionTranscriptUpdatedEphemeralUpdate));
     } else if (updateData.type === 'transcript-stream-segment') {
         const currentApplyHandlers = socketMessageApplyHandlers;
         socketMessageApplyHandlers = {

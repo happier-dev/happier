@@ -4,6 +4,7 @@ import { createDefaultActionExecutor } from './defaultActionExecutor';
 
 const forkSessionOpMock = vi.hoisted(() => vi.fn());
 const rollbackSessionConversationOpMock = vi.hoisted(() => vi.fn());
+const rollbackSessionCheckpointCodeOpMock = vi.hoisted(() => vi.fn());
 const startSessionHandoffOpMock = vi.hoisted(() => vi.fn());
 const openSessionForVoiceToolMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
@@ -11,6 +12,7 @@ const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/ops/sessions', () => ({
   forkSession: forkSessionOpMock,
   rollbackSessionConversation: rollbackSessionConversationOpMock,
+  rollbackSessionCheckpointCode: rollbackSessionCheckpointCodeOpMock,
   sessionRename: vi.fn(async () => ({ success: true })),
 }));
 
@@ -46,7 +48,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
   machineRpcWithServerScope: vi.fn(),
 }));
 
-vi.mock('@/sync/acp/sessionModeControl', () => ({
+vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
   computeSessionModePickerControl: vi.fn(() => null),
 }));
 
@@ -56,7 +58,7 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/sync/engine/overrides/acpSessionModeOverridePublish', () => ({
+vi.mock('@/sync/state/acpSessionModeOverridePublish', () => ({
   publishAcpSessionModeOverrideToMetadata: vi.fn(),
 }));
 
@@ -137,6 +139,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
   beforeEach(() => {
     forkSessionOpMock.mockReset();
     rollbackSessionConversationOpMock.mockReset();
+    rollbackSessionCheckpointCodeOpMock.mockReset();
     startSessionHandoffOpMock.mockReset();
     openSessionForVoiceToolMock.mockReset();
     readMachineTargetForSessionMock.mockReset();
@@ -452,7 +455,7 @@ describe('createDefaultActionExecutor (session.fork)', () => {
           presence: 0,
           metadata: {
             machineId: 'machine_1',
-            directSessionV1: { v: 1 },
+            externalSessionV1: { v: 1 },
             flavor: 'claude',
           },
         },
@@ -576,6 +579,57 @@ describe('createDefaultActionExecutor (session.fork)', () => {
     expect(rollbackSessionConversationOpMock).toHaveBeenCalledWith({
       sessionId: 'sess_parent',
       target: { type: 'latest_turn' },
+    });
+  });
+
+  it('delegates checkpoint code rollback through the production action executor dependency', async () => {
+    rollbackSessionCheckpointCodeOpMock.mockResolvedValueOnce({
+      status: 'applied',
+      changedPaths: ['tracked.txt'],
+      skippedPaths: [],
+      receipts: ['checkpoint.rollback_applied'],
+      diagnostics: [],
+    });
+    storageGetStateMock.mockReturnValue({
+      sessions: {
+        sess_parent: {
+          id: 'sess_parent',
+          active: true,
+          metadata: {
+            machineId: 'machine_1',
+            flavor: 'codex',
+            codexBackendMode: 'appServer',
+          },
+        },
+      },
+      settings: {},
+    });
+    const request = {
+      v: 1,
+      sessionId: 'sess_parent',
+      turnId: 'turn-1',
+      cwd: '/repo',
+      codeMode: 'code_only_without_stash',
+      backupMode: 'happier_checkpoint_only',
+      expectedStartRef: 'refs/happier/checkpoints/c2Vzc19wYXJlbnQ/turn-start/turn-1',
+      expectedFinalRef: 'refs/happier/checkpoints/c2Vzc19wYXJlbnQ/turn-final/turn-1',
+      codeOnlyTranscriptDivergenceConfirmed: true,
+    } as const;
+
+    const executor = createDefaultActionExecutor({
+      resolveServerIdForSessionId: () => 'server-b',
+    });
+
+    const result = await executor.execute(
+      'session.checkpoint_code_rollback' as any,
+      request,
+      { defaultSessionId: 'sess_parent', surface: 'ui', placement: 'session_action_menu' } as any,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(rollbackSessionCheckpointCodeOpMock).toHaveBeenCalledWith({
+      request,
+      serverId: 'server-b',
     });
   });
 });

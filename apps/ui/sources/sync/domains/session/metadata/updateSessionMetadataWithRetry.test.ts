@@ -124,4 +124,50 @@ describe('updateSessionMetadataWithRetry', () => {
         expect(sessions[sessionId]?.metadata.readStateV1?.sessionSeq).toBe(5);
         expect(sessions[sessionId]?.metadata.tools?.length).toBe(2);
     });
+
+    it('surfaces forbidden metadata acks as coded authorization failures', async () => {
+        const sessionId = 's1';
+        const sessions: Record<string, { metadataVersion: number; metadata: Metadata }> = {
+            [sessionId]: { metadataVersion: 1, metadata: { path: '/tmp', host: 'h' } },
+        };
+
+        await expect(updateSessionMetadataWithRetry({
+            sessionId,
+            getSession: () => sessions[sessionId] ?? null,
+            refreshSessions: async () => undefined,
+            encryptMetadata: async (metadata) => JSON.stringify(metadata),
+            decryptMetadata: async (_version, encrypted) => JSON.parse(encrypted) as Metadata,
+            emitUpdateMetadata: async () => ({ result: 'forbidden' as const }),
+            applySessionMetadata: (next) => {
+                sessions[sessionId] = next;
+            },
+            updater: (base) => ({ ...base, tools: ['a'] }),
+            maxAttempts: 1,
+        })).rejects.toMatchObject({ code: 'forbidden' });
+    });
+
+    it('surfaces retry exhaustion as a coded conflict', async () => {
+        const sessionId = 's1';
+        const sessions: Record<string, { metadataVersion: number; metadata: Metadata }> = {
+            [sessionId]: { metadataVersion: 1, metadata: { path: '/tmp', host: 'h' } },
+        };
+
+        await expect(updateSessionMetadataWithRetry({
+            sessionId,
+            getSession: () => sessions[sessionId] ?? null,
+            refreshSessions: async () => undefined,
+            encryptMetadata: async (metadata) => JSON.stringify(metadata),
+            decryptMetadata: async (_version, encrypted) => JSON.parse(encrypted) as Metadata,
+            emitUpdateMetadata: async () => ({
+                result: 'version-mismatch' as const,
+                version: 1,
+                metadata: JSON.stringify({ path: '/tmp', host: 'h' }),
+            }),
+            applySessionMetadata: (next) => {
+                sessions[sessionId] = next;
+            },
+            updater: (base) => ({ ...base, tools: ['a'] }),
+            maxAttempts: 1,
+        })).rejects.toMatchObject({ code: 'conflict' });
+    });
 });

@@ -1,5 +1,16 @@
 /* Theme-aware scrollbar styles using Unistyles CSS variables */
 
+::view-transition-image-pair(root) {
+    isolation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+    display: block;
+}
+
 /* iOS Safari / PWA safe-area insets (web)
    - Expose env(...) values as CSS custom properties so RNW surfaces can read them via JS when needed.
    - Only affects browsers that support env(safe-area-inset-*); others resolve to 0px. */
@@ -75,6 +86,12 @@
     --expo-router-modal-overlay-background: var(--colors-overlay-scrim-wizard, rgba(255, 255, 255, 0.52));
     -webkit-backdrop-filter: blur(2px);
     backdrop-filter: blur(2px);
+}
+
+html[data-happy-backdrop-blur="off"] [data-vaul-overlay] {
+    --expo-router-modal-overlay-background: var(--colors-overlay-scrim-strong, rgba(0, 0, 0, 0.58));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
 }
 
 /* Ensure scrollbars are visible on hover for macOS */

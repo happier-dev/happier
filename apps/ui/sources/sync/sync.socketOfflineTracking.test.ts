@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type FetchChanges = typeof import('./api/session/apiChanges').fetchChanges;
 type FetchCurrentChangesCursor = typeof import('./api/session/apiChanges').fetchCurrentChangesCursor;
-type MachineDirectSessionTranscriptPage = typeof import('@/sync/ops/machineDirectSessions').machineDirectSessionTranscriptPage;
-type MachineDirectSessionTranscriptReadAfter = typeof import('@/sync/ops/machineDirectSessions').machineDirectSessionTranscriptReadAfter;
+type MachineExternalSessionTranscriptPage = typeof import('@/sync/ops/machineExternalSessions').machineExternalSessionTranscriptPage;
+type MachineExternalSessionTranscriptReadAfter = typeof import('@/sync/ops/machineExternalSessions').machineExternalSessionTranscriptReadAfter;
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -37,16 +37,16 @@ const fetchChangesMock = vi.hoisted(() =>
 const fetchCurrentChangesCursorMock = vi.hoisted(() =>
   vi.fn<FetchCurrentChangesCursor>(async () => ({ status: 'ok' as const, cursor: '0' })),
 );
-const machineDirectSessionTranscriptPageMock = vi.hoisted(() =>
-  vi.fn<MachineDirectSessionTranscriptPage>(async () => ({
+const machineExternalSessionTranscriptPageMock = vi.hoisted(() =>
+  vi.fn<MachineExternalSessionTranscriptPage>(async () => ({
     ok: true,
     items: [],
     nextCursor: null,
     hasMore: false,
   })),
 );
-const machineDirectSessionTranscriptReadAfterMock = vi.hoisted(() =>
-  vi.fn<MachineDirectSessionTranscriptReadAfter>(async () => ({
+const machineExternalSessionTranscriptReadAfterMock = vi.hoisted(() =>
+  vi.fn<MachineExternalSessionTranscriptReadAfter>(async () => ({
     ok: true,
     items: [],
     nextCursor: null,
@@ -59,9 +59,9 @@ vi.mock('./api/session/apiChanges', () => ({
   fetchCurrentChangesCursor: fetchCurrentChangesCursorMock,
 }));
 
-vi.mock('@/sync/ops/machineDirectSessions', () => ({
-  machineDirectSessionTranscriptPage: machineDirectSessionTranscriptPageMock,
-  machineDirectSessionTranscriptReadAfter: machineDirectSessionTranscriptReadAfterMock,
+vi.mock('@/sync/ops/machineExternalSessions', () => ({
+  machineExternalSessionTranscriptPage: machineExternalSessionTranscriptPageMock,
+  machineExternalSessionTranscriptReadAfter: machineExternalSessionTranscriptReadAfterMock,
 }));
 
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
@@ -117,7 +117,7 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 import { sync } from './sync';
 import { storage } from './domains/state/storage';
 import type { Machine } from './domains/state/storageTypes';
-import { loadChangesCursor, loadDirectSessionTailCursor, saveProfile } from './domains/state/persistence';
+import { loadChangesCursor, loadExternalSessionTailCursor, saveProfile } from './domains/state/persistence';
 import { profileDefaults } from './domains/profiles/profile';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { WEB_SYNC_INSTANCE_ID_SESSION_KEY } from '@/sync/runtime/webSyncClientIdentity';
@@ -187,9 +187,9 @@ describe('sync socket offline tracking', () => {
     (sync as any).webSyncClientIdentityHeartbeatTimer = null;
     (sync as any).webSyncClientIdentity = null;
     (sync as any).changesCursor = null;
-    (sync as any).directSessionTailCursorBySessionId.clear();
-    (sync as any).directSessionOlderCursorBySessionId.clear();
-    (sync as any).directSessionHasMoreOlderBySessionId.clear();
+    (sync as any).externalSessionTailCursorBySessionId.clear();
+    (sync as any).externalSessionOlderCursorBySessionId.clear();
+    (sync as any).externalSessionHasMoreOlderBySessionId.clear();
     (sync as any).safeCursorLagState = null;
     syncReliabilityTelemetry.reset();
     fetchChangesMock.mockReset();
@@ -200,15 +200,15 @@ describe('sync socket offline tracking', () => {
     });
     fetchCurrentChangesCursorMock.mockReset();
     fetchCurrentChangesCursorMock.mockResolvedValue({ status: 'ok' as const, cursor: '0' });
-    machineDirectSessionTranscriptPageMock.mockReset();
-    machineDirectSessionTranscriptPageMock.mockResolvedValue({
+    machineExternalSessionTranscriptPageMock.mockReset();
+    machineExternalSessionTranscriptPageMock.mockResolvedValue({
       ok: true,
       items: [],
       nextCursor: null,
       hasMore: false,
     });
-    machineDirectSessionTranscriptReadAfterMock.mockReset();
-    machineDirectSessionTranscriptReadAfterMock.mockResolvedValue({
+    machineExternalSessionTranscriptReadAfterMock.mockReset();
+    machineExternalSessionTranscriptReadAfterMock.mockResolvedValue({
       ok: true,
       items: [],
       nextCursor: null,
@@ -592,7 +592,7 @@ describe('sync socket offline tracking', () => {
         s1: {
           id: 's1',
           metadata: {
-            directSessionV1: {
+            externalSessionV1: {
               v: 1,
               providerId: 'codex',
               machineId: 'm1',
@@ -606,10 +606,10 @@ describe('sync socket offline tracking', () => {
     saveProfile({ ...profileDefaults, id: 'test-account' });
     (sync as any).serverID = 'test';
 
-    await (sync as any).applyDirectSessionTranscriptItems('s1', [], { nextCursor: 'tail-2' });
+    await (sync as any).applyExternalSessionTranscriptItems('s1', [], { nextCursor: 'tail-2' });
 
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    expect(loadDirectSessionTailCursor('s1', { serverScope: activeServerId, accountId: 'test', instanceId: 'tab-a' })).toBe('tail-2');
+    expect(loadExternalSessionTailCursor('s1', { serverScope: activeServerId, accountId: 'test', instanceId: 'tab-a' })).toBe('tail-2');
   });
 
   it('catches up loaded direct sessions on resume even when the account changes feed is empty', async () => {
@@ -619,7 +619,7 @@ describe('sync socket offline tracking', () => {
       changes: [],
       nextCursor: '0',
     });
-    machineDirectSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+    machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
       ok: true,
       items: [
         {
@@ -662,7 +662,7 @@ describe('sync socket offline tracking', () => {
         s1: {
           id: 's1',
           metadata: {
-            directSessionV1: {
+            externalSessionV1: {
               v: 1,
               providerId: 'codex',
               machineId: 'm1',
@@ -688,7 +688,7 @@ describe('sync socket offline tracking', () => {
 
     await (sync as any).resumeSync('socket-reconnect');
 
-    expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'm1',
       remoteSessionId: 'remote-1',
       cursor: 'tail',
@@ -701,7 +701,7 @@ describe('sync socket offline tracking', () => {
       .map((message) => message.text);
     expect(texts).toEqual(['caught up direct']);
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    expect(loadDirectSessionTailCursor('s1', { serverScope: activeServerId, accountId: 'test' })).toBe('tail-1');
+    expect(loadExternalSessionTailCursor('s1', { serverScope: activeServerId, accountId: 'test' })).toBe('tail-1');
   }, 60_000);
 
   it('persists a safe cursor lag tripwire only after two over-threshold checks', () => {

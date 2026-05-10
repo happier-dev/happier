@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
 import {
     sessionExecutionRunAction,
     sessionExecutionRunGet,
@@ -20,6 +21,7 @@ import {
 } from '@/sync/ops/sessionExecutionRuns';
 import {
     forkSession as forkSessionOp,
+    rollbackSessionCheckpointCode as rollbackSessionCheckpointCodeOp,
     rollbackSessionConversation as rollbackSessionConversationOp,
     sessionStopWithServerScope,
 } from '@/sync/ops/sessions';
@@ -46,7 +48,7 @@ import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
 import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEnginesList';
 import { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } from '@/voice/tools/actionImpl/agentCatalogList';
 import { sync } from '@/sync/sync';
-import { publishAcpSessionModeOverrideToMetadata } from '@/sync/engine/overrides/acpSessionModeOverridePublish';
+import { publishAcpSessionModeOverrideToMetadata } from '@/sync/state/acpSessionModeOverridePublish';
 import { updatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
 import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles';
 import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
@@ -186,6 +188,9 @@ import {
       });
     },
 
+    checkpointCodeRollback: async ({ request, serverId }) =>
+      await rollbackSessionCheckpointCodeOp({ request, serverId }),
+
     sessionHandoffStart: async ({ sessionId, targetMachineId, targetSessionStorageMode, workspaceTransfer, serverId }) => {
       const sid = String(sessionId ?? '').trim();
       const tid = String(targetMachineId ?? '').trim();
@@ -195,7 +200,7 @@ import {
       const session = stateAny?.sessions?.[sid] ?? null;
       const metadata = session?.metadata ?? null;
       const sourceMachineId = resolveSessionMachineId(sid, metadata);
-      const sessionStorageMode = metadata?.directSessionV1 ? 'direct' : 'persisted';
+      const sessionStorageMode = metadata?.externalSessionV1 ? 'direct' : 'persisted';
 
       return await completeSessionHandoffOp({
         sessionId: sid,
@@ -248,14 +253,18 @@ import {
 
       const updatedAt = Date.now();
       try {
-        await sync.patchSessionMetadataWithRetry(
-          sid,
-          (metadata: any) => ({
-            ...(metadata ?? {}),
-            summary: { text: normalizedTitle, updatedAt },
-          }),
-          { serverId: typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : null },
-        );
+        await publishDisplayTitleToMetadata({
+          sessionId: sid,
+          title: normalizedTitle,
+          updatedAt,
+          updateSessionMetadataWithRetry: async (targetSessionId, updater) => {
+            await sync.patchSessionMetadataWithRetry(
+              targetSessionId,
+              updater,
+              { serverId: typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : null },
+            );
+          },
+        });
       } catch (error) {
         const err = new Error(error instanceof Error ? error.message : 'action_failed');
         (err as Error & { code?: string }).code = 'action_failed';

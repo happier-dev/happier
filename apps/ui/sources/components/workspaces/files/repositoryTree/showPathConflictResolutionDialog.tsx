@@ -163,6 +163,7 @@ export async function showPathConflictResolutionDialog(params: Readonly<{
             title: params.title,
             subtitle: params.body,
             testID: `${params.testIdPrefix ?? 'path-conflicts'}-modal`,
+            bodyScroll: 'auto',
             dimensions: { width: 420, maxHeightRatio: 0.85, size: 'md' },
         },
         closeOnBackdrop: true,

@@ -16,7 +16,7 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
                     updatedAt: 10,
                     metadata: {
                         path: '/workspace/direct-repo',
-                        directSessionV1: {
+                        externalSessionV1: {
                             v: 1,
                             providerId: 'codex',
                             machineId: 'm-direct',
@@ -39,7 +39,7 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
                     metadata: {
                         path: '/workspace/direct-repo',
                         machineId: null,
-                        directSessionV1: {
+                        externalSessionV1: {
                             v: 1,
                             providerId: 'codex',
                         },
@@ -92,7 +92,7 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
                     updatedAt: 10,
                     metadata: {
                         path: '/workspace/direct-repo',
-                        directSessionV1: {
+                        externalSessionV1: {
                             v: 1,
                             providerId: 'codex',
                             machineId: 'm-direct',
@@ -115,7 +115,7 @@ describe('resolveWorkspaceTargetForSessionFromState', () => {
                     metadata: {
                         path: '/workspace/direct-repo',
                         machineId: null,
-                        directSessionV1: {
+                        externalSessionV1: {
                             v: 1,
                             providerId: 'codex',
                         },

@@ -10,7 +10,7 @@ export * from './ops/sessionReadState';
 export * from './ops/workspaceFileSystem';
 export * from './domains/transfers/ops/uploadSessionAttachment';
 export * from './ops/machineExecutionRuns';
-export * from './ops/machineDirectSessions';
+export * from './ops/machineExternalSessions';
 export * from './ops/machineFileBrowser';
 
 

@@ -31,13 +31,13 @@ export function isSessionListCacheEntryMetadataUsable(entry: SessionListCacheEnt
         || hasNonEmptyString(entry.host)
         || hasNonEmptyString(entry.machineId)
         || hasNonEmptyString(entry.flavor)
-        || entry.directSessionV1 != null
+        || entry.externalSessionV1 != null
         || entry.hiddenSystemSession === true;
 }
 
-function areDirectSessionCacheEntriesEqual(
-    next: SessionListCacheEntryV1['directSessionV1'],
-    previous: SessionListCacheEntryV1['directSessionV1'],
+function areExternalSessionCacheEntriesEqual(
+    next: SessionListCacheEntryV1['externalSessionV1'],
+    previous: SessionListCacheEntryV1['externalSessionV1'],
 ): boolean {
     if (next === previous) return true;
     if (!next || !previous) return (next ?? null) === (previous ?? null);
@@ -69,7 +69,7 @@ function areSessionListCacheEntriesEqual(
         && nextEntry.host === previousEntry.host
         && nextEntry.machineId === previousEntry.machineId
         && nextEntry.flavor === previousEntry.flavor
-        && areDirectSessionCacheEntriesEqual(nextEntry.directSessionV1, previousEntry.directSessionV1)
+        && areExternalSessionCacheEntriesEqual(nextEntry.externalSessionV1, previousEntry.externalSessionV1)
         && nextEntry.hiddenSystemSession === previousEntry.hiddenSystemSession
         && nextEntry.keepVisibleWhenInactive === previousEntry.keepVisibleWhenInactive
         && nextEntry.hasPendingPermissionRequests === previousEntry.hasPendingPermissionRequests
@@ -112,7 +112,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
             host: entry.host ?? null,
             machineId: entry.machineId ?? null,
             flavor: entry.flavor ?? null,
-            directSessionV1: entry.directSessionV1 ?? null,
+            externalSessionV1: entry.externalSessionV1 ?? null,
             hiddenSystemSession: entry.hiddenSystemSession === true,
         } : null,
         thinking: false,
@@ -190,7 +190,7 @@ export function buildSessionListCacheEntryFromRenderable(
         host: preserveMetadata ? previousEntry.host ?? null : session.metadata?.host ?? null,
         machineId: preserveMetadata ? previousEntry.machineId ?? null : session.metadata?.machineId ?? null,
         flavor: preserveMetadata ? previousEntry.flavor ?? null : session.metadata?.flavor ?? null,
-        directSessionV1: preserveMetadata ? previousEntry.directSessionV1 ?? null : session.metadata?.directSessionV1 ?? null,
+        externalSessionV1: preserveMetadata ? previousEntry.externalSessionV1 ?? null : session.metadata?.externalSessionV1 ?? null,
         hiddenSystemSession: preserveMetadata
             ? previousEntry.hiddenSystemSession === true
             : session.metadata?.hiddenSystemSession === true,

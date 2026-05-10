@@ -5,6 +5,7 @@ import {
     LEGACY_ACP_SESSION_MODES_STATE_KEY,
     LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
     parsePermissionIntentAlias,
+    readAcpSessionModeIntentFromMetadata,
     readMetadataAliasValue,
     SESSION_MODES_STATE_KEY,
     SESSION_MODE_OVERRIDE_KEY,
@@ -70,9 +71,10 @@ function computeStaticSessionModePickerControl(params: {
     const defaultOption = options.find((o) => o.id === 'default') ?? null;
     if (!defaultOption) return null;
 
-    const modeOverride = parseSessionModeOverrideState(
-        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODE_OVERRIDE_KEY, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY),
-    );
+    const modeOverride = readAcpSessionModeIntentFromMetadata((params.metadata as any) ?? {})
+        ?? parseSessionModeOverrideState(
+            readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODE_OVERRIDE_KEY, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY),
+        );
     const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata);
     const requestedModeId = modeOverride?.modeId ?? legacy ?? null;
     const requestedMode = requestedModeId ? options.find((mode) => mode.id === requestedModeId) ?? null : null;
@@ -115,9 +117,10 @@ function computeDynamicSessionModePickerControlInternal(params: {
     const currentModeId = state.currentModeId;
     if (!currentModeId) return null;
 
-    const modeOverride = parseSessionModeOverrideState(
-        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODE_OVERRIDE_KEY, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY),
-    );
+    const modeOverride = readAcpSessionModeIntentFromMetadata((params.metadata as any) ?? {})
+        ?? parseSessionModeOverrideState(
+            readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_MODE_OVERRIDE_KEY, LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY),
+        );
     const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata);
     const requestedModeId = modeOverride?.modeId ?? legacy ?? null;
     const effectiveModeId = requestedModeId ?? currentModeId;
@@ -146,3 +149,5 @@ export function computeSessionModePickerControl(params: {
     if (!supportsSessionModeOverrides(params.agentId)) return null;
     return computeDynamicSessionModePickerControlInternal(params) ?? computeStaticSessionModePickerControl(params);
 }
+
+export const computeAcpSessionModePickerControl = computeSessionModePickerControl;

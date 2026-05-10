@@ -5,7 +5,7 @@ import {
   computeSessionModePickerControl,
   resolveRequestedSessionModeIdForMetadata,
   type SessionModePickerControl,
-} from '@/sync/acp/sessionModeControl';
+} from '@/sync/domains/sessionControl/sessionModeControl';
 import { t } from '@/text';
 
 export function normalizeRequestedSessionModeId(

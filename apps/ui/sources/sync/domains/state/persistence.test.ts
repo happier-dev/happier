@@ -57,8 +57,8 @@ import {
     saveSessionMaterializedMaxSeqById,
     loadChangesCursor,
     saveChangesCursor,
-    loadDirectSessionTailCursor,
-    saveDirectSessionTailCursor,
+    loadExternalSessionTailCursor,
+    saveExternalSessionTailCursor,
     pruneStaleInstanceChangesCursors,
     loadLastChangesCursorByAccountId,
     saveLastChangesCursorByAccountId,
@@ -389,10 +389,10 @@ describe('persistence', () => {
                 instanceId: 'tab-a',
             };
 
-            saveDirectSessionTailCursor('session-1', 'tail-b', accountBScope);
+            saveExternalSessionTailCursor('session-1', 'tail-b', accountBScope);
 
-            expect(loadDirectSessionTailCursor('session-1', accountBScope)).toBe('tail-b');
-            expect(loadDirectSessionTailCursor('session-1', accountAScope)).toBeNull();
+            expect(loadExternalSessionTailCursor('session-1', accountBScope)).toBe('tail-b');
+            expect(loadExternalSessionTailCursor('session-1', accountAScope)).toBeNull();
         });
 
         it('uses legacy server-scoped cursor only as an instance bootstrap fallback', () => {

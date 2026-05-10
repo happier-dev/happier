@@ -238,7 +238,7 @@ describe('socket update handling: plaintext update-session', () => {
         expect(storage.getState().sessions.s1).toBeUndefined();
     });
 
-    it('preserves runtime-local direct-session metadata for loaded plaintext sessions when an update omits directSessionV1', async () => {
+    it('preserves runtime-local direct-session metadata for loaded plaintext sessions when an update omits externalSessionV1', async () => {
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
             storage.getState().applySessions([{
@@ -246,7 +246,7 @@ describe('socket update handling: plaintext update-session', () => {
                 metadata: {
                     path: '/tmp',
                     host: 'localhost',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                         machineId: 'machine-1',
@@ -271,7 +271,7 @@ describe('socket update handling: plaintext update-session', () => {
                         value: JSON.stringify({
                             path: '/work',
                             host: 'devbox',
-                            directSessionAttentionV1: {
+                            externalSessionAttentionV1: {
                                 v: 1,
                                 observedProgressToken: '20:msg-2',
                                 viewedProgressToken: '10:msg-1',
@@ -296,12 +296,12 @@ describe('socket update handling: plaintext update-session', () => {
                 path: '/work',
                 host: 'devbox',
                 machineId: 'machine-1',
-                directSessionV1: expect.objectContaining({
+                externalSessionV1: expect.objectContaining({
                     v: 1,
                     providerId: 'claude',
                     remoteSessionId: 'remote-1',
                 }),
-                directSessionAttentionV1: expect.objectContaining({
+                externalSessionAttentionV1: expect.objectContaining({
                     v: 1,
                     observedProgressToken: '20:msg-2',
                 }),
@@ -311,7 +311,7 @@ describe('socket update handling: plaintext update-session', () => {
         }
     });
 
-    it('preserves runtime-local direct-session metadata for loaded plaintext sessions when an update sets directSessionV1 to null', async () => {
+    it('preserves runtime-local direct-session metadata for loaded plaintext sessions when an update sets externalSessionV1 to null', async () => {
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {
             storage.getState().applySessions([{
@@ -319,7 +319,7 @@ describe('socket update handling: plaintext update-session', () => {
                 metadata: {
                     path: '/tmp',
                     host: 'localhost',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                         machineId: 'machine-1',
@@ -344,8 +344,8 @@ describe('socket update handling: plaintext update-session', () => {
                         value: JSON.stringify({
                             path: '/work',
                             host: 'devbox',
-                            directSessionV1: null,
-                            directSessionAttentionV1: {
+                            externalSessionV1: null,
+                            externalSessionAttentionV1: {
                                 v: 1,
                                 observedProgressToken: '20:msg-2',
                                 viewedProgressToken: '10:msg-1',
@@ -369,12 +369,12 @@ describe('socket update handling: plaintext update-session', () => {
             expect(updatedSession.metadata).toEqual(expect.objectContaining({
                 path: '/work',
                 host: 'devbox',
-                directSessionV1: expect.objectContaining({
+                externalSessionV1: expect.objectContaining({
                     v: 1,
                     providerId: 'claude',
                     remoteSessionId: 'remote-1',
                 }),
-                directSessionAttentionV1: expect.objectContaining({
+                externalSessionAttentionV1: expect.objectContaining({
                     v: 1,
                     observedProgressToken: '20:msg-2',
                 }),
@@ -417,7 +417,7 @@ describe('socket update handling: plaintext update-session', () => {
                     value: JSON.stringify({
                         path: '/work',
                         host: 'devbox',
-                        directSessionV1: {
+                        externalSessionV1: {
                             v: 1,
                             providerId: 'claude',
                             machineId: 'machine-1',
@@ -427,7 +427,7 @@ describe('socket update handling: plaintext update-session', () => {
                                 configDir: '/tmp/.claude',
                             },
                         },
-                        directSessionAttentionV1: {
+                        externalSessionAttentionV1: {
                             v: 1,
                             observedProgressToken: '20:msg-2',
                             viewedProgressToken: '10:msg-1',
@@ -558,7 +558,7 @@ describe('socket update handling: plaintext update-session', () => {
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
-    it('preserves direct-session classification for cache-only renderables when an update omits directSessionV1', async () => {
+    it('preserves direct-session classification for cache-only renderables when an update omits externalSessionV1', async () => {
         storage.getState().replaceSessionListRenderables([
             {
                 id: 's_cached_direct',
@@ -573,7 +573,7 @@ describe('socket update handling: plaintext update-session', () => {
                 metadata: {
                     path: '/tmp',
                     host: 'localhost',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                     },
@@ -598,7 +598,7 @@ describe('socket update handling: plaintext update-session', () => {
                     value: JSON.stringify({
                         path: '/work',
                         host: 'devbox',
-                        directSessionAttentionV1: {
+                        externalSessionAttentionV1: {
                             v: 1,
                             observedProgressToken: '20:msg-2',
                             viewedProgressToken: '10:msg-1',
@@ -620,14 +620,14 @@ describe('socket update handling: plaintext update-session', () => {
         expect(renderable?.metadata).toEqual(expect.objectContaining({
             path: '/work',
             host: 'devbox',
-            directSessionV1: expect.objectContaining({
+            externalSessionV1: expect.objectContaining({
                 v: 1,
                 providerId: 'claude',
             }),
         }));
     });
 
-    it('preserves direct-session classification for cache-only renderables when an update sets directSessionV1 to null', async () => {
+    it('preserves direct-session classification for cache-only renderables when an update sets externalSessionV1 to null', async () => {
         storage.getState().replaceSessionListRenderables([
             {
                 id: 's_cached_direct',
@@ -642,7 +642,7 @@ describe('socket update handling: plaintext update-session', () => {
                 metadata: {
                     path: '/tmp',
                     host: 'localhost',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                     },
@@ -667,8 +667,8 @@ describe('socket update handling: plaintext update-session', () => {
                     value: JSON.stringify({
                         path: '/work',
                         host: 'devbox',
-                        directSessionV1: null,
-                        directSessionAttentionV1: {
+                        externalSessionV1: null,
+                        externalSessionAttentionV1: {
                             v: 1,
                             observedProgressToken: '20:msg-2',
                             viewedProgressToken: '10:msg-1',
@@ -690,14 +690,14 @@ describe('socket update handling: plaintext update-session', () => {
         expect(renderable?.metadata).toEqual(expect.objectContaining({
             path: '/work',
             host: 'devbox',
-            directSessionV1: expect.objectContaining({
+            externalSessionV1: expect.objectContaining({
                 v: 1,
                 providerId: 'claude',
             }),
         }));
     });
 
-    it('preserves direct-session classification for cache-only renderables when an update sets directSessionV1 to null', async () => {
+    it('preserves direct-session classification for cache-only renderables when an update sets externalSessionV1 to null', async () => {
         storage.getState().replaceSessionListRenderables([
             {
                 id: 's_cached_direct',
@@ -712,7 +712,7 @@ describe('socket update handling: plaintext update-session', () => {
                 metadata: {
                     path: '/tmp',
                     host: 'localhost',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                     },
@@ -737,8 +737,8 @@ describe('socket update handling: plaintext update-session', () => {
                     value: JSON.stringify({
                         path: '/work',
                         host: 'devbox',
-                        directSessionV1: null,
-                        directSessionAttentionV1: {
+                        externalSessionV1: null,
+                        externalSessionAttentionV1: {
                             v: 1,
                             observedProgressToken: '20:msg-2',
                             viewedProgressToken: '10:msg-1',
@@ -760,7 +760,7 @@ describe('socket update handling: plaintext update-session', () => {
         expect(renderable?.metadata).toEqual(expect.objectContaining({
             path: '/work',
             host: 'devbox',
-            directSessionV1: expect.objectContaining({
+            externalSessionV1: expect.objectContaining({
                 v: 1,
                 providerId: 'claude',
             }),

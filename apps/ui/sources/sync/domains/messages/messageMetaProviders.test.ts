@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { resolveProviderOutgoingMessageMetaExtras } from '@happier-dev/agents';
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
@@ -67,6 +69,27 @@ describe('addProviderMessageMetaExtras', () => {
         expect(Object.prototype.hasOwnProperty.call(merged, 'prototype')).toBe(false);
     });
 
+    it('rejects protocol-owned message meta keys from provider extras', () => {
+        resolveProviderOutgoingMessageMetaExtrasMock.mockReturnValue({
+            model: 'provider-model',
+            fallbackModel: 'provider-fallback',
+            allowedTools: ['provider-tool'],
+            providerEnabled: true,
+        });
+
+        const merged = addProviderMessageMetaExtras({
+            meta: buildBaseMeta(),
+            agentId: 'claude',
+            settings: {},
+            session: {},
+        });
+
+        expect((merged as Record<string, unknown>).model).toBeUndefined();
+        expect((merged as Record<string, unknown>).fallbackModel).toBeUndefined();
+        expect((merged as Record<string, unknown>).allowedTools).toBeUndefined();
+        expect((merged as Record<string, unknown>).providerEnabled).toBe(true);
+    });
+
     it('returns base meta when provider message-meta shaping throws', () => {
         resolveProviderOutgoingMessageMetaExtrasMock.mockImplementation(() => {
             throw new Error('boom');
@@ -98,5 +121,15 @@ describe('addProviderMessageMetaExtras', () => {
                 session: {},
             }),
         ).not.toThrow();
+    });
+
+    it('keeps provider leaves out of shared message-meta projection', () => {
+        const source = readFileSync(
+            fileURLToPath(new URL('./messageMetaProviders.ts', import.meta.url)),
+            'utf8',
+        );
+
+        expect(source).not.toMatch(/agents\/providers\//);
+        expect(source).not.toMatch(/['"]claude['"]/);
     });
 });

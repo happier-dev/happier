@@ -9,7 +9,7 @@ export function resolveSessionHandoffSourceMachineId(input: Readonly<{
         normalizeSessionHandoffMachineId(input.reachableMachineId)
         ?? normalizeSessionHandoffMachineId(input.sourceMachineId)
         ?? normalizeSessionHandoffMachineId(input.sessionMetadata?.machineId)
-        ?? normalizeSessionHandoffMachineId(input.sessionMetadata?.directSessionV1?.machineId)
+        ?? normalizeSessionHandoffMachineId(input.sessionMetadata?.externalSessionV1?.machineId)
         ?? null
     );
 }

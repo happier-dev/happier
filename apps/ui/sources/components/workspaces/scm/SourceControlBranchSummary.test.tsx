@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 
@@ -9,9 +9,14 @@ import { installSessionFilesCommonModuleMocks } from '@/components/sessions/file
 // Required for React 18+ act() semantics with react-test-renderer.
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const octiconsRenderMock = vi.hoisted(() => vi.fn());
+
 installSessionFilesCommonModuleMocks({
     icons: () => ({
-        Octicons: 'Octicons',
+        Octicons: (props: any) => {
+            octiconsRenderMock(props.name);
+            return React.createElement('Octicons', props);
+        },
         Ionicons: 'Ionicons',
     }),
     reactNative: async () => {
@@ -26,6 +31,46 @@ installSessionFilesCommonModuleMocks({
 });
 
 describe('SourceControlBranchSummary', () => {
+    it('skips rendering counters when parent rerenders with unchanged summary props', async () => {
+        const { SourceControlBranchSummary } = await import('./SourceControlBranchSummary');
+
+        const scmStatusFiles = {
+            branch: 'feature/refactor',
+            upstream: 'origin/feature/refactor',
+            ahead: 3,
+            behind: 1,
+            includedFiles: [],
+            pendingFiles: [],
+            totalIncluded: 2,
+            totalPending: 3,
+        };
+
+        function Wrapper(props: Readonly<{ tick: number }>) {
+            void props.tick;
+            const theme = {
+                colors: {
+                    divider: '#000',
+                    input: { background: '#111' },
+                    surface: '#111',
+                    surfaceHigh: '#222',
+                    text: '#fff',
+                    textSecondary: '#aaa',
+                },
+            };
+            return <SourceControlBranchSummary theme={theme} scmStatusFiles={scmStatusFiles} variant="rail" />;
+        }
+
+        octiconsRenderMock.mockClear();
+        const screen = await renderScreen(<Wrapper tick={0} />);
+        const initialIconRenderCount = octiconsRenderMock.mock.calls.length;
+
+        await act(async () => {
+            screen.tree.update(<Wrapper tick={1} />);
+        });
+
+        expect(octiconsRenderMock).toHaveBeenCalledTimes(initialIconRenderCount);
+    });
+
     it('renders a provided branch trigger in rail mode', async () => {
         const { SourceControlBranchSummary } = await import('./SourceControlBranchSummary');
 

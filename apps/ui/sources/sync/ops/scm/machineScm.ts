@@ -28,6 +28,8 @@ import type {
     ScmPullRequestListResponse,
     ScmPullRequestOpenComposeRequest,
     ScmPullRequestOpenComposeResponse,
+    ScmPullRequestOpenOrReuseRequest,
+    ScmPullRequestOpenOrReuseResponse,
     ScmRemoteAddRequest,
     ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
@@ -36,6 +38,12 @@ import type {
     ScmRemoteRequest,
     ScmRemoteResponse,
     ScmRemoteSetUrlRequest,
+    ScmHostingRepositoryDescribePublishTargetsRequest,
+    ScmHostingRepositoryDescribePublishTargetsResponse,
+    ScmHostingRepositoryPublishRequest,
+    ScmHostingRepositoryPublishResponse,
+    ScmRepositoryInitRequest,
+    ScmRepositoryInitResponse,
     ScmRepositoryRemoveIndexLockRequest,
     ScmRepositoryRemoveIndexLockResponse,
     ScmStashApplyRequest,
@@ -379,6 +387,50 @@ export async function machineScmPullRequestOpenCompose(
     return await callMachineScm<ScmPullRequestOpenComposeResponse, ScmPullRequestOpenComposeRequest>(
         machineId,
         RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
+        request,
+    );
+}
+
+export async function machineScmPullRequestOpenOrReuse(
+    machineId: string,
+    request: ScmPullRequestOpenOrReuseRequest,
+): Promise<ScmPullRequestOpenOrReuseResponse> {
+    return await callMachineScm<ScmPullRequestOpenOrReuseResponse, ScmPullRequestOpenOrReuseRequest>(
+        machineId,
+        RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE,
+        request,
+    );
+}
+
+export async function machineScmRepositoryInit(
+    machineId: string,
+    request: ScmRepositoryInitRequest,
+): Promise<ScmRepositoryInitResponse> {
+    return await callMachineScm<ScmRepositoryInitResponse, ScmRepositoryInitRequest>(
+        machineId,
+        RPC_METHODS.SCM_REPOSITORY_INIT,
+        request,
+    );
+}
+
+export async function machineScmHostingRepositoryDescribePublishTargets(
+    machineId: string,
+    request: ScmHostingRepositoryDescribePublishTargetsRequest,
+): Promise<ScmHostingRepositoryDescribePublishTargetsResponse> {
+    return await callMachineScm<ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryDescribePublishTargetsRequest>(
+        machineId,
+        RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS,
+        request,
+    );
+}
+
+export async function machineScmHostingRepositoryPublish(
+    machineId: string,
+    request: ScmHostingRepositoryPublishRequest,
+): Promise<ScmHostingRepositoryPublishResponse> {
+    return await callMachineScm<ScmHostingRepositoryPublishResponse, ScmHostingRepositoryPublishRequest>(
+        machineId,
+        RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH,
         request,
     );
 }

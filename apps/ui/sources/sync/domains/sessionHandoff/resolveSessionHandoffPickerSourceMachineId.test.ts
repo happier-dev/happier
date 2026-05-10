@@ -10,10 +10,10 @@ describe('resolveSessionHandoffPickerSourceMachineId', () => {
         })).toBe('machine_source');
     });
 
-    it('falls back to directSessionV1.machineId when machineId is missing', () => {
+    it('falls back to externalSessionV1.machineId when machineId is missing', () => {
         expect(resolveSessionHandoffPickerSourceMachineId({
             sourceMachineId: ' machine_target ',
-            sessionMetadata: { directSessionV1: { machineId: ' machine_direct ' } },
+            sessionMetadata: { externalSessionV1: { machineId: ' machine_direct ' } },
         })).toBe('machine_direct');
     });
 
@@ -27,7 +27,7 @@ describe('resolveSessionHandoffPickerSourceMachineId', () => {
     it('returns null when no non-empty machine id is available', () => {
         expect(resolveSessionHandoffPickerSourceMachineId({
             sourceMachineId: '   ',
-            sessionMetadata: { machineId: null, directSessionV1: { machineId: '' } },
+            sessionMetadata: { machineId: null, externalSessionV1: { machineId: '' } },
         })).toBeNull();
     });
 });

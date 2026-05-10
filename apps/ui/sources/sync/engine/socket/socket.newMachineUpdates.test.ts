@@ -582,7 +582,7 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
 
 describe('socket update handling: direct-session transcript delta ephemerals', () => {
     it('forwards only the canonical direct-session transcript delta update', async () => {
-        const updateDirectSessionTranscript = vi.fn();
+        const updateExternalSessionTranscript = vi.fn();
 
         await handleEphemeralSocketUpdate(buildEphemeralParams({
             update: {
@@ -598,11 +598,11 @@ describe('socket update handling: direct-session transcript delta ephemerals', (
                 nextCursor: 'tail-1',
                 truncated: false,
             },
-            updateDirectSessionTranscript,
+            updateExternalSessionTranscript,
         }));
 
-        expect(updateDirectSessionTranscript).toHaveBeenCalledTimes(1);
-        expect(updateDirectSessionTranscript).toHaveBeenCalledWith(expect.objectContaining({
+        expect(updateExternalSessionTranscript).toHaveBeenCalledTimes(1);
+        expect(updateExternalSessionTranscript).toHaveBeenCalledWith(expect.objectContaining({
             type: 'direct-session-transcript-delta',
             sessionId: 's1',
             nextCursor: 'tail-1',
@@ -610,7 +610,7 @@ describe('socket update handling: direct-session transcript delta ephemerals', (
     });
 
     it('ignores stale legacy direct-session transcript ephemeral names', async () => {
-        const updateDirectSessionTranscript = vi.fn();
+        const updateExternalSessionTranscript = vi.fn();
 
         await handleEphemeralSocketUpdate(buildEphemeralParams({
             update: {
@@ -618,10 +618,10 @@ describe('socket update handling: direct-session transcript delta ephemerals', (
                 sessionId: 's1',
                 items: [],
             },
-            updateDirectSessionTranscript,
+            updateExternalSessionTranscript,
         }));
 
-        expect(updateDirectSessionTranscript).not.toHaveBeenCalled();
+        expect(updateExternalSessionTranscript).not.toHaveBeenCalled();
     });
 });
 

@@ -138,7 +138,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             },
         });
 
-        expect(updated.directSessionV1).toMatchObject({
+        expect(updated.externalSessionV1).toMatchObject({
             source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex' },
         });
         expect(updated.runtimeDescriptorV1).toMatchObject({
@@ -194,7 +194,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 homePath: '/tmp/connected-codex-home',
             },
         });
-        expect(updated.directSessionV1).toMatchObject({
+        expect(updated.externalSessionV1).toMatchObject({
             source: {
                 kind: 'codexHome',
                 home: 'connectedService',
@@ -372,7 +372,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 claudeTranscriptPath: '/Users/source/.claude/projects/proj-old/claude_session_old.jsonl',
                 claudeLastCheckpointId: 'checkpoint_old',
                 claudeLastAssistantUuid: 'assistant_old',
-                directSessionV1: {
+                externalSessionV1: {
                     v: 1,
                     providerId: 'claude',
                     machineId: 'machine_source',
@@ -405,7 +405,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
         expect(updated).not.toHaveProperty('claudeTranscriptPath');
         expect(updated).not.toHaveProperty('claudeLastCheckpointId');
         expect(updated).not.toHaveProperty('claudeLastAssistantUuid');
-        expect(updated.directSessionV1).toMatchObject({
+        expect(updated.externalSessionV1).toMatchObject({
             machineId: 'machine_target',
             remoteSessionId: 'claude_session_new',
             source: {

@@ -617,6 +617,65 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         expect(get().sessions['s1']).toBe(initialSession);
     });
 
+    it('keeps store collection references stable for active session heartbeat updates', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+            } as any,
+        ]);
+
+        const initialSession = get().sessions.s1;
+        const initialSessions = get().sessions;
+        const initialRenderables = get().sessionListRenderables;
+        const initialIndex = get().sessionListIndexByServerId['server-active'];
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 2,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+            } as any,
+        ]);
+
+        expect(get().sessions.s1).toBe(initialSession);
+        expect(get().sessions.s1?.activeAt).toBe(1);
+        expect(get().sessions).toBe(initialSessions);
+        expect(get().sessionListRenderables).toBe(initialRenderables);
+        expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
+    });
+
     it('skips map churn and warm-cache writes for a semantically identical applySessions batch', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
@@ -1565,7 +1624,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
                     machineId: 'm1',
                     path: '/home/u/repo',
                     homeDir: '/home/u',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'codex',
                     },
@@ -1582,7 +1641,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         expect(get().sessionListIndexByServerId['server-active']).not.toBe(initialIndex);
     });
 
-    it('preserves linked direct-session metadata when a later refresh omits directSessionV1', async () => {
+    it('preserves linked direct-session metadata when a later refresh omits externalSessionV1', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
@@ -1606,7 +1665,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
                     host: 'h1',
                     path: '/home/u/repo',
                     homeDir: '/home/u',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                         machineId: 'm1',
@@ -1655,7 +1714,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             } as any,
         ]);
 
-        expect((get().sessions.s1?.metadata as any)?.directSessionV1).toEqual(expect.objectContaining({
+        expect((get().sessions.s1?.metadata as any)?.externalSessionV1).toEqual(expect.objectContaining({
             v: 1,
             providerId: 'claude',
             remoteSessionId: 'remote-1',
@@ -1668,7 +1727,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         ).toBe(true);
     });
 
-    it('preserves linked direct-session metadata when a later refresh sets directSessionV1 to null', async () => {
+    it('preserves linked direct-session metadata when a later refresh sets externalSessionV1 to null', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
@@ -1692,7 +1751,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
                     host: 'h1',
                     path: '/home/u/repo',
                     homeDir: '/home/u',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                         machineId: 'm1',
@@ -1724,7 +1783,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
                     host: 'h1',
                     path: '/home/u/repo',
                     homeDir: '/home/u',
-                    directSessionV1: null,
+                    externalSessionV1: null,
                 },
                 metadataVersion: 2,
                 agentState: null,
@@ -1735,7 +1794,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             } as any,
         ]);
 
-        expect((get().sessions.s1?.metadata as any)?.directSessionV1).toEqual(expect.objectContaining({
+        expect((get().sessions.s1?.metadata as any)?.externalSessionV1).toEqual(expect.objectContaining({
             v: 1,
             providerId: 'claude',
             remoteSessionId: 'remote-1',

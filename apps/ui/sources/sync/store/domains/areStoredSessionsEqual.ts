@@ -46,6 +46,15 @@ export function areStoredSessionsEqual(
 ): boolean {
     if (!previous) return false;
 
+    const activeAtMatches =
+        previous.activeAt === next.activeAt
+        || (
+            previous.active === true
+            && next.active === true
+            && previous.presence === 'online'
+            && next.presence === 'online'
+        );
+
     return previous.id === next.id
         && (previous.serverId ?? null) === (next.serverId ?? null)
         && previous.seq === next.seq
@@ -53,7 +62,7 @@ export function areStoredSessionsEqual(
         && previous.createdAt === next.createdAt
         && previous.updatedAt === next.updatedAt
         && previous.active === next.active
-        && previous.activeAt === next.activeAt
+        && activeAtMatches
         && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
         && (previous.pendingVersion ?? null) === (next.pendingVersion ?? null)
         && (previous.pendingCount ?? null) === (next.pendingCount ?? null)

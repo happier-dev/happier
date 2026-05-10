@@ -51,7 +51,7 @@ describe('handoffUiSupport', () => {
                     metadata: {
                         flavor: 'opencode',
                         machineId: 'machine_1',
-                        directSessionV1: { source: 'opencode' },
+                        externalSessionV1: { source: 'opencode' },
                         opencodeSessionId: 'opencode_session_1',
                     },
                 },
@@ -59,14 +59,14 @@ describe('handoffUiSupport', () => {
         ).toBe(true);
     });
 
-    it('returns true when a direct session stores machine id under directSessionV1 even if metadata machine id is missing', () => {
+    it('returns true when a direct session stores machine id under externalSessionV1 even if metadata machine id is missing', () => {
         expect(
             canHandoffConversation({
                 sessionId: 'sess_1',
                 session: {
                     metadata: {
                         flavor: 'opencode',
-                        directSessionV1: { v: 1, providerId: 'opencode', machineId: 'machine_1', remoteSessionId: 'remote_1', source: 'opencode' },
+                        externalSessionV1: { v: 1, providerId: 'opencode', machineId: 'machine_1', remoteSessionId: 'remote_1', source: 'opencode' },
                         opencodeSessionId: 'opencode_session_1',
                     },
                 },

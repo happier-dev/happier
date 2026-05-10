@@ -186,6 +186,19 @@ describe('buildSpawnHappySessionRpcParams', () => {
         }));
     });
 
+    it('preserves account settings version hints for modern daemon spawn payloads', () => {
+        const params = buildSpawnHappySessionRpcParams({
+            machineId: 'machine-1',
+            directory: '/tmp/workspace',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            accountSettingsVersionHint: 14,
+        } as any);
+
+        expect(params).toEqual(expect.objectContaining({
+            accountSettingsVersionHint: 14,
+        }));
+    });
+
     it('omits legacy spawn token passthrough when present on a compatibility-shaped input', () => {
         const params = buildSpawnHappySessionRpcParams({
             machineId: 'machine-1',

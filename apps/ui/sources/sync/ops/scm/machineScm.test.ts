@@ -386,4 +386,81 @@ describe('machineScm', () => {
             timeoutMs: undefined,
         });
     });
+
+    it('routes pull-request open-or-reuse and repository provisioning through canonical machine SCM RPCs', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true });
+
+        const module = await import('./machineScm');
+        expect(module.machineScmPullRequestOpenOrReuse).toBeTypeOf('function');
+        expect(module.machineScmRepositoryInit).toBeTypeOf('function');
+        expect(module.machineScmHostingRepositoryDescribePublishTargets).toBeTypeOf('function');
+        expect(module.machineScmHostingRepositoryPublish).toBeTypeOf('function');
+
+        await module.machineScmPullRequestOpenOrReuse('machine-1', {
+            cwd: '/repo',
+            base: 'trunk',
+            head: 'feature/pr-cache',
+        });
+        await module.machineScmRepositoryInit('machine-1', {
+            cwd: '/repo',
+        });
+        await module.machineScmHostingRepositoryDescribePublishTargets('machine-1', {
+            cwd: '/repo',
+            providerKind: 'github',
+        });
+        await module.machineScmHostingRepositoryPublish('machine-1', {
+            cwd: '/repo',
+            providerKind: 'github',
+            owner: 'acme',
+            repositoryName: 'repo',
+            visibility: 'private',
+            remoteName: 'origin',
+        });
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(1, {
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE,
+            payload: {
+                cwd: '/repo',
+                base: 'trunk',
+                head: 'feature/pr-cache',
+            },
+            timeoutMs: undefined,
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(2, {
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_REPOSITORY_INIT,
+            payload: {
+                cwd: '/repo',
+            },
+            timeoutMs: undefined,
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(3, {
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS,
+            payload: {
+                cwd: '/repo',
+                providerKind: 'github',
+            },
+            timeoutMs: undefined,
+        });
+        expect(machineRpcWithServerScopeMock).toHaveBeenNthCalledWith(4, {
+            machineId: 'machine-1',
+            method: RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH,
+            payload: {
+                cwd: '/repo',
+                providerKind: 'github',
+                owner: 'acme',
+                repositoryName: 'repo',
+                visibility: 'private',
+                remoteName: 'origin',
+            },
+            timeoutMs: undefined,
+        });
+    });
 });

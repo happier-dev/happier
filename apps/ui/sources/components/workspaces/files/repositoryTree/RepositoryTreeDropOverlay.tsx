@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { Animated, Easing, Platform, View } from 'react-native';
+import { Animated, Easing, Platform, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { Typography } from '@/constants/Typography';
+import { useLocalSetting } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -26,12 +27,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: theme.colors.divider,
         backgroundColor: theme.colors.surfaceHigh,
-        ...(Platform.OS === 'web'
-            ? ({
-                // RN-web supports `backdropFilter`; native platforms ignore it.
-                backdropFilter: 'blur(6px)',
-            } as any)
-            : null),
     },
     text: {
         fontSize: 13,
@@ -47,6 +42,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 export function RepositoryTreeDropOverlay(props: Readonly<{ visible: boolean; destinationLabel?: string | null }>) {
     const styles = stylesheet;
+    const uiBackdropBlurEnabled = useLocalSetting('uiBackdropBlurEnabled') !== false;
     const { theme } = useUnistyles();
     const opacity = React.useRef(new Animated.Value(0)).current;
 
@@ -62,7 +58,17 @@ export function RepositoryTreeDropOverlay(props: Readonly<{ visible: boolean; de
 
     return (
         <Animated.View testID="repository-tree-drop-overlay" pointerEvents="none" style={[styles.overlay, { opacity }]}>
-            <View style={styles.content}>
+            <View
+                style={[
+                    styles.content,
+                    Platform.OS === 'web' && !uiBackdropBlurEnabled
+                        ? ({ backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surfaceHigh } as ViewStyle)
+                        : null,
+                    Platform.OS === 'web' && uiBackdropBlurEnabled
+                        ? ({ backdropFilter: 'blur(6px)' } as unknown as ViewStyle)
+                        : null,
+                ]}
+            >
                 <SafeIonicons name="cloud-upload-outline" size={18} color={theme.colors.textSecondary} />
                 <View style={{ gap: 2 }}>
                     <Text style={styles.text}>{t('files.repositoryTree.dropToUpload')}</Text>

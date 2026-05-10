@@ -86,4 +86,43 @@ describe('scmUiBackendRegistry', () => {
         expect(gitPlugin.diffModeConfig(null).availableModes).toEqual(['included', 'pending']);
         expect(saplingPlugin.diffModeConfig(null).availableModes).toEqual(['pending']);
     });
+
+    it('fails closed for sapling remote actions when capabilities are unavailable', () => {
+        const saplingPlugin = scmUiBackendRegistry.getPlugin('sapling');
+        const snapshot: ScmWorkingSnapshot = {
+            projectKey: 'machine:/repo',
+            fetchedAt: 1,
+            repo: {
+                isRepo: true,
+                rootPath: '/repo',
+                backendId: 'sapling',
+                mode: '.sl',
+            },
+            branch: {
+                head: 'feature/no-upstream',
+                upstream: null,
+                ahead: 0,
+                behind: 0,
+                detached: false,
+            },
+            stashCount: 0,
+            hasConflicts: false,
+            entries: [],
+            totals: {
+                includedFiles: 0,
+                pendingFiles: 0,
+                untrackedFiles: 0,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
+            },
+        };
+
+        expect(saplingPlugin.remoteActionConfig(snapshot)).toMatchObject({
+            fetch: false,
+            pull: false,
+            push: false,
+        });
+    });
 });

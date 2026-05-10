@@ -44,6 +44,28 @@ function makeSnapshot(
 }
 
 describe('buildSnapshotSignature', () => {
+  it('changes when the repository default branch is detected later', () => {
+    const base = makeSnapshot({
+      repo: {
+        isRepo: true,
+        rootPath: '/repo',
+        backendId: 'git',
+        mode: '.git',
+        worktrees: [],
+        remotes: [],
+      },
+    });
+    const withDefaultBranch = makeSnapshot({
+      ...base,
+      repo: {
+        ...base.repo,
+        defaultBranch: 'release/2026',
+      },
+    });
+
+    expect(buildSnapshotSignature(withDefaultBranch)).not.toBe(buildSnapshotSignature(base));
+  });
+
   it('changes when the configured remotes change without file or branch changes', () => {
     const base = makeSnapshot({
       repo: {
@@ -165,7 +187,7 @@ describe('getRepoScopeSessionIds', () => {
           id: 's1',
           metadata: {
             path: '/repo',
-            directSessionV1: {
+            externalSessionV1: {
               v: 1,
               providerId: 'codex',
               machineId: 'machine-direct',
@@ -178,7 +200,7 @@ describe('getRepoScopeSessionIds', () => {
           id: 's2',
           metadata: {
             path: '/repo/apps/ui',
-            directSessionV1: {
+            externalSessionV1: {
               v: 1,
               providerId: 'codex',
               machineId: 'machine-direct',
@@ -191,7 +213,7 @@ describe('getRepoScopeSessionIds', () => {
           id: 's3',
           metadata: {
             path: '/repo/apps/server',
-            directSessionV1: {
+            externalSessionV1: {
               v: 1,
               providerId: 'codex',
               machineId: 'machine-other',

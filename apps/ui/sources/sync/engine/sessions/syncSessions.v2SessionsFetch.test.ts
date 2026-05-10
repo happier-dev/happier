@@ -595,7 +595,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'legacy-host',
                     machineId: 'm1',
                     flavor: 'claude',
-                    directSessionV1: null,
+                    externalSessionV1: null,
                     hiddenSystemSession: false,
                     hasPendingPermissionRequests: false,
                     hasPendingUserActionRequests: false,
@@ -991,7 +991,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'mbp',
                     machineId: 'm1',
                     flavor: 'claude',
-                    directSessionV1: { v: 1, providerId: 'codex' },
+                    externalSessionV1: { v: 1, providerId: 'codex' },
                     hiddenSystemSession: false,
                     hasPendingPermissionRequests: false,
                     hasPendingUserActionRequests: true,
@@ -1034,7 +1034,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'mbp',
                     machineId: 'm1',
                     flavor: 'claude',
-                    directSessionV1: { v: 1, providerId: 'codex' },
+                    externalSessionV1: { v: 1, providerId: 'codex' },
                     hiddenSystemSession: false,
                 }),
                 hasPendingUserActionRequests: true,
@@ -1093,7 +1093,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'mbp',
                     machineId: 'm1',
                     flavor: 'claude',
-                    directSessionV1: { v: 1, providerId: 'codex' },
+                    externalSessionV1: { v: 1, providerId: 'codex' },
                     hiddenSystemSession: false,
                     hasPendingPermissionRequests: false,
                     hasPendingUserActionRequests: false,
@@ -1180,7 +1180,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'stale-host',
                     machineId: 'stale-machine',
                     flavor: 'claude',
-                    directSessionV1: null,
+                    externalSessionV1: null,
                     hiddenSystemSession: false,
                     hasPendingPermissionRequests: false,
                     hasPendingUserActionRequests: false,
@@ -1202,7 +1202,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'stale-host',
                     machineId: 'stale-machine',
                     flavor: 'claude',
-                    directSessionV1: null,
+                    externalSessionV1: null,
                     hiddenSystemSession: false,
                 }),
             }),
@@ -2450,7 +2450,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'host',
                     machineId: 'm1',
                     flavor: 'claude',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                     },
@@ -2474,7 +2474,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 id: 's_direct',
                 metadataVersion: 2,
                 metadata: expect.objectContaining({
-                    directSessionV1: expect.objectContaining({
+                    externalSessionV1: expect.objectContaining({
                         v: 1,
                         providerId: 'claude',
                     }),
@@ -2484,7 +2484,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         expect(applySessions).not.toHaveBeenCalled();
     });
 
-    it('preserves direct-session classification from cached rows when hydrated metadata omits directSessionV1', async () => {
+    it('preserves direct-session classification from cached rows when hydrated metadata omits externalSessionV1', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
                 sessions: [
@@ -2495,7 +2495,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                         metadata: JSON.stringify({
                             path: '/tmp/direct',
                             host: 'host',
-                            directSessionAttentionV1: {
+                            externalSessionAttentionV1: {
                                 v: 1,
                                 observedProgressToken: '20:msg-2',
                                 viewedProgressToken: '10:msg-1',
@@ -2540,7 +2540,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'host',
                     machineId: 'm1',
                     flavor: 'claude',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                     },
@@ -2561,11 +2561,11 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     path: '/tmp/direct',
                     host: 'host',
                     machineId: 'm1',
-                    directSessionV1: expect.objectContaining({
+                    externalSessionV1: expect.objectContaining({
                         v: 1,
                         providerId: 'claude',
                     }),
-                    directSessionAttentionV1: expect.objectContaining({
+                    externalSessionAttentionV1: expect.objectContaining({
                         v: 1,
                         observedProgressToken: '20:msg-2',
                     }),
@@ -2574,7 +2574,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ]);
     });
 
-    it('preserves direct-session classification from cached rows when hydrated metadata sets directSessionV1 to null', async () => {
+    it('preserves direct-session classification from cached rows when hydrated metadata sets externalSessionV1 to null', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
                 sessions: [
@@ -2585,8 +2585,8 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                         metadata: JSON.stringify({
                             path: '/tmp/direct',
                             host: 'host',
-                            directSessionV1: null,
-                            directSessionAttentionV1: {
+                            externalSessionV1: null,
+                            externalSessionAttentionV1: {
                                 v: 1,
                                 observedProgressToken: '20:msg-2',
                                 viewedProgressToken: '10:msg-1',
@@ -2631,7 +2631,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     host: 'host',
                     machineId: 'm1',
                     flavor: 'claude',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'claude',
                     },
@@ -2651,11 +2651,11 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 metadata: expect.objectContaining({
                     path: '/tmp/direct',
                     host: 'host',
-                    directSessionV1: expect.objectContaining({
+                    externalSessionV1: expect.objectContaining({
                         v: 1,
                         providerId: 'claude',
                     }),
-                    directSessionAttentionV1: expect.objectContaining({
+                    externalSessionAttentionV1: expect.objectContaining({
                         v: 1,
                         observedProgressToken: '20:msg-2',
                     }),

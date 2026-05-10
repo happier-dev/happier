@@ -256,14 +256,14 @@ describe('sessionSetManualReadStateWithServerScope', () => {
                 metadata: {
                     path: '',
                     host: '',
-                    directSessionV1: {
+                    externalSessionV1: {
                         v: 1,
                         providerId: 'codex',
                         machineId: 'machine-1',
                         remoteSessionId: 'remote-1',
                         source: { kind: 'codexHome', home: 'user' },
                     },
-                    directSessionAttentionV1: {
+                    externalSessionAttentionV1: {
                         v: 1,
                         observedProgressToken: '2:message',
                         viewedProgressToken: '2:message',
@@ -287,7 +287,7 @@ describe('sessionSetManualReadStateWithServerScope', () => {
         await sessionSetManualReadStateWithServerScope('sid-1', 'unread', { serverId: 'server-a' });
 
         const appliedSession = mockStorageState.applySessions.mock.calls[0]?.[0]?.[0];
-        expect(appliedSession?.metadata?.directSessionAttentionV1).toEqual({
+        expect(appliedSession?.metadata?.externalSessionAttentionV1).toEqual({
             v: 1,
             observedProgressToken: '2:message',
         });

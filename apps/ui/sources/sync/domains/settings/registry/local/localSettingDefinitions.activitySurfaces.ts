@@ -9,6 +9,10 @@ import {
     PET_COMPANION_SIZE_SCALE_DEFAULT,
     normalizePetCompanionSizeScale,
 } from '@/sync/domains/pets/companionSizeScale';
+import {
+    PET_COMPANION_POSITION_DEFAULT,
+    PetCompanionStoredPositionSchema,
+} from '@/sync/domains/pets/companionPosition/companionPosition';
 import { serializeDesktopOverlayAutoHideDelayBucket } from './localSettingDefinitions.shared';
 
 const PetEnabledOverrideSchema = z.enum(['inherit', 'enabled', 'disabled']);
@@ -191,6 +195,18 @@ export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
         schema: PetSelectedOverrideSchema,
         default: { kind: 'inherit' },
         description: 'Device-only pet package override',
+        storageScope: 'local',
+    },
+    petsCompanionPosition: {
+        schema: PetCompanionStoredPositionSchema,
+        default: PET_COMPANION_POSITION_DEFAULT,
+        description: 'Versioned normalized app-shell pet companion position on this device',
+        storageScope: 'local',
+    },
+    petsDismissedCompanionTrayItemKeys: {
+        schema: z.array(z.string().min(1)).catch([]),
+        default: [],
+        description: 'Device-local dismissed pet companion activity bubble keys',
         storageScope: 'local',
     },
     petsCompanionSizeScale: {

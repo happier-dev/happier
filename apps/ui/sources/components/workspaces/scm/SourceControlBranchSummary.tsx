@@ -15,7 +15,53 @@ type SourceControlBranchSummaryProps = {
     actionSlot?: React.ReactNode;
 };
 
-export function SourceControlBranchSummary({
+function readThemeToken(theme: any, path: readonly string[]): unknown {
+    let value = theme;
+    for (const segment of path) {
+        if (value == null || typeof value !== 'object') return undefined;
+        value = value[segment];
+    }
+    return value;
+}
+
+function areBranchSummaryThemeTokensEqual(previous: any, next: any): boolean {
+    const tokenPaths: readonly (readonly string[])[] = [
+        ['colors', 'divider'],
+        ['colors', 'input', 'background'],
+        ['colors', 'surface'],
+        ['colors', 'surfaceHigh'],
+        ['colors', 'text'],
+        ['colors', 'textSecondary'],
+    ];
+    return tokenPaths.every((path) => Object.is(readThemeToken(previous, path), readThemeToken(next, path)));
+}
+
+function normalizeSummaryNumber(value: unknown): number {
+    return Number(value ?? 0);
+}
+
+function areScmStatusFileSummariesEqual(previous: ScmStatusFiles, next: ScmStatusFiles): boolean {
+    return previous.branch === next.branch
+        && (previous.upstream ?? null) === (next.upstream ?? null)
+        && normalizeSummaryNumber(previous.ahead) === normalizeSummaryNumber(next.ahead)
+        && normalizeSummaryNumber(previous.behind) === normalizeSummaryNumber(next.behind)
+        && normalizeSummaryNumber(previous.totalIncluded) === normalizeSummaryNumber(next.totalIncluded)
+        && normalizeSummaryNumber(previous.totalPending) === normalizeSummaryNumber(next.totalPending)
+        && (previous.changeSetModel ?? null) === (next.changeSetModel ?? null);
+}
+
+function areSourceControlBranchSummaryPropsEqual(
+    previous: SourceControlBranchSummaryProps,
+    next: SourceControlBranchSummaryProps,
+): boolean {
+    return previous.variant === next.variant
+        && previous.branchTrigger === next.branchTrigger
+        && previous.actionSlot === next.actionSlot
+        && areBranchSummaryThemeTokensEqual(previous.theme, next.theme)
+        && areScmStatusFileSummariesEqual(previous.scmStatusFiles, next.scmStatusFiles);
+}
+
+function SourceControlBranchSummaryImpl({
     theme,
     scmStatusFiles,
     variant = 'screen',
@@ -59,11 +105,28 @@ export function SourceControlBranchSummary({
 
     const InlineStat = ({ value, iconName }: { value: number; iconName: string }) => {
         return (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Octicons name={iconName as any} size={13} color={theme.colors.textSecondary} />
-                <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.mono('semiBold') }}>
+            <View
+                style={{
+                    minWidth: 16,
+                    minHeight: 30,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 1,
+                    flexShrink: 0,
+                }}
+            >
+                <Text
+                    numberOfLines={1}
+                    style={{
+                        fontSize: 11,
+                        lineHeight: 13,
+                        color: theme.colors.text,
+                        ...Typography.mono('semiBold'),
+                    }}
+                >
                     {String(value)}
                 </Text>
+                <Octicons name={iconName as any} size={14} color={theme.colors.textSecondary} />
             </View>
         );
     };
@@ -82,24 +145,48 @@ export function SourceControlBranchSummary({
                     gap: 6,
                 }}
             >
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                        <Octicons name="git-branch" size={15} color={theme.colors.textSecondary} />
-                        {branchTrigger ? branchTrigger : (
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                    <View style={{ minWidth: 0, flex: 1, gap: 4 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                            <Octicons
+                                name="git-branch"
+                                size={15}
+                                color={theme.colors.textSecondary}
+                                style={{ flexShrink: 0 }}
+                            />
+                            {branchTrigger ? (
+                                <View style={{ minWidth: 0, flexShrink: 1 }}>
+                                    {branchTrigger}
+                                </View>
+                            ) : (
+                                <Text
+                                    numberOfLines={1}
+                                    style={{
+                                        flexShrink: 1,
+                                        minWidth: 0,
+                                        fontSize: 14,
+                                        color: theme.colors.text,
+                                        ...Typography.default('semiBold'),
+                                    }}
+                                >
+                                    {scmStatusFiles.branch || t('files.detachedHead')}
+                                </Text>
+                            )}
+                        </View>
+
+                        {showTracking ? (
                             <Text
                                 numberOfLines={1}
-                                style={{
-                                    fontSize: 14,
-                                    color: theme.colors.text,
-                                    ...Typography.default('semiBold'),
-                                }}
+                                style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}
                             >
-                                {scmStatusFiles.branch || t('files.detachedHead')}
+                                {scmStatusFiles.upstream
+                                    ? t('files.branchSummary.upstreamLabel', { upstream: scmStatusFiles.upstream })
+                                    : t('files.branchSummary.noUpstream')}
                             </Text>
-                        )}
+                        ) : null}
                     </View>
 
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 5, flexShrink: 0 }}>
                         {actionSlot}
                         <InlineStat value={staged} iconName="diff-added" />
                         <InlineStat value={unstaged} iconName="diff-modified" />
@@ -108,13 +195,6 @@ export function SourceControlBranchSummary({
                     </View>
                 </View>
 
-                {showTracking ? (
-                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
-                        {scmStatusFiles.upstream
-                            ? t('files.branchSummary.upstreamLabel', { upstream: scmStatusFiles.upstream })
-                            : t('files.branchSummary.noUpstream')}
-                    </Text>
-                ) : null}
             </View>
         );
     }
@@ -173,3 +253,9 @@ export function SourceControlBranchSummary({
         </View>
     );
 }
+
+export const SourceControlBranchSummary = React.memo(
+    SourceControlBranchSummaryImpl,
+    areSourceControlBranchSummaryPropsEqual,
+);
+SourceControlBranchSummary.displayName = 'SourceControlBranchSummary';

@@ -167,6 +167,23 @@ describe('sync AppState pause/resume', () => {
         expect(pauseController.isPaused()).toBe(false);
     });
 
+    it('keeps Tauri desktop sync active when AppState reports background', async () => {
+        tauriDesktopState.value = true;
+        const { sync } = await import('./sync');
+
+        expect(appStateAddListener).toHaveBeenCalled();
+        const handler = Array.from(appStateHandlers)[0];
+        expect(handler).toBeTruthy();
+
+        const pauseController = (sync as unknown as { pauseController: PauseController }).pauseController;
+        expect(pauseController.isPaused()).toBe(false);
+
+        handler!('background');
+
+        expect(apiSocketDisconnect).not.toHaveBeenCalled();
+        expect(pauseController.isPaused()).toBe(false);
+    });
+
     it('quiesces native crypto worker dispatch on background and resumes it on active', async () => {
         const { Encryption } = await import('./encryption/encryption');
         const markQuiescentSpy = vi.spyOn(Encryption, 'markNativeCryptoWorkerQueueQuiescent');

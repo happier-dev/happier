@@ -28,7 +28,7 @@ describe('useHasUnreadMessages', () => {
                         metadata: {
                             path: '',
                             machineId: 'machine-1',
-                            directSessionV1: {
+                            externalSessionV1: {
                                 v: 1,
                                 providerId: 'claude',
                                 machineId: 'machine-1',
@@ -36,7 +36,7 @@ describe('useHasUnreadMessages', () => {
                                 source: { kind: 'claudeConfig', configDir: '/tmp/.claude', projectId: null },
                                 linkedAtMs: 1,
                             },
-                            directSessionAttentionV1: {
+                            externalSessionAttentionV1: {
                                 v: 1,
                                 observedProgressToken: '20:msg-2',
                                 viewedProgressToken: '10:msg-1',
@@ -86,7 +86,7 @@ describe('useHasUnreadMessages', () => {
                         metadata: {
                             path: '/tmp/direct',
                             host: 'localhost',
-                            directSessionV1: {
+                            externalSessionV1: {
                                 v: 1,
                                 providerId: 'claude',
                             },

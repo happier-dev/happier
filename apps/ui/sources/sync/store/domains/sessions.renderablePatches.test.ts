@@ -321,7 +321,7 @@ describe('sessions domain: renderable patches', () => {
         syncPerformanceTelemetry.configure({ enabled: false });
     });
 
-    it('preserves direct-session classification when a replacement renderable omits directSessionV1', async () => {
+    it('preserves direct-session classification when a replacement renderable omits externalSessionV1', async () => {
         mockSessionsDomainBoundaries();
 
         const warmCache = await import('../../domains/state/warmCachePersistence');
@@ -341,7 +341,7 @@ describe('sessions domain: renderable patches', () => {
                 machineId: 'm1',
                 path: '/home/u/repo',
                 homeDir: '/home/u',
-                directSessionV1: { v: 1, providerId: 'claude' },
+                externalSessionV1: { v: 1, providerId: 'claude' },
             },
             metadataVersion: 1,
             agentState: null,
@@ -383,7 +383,7 @@ describe('sessions domain: renderable patches', () => {
                 path: '/home/u/repo',
                 homeDir: '/home/u',
                 machineId: 'm1',
-                directSessionV1: {
+                externalSessionV1: {
                     v: 1,
                     providerId: 'claude',
                 },
@@ -393,7 +393,7 @@ describe('sessions domain: renderable patches', () => {
         const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
         const lastCall = saveWarmCache.mock.calls.at(-1);
         const entries = lastCall?.[2] as Record<string, any>;
-        expect(entries?.s1?.directSessionV1).toEqual({
+        expect(entries?.s1?.externalSessionV1).toEqual({
             v: 1,
             providerId: 'claude',
         });

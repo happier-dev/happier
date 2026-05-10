@@ -1,11 +1,18 @@
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { evaluateAgentSessionCapabilitySupport, inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { readSessionRollbackRangesV1FromMetadata, type SessionRollbackTarget } from '@happier-dev/protocol';
+import { readSessionRollbackRangesV1FromMetadata, type SessionRollbackTarget, type TurnChangeSet } from '@happier-dev/protocol';
 
 export type TranscriptRollbackAction = Readonly<{
     target: SessionRollbackTarget;
     restoredDraftText: string | null;
+    checkpointCodeRollback?: Readonly<{
+        conversationRollbackSupported: boolean;
+        turnId: string;
+        cwd: string;
+        expectedStartRef: string;
+        expectedFinalRef: string;
+    }>;
 }>;
 
 export type SessionRollbackRangeV1 = Readonly<{
@@ -96,13 +103,61 @@ export function resolveLatestActiveMessageId(params: Readonly<{
     return null;
 }
 
+function readCheckpointRollbackCwd(params: Readonly<{
+    sessionId: string;
+    scopeId: string;
+}>): string | null {
+    const prefix = `${params.sessionId}:`;
+    if (!params.scopeId.startsWith(prefix)) return null;
+    const cwd = params.scopeId.slice(prefix.length).trim();
+    return cwd.length > 0 ? cwd : null;
+}
+
+function findCheckpointRollbackEvidence(params: Readonly<{
+    conversationRollbackSupported: boolean;
+    messageSeq: number;
+    sessionId: string;
+    turnChangeSets: readonly TurnChangeSet[];
+}>): TranscriptRollbackAction['checkpointCodeRollback'] | undefined {
+    for (const turn of params.turnChangeSets) {
+        if (turn.sessionId !== params.sessionId) continue;
+        if (params.messageSeq < turn.seqRange.startSeqInclusive || params.messageSeq > turn.seqRange.endSeqInclusive) continue;
+        const checkpoint = turn.repositoryCheckpoint;
+        if (!checkpoint) continue;
+        if (checkpoint.contentConfidence !== 'exact') continue;
+        if (typeof checkpoint.startRef !== 'string' || checkpoint.startRef.trim().length === 0) continue;
+        if (typeof checkpoint.finalRef !== 'string' || checkpoint.finalRef.trim().length === 0) continue;
+        const cwd = readCheckpointRollbackCwd({ sessionId: params.sessionId, scopeId: checkpoint.scopeId });
+        if (!cwd) continue;
+        return {
+            conversationRollbackSupported: params.conversationRollbackSupported,
+            turnId: turn.turnId,
+            cwd,
+            expectedStartRef: checkpoint.startRef,
+            expectedFinalRef: checkpoint.finalRef,
+        };
+    }
+    return undefined;
+}
+
+function withCheckpointRollbackEvidence(
+    action: TranscriptRollbackAction,
+    evidence: TranscriptRollbackAction['checkpointCodeRollback'] | undefined,
+): TranscriptRollbackAction {
+    return evidence ? { ...action, checkpointCodeRollback: evidence } : action;
+}
+
 export function resolveTranscriptRollbackActions(params: Readonly<{
     session: Session | null | undefined;
     messageIdsOldestFirst: readonly string[];
     messagesById: Readonly<Record<string, Message>>;
     rollbackRanges: readonly SessionRollbackRangeV1[];
+    turnChangeSets?: readonly TurnChangeSet[];
 }>): Readonly<Record<string, TranscriptRollbackAction>> {
     const support = resolveConversationRollbackSupport({ session: params.session });
+    const sessionId = params.session?.id ?? null;
+    const turnChangeSets = params.turnChangeSets ?? [];
+    const conversationRollbackSupported = support.supportsRollbackToPoint || support.supportsLatestTurnRollback;
     if (support.supportsRollbackToPoint) {
         const actions: Record<string, TranscriptRollbackAction> = {};
         for (const messageId of params.messageIdsOldestFirst) {
@@ -111,25 +166,46 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
             if (isMessageRolledBack({ message, rollbackRanges: params.rollbackRanges })) continue;
             const seq = readFiniteSeq(message.seq);
             if (seq == null) continue;
-            actions[messageId] = {
+            const action = {
                 target: { type: 'before_user_message', userMessageSeq: seq },
                 restoredDraftText: message.text,
-            };
+            } satisfies TranscriptRollbackAction;
+            actions[messageId] = withCheckpointRollbackEvidence(
+                action,
+                sessionId
+                    ? findCheckpointRollbackEvidence({
+                        conversationRollbackSupported,
+                        messageSeq: seq,
+                        sessionId,
+                        turnChangeSets,
+                    })
+                    : undefined,
+            );
         }
         return actions;
     }
 
-    if (!support.supportsLatestTurnRollback) return {};
     const latestActiveMessageId = resolveLatestActiveMessageId({
         messageIdsOldestFirst: params.messageIdsOldestFirst,
         messagesById: params.messagesById,
         rollbackRanges: params.rollbackRanges,
     });
     if (!latestActiveMessageId) return {};
+    const latestActiveMessage = params.messagesById[latestActiveMessageId] ?? null;
+    const latestActiveSeq = readFiniteSeq(latestActiveMessage?.seq);
+    const checkpointCodeRollback = sessionId && latestActiveSeq != null
+        ? findCheckpointRollbackEvidence({
+            conversationRollbackSupported,
+            messageSeq: latestActiveSeq,
+            sessionId,
+            turnChangeSets,
+        })
+        : undefined;
+    if (!support.supportsLatestTurnRollback && !checkpointCodeRollback) return {};
     return {
-        [latestActiveMessageId]: {
+        [latestActiveMessageId]: withCheckpointRollbackEvidence({
             target: { type: 'latest_turn' },
             restoredDraftText: null,
-        },
+        }, checkpointCodeRollback),
     };
 }

@@ -1,4 +1,5 @@
-import { writeRuntimeDescriptorV1ToMetadata, type DirectSessionsSource, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import { type ExternalSessionsSource, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 import { getAgentBehavior, writeAgentVendorResumeIdToMetadata, type AgentId } from '@/agents/catalog/catalog';
 
@@ -30,7 +31,7 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
     transportStrategy: SessionHandoffTransportStrategy;
     completedAtMs: number;
     targetRemoteSessionId: string;
-    targetDirectSource: DirectSessionsSource | Record<string, unknown>;
+    targetDirectSource: ExternalSessionsSource | Record<string, unknown>;
     targetRuntimeDescriptor?: RuntimeDescriptorV1;
 }>): MetadataRecord {
     const sourceWorkspaceRootPath = normalizeWorkspaceRootPath(
@@ -62,23 +63,27 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
         Object.assign(next, providerPatch.metadataPatch);
     }
 
-    next = writeRuntimeDescriptorV1ToMetadata(next, providerPatch?.runtimeDescriptor ?? null) as MetadataRecord;
+    next = applySessionStateFieldMetadataPatch(
+        next,
+        'identity.runtimeDescriptor',
+        providerPatch?.runtimeDescriptor ?? null,
+    ) as MetadataRecord;
 
     if (input.sessionStorageAfter === 'direct') {
         delete next.externalHistoryImportV1;
-        next.directSessionV1 = {
+        next.externalSessionV1 = {
             v: 1,
             providerId: input.providerId,
             machineId: input.targetMachineId,
             remoteSessionId: input.targetRemoteSessionId,
             source: input.targetDirectSource,
             linkedAtMs: input.completedAtMs,
-            ...(providerPatch?.directSessionRuntimeDescriptor
-                ? { runtimeDescriptorV1: providerPatch.directSessionRuntimeDescriptor }
+            ...(providerPatch?.externalSessionRuntimeDescriptor
+                ? { runtimeDescriptorV1: providerPatch.externalSessionRuntimeDescriptor }
                 : {}),
         };
     } else {
-        delete next.directSessionV1;
+        delete next.externalSessionV1;
         next.externalHistoryImportV1 = {
             v: 1,
             providerId: input.providerId,

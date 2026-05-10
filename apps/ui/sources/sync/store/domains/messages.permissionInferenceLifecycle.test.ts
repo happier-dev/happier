@@ -52,4 +52,36 @@ describe('messages domain: permissionMode inference lifecycle', () => {
         expect(get().sessions.s1.permissionMode).toBe('yolo');
         expect(get().sessions.s1.permissionModeUpdatedAt).toBe(100);
     });
+
+    it('infers permissionMode from messages when metadata permissionMode is invalid', () => {
+        const { get, domain } = createHarness({
+            sessions: {
+                s1: {
+                    id: 's1',
+                    createdAt: 1,
+                    active: false,
+                    activeAt: 1,
+                    metadataVersion: 1,
+                    metadata: { permissionMode: 'not-a-real-mode', permissionModeUpdatedAt: 100 },
+                    permissionMode: 'default',
+                    permissionModeUpdatedAt: 0,
+                },
+            },
+        });
+
+        domain.applyMessages('s1', [
+            {
+                id: 'm1',
+                localId: null,
+                createdAt: 200,
+                isSidechain: false,
+                role: 'user',
+                content: { type: 'text', text: 'hi' },
+                meta: { permissionMode: 'read-only' },
+            } as any,
+        ]);
+
+        expect(get().sessions.s1.permissionMode).toBe('read-only');
+        expect(get().sessions.s1.permissionModeUpdatedAt).toBe(200);
+    });
 });

@@ -225,6 +225,26 @@ export const ACCOUNT_SCM_FILES_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'User instructions appended to SCM commit message generation prompts',
         storageScope: 'account',
     },
+    'scm.diffSummary.enabled': {
+        schema: z.boolean(),
+        default: true,
+        description: 'Enable SCM turn diff summary generation',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
+    'scm.diffSummary.prefetch': {
+        schema: z.boolean(),
+        default: false,
+        description: 'Allow SCM turn diff summaries to prefetch in the background',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
+    'scm.diffSummary.modelProfileOverride': {
+        schema: z.string(),
+        default: '',
+        description: 'Runtime catalog id for the SCM turn diff summary model/profile override',
+        storageScope: 'account',
+    },
     scmIncludeCoAuthoredBy: {
         schema: z.boolean(),
         default: false,

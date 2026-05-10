@@ -5382,7 +5382,7 @@ describe('sessionHandoffs ops', () => {
                 path: '/repo-source',
                 machineId: 'machine_source',
                 claudeSessionId: 'claude_session_3',
-                directSessionV1: {
+                externalSessionV1: {
                     v: 1,
                     providerId: 'claude',
                     machineId: 'machine_source',
@@ -5391,7 +5391,7 @@ describe('sessionHandoffs ops', () => {
                     linkedAtMs: 1,
                 },
             });
-            expect(updated.directSessionV1).toBeUndefined();
+            expect(updated.externalSessionV1).toBeUndefined();
             expect(updated.externalHistoryImportV1).toMatchObject({
                 v: 1,
                 providerId: 'claude',

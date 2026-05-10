@@ -6,7 +6,7 @@ export function resolveSessionHandoffPickerSourceMachineId(input: Readonly<{
 }>): string | null {
     return (
         normalizeSessionHandoffMachineId(input.sessionMetadata?.machineId)
-        ?? normalizeSessionHandoffMachineId(input.sessionMetadata?.directSessionV1?.machineId)
+        ?? normalizeSessionHandoffMachineId(input.sessionMetadata?.externalSessionV1?.machineId)
         ?? normalizeSessionHandoffMachineId(input.sourceMachineId)
         ?? null
     );

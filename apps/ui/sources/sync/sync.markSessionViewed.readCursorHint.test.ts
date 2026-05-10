@@ -114,7 +114,7 @@ function createPlainSession(params: { sessionId: string }): Session {
     };
 }
 
-function createDirectSessionWithObservedAttention(params: { sessionId: string }): Session {
+function createExternalSessionWithObservedAttention(params: { sessionId: string }): Session {
     const now = Date.now();
     return {
         id: params.sessionId,
@@ -127,7 +127,7 @@ function createDirectSessionWithObservedAttention(params: { sessionId: string })
         metadata: {
             path: '',
             host: '',
-            directSessionV1: {
+            externalSessionV1: {
                 v: 1,
                 providerId: 'codex',
                 machineId: 'machine-1',
@@ -135,7 +135,7 @@ function createDirectSessionWithObservedAttention(params: { sessionId: string })
                 source: { kind: 'codexHome', home: 'user' },
                 followPolicyV1: { v: 1, policy: 'background_follow' },
             },
-            directSessionAttentionV1: {
+            externalSessionAttentionV1: {
                 v: 1,
                 observedProgressToken: '2:direct-msg-2',
                 observedAtMs: 2,
@@ -213,7 +213,7 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
 
     it('marks the latest observed direct-session progress as viewed without persisting transcript bodies', async () => {
         const sessionId = 's_direct_attention_1';
-        storage.getState().applySessions([createDirectSessionWithObservedAttention({ sessionId })]);
+        storage.getState().applySessions([createExternalSessionWithObservedAttention({ sessionId })]);
         emitWithAckMock.mockImplementation(async (...args: unknown[]) => {
             const [event, payload] = args;
             if (event === 'update-metadata') {
@@ -245,15 +245,15 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
         expect(updateMetadataCall).toBeDefined();
         const metadataPayload = updateMetadataCall?.[1] as { metadata?: string } | undefined;
         const encodedMetadata = typeof metadataPayload?.metadata === 'string' ? metadataPayload.metadata : '';
-        expect(encodedMetadata).toContain('"directSessionAttentionV1"');
+        expect(encodedMetadata).toContain('"externalSessionAttentionV1"');
         expect(encodedMetadata).toContain('"observedProgressToken":"2:direct-msg-2"');
         expect(encodedMetadata).toContain('"viewedProgressToken":"2:direct-msg-2"');
 
-        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionV1?.followPolicyV1).toEqual({
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionV1?.followPolicyV1).toEqual({
             v: 1,
             policy: 'background_follow',
         });
-        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionAttentionV1).toEqual({
             v: 1,
             observedProgressToken: '2:direct-msg-2',
             viewedProgressToken: '2:direct-msg-2',

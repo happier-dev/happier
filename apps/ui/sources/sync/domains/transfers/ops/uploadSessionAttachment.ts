@@ -51,6 +51,13 @@ function describeUploadSource(source: AttachmentsUploadFileSource): Readonly<{
             mimeType: source.file.type || undefined,
         };
     }
+    if (source.kind === 'memory') {
+        return {
+            name: source.name,
+            sizeBytes: source.bytes.byteLength,
+            mimeType: source.mimeType ? String(source.mimeType) : undefined,
+        };
+    }
 
     return {
         name: source.name,

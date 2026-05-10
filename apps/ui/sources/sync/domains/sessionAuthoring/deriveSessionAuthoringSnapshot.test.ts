@@ -135,4 +135,27 @@ describe('deriveSessionAuthoringSnapshot', () => {
 
         expect(snapshot.codexBackendMode).toBe('acp');
     });
+
+    it('reads permission mode through the canonical metadata resolver', () => {
+        const snapshot = deriveSessionAuthoringSnapshot({
+            session: {
+                id: 'session-4',
+                encryptionMode: 'e2ee',
+                metadata: {
+                    path: '/tmp/project',
+                    host: 'qa-host',
+                    permissionMode: 'acceptEdits',
+                    permissionModeUpdatedAt: 42,
+                },
+                permissionMode: 'default',
+                permissionModeUpdatedAt: null,
+                modelMode: 'default',
+                modelModeUpdatedAt: null,
+            },
+            sessionDekBase64: null,
+        });
+
+        expect(snapshot.permissionMode).toBe('safe-yolo');
+        expect(snapshot.permissionModeUpdatedAt).toBe(42);
+    });
 });

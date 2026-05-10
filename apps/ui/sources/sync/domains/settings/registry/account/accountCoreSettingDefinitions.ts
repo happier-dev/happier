@@ -218,7 +218,7 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
     },
     sessionMessageSendMode: {
         schema: SessionMessageSendModeSchema,
-        default: 'agent_queue',
+        default: 'server_pending',
         description: 'How the app submits messages while an agent is running',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },

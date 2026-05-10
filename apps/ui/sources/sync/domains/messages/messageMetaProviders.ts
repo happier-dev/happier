@@ -1,15 +1,22 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import { resolveProviderOutgoingMessageMetaExtras } from '@happier-dev/agents';
-import { buildClaudeReasoningEffortMessageMetaOverrides } from '@/agents/providers/claude/buildClaudeReasoningEffortMessageMetaOverrides';
+import { resolveProviderRegisteredMessageMetaOverrides } from '@/agents/registry/providerMessageMetaOverrides';
 
 import type { MessageMeta } from '@/sync/domains/messages/messageMetaTypes';
 
-const PROVIDER_MESSAGE_META_OVERRIDE_BUILDERS: Partial<Record<AgentId, (params: {
-    session: unknown;
-    metaOverrides?: Record<string, unknown>;
-}) => Record<string, unknown> | undefined>> = {
-    claude: buildClaudeReasoningEffortMessageMetaOverrides,
-};
+const PROTOCOL_OWNED_MESSAGE_META_KEYS = new Set([
+    'sentFrom',
+    'source',
+    'permissionMode',
+    'model',
+    'fallbackModel',
+    'customSystemPrompt',
+    'appendSystemPrompt',
+    'allowedTools',
+    'disallowedTools',
+    'displayText',
+    'happier',
+]);
 
 export function addProviderMessageMetaExtras(args: {
     meta: MessageMeta;
@@ -36,6 +43,7 @@ export function addProviderMessageMetaExtras(args: {
 
     for (const [key, value] of Object.entries(extras as Record<string, unknown>)) {
         if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+        if (PROTOCOL_OWNED_MESSAGE_META_KEYS.has(key)) continue;
         if (Object.prototype.hasOwnProperty.call(merged, key)) continue;
         const isPrimitive = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' || value === null;
         const isSmallStringArray =
@@ -56,14 +64,12 @@ export function resolveProviderMessageMetaOverrides(args: {
 }): Partial<MessageMeta> | undefined {
     if (!args.agentId) return args.metaOverrides;
 
-    const builder = PROVIDER_MESSAGE_META_OVERRIDE_BUILDERS[args.agentId];
-    if (!builder) return args.metaOverrides;
-
     try {
-        return builder({
+        return resolveProviderRegisteredMessageMetaOverrides({
+            agentId: args.agentId,
             session: args.session,
             metaOverrides: args.metaOverrides as Record<string, unknown> | undefined,
-        }) as Partial<MessageMeta> | undefined;
+        }) as Partial<MessageMeta> | undefined ?? args.metaOverrides;
     } catch {
         return args.metaOverrides;
     }

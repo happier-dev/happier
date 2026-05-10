@@ -556,7 +556,7 @@ describe('sessionListLookupState', () => {
                     id: 's1',
                     metadata: {
                         path: '/workspace/direct-repo',
-                        directSessionV1: {
+                        externalSessionV1: {
                             v: 1,
                             providerId: 'codex',
                             machineId: 'm-direct',
@@ -579,7 +579,7 @@ describe('sessionListLookupState', () => {
                     metadata: {
                         path: '/workspace/direct-repo',
                         machineId: null,
-                        directSessionV1: {
+                        externalSessionV1: {
                             v: 1,
                             providerId: 'codex',
                         },

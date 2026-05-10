@@ -5,6 +5,7 @@ import {
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
     LEGACY_ACP_SESSION_MODELS_STATE_KEY,
     LEGACY_ACP_SESSION_MODES_STATE_KEY,
+    readAcpConfigOptionIntentFromMetadata,
     readMetadataAliasValue,
     SESSION_CONFIG_OPTIONS_STATE_KEY,
     SESSION_CONFIG_OPTION_OVERRIDES_KEY,
@@ -52,6 +53,54 @@ export type SessionConfigOptionControl = Readonly<{
     effectiveValue: SessionConfigOptionValueId;
     isPending: boolean;
 }>;
+
+export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOption[] | null {
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+
+    const parsed: SessionConfigOption[] = [];
+    type RawConfigOptionChoice = Record<string, unknown>;
+    for (const entry of raw) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+        const rec = entry as Record<string, unknown>;
+        const id = typeof rec.id === 'string' ? rec.id.trim() : '';
+        const name = typeof rec.name === 'string' ? rec.name.trim() : '';
+        const type = typeof rec.type === 'string' ? rec.type.trim() : '';
+        if (!id || !name || !type) continue;
+
+        const currentValue = normalizeValueId(rec.currentValue);
+        if (!currentValue) continue;
+
+        const options = Array.isArray(rec.options)
+            ? rec.options
+                .filter((option: unknown): option is RawConfigOptionChoice =>
+                    Boolean(option && typeof option === 'object' && !Array.isArray(option))
+                )
+                .map((option: RawConfigOptionChoice) => {
+                    const value = normalizeValueId(option.value);
+                    const optionName = typeof option.name === 'string' ? option.name.trim() : '';
+                    if (!value || !optionName) return null;
+                    const description = typeof option.description === 'string' ? option.description.trim() : '';
+                    return { value, name: optionName, ...(description ? { description } : {}) };
+                })
+                .filter(
+                    (option: NonNullable<SessionConfigOption['options']>[number] | null): option is NonNullable<SessionConfigOption['options']>[number] =>
+                        option !== null
+                )
+            : undefined;
+
+        const description = typeof rec.description === 'string' ? rec.description.trim() : '';
+        parsed.push({
+            id,
+            name,
+            type,
+            currentValue,
+            ...(description ? { description } : {}),
+            ...(options && options.length > 0 ? { options } : {}),
+        } satisfies SessionConfigOption);
+    }
+
+    return parsed.length > 0 ? parsed : null;
+}
 
 export function isBooleanConfigOptionType(type: string): boolean {
     return type === 'boolean' || type === 'bool' || type === 'toggle';
@@ -183,14 +232,24 @@ export function computeSessionConfigOptionControls(params: {
     const hasDedicatedModelControl =
         sessionModels?.provider === params.agentId && sessionModels.availableModels.length > 0;
 
-    const overrides = parseSessionConfigOptionOverridesState(
-        readMetadataAliasValue((params.metadata as any) ?? {}, SESSION_CONFIG_OPTION_OVERRIDES_KEY, LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY),
+    const metadataRecord = (params.metadata as any) ?? {};
+    const parsedOverrides = parseSessionConfigOptionOverridesState(
+        readMetadataAliasValue(metadataRecord, SESSION_CONFIG_OPTION_OVERRIDES_KEY, LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY),
     );
+    const overrides: Record<string, Readonly<{ value: unknown }>> = { ...(parsedOverrides?.overrides ?? {}) };
+    for (const option of state.configOptions) {
+        const optionId = typeof option.id === 'string' ? option.id.trim() : '';
+        if (!optionId) continue;
+        const intent = readAcpConfigOptionIntentFromMetadata(metadataRecord, optionId);
+        if (intent) {
+            overrides[optionId] = { value: intent.value };
+        }
+    }
     return buildSessionConfigOptionControls({
         providerId: params.agentId,
         provider: state.provider,
         configOptions: state.configOptions,
-        overrides: overrides?.overrides ?? null,
+        overrides,
         hideModeOption: hasDedicatedModeControl,
         hideModelOption: hasDedicatedModelControl,
     });
@@ -225,3 +284,12 @@ export function computeSessionConfigOptionControlsFromOverride(params: Readonly<
         overrides: params.overrides ?? null,
     });
 }
+
+export type AcpConfigOptionValueId = SessionConfigOptionValueId;
+export type AcpConfigOptionSelectOption = SessionConfigOptionSelectOption;
+export type AcpConfigOption = SessionConfigOption;
+export type AcpConfigOptionControl = SessionConfigOptionControl;
+
+export const computeAcpConfigOptionControls = computeSessionConfigOptionControls;
+export const computeAcpConfigOptionControlsForProvider = computeSessionConfigOptionControlsForProvider;
+export const computeAcpConfigOptionControlsFromOverride = computeSessionConfigOptionControlsFromOverride;

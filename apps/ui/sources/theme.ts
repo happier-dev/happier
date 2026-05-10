@@ -42,8 +42,6 @@ const sharedSpacing = {
     },
 } as const;
 
-const premiumOverlaySurface = '#050505';
-
 export const lightTheme = {
     dark: false,
     colors: {
@@ -78,11 +76,21 @@ export const lightTheme = {
         overlay: {
             scrimSoft: 'rgba(0, 0, 0, 0.18)',
             scrim: 'rgba(0, 0, 0, 0.45)',
-            scrimStrong: premiumOverlaySurface,
+            scrimStrong: 'rgba(255, 255, 255, 0.68)',
             // Used by the onboarding/setup wizard shell; light-theme uses a bright scrim so the blur reads as “frosted glass”.
             scrimWizard: 'rgba(255, 255, 255, 0.52)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
+        },
+        desktopPetOverlay: {
+            bubble: {
+                background: '#FFFFFF',
+                backgroundPressed: '#F7F7F7',
+                text: '#1C1C1E',
+                textSecondary: '#5F6368',
+                controlBackground: 'rgba(255, 255, 255, 0.96)',
+                controlBackgroundPressed: '#F2F2F7',
+            },
         },
         surfaceHigh: '#F8F8F8',
         surfaceHighest: '#f0f0f0',
@@ -141,7 +149,7 @@ export const lightTheme = {
         button: {
             primary: {
                 background: '#000000',
-                gradient: verticalControlGradient(['#000000', '#171717']),
+                gradient: verticalControlGradient(['#000000', '#020202']),
                 tint: '#FFFFFF',
                 disabled: '#C0C0C0',
             },
@@ -323,11 +331,21 @@ export const darkTheme = {
         overlay: {
             scrimSoft: 'rgba(0, 0, 0, 0.45)',
             scrim: 'rgba(0, 0, 0, 0.45)',
-            scrimStrong: premiumOverlaySurface,
-            // Used by the onboarding/setup wizard shell; slightly subtler than the regular scrim.
-            scrimWizard: 'rgba(0, 0, 0, 0.16)',
+            scrimStrong: 'rgba(0, 0, 0, 0.58)',
+            // Used by the onboarding/setup wizard shell; increased for stronger modal separation with blur in dark mode.
+            scrimWizard: 'rgba(0, 0, 0, 0.42)',
             text: '#FFFFFF',
             textSecondary: 'rgba(255, 255, 255, 0.9)',
+        },
+        desktopPetOverlay: {
+            bubble: {
+                background: '#2C2C2C',
+                backgroundPressed: '#343434',
+                text: '#FFFFFF',
+                textSecondary: '#B4B4B8',
+                controlBackground: 'rgba(44, 44, 44, 0.96)',
+                controlBackgroundPressed: '#3A3A3A',
+            },
         },
         surfaceHigh: '#171717',
         surfaceHighest: '#292929',
@@ -385,7 +403,7 @@ export const darkTheme = {
         button: {
             primary: {
                 background: '#1b1b1b',
-                gradient: verticalControlGradient(['#1b1b1b', '#242424']),
+                gradient: verticalControlGradient(['#1b1b1b', '#1d1d1d']),
                 tint: '#FFFFFF',
                 disabled: '#C0C0C0',
             },

@@ -2,6 +2,7 @@ import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/pr
 
 import { ACCOUNT_ACTIONS_SETTING_DEFINITIONS } from './accountActionsSettingDefinitions';
 import { ACCOUNT_BACKEND_SETTING_DEFINITIONS } from './accountBackendSettingDefinitions';
+import { ACCOUNT_CODING_PROMPT_BEHAVIOR_SETTING_DEFINITIONS } from './accountCodingPromptBehaviorSettingDefinitions';
 import { ACCOUNT_CONNECTED_SERVICES_SETTING_DEFINITIONS } from './accountConnectedServicesSettingDefinitions';
 import { ACCOUNT_COLLECTION_SETTING_DEFINITIONS } from './accountCollectionSettingDefinitions';
 import { ACCOUNT_CORE_SETTING_DEFINITIONS } from './accountCoreSettingDefinitions';
@@ -25,6 +26,7 @@ import { ACCOUNT_WORKFLOW_SETTING_DEFINITIONS } from './accountWorkflowSettingDe
 export const ACCOUNT_SETTING_DEFINITIONS = defineSettingDefinitions({
     ...ACCOUNT_ACTIONS_SETTING_DEFINITIONS,
     ...ACCOUNT_BACKEND_SETTING_DEFINITIONS,
+    ...ACCOUNT_CODING_PROMPT_BEHAVIOR_SETTING_DEFINITIONS,
     ...ACCOUNT_CONNECTED_SERVICES_SETTING_DEFINITIONS,
     ...ACCOUNT_COLLECTION_SETTING_DEFINITIONS,
     ...ACCOUNT_CORE_SETTING_DEFINITIONS,

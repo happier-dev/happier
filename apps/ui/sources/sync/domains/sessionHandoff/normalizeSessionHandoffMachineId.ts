@@ -1,6 +1,6 @@
 export type SessionHandoffMachineMetadataLike = Readonly<{
     machineId?: string | null;
-    directSessionV1?: Readonly<{
+    externalSessionV1?: Readonly<{
         machineId?: string | null;
     }> | null;
 }> | null | undefined;

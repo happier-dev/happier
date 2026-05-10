@@ -172,4 +172,32 @@ describe('computeSessionConfigOptionControls', () => {
         const res = computeSessionConfigOptionControls({ agentId: 'opencode', metadata });
         expect(res?.[0]?.effectiveValue).toBe('true');
     });
+
+    it('uses the newest config option override entry across canonical and legacy aliases', () => {
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: {
+                v: 1,
+                provider: 'opencode',
+                updatedAt: 1,
+                configOptions: [{ id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: 'false' }],
+            },
+            sessionConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 2,
+                overrides: { telemetry: { updatedAt: 2, value: false } },
+            },
+            acpConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 3,
+                overrides: { telemetry: { updatedAt: 3, value: true } },
+            },
+        });
+
+        const res = computeSessionConfigOptionControls({ agentId: 'opencode', metadata });
+        expect(res?.[0]).toMatchObject({
+            requestedValue: 'true',
+            effectiveValue: 'true',
+            isPending: true,
+        });
+    });
 });

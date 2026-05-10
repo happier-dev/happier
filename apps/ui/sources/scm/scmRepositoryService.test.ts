@@ -91,6 +91,7 @@ function makeScmSnapshot(partial?: ProtocolScmSnapshotOverrides): ProtocolScmWor
         fetchedAt: 123,
         repo: { isRepo: true, rootPath: '/repo', backendId: 'git', mode: '.git', worktrees: [], remotes: [] },
         capabilities: {
+            capabilityScope: 'local-backend',
             readStatus: true,
             readDiffFile: true,
             readDiffCommit: true,
@@ -442,6 +443,7 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
                     rootPath: '/repo',
                     backendId: 'git',
                     mode: '.git',
+                    defaultBranch: 'release/2026',
                     worktrees: [
                         { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
                         { path: '/repo', branch: 'main', isCurrent: true },
@@ -460,6 +462,7 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         const service = new ScmRepositoryService();
         const result = await service.fetchSnapshotForSession('session_1');
 
+        expect(result?.repo.defaultBranch).toBe('release/2026');
         expect(result?.repo.worktrees).toEqual([
             { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
             { path: '/repo', branch: 'main', isCurrent: true },

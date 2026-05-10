@@ -1,5 +1,6 @@
 export type LocalUploadSource =
     | Readonly<{ kind: 'web'; file: File }>
+    | Readonly<{ kind: 'memory'; bytes: Uint8Array }>
     | Readonly<{ kind: 'native'; uri: string; sizeBytes?: number | null }>;
 
 export type LocalUploadSourceReader = Readonly<{
@@ -57,12 +58,26 @@ export async function openLocalUploadSourceReader(source: LocalUploadSource): Pr
         };
     }
 
+    if (source.kind === 'memory') {
+        return {
+            sizeBytes: source.bytes.byteLength,
+            readBytes: async (offset, length) => source.bytes.slice(offset, Math.min(source.bytes.byteLength, offset + length)),
+            close: async () => {
+                // no-op
+            },
+        };
+    }
+
     return await openNativeLocalUploadSourceReader(source);
 }
 
 export async function resolveLocalUploadSourceSizeBytes(source: LocalUploadSource): Promise<number | null> {
     if (source.kind === 'web') {
         return source.file.size;
+    }
+
+    if (source.kind === 'memory') {
+        return source.bytes.byteLength;
     }
 
     if (isFiniteSizeBytes(source.sizeBytes)) {

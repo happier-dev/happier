@@ -35,7 +35,7 @@ export type SessionMetadataLike = Readonly<{
     homeDir?: unknown;
     machineId?: unknown;
     permissionMode?: unknown;
-    directSessionV1?: unknown;
+    externalSessionV1?: unknown;
 }> | null | undefined;
 
 export type SessionListLookupSessionServerScope = Readonly<{
@@ -192,13 +192,13 @@ function resolveSessionListLookupSessionEntryFromState(
         };
     }
 
-    const directSession = state?.sessions?.[normalizedSessionId];
-    if (directSession) {
-        const directServerId = normalizeTrimmedString(directSession.serverId);
+    const externalSession = state?.sessions?.[normalizedSessionId];
+    if (externalSession) {
+        const directServerId = normalizeTrimmedString(externalSession.serverId);
         return {
             serverId: serverScope.serverId ?? directServerId ?? '',
             serverName: serverScope.serverName,
-            session: directSession as unknown as SessionListRenderableSession,
+            session: externalSession as unknown as SessionListRenderableSession,
         };
     }
 
@@ -598,9 +598,9 @@ export function resolveSessionListPreferredSessionMetadataFromState(
         return cached;
     }
 
-    const directSession = state?.sessions?.[normalizedSessionId];
-    const directMetadataValue = directSession && typeof directSession === 'object'
-        ? directSession.metadata
+    const externalSession = state?.sessions?.[normalizedSessionId];
+    const directMetadataValue = externalSession && typeof externalSession === 'object'
+        ? externalSession.metadata
         : null;
     const directMetadata = directMetadataValue && typeof directMetadataValue === 'object'
         ? directMetadataValue

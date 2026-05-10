@@ -66,6 +66,6 @@ describe('sessionRename', () => {
 
         const result = await sessionRename('sess-1', 'New title');
 
-        expect(result).toEqual({ success: false, message: 'boom' });
+        expect(result).toEqual({ success: false, message: 'Session state metadata update failed: unknown_error' });
     });
 });

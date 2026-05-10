@@ -94,7 +94,7 @@ describe('resolveRepoScmSessionRequest', () => {
                     metadata: {
                         path: '~/repo',
                         homeDir: '/Users/tester',
-                        directSessionV1: {
+                        externalSessionV1: {
                             v: 1,
                             providerId: 'codex',
                             machineId: 'machine-direct',

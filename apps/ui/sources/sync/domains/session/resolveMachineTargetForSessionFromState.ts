@@ -26,7 +26,7 @@ export type SessionTargetMetadataLike = Readonly<{
     path?: string | null;
     host?: string | null;
     homeDir?: string | null;
-    directSessionV1?: Readonly<{
+    externalSessionV1?: Readonly<{
         v?: number;
         providerId?: string | null;
         machineId?: string | null;

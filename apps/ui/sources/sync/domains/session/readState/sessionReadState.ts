@@ -1,6 +1,6 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
-import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/external/readDirectSessionAttention';
-import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
+import { deriveExternalSessionAttentionHasUnread } from '@/sync/domains/session/external/readExternalSessionAttention';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import {
     resolveLastViewedSessionSeq,
     type LastViewedSessionSeqInput,
@@ -34,10 +34,10 @@ function resolveLegacyPendingActivityAt(metadata: unknown): number | undefined {
 
 export function deriveSessionReadState(session: SessionReadStateInput): SessionReadState {
     const metadata = session.metadata as Metadata | null | undefined;
-    if (readDirectSessionLink(metadata)) {
-        const directSessionHasUnread = deriveDirectSessionAttentionHasUnread(metadata);
-        if (directSessionHasUnread === true) return 'unread';
-        if (directSessionHasUnread === false) return 'read';
+    if (readExternalSessionLink(metadata)) {
+        const externalSessionHasUnread = deriveExternalSessionAttentionHasUnread(metadata);
+        if (externalSessionHasUnread === true) return 'unread';
+        if (externalSessionHasUnread === false) return 'read';
     }
 
     const sessionSeq = Math.max(0, Math.trunc(session.seq));

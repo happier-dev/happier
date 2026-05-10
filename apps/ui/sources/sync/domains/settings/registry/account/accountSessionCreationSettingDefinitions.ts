@@ -15,6 +15,48 @@ import {
 
 const SessionTranscriptStorageModeSchema = z.enum(SESSION_TRANSCRIPT_STORAGE_MODES);
 
+export const NEW_SESSION_WIZARD_SELECTION_SECTION_IDS = [
+    'profiles',
+    'backends',
+    'models',
+    'machines',
+    'paths',
+    'permissions',
+] as const;
+
+export const NEW_SESSION_WIZARD_SECTION_PRESENTATIONS = [
+    'auto',
+    'list',
+    'dropdown',
+] as const;
+
+export type NewSessionWizardSelectionSectionId = typeof NEW_SESSION_WIZARD_SELECTION_SECTION_IDS[number];
+export type NewSessionWizardSectionPresentation = typeof NEW_SESSION_WIZARD_SECTION_PRESENTATIONS[number];
+
+const NewSessionWizardSelectionSectionIdSchema = z.enum(NEW_SESSION_WIZARD_SELECTION_SECTION_IDS);
+const NewSessionWizardSectionPresentationSchema = z.enum(NEW_SESSION_WIZARD_SECTION_PRESENTATIONS);
+
+const NewSessionWizardSectionPresentationByIdSchema = z.preprocess((value) => {
+    const record = value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+
+    return Object.fromEntries(
+        Object.entries(record).flatMap(([sectionId, raw]) => {
+            if (!NewSessionWizardSelectionSectionIdSchema.safeParse(sectionId).success) return [];
+            if (!NewSessionWizardSectionPresentationSchema.safeParse(raw).success) return [];
+            return [[sectionId, raw]];
+        }),
+    ) as Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>>;
+}, z.partialRecord(NewSessionWizardSelectionSectionIdSchema, NewSessionWizardSectionPresentationSchema).default({}));
+
+export function resolveNewSessionWizardSectionPresentation(
+    setting: Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>> | null | undefined,
+    sectionId: NewSessionWizardSelectionSectionId,
+): NewSessionWizardSectionPresentation {
+    return setting?.[sectionId] ?? 'auto';
+}
+
 const SessionTranscriptStorageModeByTargetKeySchema = z.preprocess((value) => {
     const record = value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
@@ -92,6 +134,18 @@ export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinit
             privacy: 'safe',
             identityScope: 'person',
         },
+    },
+    newSessionWizardSectionPresentationV1: {
+        schema: NewSessionWizardSectionPresentationByIdSchema,
+        default: {} as Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>>,
+        description: 'Per-section presentation mode for new-session wizard selectors',
+        storageScope: 'account',
+    },
+    newSessionWizardColumnsEnabled: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Arrange new-session wizard selectors in columns on wide screens',
+        storageScope: 'account',
     },
 });
 

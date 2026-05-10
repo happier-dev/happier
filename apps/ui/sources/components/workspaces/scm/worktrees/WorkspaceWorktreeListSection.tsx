@@ -84,7 +84,7 @@ export const WorkspaceWorktreeListSection = React.memo((props: Readonly<{
             ) : filteredWorktrees.length === 0 ? (
                 <View>
                     <Text style={styles.helperText}>
-                        {t('directSessions.browseNoSearchResults')}
+                        {t('externalSessions.browseNoSearchResults')}
                     </Text>
                 </View>
             ) : (

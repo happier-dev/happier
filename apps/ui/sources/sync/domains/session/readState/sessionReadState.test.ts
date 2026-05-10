@@ -57,14 +57,14 @@ describe('sessionReadState', () => {
             seq: 0,
             lastViewedSessionSeq: 0,
             metadata: {
-                directSessionV1: {
+                externalSessionV1: {
                     v: 1,
                     providerId: 'codex',
                     machineId: 'machine-1',
                     remoteSessionId: 'remote-1',
                     source: { kind: 'codexHome', home: 'user' },
                 },
-                directSessionAttentionV1: {
+                externalSessionAttentionV1: {
                     v: 1,
                     observedProgressToken: '2:message',
                     viewedProgressToken: '1:message',

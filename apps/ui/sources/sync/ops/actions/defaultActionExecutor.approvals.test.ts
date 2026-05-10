@@ -121,7 +121,7 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/sync/engine/overrides/acpSessionModeOverridePublish', () => ({
+vi.mock('@/sync/state/acpSessionModeOverridePublish', () => ({
     publishAcpSessionModeOverrideToMetadata: vi.fn(),
 }));
 

@@ -42,16 +42,16 @@ const requestMock = vi.hoisted(() => vi.fn());
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
 const createEncryptionFromAuthCredentialsMock = vi.hoisted(() => vi.fn());
-const machineDirectSessionTranscriptPageMock = vi.hoisted(() => vi.fn());
-const machineDirectSessionTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
+const machineExternalSessionTranscriptPageMock = vi.hoisted(() => vi.fn());
+const machineExternalSessionTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 const sessionRpcWithPreferredSessionScopeMock = vi.hoisted(() => vi.fn());
 const emitSessionMetadataUpdateWithServerScopeMock = vi.hoisted(() => vi.fn());
 const notifyActivityReadyMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/ops/machineDirectSessions', () => ({
-    machineDirectSessionTranscriptPage: machineDirectSessionTranscriptPageMock,
-    machineDirectSessionTranscriptReadAfter: machineDirectSessionTranscriptReadAfterMock,
+vi.mock('@/sync/ops/machineExternalSessions', () => ({
+    machineExternalSessionTranscriptPage: machineExternalSessionTranscriptPageMock,
+    machineExternalSessionTranscriptReadAfter: machineExternalSessionTranscriptReadAfterMock,
 }));
 vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
@@ -142,7 +142,7 @@ function createMachine(machineId: string): Machine {
     };
 }
 
-function createDirectSession(sessionId: string): Session {
+function createExternalSession(sessionId: string): Session {
     const now = Date.now();
     return {
         ...createSession(sessionId),
@@ -152,7 +152,7 @@ function createDirectSession(sessionId: string): Session {
             path: '',
             host: '',
             machineId: 'machine-1',
-            directSessionV1: {
+            externalSessionV1: {
                 v: 1,
                 providerId: 'codex',
                 machineId: 'machine-1',
@@ -186,8 +186,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         runtimeFetchMock.mockReset();
         getCredentialsForServerUrlMock.mockReset();
         createEncryptionFromAuthCredentialsMock.mockReset();
-        machineDirectSessionTranscriptPageMock.mockReset();
-        machineDirectSessionTranscriptReadAfterMock.mockReset();
+        machineExternalSessionTranscriptPageMock.mockReset();
+        machineExternalSessionTranscriptReadAfterMock.mockReset();
         resolvePreferredServerIdForSessionIdMock.mockReset();
         sessionRpcWithPreferredSessionScopeMock.mockReset();
         emitSessionMetadataUpdateWithServerScopeMock.mockReset();
@@ -514,13 +514,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
     it('loads direct session transcripts from provider-backed paging without requiring session encryption', async () => {
         const sessionId = 'direct_session_id';
         resolvePreferredServerIdForSessionIdMock.mockReturnValue('server-owned');
-        storage.getState().applySessions([createDirectSession(sessionId)]);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
         emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
             result: 'success',
             version: Number(expectedVersion ?? 0) + 1,
             metadata,
         }));
-        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
             ok: true,
             items: [
                 {
@@ -532,7 +532,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             nextCursor: 'older-cursor-1',
             hasMore: true,
         });
-        machineDirectSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
             ok: true,
             items: [],
             nextCursor: 'tail-cursor-1',
@@ -548,18 +548,18 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
 
-        expect(machineDirectSessionTranscriptPageMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             providerId: 'codex',
             remoteSessionId: 'vendor-session-1',
             direction: 'older',
         }), { serverId: 'server-owned' });
-        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
             cursor: 'tail',
         }), { serverId: 'server-owned' });
-        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionAttentionV1).toEqual({
             v: 1,
             observedProgressToken: '1:direct-msg-1',
             observedAtMs: 1,
@@ -573,13 +573,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
     it('loads direct session transcripts even when the active server snapshot does not yet know the linked session', async () => {
         const sessionId = 'direct_session_id_without_active_snapshot';
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(undefined);
-        storage.getState().applySessions([createDirectSession(sessionId)]);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
         emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
             result: 'success',
             version: Number(expectedVersion ?? 0) + 1,
             metadata,
         }));
-        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
             ok: true,
             items: [
                 {
@@ -591,7 +591,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             nextCursor: 'older-cursor-1',
             hasMore: true,
         });
-        machineDirectSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
             ok: true,
             items: [],
             nextCursor: 'tail-cursor-1',
@@ -607,13 +607,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         await expect((sync as any).fetchMessages(sessionId)).resolves.toBeUndefined();
 
-        expect(machineDirectSessionTranscriptPageMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             providerId: 'codex',
             remoteSessionId: 'vendor-session-1',
             direction: 'older',
         }), { serverId: undefined });
-        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
             cursor: 'tail',
@@ -1047,7 +1047,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
     it('drops stale direct transcript fetch results after the server scope resets mid-request', async () => {
         const sessionId = 'direct_session_scope_reset';
-        storage.getState().applySessions([createDirectSession(sessionId)]);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
 
         let resolvePage: ((value: {
             ok: true;
@@ -1060,12 +1060,12 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             hasMore: boolean;
         }) => void) | null = null;
 
-        machineDirectSessionTranscriptPageMock.mockImplementationOnce(
+        machineExternalSessionTranscriptPageMock.mockImplementationOnce(
             () => new Promise((resolve) => {
                 resolvePage = resolve;
             }),
         );
-        machineDirectSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
             ok: true,
             items: [],
             nextCursor: 'tail-cursor-stale',
@@ -1114,13 +1114,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         await expect(fetchPromise).resolves.toBeUndefined();
         expect(storage.getState().sessionMessages[sessionId]).toBeUndefined();
-        expect(machineDirectSessionTranscriptReadAfterMock).not.toHaveBeenCalled();
+        expect(machineExternalSessionTranscriptReadAfterMock).not.toHaveBeenCalled();
     });
 
     it('pages older direct transcript messages using provider cursors', async () => {
         const sessionId = 'direct_session_paging';
-        storage.getState().applySessions([createDirectSession(sessionId)]);
-        machineDirectSessionTranscriptPageMock
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        machineExternalSessionTranscriptPageMock
             .mockResolvedValueOnce({
                 ok: true,
                 items: [
@@ -1145,7 +1145,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 nextCursor: null,
                 hasMore: false,
             });
-        machineDirectSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
             ok: true,
             items: [],
             nextCursor: 'tail-cursor-2',
@@ -1163,7 +1163,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const result = await (sync as any).loadOlderMessages(sessionId);
 
         expect(result).toEqual({ loaded: 1, hasMore: false, status: 'no_more' });
-        expect(machineDirectSessionTranscriptPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             remoteSessionId: 'vendor-session-1',
             cursor: 'older-cursor-2',
             direction: 'older',
@@ -1179,13 +1179,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
     it('refreshes loaded direct session transcripts through the shared messages invalidation path', async () => {
         const sessionId = 'direct_session_refresh';
-        storage.getState().applySessions([createDirectSession(sessionId)]);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
         emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
             result: 'success',
             version: Number(expectedVersion ?? 0) + 1,
             metadata,
         }));
-        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
             ok: true,
             items: [
                 {
@@ -1198,7 +1198,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             tailCursor: 'page-tail-cursor-1',
             hasMore: false,
         });
-        machineDirectSessionTranscriptReadAfterMock
+        machineExternalSessionTranscriptReadAfterMock
             .mockResolvedValueOnce({
                 ok: true,
                 items: [
@@ -1222,13 +1222,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         await (sync as any).fetchMessages(sessionId);
         await (sync as any).refreshSessionMessages(sessionId);
 
-        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1);
-        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1);
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
             cursor: 'page-tail-cursor-1',
         }), expect.anything());
-        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionAttentionV1).toEqual({
             v: 1,
             observedProgressToken: '2:direct-msg-2',
             observedAtMs: 2,
@@ -1245,13 +1245,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
     it('applies pushed direct-session transcript deltas and advances the tail cursor for fallback paging', async () => {
         const sessionId = 'direct_session_push_delta';
-        storage.getState().applySessions([createDirectSession(sessionId)]);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
         emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
             result: 'success',
             version: Number(expectedVersion ?? 0) + 1,
             metadata,
         }));
-        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
             ok: true,
             items: [
                 {
@@ -1264,7 +1264,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             tailCursor: 'page-tail-cursor-1',
             hasMore: false,
         });
-        machineDirectSessionTranscriptReadAfterMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptReadAfterMock.mockResolvedValueOnce({
             ok: true,
             items: [],
             nextCursor: 'tail-cursor-3',
@@ -1279,7 +1279,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
 
         await (sync as any).fetchMessages(sessionId);
-        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionAttentionV1).toEqual({
             v: 1,
             observedProgressToken: '1:direct-msg-1',
             observedAtMs: 1,
@@ -1304,7 +1304,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             truncated: false,
         });
 
-        expect((storage.getState().sessions[sessionId]?.metadata as any)?.directSessionAttentionV1).toEqual({
+        expect((storage.getState().sessions[sessionId]?.metadata as any)?.externalSessionAttentionV1).toEqual({
             v: 1,
             observedProgressToken: '2:direct-msg-2',
             observedAtMs: 2,
@@ -1326,8 +1326,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
         await (sync as any).refreshSessionMessages(sessionId);
 
-        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1);
-        expect(machineDirectSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledTimes(1);
+        expect(machineExternalSessionTranscriptReadAfterMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
             cursor: 'tail-cursor-2',
@@ -1336,13 +1336,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
     it('reuses ready local notifications for direct-session assistant push deltas', async () => {
         const sessionId = 'direct_session_notify_delta';
-        storage.getState().applySessions([createDirectSession(sessionId)]);
+        storage.getState().applySessions([createExternalSession(sessionId)]);
         emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ expectedVersion, metadata }: any) => ({
             result: 'success',
             version: Number(expectedVersion ?? 0) + 1,
             metadata,
         }));
-        machineDirectSessionTranscriptPageMock.mockResolvedValueOnce({
+        machineExternalSessionTranscriptPageMock.mockResolvedValueOnce({
             ok: true,
             items: [],
             nextCursor: null,
@@ -1389,8 +1389,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
 
     it('refetches direct-session transcript state when a push delta is truncated', async () => {
         const sessionId = 'direct_session_truncated_delta';
-        storage.getState().applySessions([createDirectSession(sessionId)]);
-        machineDirectSessionTranscriptPageMock
+        storage.getState().applySessions([createExternalSession(sessionId)]);
+        machineExternalSessionTranscriptPageMock
             .mockResolvedValueOnce({
                 ok: true,
                 items: [
@@ -1446,8 +1446,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(machineDirectSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
-        expect(machineDirectSessionTranscriptPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenCalledTimes(2);
+        expect(machineExternalSessionTranscriptPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             machineId: 'machine-1',
             remoteSessionId: 'vendor-session-1',
             direction: 'older',

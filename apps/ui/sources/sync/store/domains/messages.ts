@@ -1,5 +1,8 @@
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import {
+    inferLatestUserPermissionModeIntent,
+    readPermissionModeIntentFromMetadata,
+} from '@happier-dev/agents';
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
 import type { Message } from '../../domains/messages/messageTypes';
@@ -8,6 +11,7 @@ import type { Session } from '../../domains/state/storageTypes';
 import { isToolPotentiallyMutableForScm } from '@/sync/domains/tools/toolMutationClassification';
 import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry';
 import { buildSessionListRenderableFromSession, type SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { mutateSessionPermissionModeField } from '@/sync/state/mutators';
 
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import type { SessionPending } from './pending';
@@ -173,26 +177,8 @@ function coerceSessionMessages(input: unknown): SessionMessages {
 function inferLatestUserPermissionModeFromChangedMessages(
     messages: ReadonlyArray<Message>,
 ): { mode: PermissionMode; updatedAt: number } | null {
-    let best: { mode: PermissionMode; updatedAt: number } | null = null;
-
-    for (const message of messages) {
-        if (message.kind !== 'user-text') continue;
-        const rawMode = message.meta?.permissionMode;
-        const modeStr = typeof rawMode === 'string' ? rawMode : null;
-        if (!modeStr) continue;
-
-        const parsed = parsePermissionIntentAlias(modeStr);
-        if (!parsed) continue;
-
-        const at = message.createdAt;
-        if (typeof at !== 'number' || !Number.isFinite(at)) continue;
-
-        if (!best || at > best.updatedAt) {
-            best = { mode: parsed as PermissionMode, updatedAt: at };
-        }
-    }
-
-    return best;
+    const inferred = inferLatestUserPermissionModeIntent(messages);
+    return inferred ? { mode: inferred.permissionMode as PermissionMode, updatedAt: inferred.updatedAt } : null;
 }
 
 export function inferLatestUserPermissionModeFromMessages(
@@ -626,7 +612,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     inferredPermissionModeAt &&
                     // If the session has a canonical permission mode in metadata, that is the source of truth.
                     // Message-level permissionMode is per-turn and must not rewrite the session's stored mode.
-                    !(typeof (session.metadata as any)?.permissionMode === 'string' && (session.metadata as any).permissionMode.trim().length > 0) &&
+                    !readPermissionModeIntentFromMetadata((session.metadata ?? {}) as any) &&
                     // NOTE: inferredPermissionModeAt comes from message.createdAt (server timestamp for remote messages,
                     // and best-effort server-aligned timestamp for locally-created optimistic messages).
                     // permissionModeUpdatedAt is stamped using nowServerMs() for clock-safe ordering across devices.
@@ -638,7 +624,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     (session!.permissionMode ?? 'default') !== inferredPermissionMode;
 
                 if (needsUpdate || shouldWritePermissionMode || shouldAdvanceSessionSeq) {
-                    const nextSession: Session = {
+                    const baseSession: Session = {
                         ...session,
                         ...(shouldAdvanceSessionSeq && { seq: latestCommittedMessageSeq }),
                         ...(reducerResult.todos !== undefined && { todos: reducerResult.todos }),
@@ -646,11 +632,14 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         latestUsage: existingSession.reducerState.latestUsage ? {
                             ...existingSession.reducerState.latestUsage
                         } : session.latestUsage,
-                        ...(shouldWritePermissionMode && {
-                            permissionMode: inferredPermissionMode,
-                            permissionModeUpdatedAt: inferredPermissionModeAt
-                        })
                     };
+                    const nextSession = shouldWritePermissionMode
+                        ? mutateSessionPermissionModeField({
+                            session: baseSession,
+                            mode: inferredPermissionMode ?? 'default',
+                            updatedAt: inferredPermissionModeAt ?? 0,
+                        })
+                        : baseSession;
 
                     updatedSessions = {
                         ...state.sessions,

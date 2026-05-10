@@ -1,3 +1,4 @@
+import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
 
 import { isAgentId } from '@/agents/catalog/catalog';
@@ -7,7 +8,6 @@ import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resol
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 import {
-    normalizeOptionalNumber,
     normalizeSessionAuthoringConnectedServices,
     normalizeOptionalRecord,
     normalizeOptionalString,
@@ -38,8 +38,9 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
     });
     const backendTarget = defaultBackend?.backendTarget ?? null;
     const permissionOverride = getPermissionModeOverrideForSpawn(params.session as Session);
-    const metadataPermissionMode = normalizeOptionalString(metadata?.permissionMode);
-    const metadataPermissionModeUpdatedAt = normalizeOptionalNumber(metadata?.permissionModeUpdatedAt);
+    const metadataPermission = resolvePermissionIntentFromSessionMetadata(metadata);
+    const metadataPermissionMode = metadataPermission?.intent ?? null;
+    const metadataPermissionModeUpdatedAt = metadataPermission?.updatedAt ?? null;
     const modelOverride = getModelOverrideForSpawn(params.session as Session);
     const metadataModelOverride = resolveMetadataModelOverride(params.session);
     const rawMcpSelection = metadata && Object.prototype.hasOwnProperty.call(metadata, 'mcpSelection')

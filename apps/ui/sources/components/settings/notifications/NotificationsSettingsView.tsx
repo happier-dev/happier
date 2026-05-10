@@ -34,6 +34,7 @@ import { NotificationBadgesSection } from './NotificationBadgesSection';
 import { NotificationForegroundBehaviorSection } from './NotificationForegroundBehaviorSection';
 import { NotificationLiveActivityRemoteUpdatesSection } from './NotificationLiveActivityRemoteUpdatesSection';
 import { NotificationLocalDeviceSection } from './NotificationLocalDeviceSection';
+import { NotificationDesktopPermissionSection } from './NotificationDesktopPermissionSection';
 import { NotificationPushSection } from './NotificationPushSection';
 import { NotificationQuietHoursSection } from './NotificationQuietHoursSection';
 import { NotificationSoundsSection } from './NotificationSoundsSection';
@@ -253,6 +254,9 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                 localSettings={localSettings}
                 setLocalSetting={setLocalSetting}
             />
+            {isTauriDesktop() ? (
+                <NotificationDesktopPermissionSection />
+            ) : null}
             <NotificationQuietHoursSection
                 policy={attentionPolicy}
                 deviceOverride={localSettings.attentionDeviceOverridesV1.quietHoursOverride}

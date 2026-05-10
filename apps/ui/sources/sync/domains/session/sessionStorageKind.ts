@@ -5,17 +5,17 @@ export type SessionListStorageFilter = SessionStorageKind | 'all';
 
 type SessionStorageMetadataShape = {
     metadata?: {
-        directSessionV1?: unknown;
+        externalSessionV1?: unknown;
     } | null;
 };
 
-function isDirectSessionMetadata(value: unknown): boolean {
+function isExternalSessionMetadata(value: unknown): boolean {
     if (!value || typeof value !== 'object') return false;
-    const directSessionV1 = (value as { directSessionV1?: unknown }).directSessionV1;
-    if (!directSessionV1 || typeof directSessionV1 !== 'object') return false;
-    return (directSessionV1 as { v?: unknown }).v === 1;
+    const externalSessionV1 = (value as { externalSessionV1?: unknown }).externalSessionV1;
+    if (!externalSessionV1 || typeof externalSessionV1 !== 'object') return false;
+    return (externalSessionV1 as { v?: unknown }).v === 1;
 }
 
 export function getSessionStorageKind(session: Pick<Session, 'metadata'> | SessionStorageMetadataShape | null | undefined): SessionStorageKind {
-    return isDirectSessionMetadata(session?.metadata) ? 'direct' : 'persisted';
+    return isExternalSessionMetadata(session?.metadata) ? 'direct' : 'persisted';
 }

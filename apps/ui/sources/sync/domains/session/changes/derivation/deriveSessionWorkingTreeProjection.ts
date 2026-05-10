@@ -27,6 +27,7 @@ export function deriveSessionWorkingTreeProjection(params: Readonly<{
                 remotes: params.snapshot.repo.remotes ?? [],
             },
             capabilities: {
+                capabilityScope: mergedCapabilities!.capabilityScope ?? 'local-backend',
                 readStatus: mergedCapabilities!.readStatus ?? false,
                 readDiffFile: mergedCapabilities!.readDiffFile ?? false,
                 readDiffCommit: mergedCapabilities!.readDiffCommit ?? false,

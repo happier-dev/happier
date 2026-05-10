@@ -8,7 +8,7 @@ type RuntimeLocalMetadataShape = {
     host?: unknown;
     machineId?: unknown;
     flavor?: unknown;
-    directSessionV1?: unknown;
+    externalSessionV1?: unknown;
     claudeSessionId?: unknown;
     codexSessionId?: unknown;
     opencodeSessionId?: unknown;
@@ -19,12 +19,12 @@ function readRuntimeLocalMachineId(metadata: RuntimeLocalMetadataShape): unknown
         return metadata.machineId;
     }
 
-    const directSession = metadata.directSessionV1;
-    if (!directSession || typeof directSession !== 'object') {
+    const externalSession = metadata.externalSessionV1;
+    if (!externalSession || typeof externalSession !== 'object') {
         return undefined;
     }
 
-    return 'machineId' in directSession ? directSession.machineId : undefined;
+    return 'machineId' in externalSession ? externalSession.machineId : undefined;
 }
 
 export function preserveSessionRuntimeLocalMetadata(
@@ -46,10 +46,10 @@ export function preserveSessionRuntimeLocalMetadata<T extends RuntimeLocalMetada
     let preservedMetadata = nextMetadata;
     const previousRuntimeLocalMachineId = readRuntimeLocalMachineId(previousMetadata);
 
-    if (preservedMetadata.directSessionV1 == null && previousMetadata.directSessionV1 != null) {
+    if (preservedMetadata.externalSessionV1 == null && previousMetadata.externalSessionV1 != null) {
         preservedMetadata = {
             ...preservedMetadata,
-            directSessionV1: previousMetadata.directSessionV1,
+            externalSessionV1: previousMetadata.externalSessionV1,
         };
     }
 

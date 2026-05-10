@@ -1,8 +1,8 @@
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import {
-    updateMetadataWithUnreadDirectSessionProgress,
-    updateMetadataWithViewedDirectSessionProgress,
-} from '@/sync/domains/session/external/directSessionAttentionMetadata';
+    updateMetadataWithUnreadExternalSessionProgress,
+    updateMetadataWithViewedExternalSessionProgress,
+} from '@/sync/domains/session/external/externalSessionAttentionMetadata';
 import { getFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
@@ -106,8 +106,8 @@ function applyManualReadStateToMetadata(params: Readonly<{
     if (!metadata) return metadata;
 
     metadata = params.readState === 'read'
-        ? updateMetadataWithViewedDirectSessionProgress(metadata)
-        : updateMetadataWithUnreadDirectSessionProgress(metadata);
+        ? updateMetadataWithViewedExternalSessionProgress(metadata)
+        : updateMetadataWithUnreadExternalSessionProgress(metadata);
 
     if (params.readState === 'unread' && metadata.readStateV1) {
         const legacyResult = computeManualUnreadReadStateV1({

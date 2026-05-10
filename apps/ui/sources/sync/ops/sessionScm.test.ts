@@ -248,7 +248,7 @@ describe('sessionScm', () => {
                     metadata: {
                         path: '~/repo',
                         homeDir: '/Users/tester',
-                        directSessionV1: {
+                        externalSessionV1: {
                             v: 1,
                             providerId: 'codex',
                             machineId: 'machine-direct',
@@ -530,6 +530,98 @@ describe('sessionScm', () => {
                 cwd: '~/repo',
                 base: 'main',
                 head: 'feature/pr-cache',
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(sessionRpcMock).not.toHaveBeenCalled();
+    });
+
+    it('routes pull-request open-or-reuse and repository provisioning through the attached machine target', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+            sessions: {
+                'session-1': {
+                    active: true,
+                    metadata: {
+                        path: '~/repo',
+                        homeDir: '/Users/tester',
+                        machineId: 'machine-1',
+                    },
+                },
+            },
+        });
+        machineRpcMock.mockResolvedValue({ success: true });
+
+        const module = await import('./sessionScm');
+        expect(module.sessionScmPullRequestOpenOrReuse).toBeTypeOf('function');
+        expect(module.sessionScmRepositoryInit).toBeTypeOf('function');
+        expect(module.sessionScmHostingRepositoryDescribePublishTargets).toBeTypeOf('function');
+        expect(module.sessionScmHostingRepositoryPublish).toBeTypeOf('function');
+
+        await module.sessionScmPullRequestOpenOrReuse('session-1', {
+            cwd: '.',
+            base: 'trunk',
+            head: 'feature/pr-cache',
+        });
+        await module.sessionScmRepositoryInit('session-1', {
+            cwd: '.',
+        });
+        await module.sessionScmHostingRepositoryDescribePublishTargets('session-1', {
+            cwd: '.',
+            providerKind: 'github',
+        });
+        await module.sessionScmHostingRepositoryPublish('session-1', {
+            cwd: '.',
+            providerKind: 'github',
+            owner: 'acme',
+            repositoryName: 'repo',
+            visibility: 'private',
+            remoteName: 'origin',
+        });
+
+        expect(machineRpcMock).toHaveBeenNthCalledWith(
+            1,
+            'machine-1',
+            RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE,
+            {
+                cwd: '~/repo',
+                base: 'trunk',
+                head: 'feature/pr-cache',
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(machineRpcMock).toHaveBeenNthCalledWith(
+            2,
+            'machine-1',
+            RPC_METHODS.SCM_REPOSITORY_INIT,
+            {
+                cwd: '~/repo',
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(machineRpcMock).toHaveBeenNthCalledWith(
+            3,
+            'machine-1',
+            RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS,
+            {
+                cwd: '~/repo',
+                providerKind: 'github',
+            },
+            expect.objectContaining({ timeoutMs: expect.any(Number) }),
+        );
+        expect(machineRpcMock).toHaveBeenNthCalledWith(
+            4,
+            'machine-1',
+            RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH,
+            {
+                cwd: '~/repo',
+                providerKind: 'github',
+                owner: 'acme',
+                repositoryName: 'repo',
+                visibility: 'private',
+                remoteName: 'origin',
             },
             expect.objectContaining({ timeoutMs: expect.any(Number) }),
         );

@@ -31,6 +31,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
+    uiBackdropBlurEnabled: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Enable backdrop blur effects behind modals and overlay menus',
+        storageScope: 'local',
+    },
     uiFontScale: {
         schema: z.number(),
         default: 1,

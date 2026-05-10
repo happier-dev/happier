@@ -39,7 +39,7 @@ export interface ProjectKey {
     rootPath: string;
 }
 
-export function resolveProjectMachineScopeId(metadata: { machineId?: string | null; host?: string | null; directSessionV1?: unknown }): string {
+export function resolveProjectMachineScopeId(metadata: { machineId?: string | null; host?: string | null; externalSessionV1?: unknown }): string {
     const machineId = resolveSessionMachineId(metadata);
     if (machineId) return machineId;
     const host = normalizeMachineHost(metadata.host);

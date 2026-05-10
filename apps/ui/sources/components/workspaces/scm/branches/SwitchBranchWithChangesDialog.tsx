@@ -122,6 +122,7 @@ export async function showSwitchBranchWithChangesDialog(params: Readonly<{
             title: t('files.branchSwitchDialog.title'),
             subtitle: t('files.branchSwitchDialog.body'),
             testID: 'switch-branch-with-changes-dialog',
+            bodyScroll: 'auto',
             dimensions: { width: 520, maxHeightRatio: 0.85, size: 'md' },
         },
         closeOnBackdrop: true,

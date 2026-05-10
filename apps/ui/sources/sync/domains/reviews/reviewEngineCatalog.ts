@@ -2,14 +2,27 @@ export type ExecutionRunsBackendSnapshotEntry = Readonly<{
   available?: boolean;
   intents?: readonly string[];
   supportsVendorResume?: boolean;
+  title?: string;
+  label?: string;
+  displayName?: string;
 }>;
 
 export type ReviewEngineOption = Readonly<{ id: string; label: string; disabled?: boolean }>;
 
 function supportsReviewIntent(entry: ExecutionRunsBackendSnapshotEntry | null | undefined): boolean {
-  const intents = Array.isArray(entry?.intents) ? entry!.intents : null;
+  const intents = Array.isArray(entry?.intents) ? entry.intents : null;
   if (!intents) return true; // best-effort (older snapshots)
-  return (intents as readonly string[]).includes('review');
+  return intents.includes('review');
+}
+
+function buildReviewEngineOption(
+  id: string,
+  entry: ExecutionRunsBackendSnapshotEntry | null | undefined,
+  resolveAgentLabel: (agentId: string) => string,
+): ReviewEngineOption {
+  const label = entry?.title ?? entry?.label ?? entry?.displayName ?? resolveAgentLabel(id);
+  const disabled = entry ? !(entry.available === true && supportsReviewIntent(entry)) : false;
+  return { id, label, ...(disabled ? { disabled: true as const } : {}) };
 }
 
 export function buildAvailableReviewEngineOptions(params: Readonly<{
@@ -18,20 +31,29 @@ export function buildAvailableReviewEngineOptions(params: Readonly<{
   executionRunsBackends: Readonly<Record<string, ExecutionRunsBackendSnapshotEntry>> | null | undefined;
 }>): readonly ReviewEngineOption[] {
   const backends = params.executionRunsBackends ?? null;
+  const includedIds = new Set<string>();
 
   const agentOptions: ReviewEngineOption[] = params.enabledAgentIds
     .map((id) => String(id ?? '').trim())
     .filter((id) => id.length > 0)
     .map((id) => {
+      includedIds.add(id);
       if (!backends) return { id, label: params.resolveAgentLabel(id) };
       const entry = backends[id];
       // If the machine explicitly reports the backend, surface it even when unavailable so the
       // UI can explain why it's disabled instead of hiding it entirely.
-      const available = entry ? Boolean(entry.available === true) : true;
-      const reviewOk = supportsReviewIntent(entry);
-      const disabled = entry ? !(available && reviewOk) : false;
-      return { id, label: params.resolveAgentLabel(id), ...(disabled ? { disabled: true as const } : {}) } as any;
+      return buildReviewEngineOption(id, entry, params.resolveAgentLabel);
     });
 
-  return agentOptions;
+  if (!backends) {
+    return agentOptions;
+  }
+
+  const discoveredReviewOptions = Object.entries(backends)
+    .map(([rawId, entry]) => [String(rawId ?? '').trim(), entry] as const)
+    .filter(([id]) => id.length > 0 && !includedIds.has(id))
+    .filter(([, entry]) => supportsReviewIntent(entry))
+    .map(([id, entry]) => buildReviewEngineOption(id, entry, params.resolveAgentLabel));
+
+  return [...agentOptions, ...discoveredReviewOptions];
 }

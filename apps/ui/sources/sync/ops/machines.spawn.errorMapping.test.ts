@@ -5,6 +5,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const prepareAccountSettingsForDaemonSpawnIfNeededMock = vi.hoisted(() => vi.fn(async () => ({})));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
   machineRpcWithServerScope: machineRpcWithServerScopeMock,
@@ -20,6 +21,12 @@ vi.mock('../api/session/apiSocket', () => ({
 vi.mock('@/sync/runtime/socketIoAckTimeout', () => ({
   isSocketIoAckTimeoutError: (error: unknown) =>
     error instanceof Error && error.message.includes('timed out'),
+}));
+
+vi.mock('./accountSettingsDaemonSpawnPreparation', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./accountSettingsDaemonSpawnPreparation')>(),
+  prepareAccountSettingsForDaemonSpawnIfNeeded: prepareAccountSettingsForDaemonSpawnIfNeededMock,
+  registerAccountSettingsDaemonSpawnPreparation: vi.fn(() => vi.fn()),
 }));
 
 describe('machineSpawnNewSession error mapping', () => {
@@ -46,6 +53,8 @@ describe('machineSpawnNewSession error mapping', () => {
   beforeEach(() => {
     storage.setState(initialStorageState, true);
     machineRpcWithServerScopeMock.mockReset();
+    prepareAccountSettingsForDaemonSpawnIfNeededMock.mockReset();
+    prepareAccountSettingsForDaemonSpawnIfNeededMock.mockResolvedValue({});
   });
 
   it('returns a descriptive error when daemon RPC method is not available', async () => {
@@ -87,6 +96,42 @@ describe('machineSpawnNewSession error mapping', () => {
     const call = machineRpcWithServerScopeMock.mock.calls[0]?.[0];
     expect(call).toMatchObject({ timeoutMs: expect.any(Number) });
     expect(call.timeoutMs).toBe(readSpawnSessionRpcTimeoutMsFromEnv());
+  });
+
+  it('includes prepared account settings version hints in spawn requests', async () => {
+    prepareAccountSettingsForDaemonSpawnIfNeededMock.mockResolvedValueOnce({ accountSettingsVersionHint: 17 });
+    machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'session-1' });
+
+    const { machineSpawnNewSession } = await import('./machines');
+    await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+    });
+
+    expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ accountSettingsVersionHint: 17 }),
+    }));
+  });
+
+  it('does not spawn when account settings scope changes during preparation', async () => {
+    prepareAccountSettingsForDaemonSpawnIfNeededMock.mockRejectedValueOnce(
+      new Error('Account settings scope changed while preparing session spawn'),
+    );
+
+    const { machineSpawnNewSession } = await import('./machines');
+    const result = await machineSpawnNewSession({
+      machineId: 'machine-1',
+      directory: '/tmp',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      serverId: 'server-b',
+    });
+
+    expect(result.type).toBe('error');
+    if (result.type !== 'error') throw new Error('expected an error result');
+    expect(result.errorCode).toBe('ACCOUNT_SCOPE_CHANGED');
+    expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
   });
 
   it('maps socket ack timeouts to SESSION_WEBHOOK_TIMEOUT', async () => {

@@ -38,9 +38,9 @@ export const saplingScmUiPlugin: ScmUiBackendPlugin = {
     },
     remoteActionConfig(snapshot) {
         return {
-            fetch: snapshot?.capabilities?.writeRemoteFetch ?? true,
-            pull: snapshot?.capabilities?.writeRemotePull ?? true,
-            push: snapshot?.capabilities?.writeRemotePush ?? true,
+            fetch: snapshot?.capabilities?.writeRemoteFetch === true,
+            pull: snapshot?.capabilities?.writeRemotePull === true,
+            push: snapshot?.capabilities?.writeRemotePush === true,
             confirmationCopy: 'Sapling remote operation',
         };
     },

@@ -140,7 +140,7 @@ function buildRenderableFromRowAndCache(
             host: cachedEntry.host ?? null,
             machineId: cachedEntry.machineId ?? null,
             flavor: cachedEntry.flavor ?? null,
-            directSessionV1: cachedEntry.directSessionV1 ?? null,
+            externalSessionV1: cachedEntry.externalSessionV1 ?? null,
             hiddenSystemSession: cachedEntry.hiddenSystemSession === true,
         }
         : null;
@@ -625,7 +625,7 @@ async function decryptSessionRow(
                             host: cachedEntry.host ?? undefined,
                             machineId: cachedEntry.machineId ?? undefined,
                             flavor: cachedEntry.flavor ?? undefined,
-                            directSessionV1: cachedEntry.directSessionV1 ?? undefined,
+                            externalSessionV1: cachedEntry.externalSessionV1 ?? undefined,
                         }
                         : null,
                     decryptedState.metadata,

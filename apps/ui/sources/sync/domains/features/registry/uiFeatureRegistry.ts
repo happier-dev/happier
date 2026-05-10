@@ -262,6 +262,12 @@ export const UI_FEATURE_REGISTRY = {
     'app.ui.changelog': {
         settingsToggle: undefined,
     },
+    'app.ui.releaseNotes': {
+        settingsToggle: undefined,
+    },
+    'app.ui.onboardingShowcase': {
+        settingsToggle: undefined,
+    },
     'app.ui.liveActivities': {
         settingsToggle: {
             showInSettings: true,

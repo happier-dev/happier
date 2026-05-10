@@ -3,6 +3,7 @@
  */
 
 import { apiSocket } from '../api/session/apiSocket';
+import { publishDisplayTitleToMetadata } from '@/sync/state/displayTitlePublish';
 import { createRpcCallError, isRpcMethodNotAvailableError, readRpcErrorCode as readSessionRpcErrorCode } from '../runtime/rpcErrors';
 import { assertRpcResponseWithSuccess } from '../runtime/assertRpcResponseWithSuccess';
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
@@ -17,9 +18,12 @@ import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import { prepareAccountSettingsForDaemonSpawnIfNeeded } from './accountSettingsDaemonSpawnPreparation';
 import type {
     BackendTargetRefV2Input,
     BackendTargetRefV1,
+    CheckpointCodeRollbackRequest,
+    CheckpointCodeRollbackResult,
     LlmTaskRunnerConfigV1,
     SessionAttachMetadataIdentityPolicy,
     SessionContinueWithReplayRpcResult,
@@ -36,6 +40,7 @@ import type { AgentId } from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import {
     SessionContinueWithReplayRpcResultSchema,
+    CheckpointCodeRollbackResultSchema,
     SessionForkRpcResultSchema,
     SessionRollbackRpcResultSchema,
     SessionAuthoringValueV1Schema,
@@ -43,10 +48,10 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
+import { isAccountSettingsScopeChangedDuringSpawnPreparationError } from '@/sync/engine/settings/accountSettingsSpawnPreparationError';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 import { readMachineTargetForSession } from './sessionMachineTarget';
 import { stopSessionUsingCanonicalStrategy } from './sessionStopStrategy';
-import type { Metadata } from '../domains/state/storageTypes';
 export {
     sessionScmBranchCheckout,
     sessionScmBranchCreate,
@@ -70,6 +75,10 @@ export {
     sessionScmRemoteRemove,
     sessionScmRemotePush,
     sessionScmRemoteSetUrl,
+    sessionScmHostingRepositoryDescribePublishTargets,
+    sessionScmHostingRepositoryPublish,
+    sessionScmPullRequestOpenOrReuse,
+    sessionScmRepositoryInit,
     sessionScmRepositoryRemoveIndexLock,
     sessionScmStatusSnapshot,
     sessionScmStashApply,
@@ -208,6 +217,11 @@ export interface ResumeSessionOptions {
     codexBackendMode?: import('@happier-dev/agents').CodexBackendMode;
     runtimeDescriptorV1?: import('@happier-dev/protocol').RuntimeDescriptorV1;
     /**
+     * Internal daemon freshness barrier. Resume callers should normally omit this and let
+     * `resumeSession` capture a freshly flushed account-settings version at the RPC boundary.
+     */
+    accountSettingsVersionHint?: number;
+    /**
      * When true, use the requested machine/directory even if the current session metadata
      * still points at a previously reachable machine. This is required for session handoff
      * cutover where the source machine target remains visible until metadata is patched.
@@ -226,40 +240,42 @@ export interface ResumeSessionOptions {
  * to the existing Happy session and resumes the agent.
  */
 export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
-    const {
-        sessionId,
-        machineId: rawMachineId,
-        directory: rawDirectory,
-        backendTarget,
-        resume,
-        environmentVariables,
-        connectedServices,
-        transcriptStorage,
-        attachMetadataIdentityPolicy,
-        permissionMode,
-        permissionModeUpdatedAt,
-        modelId,
-        modelUpdatedAt,
-        experimentalCodexAcp,
-        codexBackendMode,
-        runtimeDescriptorV1,
-        preferRequestedMachineTarget,
-        preferScopedMachineRpc,
-    } = options;
-    const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
-
-    const machineTarget = readMachineTargetForSession(sessionId);
-    const machineId = preferRequestedMachineTarget ? rawMachineId.trim() : machineTarget?.machineId ?? rawMachineId.trim();
-    const directory = preferRequestedMachineTarget ? rawDirectory.trim() : machineTarget?.basePath ?? rawDirectory.trim();
-    if (!machineId || !directory) {
-        return {
-            type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-            errorMessage: 'No reachable machine target found to resume session',
-        };
-    }
-
     try {
+        const {
+            sessionId,
+            machineId: rawMachineId,
+            directory: rawDirectory,
+            backendTarget,
+            resume,
+            environmentVariables,
+            connectedServices,
+            transcriptStorage,
+            attachMetadataIdentityPolicy,
+            permissionMode,
+            permissionModeUpdatedAt,
+            modelId,
+            modelUpdatedAt,
+            experimentalCodexAcp,
+            codexBackendMode,
+            runtimeDescriptorV1,
+            accountSettingsVersionHint,
+            preferRequestedMachineTarget,
+            preferScopedMachineRpc,
+        } = options;
+        const preparation = await prepareAccountSettingsForDaemonSpawnIfNeeded(options.accountSettingsVersionHint);
+        const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
+
+        const machineTarget = readMachineTargetForSession(sessionId);
+        const machineId = preferRequestedMachineTarget ? rawMachineId.trim() : machineTarget?.machineId ?? rawMachineId.trim();
+        const directory = preferRequestedMachineTarget ? rawDirectory.trim() : machineTarget?.basePath ?? rawDirectory.trim();
+        if (!machineId || !directory) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'No reachable machine target found to resume session',
+            };
+        }
+
         const parsedConnectedServicesRaw: SessionAuthoringValueV1['connectedServices'] | undefined =
             connectedServices === undefined
                 ? undefined
@@ -278,6 +294,8 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             ...(typeof permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt } : {}),
             ...(modelId ? { modelId } : {}),
             ...(typeof modelUpdatedAt === 'number' ? { modelUpdatedAt } : {}),
+            ...(typeof accountSettingsVersionHint === 'number' ? { accountSettingsVersionHint } : {}),
+            ...preparation,
             experimentalCodexAcp,
             codexBackendMode,
             ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
@@ -293,6 +311,13 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
         });
         return normalizeSpawnSessionResult(result);
     } catch (error) {
+        if (isAccountSettingsScopeChangedDuringSpawnPreparationError(error)) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.ACCOUNT_SCOPE_CHANGED,
+                errorMessage: 'Account changed while syncing settings. Please retry from the current account.',
+            };
+        }
         if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
             return {
                 type: 'error',
@@ -488,6 +513,83 @@ export async function rollbackSessionConversation(options: Readonly<{
             ok: false,
             errorCode: 'UNEXPECTED',
             errorMessage: error instanceof Error ? error.message : 'Failed to roll back session conversation',
+        };
+    }
+}
+
+function coerceCheckpointCodeRollbackResult(raw: unknown): CheckpointCodeRollbackResult | null {
+    const schema = CheckpointCodeRollbackResultSchema as unknown as { safeParse?: (value: unknown) => { success: boolean; data?: CheckpointCodeRollbackResult } };
+    const parsed = typeof schema?.safeParse === 'function' ? schema.safeParse(raw) : null;
+    if (parsed?.success && parsed.data) return parsed.data;
+    if (!raw || typeof raw !== 'object') return null;
+    const candidate = raw as Partial<CheckpointCodeRollbackResult>;
+    if (
+        (candidate.status === 'conversation_only'
+            || candidate.status === 'applied'
+            || candidate.status === 'conflict'
+            || candidate.status === 'unavailable'
+            || candidate.status === 'aborted')
+        && Array.isArray(candidate.changedPaths)
+        && Array.isArray(candidate.skippedPaths)
+        && Array.isArray(candidate.receipts)
+        && Array.isArray(candidate.diagnostics)
+    ) {
+        return {
+            status: candidate.status,
+            ...(typeof candidate.backupCheckpointRef === 'string' ? { backupCheckpointRef: candidate.backupCheckpointRef } : {}),
+            ...(typeof candidate.gitStashRef === 'string' ? { gitStashRef: candidate.gitStashRef } : {}),
+            changedPaths: candidate.changedPaths.filter((path): path is string => typeof path === 'string' && path.length > 0),
+            skippedPaths: candidate.skippedPaths.filter((path): path is string => typeof path === 'string' && path.length > 0),
+            receipts: candidate.receipts.filter((receipt): receipt is CheckpointCodeRollbackResult['receipts'][number] =>
+                receipt === 'checkpoint.rollback_backup_captured'
+                || receipt === 'checkpoint.rollback_applied'
+                || receipt === 'checkpoint.rollback_conflict'
+                || receipt === 'checkpoint.rollback_aborted',
+            ),
+            diagnostics: candidate.diagnostics.filter((diagnostic): diagnostic is string => typeof diagnostic === 'string' && diagnostic.length > 0),
+        };
+    }
+    return null;
+}
+
+export async function rollbackSessionCheckpointCode(options: Readonly<{
+    request: CheckpointCodeRollbackRequest;
+    serverId?: string | null;
+}>): Promise<CheckpointCodeRollbackResult> {
+    try {
+        const raw = await sessionRpcWithServerScope<unknown, unknown>({
+            sessionId: options.request.sessionId,
+            serverId: options.serverId,
+            method: SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK,
+            payload: options.request,
+        });
+        const parsed = coerceCheckpointCodeRollbackResult(raw);
+        if (!parsed) {
+            return {
+                status: 'unavailable',
+                changedPaths: [],
+                skippedPaths: [],
+                receipts: ['checkpoint.rollback_aborted'],
+                diagnostics: ['unsupported_checkpoint_code_rollback_response'],
+            };
+        }
+        return parsed;
+    } catch (error) {
+        if (isRpcMethodNotAvailableError(error as any) || readSessionRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+            return {
+                status: 'unavailable',
+                changedPaths: [],
+                skippedPaths: [],
+                receipts: ['checkpoint.rollback_aborted'],
+                diagnostics: ['session_checkpoint_code_rollback_unavailable'],
+            };
+        }
+        return {
+            status: 'unavailable',
+            changedPaths: [],
+            skippedPaths: [],
+            receipts: ['checkpoint.rollback_aborted'],
+            diagnostics: [error instanceof Error ? error.message : 'failed_to_roll_back_checkpoint_code'],
         };
     }
 }
@@ -977,16 +1079,17 @@ export async function sessionRename(
         }
 
         const { sync } = await import('../sync');
-        const updatedAt = Date.now();
-
-        await sync.patchSessionMetadataWithRetry(
-            sid,
-            (metadata: Metadata) => ({
-                ...(metadata ?? {}),
-                summary: { text: normalizedTitle, updatedAt },
-            }),
-            { serverId: options?.serverId ?? null },
-        );
+        await publishDisplayTitleToMetadata({
+            sessionId: sid,
+            title: normalizedTitle,
+            updateSessionMetadataWithRetry: async (targetSessionId, updater) => {
+                await sync.patchSessionMetadataWithRetry(
+                    targetSessionId,
+                    updater,
+                    { serverId: options?.serverId ?? null },
+                );
+            },
+        });
 
         return { success: true };
     } catch (error) {

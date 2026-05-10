@@ -522,7 +522,7 @@ describe('buildSessionListRenderableFromSession', () => {
                 host: 'mbp',
                 machineId: 'm1',
                 flavor: 'pro',
-                directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+                externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
                 systemSessionV1: { hidden: false },
             },
             metadataVersion: 4,
@@ -568,7 +568,7 @@ describe('buildSessionListRenderableFromSession', () => {
                 host: 'mbp',
                 machineId: 'm1',
                 flavor: 'pro',
-                directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+                externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
                 systemSessionV1: { hidden: false },
             },
             metadataVersion: 4,
@@ -612,7 +612,7 @@ describe('buildSessionListRenderableFromSession', () => {
             host: 'mbp',
             machineId: 'm1',
             flavor: 'pro',
-            directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
             systemSessionV1: { hidden: false },
         };
 
@@ -622,7 +622,7 @@ describe('buildSessionListRenderableFromSession', () => {
         expect(next).toBe(previous);
     });
 
-    it('reuses the nested directSessionV1 object when only unrelated metadata fields change', () => {
+    it('reuses the nested externalSessionV1 object when only unrelated metadata fields change', () => {
         const baseMetadata = {
             name: 'Repo',
             summary: { text: 'Summary' },
@@ -631,7 +631,7 @@ describe('buildSessionListRenderableFromSession', () => {
             host: 'mbp',
             machineId: 'm1',
             flavor: 'pro',
-            directSessionV1: { v: 1 as const, providerId: 'provider-a' },
+            externalSessionV1: { v: 1 as const, providerId: 'provider-a' },
             systemSessionV1: { hidden: false },
         };
 
@@ -642,7 +642,7 @@ describe('buildSessionListRenderableFromSession', () => {
         } as any, previous);
 
         expect(next).not.toBe(previous);
-        expect(next?.directSessionV1).toBe(previous?.directSessionV1);
+        expect(next?.externalSessionV1).toBe(previous?.externalSessionV1);
     });
 
     it('returns the next renderable unchanged when there is no transient state to preserve', () => {

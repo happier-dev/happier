@@ -2,10 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
+const prepareAccountSettingsForDaemonSpawnIfNeededMock = vi.hoisted(() => vi.fn(async () => ({})));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
+    sessionRpcWithServerScope: sessionRpcWithServerScopeMock,
 }));
 
 vi.mock('./sessionMachineTarget', async () => {
@@ -23,12 +29,21 @@ vi.mock('../api/session/apiSocket', () => ({
     },
 }));
 
+vi.mock('./accountSettingsDaemonSpawnPreparation', async (importOriginal) => ({
+    ...await importOriginal<typeof import('./accountSettingsDaemonSpawnPreparation')>(),
+    prepareAccountSettingsForDaemonSpawnIfNeeded: prepareAccountSettingsForDaemonSpawnIfNeededMock,
+    registerAccountSettingsDaemonSpawnPreparation: vi.fn(() => vi.fn()),
+}));
+
 const sessionsModulePromise = import('./sessions');
 
 describe('sessions ops server-scoped routing', () => {
     beforeEach(() => {
         machineRpcWithServerScopeMock.mockReset();
+        sessionRpcWithServerScopeMock.mockReset();
         readMachineTargetForSessionMock.mockReset();
+        prepareAccountSettingsForDaemonSpawnIfNeededMock.mockReset();
+        prepareAccountSettingsForDaemonSpawnIfNeededMock.mockResolvedValue({});
         readMachineTargetForSessionMock.mockReturnValue(null);
     });
 
@@ -68,6 +83,45 @@ describe('sessions ops server-scoped routing', () => {
                 transcriptStorage: 'direct',
             }),
         }));
+    });
+
+    it('includes prepared account settings version hints in resume spawn requests', async () => {
+        prepareAccountSettingsForDaemonSpawnIfNeededMock.mockResolvedValueOnce({ accountSettingsVersionHint: 23 });
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
+        const { resumeSession } = await sessionsModulePromise;
+        await resumeSession({
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            serverId: 'server-b',
+        } as any);
+
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({
+                accountSettingsVersionHint: 23,
+            }),
+        }));
+    });
+
+    it('does not resume-spawn when account settings scope changes during preparation', async () => {
+        prepareAccountSettingsForDaemonSpawnIfNeededMock.mockRejectedValueOnce(
+            new Error('Account settings scope changed while preparing session spawn'),
+        );
+        const { resumeSession } = await sessionsModulePromise;
+
+        const result = await resumeSession({
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            serverId: 'server-b',
+        } as any);
+
+        expect(result.type).toBe('error');
+        if (result.type !== 'error') throw new Error('expected an error result');
+        expect(result.errorCode).toBe('ACCOUNT_SCOPE_CHANGED');
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 
     it('passes attachMetadataIdentityPolicy through resumeSession when requested', async () => {
@@ -397,6 +451,40 @@ describe('sessions ops server-scoped routing', () => {
             method: 'session.fork',
             serverId: 'server-b',
             payload: expect.objectContaining({ replaySummaryRunner, replayMaxSeedChars: 55_000 }),
+        }));
+    });
+
+    it('routes checkpoint code rollback through session-scoped RPC with requested server id', async () => {
+        sessionRpcWithServerScopeMock.mockResolvedValueOnce({
+            status: 'applied',
+            changedPaths: ['tracked.txt'],
+            skippedPaths: [],
+            receipts: ['checkpoint.rollback_applied'],
+            diagnostics: [],
+        });
+        const { rollbackSessionCheckpointCode } = await sessionsModulePromise;
+        const request = {
+            v: 1,
+            sessionId: 'sess-parent',
+            turnId: 'turn-1',
+            cwd: '/repo',
+            codeMode: 'conversation_and_code_without_stash',
+            backupMode: 'happier_checkpoint_only',
+            expectedStartRef: 'refs/happier/checkpoints/c2Vzcy1wYXJlbnQ/turn-start/turn-1',
+            expectedFinalRef: 'refs/happier/checkpoints/c2Vzcy1wYXJlbnQ/turn-final/turn-1',
+        } as const;
+
+        const result = await rollbackSessionCheckpointCode({
+            request,
+            serverId: 'server-b',
+        });
+
+        expect(result.status).toBe('applied');
+        expect(sessionRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess-parent',
+            serverId: 'server-b',
+            method: 'session.checkpointCodeRollback',
+            payload: request,
         }));
     });
 

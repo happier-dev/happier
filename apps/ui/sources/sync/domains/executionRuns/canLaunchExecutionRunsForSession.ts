@@ -9,11 +9,11 @@ export function canLaunchExecutionRunsForSession(input: Readonly<{
     executionRunsSupported: boolean;
     executionRunsBackends: Record<string, unknown> | null | undefined;
     allowWhileInactive?: boolean;
-    hasDirectSessionLink?: boolean;
-    directSessionRunnerActive?: boolean | null | undefined;
+    hasExternalSessionLink?: boolean;
+    externalSessionRunnerActive?: boolean | null | undefined;
 }>): boolean {
     if (input.session?.active === false && input.allowWhileInactive !== true) return false;
-    if (input.hasDirectSessionLink === true && input.directSessionRunnerActive !== true) return false;
+    if (input.hasExternalSessionLink === true && input.externalSessionRunnerActive !== true) return false;
     if (input.executionRunsSupported !== true) return false;
     return hasLiveExecutionRunBackends(input.executionRunsBackends);
 }

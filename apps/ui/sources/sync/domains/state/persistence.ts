@@ -121,7 +121,7 @@ function changesCursorByServerScopeAccountIdAndInstancePrefix(): string {
     return 'changes-cursor-by-server-scope-account-id-and-instance-v1:';
 }
 
-function directSessionTailCursorPrefix(): string {
+function externalSessionTailCursorPrefix(): string {
     return 'direct-session-tail-cursor-v1:';
 }
 
@@ -728,9 +728,9 @@ function unscopedChangesCursorKey(accountId: string): string {
     return `${changesCursorByAccountIdPrefix()}${encodeChangesCursorKeyPart(accountId)}`;
 }
 
-function directSessionTailCursorKey(accountId: string, sessionId: string, scope: string, instanceId: string | null): string {
+function externalSessionTailCursorKey(accountId: string, sessionId: string, scope: string, instanceId: string | null): string {
     const instancePart = instanceId ? `:${encodeChangesCursorKeyPart(instanceId)}` : ':no-instance';
-    return `${directSessionTailCursorPrefix()}${encodeChangesCursorKeyPart(scope)}:${encodeChangesCursorKeyPart(accountId)}:${encodeChangesCursorKeyPart(sessionId)}${instancePart}`;
+    return `${externalSessionTailCursorPrefix()}${encodeChangesCursorKeyPart(scope)}:${encodeChangesCursorKeyPart(accountId)}:${encodeChangesCursorKeyPart(sessionId)}${instancePart}`;
 }
 
 function parseInstanceChangesCursorRecord(raw: string | undefined | null): string | null {
@@ -876,7 +876,7 @@ export function saveChangesCursor(cursor: string, scopeRaw?: ChangesCursorScope 
     }
 }
 
-export function loadDirectSessionTailCursor(sessionIdRaw: string, scopeRaw?: ChangesCursorScope | null): string | null {
+export function loadExternalSessionTailCursor(sessionIdRaw: string, scopeRaw?: ChangesCursorScope | null): string | null {
     const mmkv = getPersistenceStorage();
     const scope = normalizeChangesCursorScope(scopeRaw);
     const accountId = scope.accountId;
@@ -885,11 +885,11 @@ export function loadDirectSessionTailCursor(sessionIdRaw: string, scopeRaw?: Cha
 
     if (!scope.serverScope) return null;
 
-    const raw = mmkv.getString(directSessionTailCursorKey(accountId, sessionId, scope.serverScope, scope.instanceId));
+    const raw = mmkv.getString(externalSessionTailCursorKey(accountId, sessionId, scope.serverScope, scope.instanceId));
     return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
 }
 
-export function saveDirectSessionTailCursor(
+export function saveExternalSessionTailCursor(
     sessionIdRaw: string,
     cursorRaw: string | null | undefined,
     scopeRaw?: ChangesCursorScope | null,
@@ -902,7 +902,7 @@ export function saveDirectSessionTailCursor(
 
     if (!scope.serverScope) return;
 
-    const key = directSessionTailCursorKey(accountId, sessionId, scope.serverScope, scope.instanceId);
+    const key = externalSessionTailCursorKey(accountId, sessionId, scope.serverScope, scope.instanceId);
     const cursor = typeof cursorRaw === 'string' ? cursorRaw.trim() : '';
     if (!cursor) {
         mmkv.delete(key);

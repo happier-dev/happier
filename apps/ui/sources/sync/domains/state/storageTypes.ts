@@ -1,6 +1,12 @@
 import { z } from "zod";
+import { applySessionStateFieldMetadataPatch } from "@happier-dev/agents/session/state/metadataPatch";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
-import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from "@happier-dev/protocol";
+import type {
+    PrimaryTurnStatusV1,
+    ScmHostingProviderRef,
+    ScmPullRequestStatusProjection,
+    SessionRuntimeIssueV1,
+} from "@happier-dev/protocol";
 import { 
     createAgentRuntimeFacetsV1Schema,
     createAcpConfigOptionOverridesV1Schema,
@@ -12,7 +18,6 @@ import {
     createSessionSystemSessionV1Schema,
     readRuntimeDescriptorV1FromMetadata,
     RuntimeDescriptorV1Schema,
-    writeRuntimeDescriptorV1ToMetadata,
     WindowsRemoteSessionLaunchModeSchema,
 } from "@happier-dev/protocol";
 
@@ -230,7 +235,7 @@ const MetadataObjectSchema = z.object({
      * Local-only markers for committed transcript messages that should be treated as discarded
      * (e.g. when the user switches to terminal control and abandons unprocessed remote messages).
      */
-    directSessionAttentionV1: z.object({
+    externalSessionAttentionV1: z.object({
         v: z.literal(1),
         observedProgressToken: z.string().optional(),
         viewedProgressToken: z.string().optional(),
@@ -307,7 +312,7 @@ export const MetadataSchema = z.preprocess((value) => {
         const { agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1, ...rest } = metadata;
         return rest;
     }
-    return writeRuntimeDescriptorV1ToMetadata(metadata, runtimeDescriptorV1);
+    return applySessionStateFieldMetadataPatch(metadata, 'identity.runtimeDescriptor', runtimeDescriptorV1);
 }, MetadataObjectSchema);
 
 export type Metadata = z.infer<typeof MetadataSchema>;
@@ -579,6 +584,7 @@ export interface ScmCommitSelectionPatch {
 }
 
 export interface ScmCapabilities {
+    capabilityScope?: 'local-backend';
     readStatus: boolean;
     readDiffFile: boolean;
     readDiffCommit: boolean;
@@ -603,6 +609,17 @@ export interface ScmCapabilities {
     writeRemoteAdd?: boolean;
     writeRemoteSetUrl?: boolean;
     writeRemoteRemove?: boolean;
+    readHostingProvider?: boolean;
+    readPullRequestStatus?: boolean;
+    writePullRequestCreate?: boolean;
+    writePullRequestCheckout?: boolean;
+    writePullRequestPrepareWorktree?: boolean;
+    writePullRequestRunStacked?: boolean;
+    defaultBranchPushPolicy?: 'allow' | 'requires-feature-branch' | 'deny';
+    writeRepositoryInit?: boolean;
+    readHostingRepositoryPublishTargets?: boolean;
+    writeHostingRepositoryPublish?: boolean;
+    writeRepositoryRemoveIndexLock?: boolean;
     readStash?: boolean;
     writeStash?: boolean;
     worktreeCreate: boolean;
@@ -651,6 +668,7 @@ export interface ScmWorkingSnapshot {
         rootPath: string | null;
         backendId?: 'git' | 'sapling' | null;
         mode?: '.git' | '.sl' | null;
+        defaultBranch?: string | null;
         worktrees?: Array<{
             id?: string;
             path: string;
@@ -671,6 +689,8 @@ export interface ScmWorkingSnapshot {
     };
     stashCount?: number;
     operationState?: ScmOperationState | null;
+    hostingProvider?: ScmHostingProviderRef | null;
+    pullRequestStatus?: ScmPullRequestStatusProjection | null;
     hasConflicts: boolean;
     entries: ScmWorkingEntry[];
     totals: {

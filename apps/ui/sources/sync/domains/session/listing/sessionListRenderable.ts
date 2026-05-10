@@ -2,8 +2,8 @@ import type { AgentState, Metadata, Session } from '@/sync/domains/state/storage
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/external/readDirectSessionAttention';
-import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
+import { deriveExternalSessionAttentionHasUnread } from '@/sync/domains/session/external/readExternalSessionAttention';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import {
     derivePendingRequestFlagsFromAgentState,
     derivePendingRequestFlagsFromSession,
@@ -26,7 +26,7 @@ export interface SessionListRenderableMetadata {
     host?: string | null;
     machineId?: string | null;
     flavor?: string | null;
-    directSessionV1?: {
+    externalSessionV1?: {
         v: 1;
         providerId?: string;
     } | null;
@@ -104,21 +104,21 @@ function normalizeLastViewedSessionSeq(value: number | null | undefined): number
         : null;
 }
 
-function deriveSessionListRenderableDirectSessionUnread(
+function deriveSessionListRenderableExternalSessionUnread(
     metadata: Metadata | null | undefined,
 ): boolean | null {
-    if (!readDirectSessionLink(metadata)) {
+    if (!readExternalSessionLink(metadata)) {
         return null;
     }
-    return deriveDirectSessionAttentionHasUnread(metadata);
+    return deriveExternalSessionAttentionHasUnread(metadata);
 }
 
 export function deriveSessionListRenderableHasUnreadMessagesFromSession(
     session: Pick<Session, 'seq' | 'metadata' | 'lastViewedSessionSeq'>,
 ): boolean {
-    const directSessionHasUnread = deriveSessionListRenderableDirectSessionUnread(session.metadata);
-    if (directSessionHasUnread !== null) {
-        return directSessionHasUnread;
+    const externalSessionHasUnread = deriveSessionListRenderableExternalSessionUnread(session.metadata);
+    if (externalSessionHasUnread !== null) {
+        return externalSessionHasUnread;
     }
 
     return computeHasUnreadActivity({
@@ -136,9 +136,9 @@ export function deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch(pa
     previousHasUnreadMessages?: boolean;
 }>): boolean {
     if (params.metadata !== undefined) {
-        const directSessionHasUnread = deriveSessionListRenderableDirectSessionUnread(params.metadata);
-        if (directSessionHasUnread !== null) {
-            return directSessionHasUnread;
+        const externalSessionHasUnread = deriveSessionListRenderableExternalSessionUnread(params.metadata);
+        if (externalSessionHasUnread !== null) {
+            return externalSessionHasUnread;
         }
     }
 
@@ -252,25 +252,25 @@ export function preserveSessionListRenderableStaleFields(
         && previous?.metadata == null
         && previous?.metadataUnavailable === true;
     const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(next, previous);
-    const preserveDirectSessionClassification =
-        previous?.metadata?.directSessionV1 != null
+    const preserveExternalSessionClassification =
+        previous?.metadata?.externalSessionV1 != null
         && next.metadata != null
-        && next.metadata.directSessionV1 == null
+        && next.metadata.externalSessionV1 == null
         && previous.metadataVersion === next.metadataVersion;
 
     if (
         previous == null
-        || (!preserveMetadata && !preserveMetadataUnavailable && !preservePendingFlags && !preserveDirectSessionClassification)
+        || (!preserveMetadata && !preserveMetadataUnavailable && !preservePendingFlags && !preserveExternalSessionClassification)
     ) {
         return next;
     }
 
     const nextMetadata = preserveMetadata
         ? previous.metadata
-        : preserveDirectSessionClassification
+        : preserveExternalSessionClassification
             ? {
                 ...(next.metadata as SessionListRenderableMetadata),
-                directSessionV1: previous.metadata?.directSessionV1 ?? null,
+                externalSessionV1: previous.metadata?.externalSessionV1 ?? null,
             }
             : next.metadata;
 
@@ -346,8 +346,8 @@ export function didSessionListRenderableStructuralFieldsChange(
     if (String(prevMeta?.machineId ?? '') !== String(nextMeta?.machineId ?? '')) return true;
     if (String(prevMeta?.path ?? '') !== String(nextMeta?.path ?? '')) return true;
     if (String(prevMeta?.homeDir ?? '') !== String(nextMeta?.homeDir ?? '')) return true;
-    if ((prevMeta?.directSessionV1?.v ?? null) !== (nextMeta?.directSessionV1?.v ?? null)) return true;
-    if ((prevMeta?.directSessionV1?.providerId ?? null) !== (nextMeta?.directSessionV1?.providerId ?? null)) return true;
+    if ((prevMeta?.externalSessionV1?.v ?? null) !== (nextMeta?.externalSessionV1?.v ?? null)) return true;
+    if ((prevMeta?.externalSessionV1?.providerId ?? null) !== (nextMeta?.externalSessionV1?.providerId ?? null)) return true;
     if ((prevMeta?.hiddenSystemSession === true) !== (nextMeta?.hiddenSystemSession === true)) return true;
 
     return false;
@@ -416,8 +416,8 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     if ((prevMeta?.machineId ?? null) !== (nextMeta?.machineId ?? null)) return true;
     if ((prevMeta?.flavor ?? null) !== (nextMeta?.flavor ?? null)) return true;
     if ((prevMeta?.hiddenSystemSession === true) !== (nextMeta?.hiddenSystemSession === true)) return true;
-    if ((prevMeta?.directSessionV1?.v ?? null) !== (nextMeta?.directSessionV1?.v ?? null)) return true;
-    if ((prevMeta?.directSessionV1?.providerId ?? null) !== (nextMeta?.directSessionV1?.providerId ?? null)) return true;
+    if ((prevMeta?.externalSessionV1?.v ?? null) !== (nextMeta?.externalSessionV1?.v ?? null)) return true;
+    if ((prevMeta?.externalSessionV1?.providerId ?? null) !== (nextMeta?.externalSessionV1?.providerId ?? null)) return true;
 
     if ((previous.hasPendingPermissionRequests ?? null) !== (next.hasPendingPermissionRequests ?? null)) return true;
     if ((previous.hasPendingUserActionRequests ?? null) !== (next.hasPendingUserActionRequests ?? null)) return true;

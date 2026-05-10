@@ -23,7 +23,7 @@ export function canHandoffConversation(params: Readonly<{ sessionId?: string | n
     if (!isAgentId(agentId)) return false;
 
     const agent = getAgentCore(agentId);
-    const sessionStorageMode = metadata.directSessionV1 ? 'direct' : 'persisted';
+    const sessionStorageMode = metadata.externalSessionV1 ? 'direct' : 'persisted';
     if (!agent.sessionStorage[sessionStorageMode]) return false;
     if (agent.handoff.vendorStateTransfer === 'unsupported') return false;
 

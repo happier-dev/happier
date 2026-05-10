@@ -51,7 +51,7 @@ import { syncPerformanceTelemetry } from '../../runtime/syncPerformanceTelemetry
 import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
-import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
+import { resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import {
     buildActiveServerSessionListIndex,
     buildSessionListIndexWithServerScope,
@@ -63,6 +63,10 @@ import type { SessionActionDraft } from '@/sync/domains/sessionActions/sessionAc
 import type { SessionActionDraftStatus } from '@/sync/domains/sessionActions/sessionActionDraftTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import {
+    mutateSessionModelModeField,
+    mutateSessionPermissionModeField,
+} from '@/sync/state/mutators';
 
 import type { StoreGet, StoreSet } from './_shared';
 import { areStoredSessionsEqual } from './areStoredSessionsEqual';
@@ -1762,18 +1766,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             if (!session) return state;
 
             const now = nowServerMs();
-            const canonicalMode = (typeof mode === 'string' ? (parsePermissionIntentAlias(mode) as PermissionMode | null) : null) ?? 'default';
-
             // Update the session with the new permission mode
             const updatedSessions = {
                 ...state.sessions,
-                [sessionId]: {
-                    ...session,
-                    permissionMode: canonicalMode,
-                    // Mark as locally updated so older message-based inference cannot override this selection.
-                    // Newer user messages (from any device) will still take over.
-                    permissionModeUpdatedAt: now
-                }
+                // Mark as locally updated so older message-based inference cannot override this selection.
+                // Newer user messages (from any device) will still take over.
+                [sessionId]: mutateSessionPermissionModeField({ session, mode, updatedAt: now }),
             };
 
             const persisted = persistSessionPermissionData(updatedSessions, sessionLocalStateScope);
@@ -1804,11 +1802,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 	            // Update the session with the new model mode
 	            const updatedSessions = {
 	                ...state.sessions,
-	                [sessionId]: {
-	                    ...session,
-	                    modelMode: effectiveMode,
-	                    modelModeUpdatedAt: now,
-	                }
+	                [sessionId]: mutateSessionModelModeField({
+                        session,
+                        modelMode: effectiveMode,
+                        updatedAt: now,
+                    }),
 	            };
 
             // Collect all model modes for persistence (only non-default values to save space)

@@ -103,6 +103,25 @@ describe('sessionModeControl', () => {
     expect(res?.effectiveModeId).toBe('plan');
   });
 
+  it('uses the newest session-mode override alias when canonical and legacy diverge', async () => {
+    const { computeSessionModePickerControl } = await import('./sessionModeControl');
+    const metadata = createMetadata({
+      sessionModesV1: {
+        v: 1,
+        provider: 'opencode',
+        updatedAt: 1,
+        currentModeId: 'build',
+        availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }],
+      },
+      sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'build' },
+      acpSessionModeOverrideV1: { v: 1, updatedAt: 3, modeId: 'plan' },
+    });
+
+    const res = computeSessionModePickerControl({ agentId: 'opencode', metadata });
+    expect(res?.effectiveModeId).toBe('plan');
+    expect(res?.requestedModeId).toBe('plan');
+  });
+
   it('computeSessionModePickerControl returns Codex app-server modes from generic session metadata', async () => {
     const { computeSessionModePickerControl } = await import('./sessionModeControl');
     const metadata = createMetadata({

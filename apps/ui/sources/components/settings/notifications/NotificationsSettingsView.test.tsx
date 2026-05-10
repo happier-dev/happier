@@ -29,6 +29,8 @@ const modalConfirmMock = vi.fn();
 const modalAlertMock = vi.fn();
 const routerPushMock = vi.fn();
 const sendExpoLocalNotificationMock = vi.fn();
+const tauriIsPermissionGrantedMock = vi.hoisted(() => vi.fn(async () => true));
+const tauriRequestPermissionMock = vi.hoisted(() => vi.fn(async () => 'granted'));
 const liveActivityRemoteDiagnosticsState = vi.hoisted(() => ({
     value: {
         modes: {
@@ -241,6 +243,11 @@ vi.mock('@/activity/notifications/channels/sendExpoLocalNotification', () => ({
     sendExpoLocalNotification: sendExpoLocalNotificationMock,
 }));
 
+vi.mock('@/activity/notifications/channels/tauriNotificationPlugin', () => ({
+    isPermissionGranted: tauriIsPermissionGrantedMock,
+    requestPermission: tauriRequestPermissionMock,
+}));
+
 vi.mock('@/sync/store/settingsWriters', () => ({
     useApplySettings: () => applySettingsMock,
     useApplyLocalSettings: () => applyLocalSettingsMock,
@@ -282,6 +289,10 @@ describe('NotificationsSettingsView', () => {
         routerPushMock.mockReset();
         sendExpoLocalNotificationMock.mockReset();
         sendExpoLocalNotificationMock.mockResolvedValue('preview-notification-id');
+        tauriIsPermissionGrantedMock.mockReset();
+        tauriRequestPermissionMock.mockReset();
+        tauriIsPermissionGrantedMock.mockResolvedValue(true);
+        tauriRequestPermissionMock.mockResolvedValue('granted');
 
         settingsState.notificationsSettingsV1 = {
             v: 1,
@@ -391,6 +402,45 @@ describe('NotificationsSettingsView', () => {
         expect(screen.findRow('settings-notifications-quiet-hours-device-custom-nightly')).toBeTruthy();
         expect(screen.findRow('settings-notifications-push-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-add-webhook')).toBeTruthy();
+    });
+
+    it('hides desktop notification diagnostics outside the Tauri app', async () => {
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+
+        expect(screen.findGroup('settingsNotifications.desktop.title')).toBeNull();
+        expect(screen.findRow('settings-notifications-desktop-permission')).toBeNull();
+    });
+
+    it('shows desktop notification diagnostics inside the Tauri app', async () => {
+        platformState.os = 'web';
+        tauriDesktopState.value = true;
+        tauriIsPermissionGrantedMock.mockResolvedValue(false);
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        await act(async () => {});
+
+        expect(screen.findGroup('settingsNotifications.desktop.title')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-desktop-permission')).toBeTruthy();
+    });
+
+    it('requests Tauri notification permission from the desktop diagnostics row', async () => {
+        platformState.os = 'web';
+        tauriDesktopState.value = true;
+        tauriIsPermissionGrantedMock.mockResolvedValue(false);
+        tauriRequestPermissionMock.mockResolvedValue('granted');
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        await act(async () => {});
+
+        await act(async () => {
+            screen.pressRow('settings-notifications-desktop-permission');
+        });
+
+        expect(tauriRequestPermissionMock).toHaveBeenCalledTimes(1);
     });
 
     it('marks the Happier sound preset selected for the implicit default policy', async () => {

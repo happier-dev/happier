@@ -2,7 +2,7 @@ import type { ModelMode } from '../permissions/permissionTypes';
 import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { Metadata } from '../state/storageTypes';
-import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
+import type { AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import {
     getAgentStaticModels,
     LEGACY_ACP_SESSION_MODELS_STATE_KEY,

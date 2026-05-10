@@ -49,7 +49,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     host: z.string().nullable().optional(),
     machineId: z.string().nullable().optional(),
     flavor: z.string().nullable().optional(),
-    directSessionV1: z.object({
+    externalSessionV1: z.object({
         v: z.literal(1),
         providerId: z.string().optional(),
     }).nullable().optional(),

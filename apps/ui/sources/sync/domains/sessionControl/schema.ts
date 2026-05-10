@@ -114,3 +114,15 @@ export function parseSessionModeOverrideState(raw: unknown): SessionModeOverride
     const parsed = SessionModeOverrideSchema.safeParse(raw);
     return parsed.success ? parsed.data : null;
 }
+
+export type AcpSessionModesState = SessionModesState;
+export type AcpSessionModelsState = SessionModelsState;
+export type AcpConfigOptionsState = SessionConfigOptionsState;
+export type AcpConfigOptionOverridesState = SessionConfigOptionOverridesState;
+export type AcpSessionModeOverrideState = SessionModeOverrideState;
+
+export const parseAcpSessionModesState = parseSessionModesState;
+export const parseAcpSessionModelsState = parseSessionModelsState;
+export const parseAcpConfigOptionsState = parseSessionConfigOptionsState;
+export const parseAcpConfigOptionOverridesState = parseSessionConfigOptionOverridesState;
+export const parseAcpSessionModeOverrideState = parseSessionModeOverrideState;

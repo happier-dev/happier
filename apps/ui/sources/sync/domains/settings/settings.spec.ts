@@ -103,6 +103,15 @@ describe('settings', () => {
             });
         });
 
+        it('includes codingPromptBehaviorV1 by default', () => {
+            const settings = settingsParse({});
+            expect((settings as any).codingPromptBehaviorV1).toEqual({
+                v: 1,
+                sessionTitleUpdates: 'agent',
+                responseOptions: 'agent',
+            });
+        });
+
         it('includes promptInvocationsV1 by default', () => {
             const settings = settingsParse({});
             expect((settings as any).promptInvocationsV1).toEqual({
@@ -486,6 +495,11 @@ describe('settings', () => {
             expect((parsed as any).sessionReplayStrategy).toBe('recent_messages');
             expect((parsed as any).sessionReplayRecentMessagesCount).toBeGreaterThan(0);
             expect((parsed as any).sessionReplaySummaryRunnerV1).toBe(null);
+        });
+
+        it('defaults session message sending to server pending queue mode', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).sessionMessageSendMode).toBe('server_pending');
         });
 
 	        it('defaults voice settings', () => {
@@ -895,6 +909,7 @@ describe('settings', () => {
             expect((settingsDefaults as any).backendCliSourcePreferenceByTargetKey).toEqual({});
             expect(settingsDefaults.codexBackendMode).toBe('appServer');
             expect(settingsDefaults.sessionReplayMaxSeedChars).toBe(120_000);
+            expect(settingsDefaults.sessionMessageSendMode).toBe('server_pending');
             expect(settingsDefaults.sessionDefaultPermissionModeByTargetKey).toMatchObject({
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: 'default',
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'default',

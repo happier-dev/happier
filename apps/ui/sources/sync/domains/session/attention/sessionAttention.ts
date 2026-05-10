@@ -1,6 +1,6 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
-import { deriveDirectSessionAttentionHasUnread } from '@/sync/domains/session/external/readDirectSessionAttention';
-import { readDirectSessionLink } from '@/sync/domains/session/external/readDirectSessionLink';
+import { deriveExternalSessionAttentionHasUnread } from '@/sync/domains/session/external/readExternalSessionAttention';
+import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -28,13 +28,13 @@ export function deriveSessionAttentionFlags(
 ): SessionAttentionFlags {
     const isSessionActive = session.active === true;
     const pendingFlags = derivePendingRequestFlagsFromSession(session);
-    const directSessionHasUnread = readDirectSessionLink(session.metadata)
-        ? deriveDirectSessionAttentionHasUnread(session.metadata)
+    const externalSessionHasUnread = readExternalSessionLink(session.metadata)
+        ? deriveExternalSessionAttentionHasUnread(session.metadata)
         : null;
 
     const hasUnread = options?.showUnread === false
         ? false
-        : directSessionHasUnread ?? computeHasUnreadActivity({
+        : externalSessionHasUnread ?? computeHasUnreadActivity({
             sessionSeq: session.seq ?? 0,
             pendingActivityAt: 0,
             lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
