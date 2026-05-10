@@ -600,7 +600,7 @@ describe('createCodexAppServerRuntime', () => {
         return { root, requestLogPath, fakeAppServer };
     }
 
-    async function readRequestLog(requestLogPath: string): Promise<Array<{ id: unknown; method: string; params: any; result: any; error: any }>> {
+    async function readRequestLog(requestLogPath: string): Promise<Array<{ id: unknown; method: string; params: unknown; result: unknown; error: unknown }>> {
         return (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
     }
 

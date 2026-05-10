@@ -4,6 +4,7 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
+import { withPatchedProcessEnv } from '../../testkit/core/env_scope.mjs';
 import { expoExec } from './command.mjs';
 
 async function writeJson(path, value) {
@@ -141,26 +142,6 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function applyEnvOverrides(t, vars) {
-  const effectiveVars = process.platform === 'win32' && Object.prototype.hasOwnProperty.call(vars, 'PATH')
-    ? { ...vars, Path: vars.PATH }
-    : vars;
-  const previous = {};
-  for (const key of Object.keys(effectiveVars)) {
-    previous[key] = process.env[key];
-  }
-  t.after(() => {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value == null) delete process.env[key];
-      else process.env[key] = value;
-    }
-  });
-  for (const [key, value] of Object.entries(effectiveVars)) {
-    if (value == null) delete process.env[key];
-    else process.env[key] = String(value);
-  }
-}
-
 test('expoExec builds workspace dist deps for the projectDir (not the runnerDir)', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-expo-workspace-deps-built-'));
   t.after(async () => {
@@ -208,7 +189,7 @@ test('expoExec builds workspace dist deps for the projectDir (not the runnerDir)
   const expoPath = join(root, 'node_modules', '.bin', 'expo');
   await writeExpoStub({ expoPath });
 
-  applyEnvOverrides(t, {
+  withPatchedProcessEnv(t, {
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_ENV_FILE: null,
@@ -278,7 +259,7 @@ test('expoExec falls back to the monorepo root expo bin when runnerDir lacks nod
   const expoPath = join(root, 'node_modules', '.bin', 'expo');
   await writeExpoStubCaptureCwd({ expoPath });
 
-  applyEnvOverrides(t, {
+  withPatchedProcessEnv(t, {
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_ENV_FILE: null,

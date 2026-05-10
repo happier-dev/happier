@@ -191,6 +191,20 @@ export async function codexLocalLauncher<TMode>(opts: {
   const turnLifecycle = createLocalTurnLifecycleController({ completionQuiescenceMs: 0 });
   turnLifecycle.observe({ type: 'turn_started', providerTurnId: null, source: 'codex_rollout_discovery_pending' });
 
+  const stopChildIfRunning = (): void => {
+    if (!child || child.exitCode !== null) return;
+    childStopRequested = true;
+    if (isWindows) {
+      void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+      return;
+    }
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // ignore
+    }
+  };
+
   const publishRemoteControlState = (tag: 'switch' | 'exit' | 'launch_error'): void => {
     try {
       opts.session.sendSessionEvent({ type: 'switch', mode: 'remote' });
@@ -460,18 +474,7 @@ export async function codexLocalLauncher<TMode>(opts: {
           elapsedSinceStartMs: now - startedAtMs,
         });
         exitReason = { type: 'switch', resumeId: null };
-        if (child && child.exitCode === null) {
-          childStopRequested = true;
-          if (isWindows) {
-            void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-          } else {
-            try {
-              child.kill('SIGTERM');
-            } catch {
-              // ignore
-            }
-          }
-        }
+        stopChildIfRunning();
         childExited = true;
         break;
       }
@@ -550,18 +553,7 @@ export async function codexLocalLauncher<TMode>(opts: {
         // We can now safely switch because the session id is known.
         exitReason = { type: 'switch', resumeId };
       }
-      if (child && child.exitCode === null) {
-        childStopRequested = true;
-        if (isWindows) {
-          void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-        } else {
-          try {
-            child.kill('SIGTERM');
-          } catch {
-            // ignore
-          }
-        }
-      }
+      stopChildIfRunning();
     }
 
     mirror = new CodexRolloutMirror({
@@ -595,18 +587,7 @@ export async function codexLocalLauncher<TMode>(opts: {
               elapsedSinceStartMs: Date.now() - startedAtMs,
             });
             exitReason = { type: 'switch', resumeId };
-            if (child && child.exitCode === null) {
-              childStopRequested = true;
-              if (isWindows) {
-                void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-              } else {
-                try {
-                  child.kill('SIGTERM');
-                } catch {
-                  // ignore
-                }
-              }
-            }
+            stopChildIfRunning();
           }
           await delay(50);
         }
@@ -648,17 +629,6 @@ export async function codexLocalLauncher<TMode>(opts: {
     } catch {
       // ignore
     }
-    if (child && child.exitCode === null) {
-      childStopRequested = true;
-      if (isWindows) {
-        void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-      } else {
-        try {
-          child.kill('SIGTERM');
-        } catch {
-          // ignore
-        }
-      }
-    }
+    stopChildIfRunning();
   }
 }

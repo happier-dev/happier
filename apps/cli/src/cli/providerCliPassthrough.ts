@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 
-import { AGENTS_CORE, type AgentCore, type AgentId } from '@happier-dev/agents';
+import { AGENTS_CORE, type AgentId } from '@happier-dev/agents';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
@@ -8,12 +8,15 @@ import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProv
 const HELP_FLAGS = new Set(['-h', '--help']);
 const VERSION_FLAGS = new Set(['-v', '--version']);
 
-type NativeCliPassthroughSupport = Pick<AgentCore, 'id' | 'nativeCliPassthroughSubcommands'>;
+type AgentCoreDefinition = (typeof AGENTS_CORE)[AgentId];
 
-const NATIVE_CLI_PASSTHROUGH_SUPPORT_BY_AGENT: Readonly<Record<AgentId, NativeCliPassthroughSupport>> = AGENTS_CORE;
+function getNativeCliPassthroughSubcommands(agent: AgentCoreDefinition): readonly string[] {
+  if (!('nativeCliPassthroughSubcommands' in agent)) return [];
+  return agent.nativeCliPassthroughSubcommands ?? [];
+}
 
 function resolveNativeProviderArgs(agentId: AgentId, args: readonly string[]): string[] | null {
-  const supported = NATIVE_CLI_PASSTHROUGH_SUPPORT_BY_AGENT[agentId].nativeCliPassthroughSubcommands ?? [];
+  const supported = getNativeCliPassthroughSubcommands(AGENTS_CORE[agentId]);
   if (supported.length === 0) return null;
 
   const providerArgs = args[0] === agentId ? args.slice(1) : args;

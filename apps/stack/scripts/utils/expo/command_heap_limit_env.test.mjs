@@ -4,6 +4,8 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
+import { writeExpoShimPairCaptureInvocation } from '../../testkit/core/expo_command_shims.mjs';
+import { withPatchedProcessEnv } from '../../testkit/core/env_scope.mjs';
 import { expoExec, expoSpawn } from './command.mjs';
 
 async function writeJson(path, value) {
@@ -84,53 +86,6 @@ async function writeExpoStubCaptureNodeOptions({ expoPath }) {
   );
 }
 
-async function writeExpoShimPairCaptureInvocation({ binDir, outputPath }) {
-  await mkdir(binDir, { recursive: true });
-
-  const expoPath = join(binDir, 'expo');
-  await writeFile(
-    expoPath,
-    [
-      '#!/usr/bin/env bash',
-      'set -euo pipefail',
-      'echo "shim=posix bin=$0 args=$*" >> "${OUTPUT_PATH:?}"',
-      'exit 0',
-    ].join('\n') + '\n',
-    'utf-8'
-  );
-  await chmod(expoPath, 0o755);
-
-  await writeFile(
-    join(binDir, 'expo.cmd'),
-    [
-      '@echo off',
-      `echo shim=cmd bin=%~f0 args=%*>>"${outputPath}"`,
-      'exit /b 0',
-    ].join('\r\n') + '\r\n',
-    'utf-8'
-  );
-}
-
-function applyEnvOverrides(t, vars) {
-  const effectiveVars = process.platform === 'win32' && Object.prototype.hasOwnProperty.call(vars, 'PATH')
-    ? { ...vars, Path: vars.PATH }
-    : vars;
-  const previous = {};
-  for (const key of Object.keys(effectiveVars)) {
-    previous[key] = process.env[key];
-  }
-  t.after(() => {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value == null) delete process.env[key];
-      else process.env[key] = value;
-    }
-  });
-  for (const [key, value] of Object.entries(effectiveVars)) {
-    if (value == null) delete process.env[key];
-    else process.env[key] = String(value);
-  }
-}
-
 async function writeMinimalRepo({ root }) {
   await mkdir(join(root, 'apps', 'ui'), { recursive: true });
   await mkdir(join(root, 'apps', 'cli'), { recursive: true });
@@ -159,7 +114,7 @@ test('expoExec defaults Expo heap limit to 8192MB (unless overridden)', async (t
   const expoPath = join(root, 'node_modules', '.bin', 'expo');
   await writeExpoStubCaptureNodeOptions({ expoPath });
 
-  applyEnvOverrides(t, {
+  withPatchedProcessEnv(t, {
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     EXPECT_MAX_OLD_SPACE_SIZE: '8192',
@@ -197,7 +152,7 @@ test('expoExec honors HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB override', async 
   const expoPath = join(root, 'node_modules', '.bin', 'expo');
   await writeExpoStubCaptureNodeOptions({ expoPath });
 
-  applyEnvOverrides(t, {
+  withPatchedProcessEnv(t, {
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     EXPECT_MAX_OLD_SPACE_SIZE: '4096',
@@ -235,7 +190,7 @@ test('expoExec overrides NODE_OPTIONS --max-old-space-size unless explicitly ove
   const expoPath = join(root, 'node_modules', '.bin', 'expo');
   await writeExpoStubCaptureNodeOptions({ expoPath });
 
-  applyEnvOverrides(t, {
+  withPatchedProcessEnv(t, {
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     EXPECT_MAX_OLD_SPACE_SIZE: '8192',
@@ -274,7 +229,7 @@ test('expoSpawn applies the same heap limit behavior', async (t) => {
   const expoPath = join(root, 'node_modules', '.bin', 'expo');
   await writeExpoStubCaptureNodeOptions({ expoPath });
 
-  applyEnvOverrides(t, {
+  withPatchedProcessEnv(t, {
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     EXPECT_MAX_OLD_SPACE_SIZE: '8192',
@@ -321,7 +276,7 @@ test('expoExec prefers the Windows cmd shim when both Expo shims exist', async (
     outputPath,
   });
 
-  applyEnvOverrides(t, {
+  withPatchedProcessEnv(t, {
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
