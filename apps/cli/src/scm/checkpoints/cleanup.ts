@@ -5,9 +5,16 @@ import type {
     RepositoryCheckpointCleanupResult,
     RepositoryCheckpointListedRef,
 } from './types';
+import { scmDiffSummaryCacheStore } from '@/agent/executionRuns/tasks/scmDiffSummary/cache/cacheStore';
 
 const DEFAULT_MAX_FINALIZED_TURNS = 100;
 const DEFAULT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function applyDiffSummaryCacheCleanup(receipts: RepositoryCheckpointCleanupResult['receipts']): void {
+    for (const receipt of receipts) {
+        scmDiffSummaryCacheStore.applyCheckpointCleanupReceipt(receipt);
+    }
+}
 
 function isOlderThan(input: {
     ref: RepositoryCheckpointListedRef;
@@ -65,32 +72,37 @@ export async function pruneRepositoryCheckpointRefs(
             await input.deleteRef(entry.listedRef.ref);
             prunedRefs.push(entry.listedRef.ref);
         } catch (error) {
+            const receipts = prunedRefs.length > 0
+                ? [{
+                    id: REPOSITORY_CHECKPOINT_RECEIPT_IDS.cleanupPruned,
+                    prunedCount: prunedRefs.length,
+                    refs: prunedRefs,
+                }]
+                : [];
+            applyDiffSummaryCacheCleanup(receipts);
             return {
                 success: false,
                 prunedCount: prunedRefs.length,
                 prunedRefs,
                 error: error instanceof Error ? error.message : 'Failed to prune repository checkpoint refs',
-                receipts: prunedRefs.length > 0
-                    ? [{
-                        id: REPOSITORY_CHECKPOINT_RECEIPT_IDS.cleanupPruned,
-                        prunedCount: prunedRefs.length,
-                        refs: prunedRefs,
-                    }]
-                    : [],
+                receipts,
             };
         }
     }
+
+    const receipts = prunedRefs.length > 0
+        ? [{
+            id: REPOSITORY_CHECKPOINT_RECEIPT_IDS.cleanupPruned,
+            prunedCount: prunedRefs.length,
+            refs: prunedRefs,
+        }]
+        : [];
+    applyDiffSummaryCacheCleanup(receipts);
 
     return {
         success: true,
         prunedCount: prunedRefs.length,
         prunedRefs,
-        receipts: prunedRefs.length > 0
-            ? [{
-                id: REPOSITORY_CHECKPOINT_RECEIPT_IDS.cleanupPruned,
-                prunedCount: prunedRefs.length,
-                refs: prunedRefs,
-            }]
-            : [],
+        receipts,
     };
 }

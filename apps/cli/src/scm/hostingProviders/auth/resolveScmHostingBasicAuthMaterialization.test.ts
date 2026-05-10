@@ -1,11 +1,194 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { materializeBitbucketScmHostingBasicAuth } from '@happier-dev/plugins-scm-bitbucket/auth/basicAuthMaterializer';
+import {
+  BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR,
+  buildConnectedServiceCredentialRecord,
+} from '@happier-dev/protocol';
 
+import type { ScmHostingAuthMaterializationRegistry } from './materializationRegistry';
 import { resolveScmHostingBasicAuthMaterialization } from './resolveScmHostingBasicAuthMaterialization';
+import type {
+  ScmHostingBasicAuthMaterializationRequest,
+  ScmHostingBasicAuthMaterializationResult,
+} from './types';
+
+type BasicAuthMaterializationRegistryFixture = Readonly<{
+  connectedAccountDescriptors: readonly Readonly<{
+    definition: Readonly<{
+      id: string;
+      materialization: Readonly<{
+        materializationKinds: readonly string[];
+        hookKey?: string;
+      }>;
+    }>;
+  }>[];
+  hookHandlersByHookId: ReadonlyMap<string, readonly Readonly<{
+    handler: (request: ScmHostingBasicAuthMaterializationRequest) => ScmHostingBasicAuthMaterializationResult;
+  }>[]>;
+}>;
+
+type BasicAuthMaterializationResolver = (
+  request: ScmHostingBasicAuthMaterializationRequest,
+  registry: BasicAuthMaterializationRegistryFixture,
+) => Promise<ScmHostingBasicAuthMaterializationResult>;
+
+const bitbucketMaterializationRegistry: ScmHostingAuthMaterializationRegistry = {
+  connectedAccountDescriptors: [{
+    provenance: 'first_party',
+    source: { kind: 'bundled' },
+    definition: BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR,
+  }],
+  hookHandlersByHookId: new Map([[
+    'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+    [{
+      handler: (request) => materializeBitbucketScmHostingBasicAuth(
+        request as Parameters<typeof materializeBitbucketScmHostingBasicAuth>[0],
+      ),
+    }],
+  ]]),
+};
 
 describe('resolveScmHostingBasicAuthMaterialization', () => {
-  it('materializes Bitbucket Cloud email and API token credentials only for bitbucket.org', () => {
+  it('materializes through a descriptor-declared hook handler', async () => {
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1700000000000,
+      serviceId: 'bitbucket',
+      profileId: 'work',
+      kind: 'token',
+      token: {
+        token: '  bb-api-token  ',
+        providerAccountId: 'dev@example.com',
+        providerEmail: 'dev@example.com',
+      },
+    });
+    const registry: BasicAuthMaterializationRegistryFixture = {
+      connectedAccountDescriptors: [{
+        definition: {
+          id: 'bitbucket',
+          materialization: {
+            materializationKinds: ['scm_hosting_basic_auth'],
+            hookKey: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+          },
+        },
+      }],
+      hookHandlersByHookId: new Map([[
+        'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+        [{
+          handler: (request) => {
+            const tokenRecord = request.records.find((candidate) => candidate.kind === 'token');
+            if (!tokenRecord || tokenRecord.kind !== 'token') {
+              return { kind: 'missing', reason: 'credential_unavailable' };
+            }
+            return {
+              kind: 'available',
+              username: tokenRecord.token.providerEmail ?? '',
+              password: tokenRecord.token.token.trim(),
+              profileId: tokenRecord.profileId,
+              serviceId: 'bitbucket',
+              credentialKind: 'bitbucket_basic_auth',
+              providerAccountId: tokenRecord.token.providerAccountId,
+              providerEmail: tokenRecord.token.providerEmail,
+            };
+          },
+        }],
+      ]]),
+    };
+
+    const resolveWithRegistry = resolveScmHostingBasicAuthMaterialization as BasicAuthMaterializationResolver;
+
+    await expect(Promise.resolve(resolveWithRegistry({
+      kind: 'scm_hosting_basic_auth',
+      providerId: 'scm.example',
+      host: 'example.test',
+      profileId: 'work',
+      records: [record],
+    }, registry))).resolves.toEqual({
+      kind: 'available',
+      username: 'dev@example.com',
+      password: 'bb-api-token',
+      profileId: 'work',
+      serviceId: 'bitbucket',
+      credentialKind: 'bitbucket_basic_auth',
+      providerAccountId: 'dev@example.com',
+      providerEmail: 'dev@example.com',
+    });
+  });
+
+  it('rejects malformed hook results instead of accepting undefined profile material', async () => {
+    const registry: BasicAuthMaterializationRegistryFixture = {
+      connectedAccountDescriptors: [{
+        definition: {
+          id: 'bitbucket',
+          materialization: {
+            materializationKinds: ['scm_hosting_basic_auth'],
+            hookKey: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+          },
+        },
+      }],
+      hookHandlersByHookId: new Map([[
+        'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+        [{
+          handler: () => ({
+            kind: 'available',
+            username: 'dev@example.com',
+            password: 'bb-api-token',
+          } as unknown as ScmHostingBasicAuthMaterializationResult),
+        }],
+      ]]),
+    };
+
+    const resolveWithRegistry = resolveScmHostingBasicAuthMaterialization as BasicAuthMaterializationResolver;
+
+    await expect(Promise.resolve(resolveWithRegistry({
+      kind: 'scm_hosting_basic_auth',
+      providerId: 'scm.example',
+      host: 'example.test',
+      profileId: 'work',
+      records: [],
+    }, registry))).resolves.toEqual({
+      kind: 'missing',
+      reason: 'unsupported_provider',
+    });
+  });
+
+  it('rejects hook missing results with invalid reasons', async () => {
+    const registry: BasicAuthMaterializationRegistryFixture = {
+      connectedAccountDescriptors: [{
+        definition: {
+          id: 'bitbucket',
+          materialization: {
+            materializationKinds: ['scm_hosting_basic_auth'],
+            hookKey: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+          },
+        },
+      }],
+      hookHandlersByHookId: new Map([[
+        'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+        [{
+          handler: () => ({
+            kind: 'missing',
+            reason: 'not_a_typed_reason',
+          } as unknown as ScmHostingBasicAuthMaterializationResult),
+        }],
+      ]]),
+    };
+
+    const resolveWithRegistry = resolveScmHostingBasicAuthMaterialization as BasicAuthMaterializationResolver;
+
+    await expect(Promise.resolve(resolveWithRegistry({
+      kind: 'scm_hosting_basic_auth',
+      providerId: 'scm.example',
+      host: 'example.test',
+      profileId: 'work',
+      records: [],
+    }, registry))).resolves.toEqual({
+      kind: 'missing',
+      reason: 'unsupported_provider',
+    });
+  });
+
+  it('materializes Bitbucket Cloud email and API token credentials only for bitbucket.org', async () => {
     const record = buildConnectedServiceCredentialRecord({
       now: 1700000000000,
       serviceId: 'bitbucket',
@@ -18,13 +201,13 @@ describe('resolveScmHostingBasicAuthMaterialization', () => {
       },
     });
 
-    expect(resolveScmHostingBasicAuthMaterialization({
+    await expect(resolveScmHostingBasicAuthMaterialization({
       kind: 'scm_hosting_basic_auth',
       providerId: 'scm.bitbucket',
       host: 'bitbucket.org',
       profileId: 'work',
       records: [record],
-    })).toEqual({
+    }, bitbucketMaterializationRegistry)).resolves.toEqual({
       kind: 'available',
       username: 'dev@example.com',
       password: 'bb-api-token',
@@ -36,7 +219,7 @@ describe('resolveScmHostingBasicAuthMaterialization', () => {
     });
   });
 
-  it('does not materialize Bitbucket credentials for custom hosts or incomplete records', () => {
+  it('does not materialize Bitbucket credentials for custom hosts or incomplete records', async () => {
     const record = buildConnectedServiceCredentialRecord({
       now: 1700000000000,
       serviceId: 'bitbucket',
@@ -49,24 +232,24 @@ describe('resolveScmHostingBasicAuthMaterialization', () => {
       },
     });
 
-    expect(resolveScmHostingBasicAuthMaterialization({
+    await expect(resolveScmHostingBasicAuthMaterialization({
       kind: 'scm_hosting_basic_auth',
       providerId: 'scm.bitbucket',
       host: 'bitbucket.internal.test',
       profileId: 'work',
       records: [record],
-    })).toEqual({
+    }, bitbucketMaterializationRegistry)).resolves.toEqual({
       kind: 'missing',
       reason: 'unsupported_host',
     });
 
-    expect(resolveScmHostingBasicAuthMaterialization({
+    await expect(resolveScmHostingBasicAuthMaterialization({
       kind: 'scm_hosting_basic_auth',
       providerId: 'scm.bitbucket',
       host: 'bitbucket.org',
       profileId: 'work',
       records: [record],
-    })).toEqual({
+    }, bitbucketMaterializationRegistry)).resolves.toEqual({
       kind: 'missing',
       reason: 'credential_unavailable',
     });

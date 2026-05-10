@@ -38,6 +38,7 @@ export type ScmHostingTokenMaterializationResult =
   | ScmHostingTokenMaterializationMissing;
 
 export type ScmHostingTokenMaterializer = Readonly<{
+  serviceId: ConnectedServiceId;
   materialize(request: ScmHostingTokenMaterializationRequest): ScmHostingTokenMaterializationResult;
 }>;
 
@@ -76,5 +77,6 @@ export type ScmHostingBasicAuthMaterializationResult =
   | ScmHostingBasicAuthMaterializationMissing;
 
 export type ScmHostingBasicAuthMaterializer = Readonly<{
+  serviceId: ConnectedServiceId;
   materialize(request: ScmHostingBasicAuthMaterializationRequest): ScmHostingBasicAuthMaterializationResult;
 }>;

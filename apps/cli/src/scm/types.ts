@@ -1,6 +1,7 @@
 import type {
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
+    ScmBackendCapabilities,
     ScmBranchIntegrationRequest,
     ScmBranchIntegrationResponse,
     ScmBranchCheckoutRequest,
@@ -33,6 +34,12 @@ import type {
     ScmPullRequestOpenComposeResponse,
     ScmPullRequestOpenOrReuseRequest,
     ScmPullRequestOpenOrReuseResponse,
+    ScmHostingRepositoryDescribePublishTargetsRequest,
+    ScmHostingRepositoryDescribePublishTargetsResponse,
+    ScmHostingRepositoryPublishRequest,
+    ScmHostingRepositoryPublishResponse,
+    ScmRepositoryCloneInput,
+    ScmRepositoryCloneOutput,
     ScmRemoteAddRequest,
     ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
@@ -69,27 +76,27 @@ import type {
     WorkspaceLocationScm,
 } from '@happier-dev/protocol';
 
-import type { ScmSourceControllerCheckoutMaterializationRequest } from './sourceController/checkoutMaterialization';
+import type { ScmWorkspaceIntegrationCheckoutMaterializationRequest } from './workspace/checkoutMaterialization';
 import type {
-    ScmSourceControllerWorkspaceCheckoutCreationRequest,
-    ScmSourceControllerWorkspaceCheckoutCreationResult,
-} from './sourceController/workspaceCheckoutCreation';
+    ScmWorkspaceIntegrationWorkspaceCheckoutCreationRequest,
+    ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult,
+} from './workspace/workspaceCheckoutCreation';
 import type {
-    ScmSourceControllerPortableWorkspacePathClassification,
-    ScmSourceControllerPortableWorkspacePathRequest,
-} from './sourceController/portableWorkspacePath';
+    ScmWorkspaceIntegrationPortableWorkspacePathClassification,
+    ScmWorkspaceIntegrationPortableWorkspacePathRequest,
+} from './workspace/portableWorkspacePath';
 import type {
-    ScmSourceControllerWorkspaceCheckoutRealizationRequest,
-    ScmSourceControllerWorkspaceCheckoutRealizationResult,
-} from './sourceController/workspaceCheckoutRealization';
-import type { ScmSourceControllerWorkspaceCheckoutMaterializationRequest } from './sourceController/workspaceCheckoutMaterialization';
-import type { ScmSourceControllerWorkspaceCheckoutMaterializationResult } from './sourceController/workspaceCheckoutMaterialization';
+    ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest,
+    ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult,
+} from './workspace/workspaceCheckoutRealization';
+import type { ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest } from './workspace/workspaceCheckoutMaterialization';
+import type { ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult } from './workspace/workspaceCheckoutMaterialization';
 import type {
-    ScmSourceControllerWorkspaceTransferEntry,
-    ScmSourceControllerWorkspaceTransferMetadata,
-    ScmSourceControllerWorkspaceTransferRequest,
-    ScmSourceControllerWorkspaceTransferResult,
-} from './sourceController/workspaceTransfer';
+    ScmWorkspaceIntegrationWorkspaceTransferEntry,
+    ScmWorkspaceIntegrationWorkspaceTransferMetadata,
+    ScmWorkspaceIntegrationWorkspaceTransferRequest,
+    ScmWorkspaceIntegrationWorkspaceTransferResult,
+} from './workspace/workspaceTransfer';
 
 export type ScmRepoDetection = {
     isRepo: boolean;
@@ -108,95 +115,99 @@ export type ScmBackendSelection = {
     preferenceAllowedModes?: readonly ScmRepoMode[];
 };
 
-export type ScmSourceControllerWorkspaceLocationInspection = Readonly<{
+export type ScmWorkspaceIntegrationWorkspaceLocationInspection = Readonly<{
     rootPath: string;
     scmProvider?: WorkspaceLocationScm['provider'];
-    checkoutDiscovery?: readonly ScmSourceControllerCheckoutDiscovery[];
+    checkoutDiscovery?: readonly ScmWorkspaceIntegrationCheckoutDiscovery[];
     checkoutProviderKinds?: readonly Exclude<WorkspaceCheckoutKind, 'primary'>[];
 }>;
 
-export type ScmSourceControllerCheckoutDiscovery = Readonly<{
+export type ScmWorkspaceIntegrationCheckoutDiscovery = Readonly<{
     kind: Exclude<WorkspaceCheckoutKind, 'primary'>;
     path?: string;
 }>;
 
-export type ScmSourceControllerPostMaterializationInput = Readonly<{
+export type ScmWorkspaceIntegrationPostMaterializationInput = Readonly<{
     context: ScmBackendContext;
-    checkoutMaterialization: ScmSourceControllerCheckoutMaterializationRequest;
+    checkoutMaterialization: ScmWorkspaceIntegrationCheckoutMaterializationRequest;
     sourcePath?: string;
     previousTargetPath?: string;
-    sourceControllerMetadata?: ScmSourceControllerWorkspaceTransferMetadata;
+    workspaceIntegrationMetadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata;
 }>;
 
-export type ScmSourceControllerWorkspaceTransferInput = Readonly<{
+export type ScmWorkspaceIntegrationWorkspaceTransferInput = Readonly<{
     context: ScmBackendContext;
-    workspaceTransfer: ScmSourceControllerWorkspaceTransferRequest;
+    workspaceTransfer: ScmWorkspaceIntegrationWorkspaceTransferRequest;
 }>;
 
-export type ScmSourceControllerWorkspaceTransferEntryInput = ScmSourceControllerWorkspaceTransferEntry;
+export type ScmWorkspaceIntegrationWorkspaceTransferEntryInput = ScmWorkspaceIntegrationWorkspaceTransferEntry;
 
-export type ScmSourceControllerWorkspaceCheckoutMaterializationInput = Readonly<{
+export type ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationInput = Readonly<{
     context: ScmBackendContext;
-    workspaceCheckoutMaterialization: ScmSourceControllerWorkspaceCheckoutMaterializationRequest;
+    workspaceCheckoutMaterialization: ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest;
 }>;
 
-export type ScmSourceControllerWorkspaceCheckoutCreationInput = Readonly<{
+export type ScmWorkspaceIntegrationWorkspaceCheckoutCreationInput = Readonly<{
     context: ScmBackendContext;
-    workspaceCheckoutCreation: ScmSourceControllerWorkspaceCheckoutCreationRequest;
+    workspaceCheckoutCreation: ScmWorkspaceIntegrationWorkspaceCheckoutCreationRequest;
 }>;
 
-export type { ScmSourceControllerWorkspaceCheckoutCreationResult };
+export type { ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult };
 
-export type ScmSourceControllerWorkspaceCheckoutRealizationInput = Readonly<{
+export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationInput = Readonly<{
     context: ScmBackendContext;
-    workspaceCheckoutRealization: ScmSourceControllerWorkspaceCheckoutRealizationRequest;
+    workspaceCheckoutRealization: ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest;
 }>;
 
-export type { ScmSourceControllerWorkspaceCheckoutRealizationResult };
+export type { ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult };
 
-export type ScmSourceControllerPortableWorkspaceEntriesInput = Readonly<{
+export type ScmWorkspaceIntegrationPortableWorkspaceEntriesInput = Readonly<{
     entries: readonly Readonly<{
         relativePath: string;
     }>[];
 }>;
 
-export type ScmSourceControllerAdministrativePathInput = Readonly<{
+export type ScmWorkspaceIntegrationAdministrativePathInput = Readonly<{
     relativePath: string;
 }>;
 
-export type ScmSourceControllerPortableWorkspacePathInput = ScmSourceControllerPortableWorkspacePathRequest;
+export type ScmWorkspaceIntegrationPortableWorkspacePathInput = ScmWorkspaceIntegrationPortableWorkspacePathRequest;
 
-export type ScmSourceController = Readonly<{
+export type ScmWorkspaceIntegration = Readonly<{
     inspectWorkspaceLocation: (input: Readonly<{
         context: ScmBackendContext;
-    }>) => Promise<ScmSourceControllerWorkspaceLocationInspection | null>;
-    reconcilePostMaterialization?: (input: ScmSourceControllerPostMaterializationInput) => Promise<void>;
+    }>) => Promise<ScmWorkspaceIntegrationWorkspaceLocationInspection | null>;
+    reconcilePostMaterialization?: (input: ScmWorkspaceIntegrationPostMaterializationInput) => Promise<void>;
     realizeWorkspaceCheckout?: (
-        input: ScmSourceControllerWorkspaceCheckoutRealizationInput,
-    ) => Promise<ScmSourceControllerWorkspaceCheckoutRealizationResult>;
+        input: ScmWorkspaceIntegrationWorkspaceCheckoutRealizationInput,
+    ) => Promise<ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult>;
     createWorkspaceCheckout?: (
-        input: ScmSourceControllerWorkspaceCheckoutCreationInput,
-    ) => Promise<ScmSourceControllerWorkspaceCheckoutCreationResult>;
+        input: ScmWorkspaceIntegrationWorkspaceCheckoutCreationInput,
+    ) => Promise<ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult>;
     materializeWorkspaceCheckout?: (
-        input: ScmSourceControllerWorkspaceCheckoutMaterializationInput,
-    ) => Promise<ScmSourceControllerWorkspaceCheckoutMaterializationResult | void>;
-    resolveWorkspaceTransfer?: (input: ScmSourceControllerWorkspaceTransferInput) => Promise<ScmSourceControllerWorkspaceTransferResult | null>;
-    resolveWorkspaceTransferEntries?: (input: ScmSourceControllerWorkspaceTransferInput) => Promise<readonly ScmSourceControllerWorkspaceTransferEntry[] | null>;
-    resolveWorkspaceTransferMetadata?: (input: ScmSourceControllerWorkspaceTransferInput) => Promise<ScmSourceControllerWorkspaceTransferMetadata | null>;
-    assertPortableWorkspaceEntries?: (input: ScmSourceControllerPortableWorkspaceEntriesInput) => Promise<void>;
+        input: ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationInput,
+    ) => Promise<ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult | void>;
+    resolveWorkspaceTransfer?: (input: ScmWorkspaceIntegrationWorkspaceTransferInput) => Promise<ScmWorkspaceIntegrationWorkspaceTransferResult | null>;
+    resolveWorkspaceTransferEntries?: (input: ScmWorkspaceIntegrationWorkspaceTransferInput) => Promise<readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[] | null>;
+    resolveWorkspaceTransferMetadata?: (input: ScmWorkspaceIntegrationWorkspaceTransferInput) => Promise<ScmWorkspaceIntegrationWorkspaceTransferMetadata | null>;
+    assertPortableWorkspaceEntries?: (input: ScmWorkspaceIntegrationPortableWorkspaceEntriesInput) => Promise<void>;
     classifyPortableWorkspaceTransferEntry?: (
-        input: ScmSourceControllerWorkspaceTransferEntryInput,
-    ) => ScmSourceControllerPortableWorkspacePathClassification;
-    isAdministrativeWorkspacePath?: (input: ScmSourceControllerAdministrativePathInput) => boolean;
-    classifyPortableWorkspacePath?: (input: ScmSourceControllerPortableWorkspacePathInput) => ScmSourceControllerPortableWorkspacePathClassification;
+        input: ScmWorkspaceIntegrationWorkspaceTransferEntryInput,
+    ) => ScmWorkspaceIntegrationPortableWorkspacePathClassification;
+    isAdministrativeWorkspacePath?: (input: ScmWorkspaceIntegrationAdministrativePathInput) => boolean;
+    classifyPortableWorkspacePath?: (input: ScmWorkspaceIntegrationPortableWorkspacePathInput) => ScmWorkspaceIntegrationPortableWorkspacePathClassification;
 }>;
 
 export interface ScmBackend {
     id: ScmBackendId;
+    declaredCapabilities?: ScmBackendCapabilities;
     selection: ScmBackendSelection;
-    sourceController?: ScmSourceController;
+    workspaceIntegration?: ScmWorkspaceIntegration;
     detectRepo(input: { cwd: string }): Promise<ScmRepoDetection>;
-    getCapabilities(input: { mode: ScmRepoMode | null }): ScmCapabilities;
+    getCapabilities(input: {
+        mode: ScmRepoMode | null;
+        executableAvailable?: boolean;
+    }): ScmCapabilities;
     describeBackend(input: {
         context: ScmBackendContext;
         request: ScmBackendDescribeRequest;
@@ -321,10 +332,22 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmPullRequestOpenOrReuseRequest;
     }): Promise<ScmPullRequestOpenOrReuseResponse>;
+    hostingRepositoryDescribePublishTargets?(input: {
+        context: ScmBackendContext;
+        request: ScmHostingRepositoryDescribePublishTargetsRequest;
+    }): Promise<ScmHostingRepositoryDescribePublishTargetsResponse>;
     repositoryInit?(input: {
         context: ScmBackendContext;
         request: ScmRepositoryInitRequest;
     }): Promise<ScmRepositoryInitResponse>;
+    hostingRepositoryPublish?(input: {
+        context: ScmBackendContext;
+        request: ScmHostingRepositoryPublishRequest;
+    }): Promise<ScmHostingRepositoryPublishResponse>;
+    repositoryClone?(input: {
+        context: ScmBackendContext;
+        request: ScmRepositoryCloneInput;
+    }): Promise<ScmRepositoryCloneOutput>;
     removeIndexLock?(input: {
         context: ScmBackendContext;
         request: ScmRepositoryRemoveIndexLockRequest;

@@ -1,13 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resolveRepositoryCheckpointAvailability } from './availability';
 import { pruneRepositoryCheckpointRefs } from './cleanup';
 import { REPOSITORY_CHECKPOINT_RECEIPT_IDS } from './receipts';
 import { buildRepositoryCheckpointRef, buildRepositoryCheckpointRefs } from './refs';
+import { scmDiffSummaryCacheStore } from '@/agent/executionRuns/tasks/scmDiffSummary/cache/cacheStore';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe('repository checkpoint primitives', () => {
+    beforeEach(() => {
+        scmDiffSummaryCacheStore.clear();
+    });
+
     it('builds stable namespace-contained hidden refs with base64url scope encoding', () => {
         const refs = buildRepositoryCheckpointRefs({
             scopeId: 'session/one?with punctuation',
@@ -126,5 +131,56 @@ describe('repository checkpoint primitives', () => {
             prunedCount: 3,
             refs: deletedRefs,
         }]);
+    });
+
+    it('applies cleanup receipts to dependent diff-summary cache entries before returning', async () => {
+        const nowMs = Date.UTC(2026, 4, 4);
+        const scopeId = 'session-cleanup';
+        const oldRefs = buildRepositoryCheckpointRefs({ scopeId, turnId: 'old' });
+
+        scmDiffSummaryCacheStore.set({
+            keyInput: {
+                source: {
+                    kind: 'turnCheckpoint',
+                    checkpointReceiptId: 'checkpoint.diff_computed',
+                    checkpointRef: oldRefs.turnFinal!.ref,
+                },
+                summarySchemaVersion: 1,
+                resolvedSelector: { catalogId: 'profile:fast-summary' },
+            },
+            checkpointRef: oldRefs.turnFinal!.ref,
+            value: {
+                success: true,
+                summaryMarkdown: '## Summary\n\nOld checkpoint.',
+                sourceKey: 'turnCheckpoint:old:checkpoint.diff_computed',
+                checkpointReceiptId: 'checkpoint.diff_computed',
+                metadata: {
+                    source: { kind: 'turnCheckpoint' },
+                    sourceKey: 'turnCheckpoint:old:checkpoint.diff_computed',
+                    checkpointReceiptId: 'checkpoint.diff_computed',
+                },
+            },
+        });
+
+        await pruneRepositoryCheckpointRefs({
+            scopeId,
+            refs: [
+                { ref: oldRefs.turnFinal!.ref, committedAtMs: nowMs - (31 * DAY_MS) },
+            ],
+            nowMs,
+            maxAgeMs: 30 * DAY_MS,
+            maxFinalizedTurns: 100,
+            deleteRef: async () => {},
+        });
+
+        expect(scmDiffSummaryCacheStore.get({
+            source: {
+                kind: 'turnCheckpoint',
+                checkpointReceiptId: 'checkpoint.diff_computed',
+                checkpointRef: oldRefs.turnFinal!.ref,
+            },
+            summarySchemaVersion: 1,
+            resolvedSelector: { catalogId: 'profile:fast-summary' },
+        })).toBeNull();
     });
 });

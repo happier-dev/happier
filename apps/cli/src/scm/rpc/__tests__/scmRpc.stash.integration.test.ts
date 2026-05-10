@@ -4,9 +4,9 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { buildHappierBranchStashMarker } from '@happier-dev/plugins-scm-git/operations/stashOperations';
 
 import { createTestRpcManager, runGit as git } from './testRpcHarness';
-import { buildHappierBranchStashMarker } from '../../providers/git/operations/stashOperations';
 
 function initGitWorkspace(): { workspace: string; head: string } {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-git-stash-rpc-'));

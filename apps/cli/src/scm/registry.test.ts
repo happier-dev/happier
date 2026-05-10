@@ -1,11 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ScmBackendPreference, ScmRepoMode } from '@happier-dev/protocol';
+import { ScmBackendCapabilitiesSchema, type ScmBackendPreference, type ScmRepoMode } from '@happier-dev/protocol';
 
 import {
     createScmBackendRegistry,
 } from './registry';
 import type { ScmBackend } from './types';
+
+const TEST_DECLARED_CAPABILITIES = ScmBackendCapabilitiesSchema.parse({
+    detection: {},
+    read: {},
+    changeSet: {
+        model: 'working-copy',
+        diffAreas: ['pending', 'both'],
+    },
+    commit: {},
+    remote: {},
+    branch: {},
+    worktree: {},
+    lifecycle: {},
+    hosting: {},
+    checkpoints: {},
+    workspaceIntegration: {},
+    tooling: {},
+    freshness: {},
+});
 
 function backend(input: {
     id: 'git' | 'sapling';
@@ -14,6 +33,7 @@ function backend(input: {
 }): ScmBackend {
     return {
         id: input.id,
+        declaredCapabilities: TEST_DECLARED_CAPABILITIES,
         selection: {
             modeSelectionScores: input.modeSelectionScores ?? {},
         },
@@ -217,5 +237,175 @@ describe('scm backend registry selection', () => {
             cwd: '/not-a-repo',
             workingDirectory: '/not-a-repo',
         })).resolves.toBeNull();
+    });
+
+    it('resolves live availability without mutating static declared support', async () => {
+        const module = await import('./capabilities/resolveScmBackendCapabilities').catch(() => null);
+        expect(module).not.toBeNull();
+        if (!module) return;
+
+        const capabilityModule = await import('@happier-dev/protocol').then((protocol) => ({
+            schema: protocol.ScmBackendCapabilitiesSchema,
+        })).catch(() => null);
+        expect(capabilityModule).not.toBeNull();
+        if (!capabilityModule) return;
+
+        const declared = capabilityModule.schema.parse({
+            detection: {
+                repository: { support: 'supported' },
+                executable: { support: 'supported' },
+            },
+            read: {
+                status: { support: 'supported' },
+            },
+            changeSet: {
+                model: 'index',
+                diffAreas: ['included', 'pending', 'both'],
+            },
+            commit: {},
+            remote: {
+                push: { support: 'supported' },
+            },
+            branch: {},
+            worktree: {},
+            lifecycle: {},
+            hosting: {},
+            checkpoints: {},
+            workspaceIntegration: {},
+            tooling: {
+                binarySafe: { support: 'supported' },
+            },
+            freshness: {},
+        });
+
+        const resolved = module.resolveScmBackendCapabilities({
+            declaredCapabilities: declared,
+            mode: '.sl',
+            executableAvailable: false,
+            freshness: {
+                state: {
+                    source: 'live-local',
+                    observedAt: 100,
+                },
+                refreshPolicy: 'cache-first',
+            },
+        });
+
+        expect(declared.remote.push).toEqual({ support: 'supported' });
+        expect(resolved.remote.push).toEqual({
+            support: 'unsupported',
+            reason: 'tool_missing',
+            declaredSupport: 'supported',
+        });
+        expect(resolved.detection.repository).toEqual({
+            support: 'unsupported',
+            reason: 'repo_mode_unsupported',
+            declaredSupport: 'supported',
+        });
+        expect(resolved.freshness.state).toEqual({
+            source: 'live-local',
+            observedAt: 100,
+        });
+        expect(resolved.freshness.refreshPolicy).toBe('cache-first');
+    });
+
+    it('does not infer tool availability when live executable status is omitted', async () => {
+        const module = await import('./capabilities/resolveScmBackendCapabilities').catch(() => null);
+        expect(module).not.toBeNull();
+        if (!module) return;
+
+        const declared = ScmBackendCapabilitiesSchema.parse({
+            detection: {
+                repository: { support: 'supported' },
+                executable: { support: 'supported' },
+            },
+            read: {
+                status: { support: 'supported' },
+            },
+            changeSet: {
+                model: 'index',
+                diffAreas: ['included', 'pending', 'both'],
+            },
+            commit: {},
+            remote: {
+                push: { support: 'supported' },
+            },
+            branch: {},
+            worktree: {},
+            lifecycle: {},
+            hosting: {},
+            checkpoints: {},
+            workspaceIntegration: {},
+            tooling: {},
+            freshness: {},
+        });
+
+        const resolved = module.resolveScmBackendCapabilities({
+            declaredCapabilities: declared,
+            mode: '.git',
+            supportedRepoModes: ['.git'],
+        });
+
+        expect(resolved.detection.executable).toEqual({ support: 'supported' });
+        expect(resolved.read.status).toEqual({ support: 'supported' });
+        expect(resolved.remote.push).toEqual({ support: 'supported' });
+    });
+
+    it('treats missing repo mode as unavailable instead of live supported', async () => {
+        const module = await import('./capabilities/resolveScmBackendCapabilities').catch(() => null);
+        expect(module).not.toBeNull();
+        if (!module) return;
+
+        const declared = ScmBackendCapabilitiesSchema.parse({
+            detection: {
+                repository: { support: 'supported' },
+                executable: { support: 'supported' },
+            },
+            read: {
+                status: { support: 'supported' },
+            },
+            changeSet: {
+                model: 'index',
+                diffAreas: ['included', 'pending', 'both'],
+                include: { support: 'supported' },
+            },
+            commit: {
+                create: { support: 'supported' },
+            },
+            remote: {
+                push: { support: 'supported' },
+            },
+            branch: {},
+            worktree: {},
+            lifecycle: {},
+            hosting: {},
+            checkpoints: {},
+            workspaceIntegration: {},
+            tooling: {},
+            freshness: {},
+        });
+
+        const resolved = module.resolveScmBackendCapabilities({
+            declaredCapabilities: declared,
+            mode: null,
+            supportedRepoModes: ['.git'],
+            executableAvailable: true,
+        });
+
+        expect(resolved.detection.repository).toEqual({
+            support: 'unsupported',
+            reason: 'repo_mode_unsupported',
+            declaredSupport: 'supported',
+        });
+        expect(resolved.read.status).toEqual({
+            support: 'unsupported',
+            reason: 'repo_mode_unsupported',
+            declaredSupport: 'supported',
+        });
+        expect(resolved.remote.push).toEqual({
+            support: 'unsupported',
+            reason: 'repo_mode_unsupported',
+            declaredSupport: 'supported',
+        });
     });
 });

@@ -3,7 +3,7 @@ import { resolve } from 'path';
 import { createScmCapabilities, type ScmBackendPreference } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-import { defaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
+import { resolveScmBackendRegistry } from '@/scm/scmBackendCatalog';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import type { ScmBackendSelection } from '@/scm/registry';
 import { resolveScmSelection } from '@/scm/resolveScmSelection';
@@ -85,11 +85,12 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
             return invalidPathResponse<TResponse>(cwdResult.error);
         }
 
+        const registry = await resolveScmBackendRegistry(input.registry);
         const resolved = await resolveScmSelection({
             workingDirectory: normalizedWorkingDirectory,
             cwd: cwdResult.cwd,
             backendPreference: input.request.backendPreference,
-            registry: input.registry ?? defaultScmBackendRegistry,
+            registry,
         });
         if (!resolved) {
             return await input.onNonRepository({

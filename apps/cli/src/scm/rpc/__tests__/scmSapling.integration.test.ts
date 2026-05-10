@@ -340,152 +340,24 @@ describe.skipIf(!shouldRunSaplingIntegration())('sapling backend integration', (
         expect(status.snapshot.totals.pendingFiles).toBe(0);
     });
 
-    it('fetches, pulls, and pushes with branch shorthand against git remotes', async () => {
-        const remote = mkdtempSync(join(tmpdir(), 'happier-scm-sl-remote-'));
-        runGit(remote, ['init', '--bare']);
-        // Ensure clones of this temporary remote have a deterministic default branch.
-        // Without this, `git clone` may produce a repo without a local `main` branch, and
-        // `git push origin main` will fail even if `refs/heads/main` exists on the remote.
-        runGit(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
-
+    it('returns feature unsupported for Sapling remote mutation operations', async () => {
         const workspace = createSaplingWorkspace();
-        runSapling(workspace, ['path', '--add', 'origin', remote]);
         writeFileSync(join(workspace, 'a.txt'), 'hello\n');
         runSapling(workspace, ['commit', '-A', '-m', 'init']);
-        runSapling(workspace, ['push', 'origin', '--to', 'main', '--create']);
-
-        const other = mkdtempSync(join(tmpdir(), 'happier-scm-sl-other-'));
-        runGit(other, ['clone', remote, '.']);
-        runGit(other, ['config', 'user.email', 'other@example.com']);
-        runGit(other, ['config', 'user.name', 'Other User']);
-        writeFileSync(join(other, 'remote.txt'), 'remote\n');
-        runGit(other, ['add', 'remote.txt']);
-        runGit(other, ['commit', '-m', 'remote update']);
-        runGit(other, ['push', 'origin', 'main']);
 
         const { call } = createTestRpcManager({ workingDirectory: workspace });
         const fetch = await call<any, { cwd?: string; remote?: string }>(RPC_METHODS.SCM_REMOTE_FETCH, {
             cwd: '.',
             remote: 'origin',
         });
-        expect(fetch.success).toBe(true);
-
-        const pull = await call<any, { cwd?: string; remote?: string; branch?: string }>(RPC_METHODS.SCM_REMOTE_PULL, {
-            cwd: '.',
-            remote: 'origin',
-            branch: 'main',
-        });
-        expect(pull.success).toBe(true);
-        expect(readFileSync(join(workspace, 'remote.txt'), 'utf8')).toBe('remote\n');
-
-        writeFileSync(join(workspace, 'local.txt'), 'local\n');
-        runSapling(workspace, ['commit', '-A', '-m', 'local update']);
-
-        const push = await call<any, { cwd?: string; remote?: string; branch?: string }>(RPC_METHODS.SCM_REMOTE_PUSH, {
-            cwd: '.',
-            remote: 'origin',
-            branch: 'main',
-        });
-        expect(push.success).toBe(true);
-
-        const remoteHead = runGit(remote, ['rev-parse', 'refs/heads/main']);
-        const localHead = runSapling(workspace, ['whereami']);
-        expect(remoteHead).toBe(localHead);
-    });
-
-    it('returns deterministic upstream-required errors for pull/push without bookmark target', async () => {
-        const workspace = createSaplingWorkspace();
-        writeFileSync(join(workspace, 'a.txt'), 'hello\n');
-        runSapling(workspace, ['commit', '-A', '-m', 'init']);
-
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
         const pull = await call<any, { cwd?: string }>(RPC_METHODS.SCM_REMOTE_PULL, { cwd: '.' });
         const push = await call<any, { cwd?: string }>(RPC_METHODS.SCM_REMOTE_PUSH, { cwd: '.' });
 
+        expect(fetch.success).toBe(false);
+        expect(fetch.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
         expect(pull.success).toBe(false);
-        expect(pull.errorCode).toBe(SCM_OPERATION_ERROR_CODES.REMOTE_UPSTREAM_REQUIRED);
+        expect(pull.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
         expect(push.success).toBe(false);
-        expect(push.errorCode).toBe(SCM_OPERATION_ERROR_CODES.REMOTE_UPSTREAM_REQUIRED);
-    });
-
-    it('does not infer a push destination branch from active commit hash', async () => {
-        const remote = mkdtempSync(join(tmpdir(), 'happier-scm-sl-remote-no-branch-'));
-        runGit(remote, ['init', '--bare']);
-
-        const workspace = createSaplingWorkspace();
-        runSapling(workspace, ['path', '--add', 'origin', remote]);
-        writeFileSync(join(workspace, 'a.txt'), 'hello\n');
-        runSapling(workspace, ['commit', '-A', '-m', 'init']);
-
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
-        const push = await call<any, { cwd?: string; remote?: string }>(RPC_METHODS.SCM_REMOTE_PUSH, {
-            cwd: '.',
-            remote: 'origin',
-        });
-
-        expect(push.success).toBe(false);
-        expect(push.errorCode).toBe(SCM_OPERATION_ERROR_CODES.REMOTE_UPSTREAM_REQUIRED);
-    });
-
-    it('blocks pull with deterministic conflicting-worktree error when sapling workspace is dirty', async () => {
-        const remote = mkdtempSync(join(tmpdir(), 'happier-scm-sl-remote-dirty-pull-'));
-        runGit(remote, ['init', '--bare']);
-
-        const workspace = createSaplingWorkspace();
-        runSapling(workspace, ['path', '--add', 'origin', remote]);
-        writeFileSync(join(workspace, 'a.txt'), 'base\n');
-        runSapling(workspace, ['commit', '-A', '-m', 'base']);
-        runSapling(workspace, ['push', 'origin', '--to', 'main', '--create']);
-
-        writeFileSync(join(workspace, 'a.txt'), 'base\ndirty\n');
-
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
-        const pull = await call<any, { cwd?: string; remote?: string; branch?: string }>(RPC_METHODS.SCM_REMOTE_PULL, {
-            cwd: '.',
-            remote: 'origin',
-            branch: 'main',
-        });
-
-        expect(pull.success).toBe(false);
-        expect(pull.errorCode).toBe(SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE);
-    });
-
-    it('blocks push with deterministic conflicting-worktree error when sapling repository has unresolved conflicts', async () => {
-        const remote = mkdtempSync(join(tmpdir(), 'happier-scm-sl-remote-conflict-push-'));
-        runGit(remote, ['init', '--bare']);
-
-        const workspace = createSaplingWorkspace();
-        runSapling(workspace, ['path', '--add', 'origin', remote]);
-
-        writeFileSync(join(workspace, 'a.txt'), 'base\n');
-        runSapling(workspace, ['commit', '-A', '-m', 'base']);
-        runSapling(workspace, ['push', 'origin', '--to', 'main', '--create']);
-        const base = runSapling(workspace, ['whereami']);
-
-        writeFileSync(join(workspace, 'a.txt'), 'one\n');
-        runSapling(workspace, ['commit', '-A', '-m', 'one']);
-        const one = runSapling(workspace, ['whereami']);
-
-        runSapling(workspace, ['goto', base]);
-        writeFileSync(join(workspace, 'a.txt'), 'two\n');
-        runSapling(workspace, ['commit', '-A', '-m', 'two']);
-        const two = runSapling(workspace, ['whereami']);
-
-        runSapling(workspace, ['goto', one]);
-        try {
-            runSapling(workspace, ['merge', two]);
-        } catch {
-            // Merge exits non-zero when conflicts remain.
-        }
-
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
-        const push = await call<any, { cwd?: string; remote?: string; branch?: string }>(RPC_METHODS.SCM_REMOTE_PUSH, {
-            cwd: '.',
-            remote: 'origin',
-            branch: 'main',
-        });
-
-        expect(push.success).toBe(false);
-        expect(push.errorCode).toBe(SCM_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE);
+        expect(push.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
     });
 });
