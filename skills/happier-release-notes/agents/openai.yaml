@@ -1,0 +1,4 @@
+interface:
+  display_name: "Happier Release Notes"
+  short_description: "Author curated Happier release-note story decks and assets."
+  default_prompt: "Create or update curated Happier release notes for the next release."
