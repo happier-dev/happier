@@ -212,7 +212,7 @@ describe('Session', () => {
     try {
       session.onSessionFound('sess_1', hookWithTranscript('/tmp/.claude/projects/proj-a/sess_1.jsonl'));
 
-      expect(metadata.directSessionV1).toMatchObject({
+      expect(metadata.externalSessionV1).toMatchObject({
         v: 1,
         providerId: 'claude',
         machineId: 'machine-1',

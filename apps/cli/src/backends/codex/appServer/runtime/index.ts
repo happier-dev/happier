@@ -3,9 +3,17 @@ import type { PermissionMode } from '@/api/types';
 import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
+    type CheckpointCodeRollbackRequest,
+    type CheckpointCodeRollbackResult,
     type SessionRollbackRpcParams,
     type SessionRollbackRpcResult,
 } from '@happier-dev/protocol';
+import { randomUUID } from 'node:crypto';
+import { executeCheckpointCodeRollback } from '@/scm/checkpoints/rollback';
+import {
+    createGitCheckpointRollbackDependencies,
+    resolveGitCheckpointBackendContext,
+} from '@/scm/checkpoints/gitCheckpointAdapter';
 import { createCodexAppServerRuntimeOperations } from './operations';
 import { createCodexAppServerClientLifecycle } from '../createCodexAppServerClientLifecycle';
 import {
@@ -20,13 +28,22 @@ import { createCodexAppServerStreamLifecycle } from '../createCodexAppServerStre
 import { createCodexAppServerRuntimeControlState } from '../createCodexAppServerRuntimeControlState';
 import { rollbackCodexAppServerConversation } from '../rollbackConversation';
 import { type CodexAppServerStartOrLoadOptions } from '../startOrLoadThread';
-import { createCodexAppServerStreamEventBridge } from '../streamEventBridge';
+import {
+    createCodexAppServerStreamEventBridge,
+} from '../streamEventBridge';
+import { createCodexAppServerDisplayTitleHandler } from '../displayTitle';
+import {
+    registerCodexDisplayTitleSessionStateHandler,
+} from '../../sessionState';
 import {
     type CompletedTurnSeqRange,
 } from '../rollbackMetadata';
 import { recordPrimaryTurnInProgress } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
 
 type RuntimeSession = ApiSessionClient;
+type CodexAppServerTitleMirrorClient = Readonly<{
+    request(method: 'thread/name/set', params: Readonly<{ threadId: string; name: string }>): Promise<unknown>;
+}>;
 
 function readLastObservedMessageSeq(session: RuntimeSession): number {
     const raw = typeof session.getLastObservedMessageSeq === 'function'
@@ -84,6 +101,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     sendPrompt: (_prompt: string) => Promise<void>;
     flushTurn: () => Promise<void>;
     rollbackConversation: (request: SessionRollbackRpcParams) => Promise<SessionRollbackRpcResult>;
+    checkpointCodeRollback: (request: CheckpointCodeRollbackRequest) => Promise<CheckpointCodeRollbackResult>;
 }> & RuntimeTurnOperations {
     const runtimeEnv = params.processEnv ?? process.env;
     const lastPublishedThreadId: { value: string | null } = { value: null };
@@ -112,6 +130,21 @@ export function createCodexAppServerRuntime(params: Readonly<{
         transcriptSession: params.transcriptSession,
         readLastObservedMessageSeq: () => readLastObservedMessageSeq(params.session),
         getPendingTurn: () => pendingTurn,
+    });
+    let ensureClientForTitleMirror: (() => Promise<CodexAppServerTitleMirrorClient>) | null = null;
+    const displayTitleHandler = createCodexAppServerDisplayTitleHandler({
+        getThreadId: () => threadId,
+        client: {
+            request: async (method, requestParams) => {
+                const client = await ensureClientForTitleMirror?.();
+                if (!client) return null;
+                return client.request(method, requestParams);
+            },
+        },
+    });
+    const unregisterDisplayTitleHandler = registerCodexDisplayTitleSessionStateHandler({
+        sessionId: params.session.sessionId,
+        handler: displayTitleHandler,
     });
     const runtimeControlState = createCodexAppServerRuntimeControlState({
         directory: params.directory,
@@ -194,7 +227,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
         ensureSyntheticSubagentThread: streamLifecycle.ensureSyntheticSubagentThread,
         finalizeSyntheticSubagentThread: streamLifecycle.finalizeSyntheticSubagentThread,
         streamEventBridge,
-        applyStreamUpdate: streamLifecycle.applyStreamUpdate,
+        applyStreamUpdate: async (update, context) => {
+            await streamLifecycle.applyStreamUpdate(update, context);
+        },
         handleServerRequest: requestHandlers.handleServerRequest,
         handleMcpElicitationRequest: requestHandlers.handleMcpElicitationRequest,
         notificationMatchesPendingTurn: pendingTurnLifecycle.notificationMatchesPendingTurn,
@@ -207,7 +242,9 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
     const runtimeOperations = createCodexAppServerRuntimeOperations({
         ensureClient: clientLifecycle.ensureClient,
-        startOrLoad: clientLifecycle.startOrLoad,
+        startOrLoad: async (options) => {
+            await clientLifecycle.startOrLoad(options);
+        },
         waitForActiveTurnId: runtimeControlState.waitForActiveTurnId,
         finishPendingTurn: pendingTurnLifecycle.finishPendingTurn,
         createPendingTurn,
@@ -257,6 +294,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
             params.session.sendSessionEvent({ type: 'message', message });
         },
     });
+    ensureClientForTitleMirror = clientLifecycle.ensureClient;
+    const resetRuntime = async (): Promise<void> => {
+        unregisterDisplayTitleHandler();
+        await runtimeOperations.reset();
+    };
 
     return {
         getSessionId: () => threadId,
@@ -267,8 +309,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
         isTurnInFlight: () => turnInFlight,
         beginTurn: runtimeOperations.beginTurn,
         cancel: runtimeOperations.cancel,
-        reset: runtimeOperations.reset,
-        startOrLoad: clientLifecycle.startOrLoad,
+        reset: resetRuntime,
+        startOrLoad: async (options) => {
+            await clientLifecycle.startOrLoad(options);
+        },
         setSessionMode: runtimeOperations.setSessionMode,
         setSessionModel: runtimeOperations.setSessionModel,
         setSessionConfigOption: runtimeOperations.setSessionConfigOption,
@@ -289,7 +333,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             sessionId: threadId,
         }),
         updateSessionRuntimeConfig: runtimeOperations.updateSessionRuntimeConfig,
-        resetOrDisposeRuntime: runtimeOperations.reset,
+        resetOrDisposeRuntime: resetRuntime,
         rollbackConversation: async (request: SessionRollbackRpcParams) =>
             await rollbackCodexAppServerConversation({
                 threadId,
@@ -300,5 +344,29 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 finishPendingTurn: pendingTurnLifecycle.finishPendingTurn,
                 session: params.session,
             }),
+        checkpointCodeRollback: async (request: CheckpointCodeRollbackRequest) => {
+            const context = await resolveGitCheckpointBackendContext({
+                workingDirectory: request.cwd,
+                cwd: request.cwd,
+            });
+            if (!context) {
+                return {
+                    status: 'unavailable',
+                    changedPaths: [],
+                    skippedPaths: [],
+                    receipts: ['checkpoint.rollback_aborted'],
+                    diagnostics: ['checkpoint_rollback_git_repository_required'],
+                };
+            }
+            const rollbackId = randomUUID();
+            return await executeCheckpointCodeRollback({
+                request,
+                conversationRollbackSupported: true,
+                deps: createGitCheckpointRollbackDependencies({
+                    context,
+                    rollbackId,
+                }),
+            });
+        },
     };
 }

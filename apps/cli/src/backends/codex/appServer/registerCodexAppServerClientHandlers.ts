@@ -138,6 +138,9 @@ export function registerCodexAppServerClientHandlers(params: Readonly<{
     params.client.registerRequestHandler('item/tool/requestUserInput', (requestParams) => {
         return params.runBridgeWork(() => params.handleServerRequest('item/tool/requestUserInput', requestParams));
     });
+    params.client.registerRequestHandler('item/permissions/requestApproval', (requestParams) => {
+        return params.runBridgeWork(() => params.handleServerRequest('item/permissions/requestApproval', requestParams));
+    });
     params.client.registerRequestHandler('mcpServer/elicitation/request', (requestParams, message) => {
         return params.runBridgeWork(() => params.handleMcpElicitationRequest(requestParams, message));
     });

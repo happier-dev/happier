@@ -4,9 +4,9 @@ import type { Capability } from '@/capabilities/service';
 import type { CommandHandler } from '@/cli/commandRegistry';
 import type { CloudConnectTarget } from '@/cloud/connectTypes';
 import type { DaemonSpawnHooks } from '../daemon/spawnHooks';
-import type { DirectSessionsProviderId } from '@happier-dev/protocol';
+import type { ExternalSessionsProviderId } from '@happier-dev/protocol';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
-import type { DirectSessionProviderOps } from '@/session/external/providerOps';
+import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
 import type { AcpForkContinuationHandler } from '@/session/fork/acpForkContinuationHandler';
 import type { ProviderNativeForkHandler } from '@/session/fork/providerNativeForkHandler';
 import type { ReplayForkContinuationHandler } from '@/session/fork/replayForkContinuationHandler';
@@ -171,7 +171,7 @@ export type AgentCatalogEntry = Readonly<{
    * Keep provider-specific implementations inside `src/backends/<provider>/...`
    * and expose them through this catalog hook instead of side registries.
    */
-  getDirectSessionProviderOps?: () => Promise<DirectSessionProviderOps>;
+  getExternalSessionProviderOps?: () => Promise<ExternalSessionProviderOps>;
   /**
    * Optional provider-owned connected-services materializer used before spawning the backend.
    *
@@ -308,8 +308,8 @@ export type AgentCatalogEntry = Readonly<{
 
 export type {
   AcpForkContinuationHandler,
-  DirectSessionProviderOps,
-  DirectSessionsProviderId,
+  ExternalSessionProviderOps,
+  ExternalSessionsProviderId,
   ProviderNativeForkHandler,
   ReplayForkContinuationHandler,
 };

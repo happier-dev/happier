@@ -323,7 +323,7 @@ describe('ApiMachineClient transports', () => {
     const client = new mod.ApiMachineClient('fake-token', machine);
     client.connect();
 
-    client.emitDirectSessionTranscriptUpdate({
+    client.emitExternalSessionTranscriptUpdate({
       type: 'direct-session-transcript-delta',
       sessionId: 'session-1',
       items: [

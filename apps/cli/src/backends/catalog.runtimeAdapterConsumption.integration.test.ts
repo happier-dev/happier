@@ -106,7 +106,7 @@ describe('resolveBackendExecutionSurfaces', () => {
                 launch: expect.any(Function),
                 discoverIdentity: expect.any(Function),
             },
-            directSessions: {
+            externalSessions: {
                 validateSource: expect.any(Function),
                 listCandidates: expect.any(Function),
                 getActivity: expect.any(Function),
@@ -155,16 +155,16 @@ describe('resolveBackendExecutionSurfaces', () => {
             identity: 'integration-identity',
         });
         await expect(
-            surfaces?.directSessions?.validateSource?.({ source: 'codex', env: {} as NodeJS.ProcessEnv } as never),
+            surfaces?.externalSessions?.validateSource?.({ source: 'codex', env: {} as NodeJS.ProcessEnv } as never),
         ).resolves.toEqual({ ok: true, source: 'codex' });
         await expect(
-            surfaces?.directSessions?.listCandidates?.({ source: 'codex', limit: 1 } as never),
+            surfaces?.externalSessions?.listCandidates?.({ source: 'codex', limit: 1 } as never),
         ).resolves.toEqual({ candidates: [], nextCursor: null });
         await expect(
-            surfaces?.directSessions?.getActivity?.({ source: 'codex', remoteSessionId: 'remote-1' } as never),
+            surfaces?.externalSessions?.getActivity?.({ source: 'codex', remoteSessionId: 'remote-1' } as never),
         ).resolves.toEqual({ lastActivityAtMs: null, isRunning: false });
         await expect(
-            surfaces?.directSessions?.pageTranscript?.({
+            surfaces?.externalSessions?.pageTranscript?.({
                 source: 'codex',
                 remoteSessionId: 'remote-1',
                 direction: 'older',
@@ -179,7 +179,7 @@ describe('resolveBackendExecutionSurfaces', () => {
             truncated: false,
         });
         await expect(
-            surfaces?.directSessions?.readAfterTranscript?.({
+            surfaces?.externalSessions?.readAfterTranscript?.({
                 source: 'codex',
                 remoteSessionId: 'remote-1',
                 cursor: 'cursor-1',
@@ -188,7 +188,7 @@ describe('resolveBackendExecutionSurfaces', () => {
             } as never),
         ).resolves.toEqual({ items: [], nextCursor: null, truncated: false });
         await expect(
-            surfaces?.directSessions?.resolveTakeoverSpawnOptions?.({
+            surfaces?.externalSessions?.resolveTakeoverSpawnOptions?.({
                 linked: { providerId: 'codex' } as never,
                 sessionId: 'session-1',
             } as never),
@@ -293,7 +293,7 @@ describe('resolveBackendExecutionSurfaces', () => {
         const surfaces = await resolveBackendExecutionSurfaces(SAMPLE_PLUGIN_BACKEND_ID, { happyHomeDir });
         expect(surfaces).toEqual({
             terminalRuntime: null,
-            directSessions: null,
+            externalSessions: null,
             attach: null,
             sessionHandoff: null,
         });
@@ -359,7 +359,7 @@ describe('resolveBackendExecutionSurfaces', () => {
                     launch: expect.any(Function),
                     discoverIdentity: expect.any(Function),
                 },
-                directSessions: {
+                externalSessions: {
                     validateSource: expect.any(Function),
                 },
                 attach: {

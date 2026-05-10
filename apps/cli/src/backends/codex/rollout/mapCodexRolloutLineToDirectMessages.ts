@@ -1,4 +1,4 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import type { CodexRolloutAction } from './projection/mapCodexRolloutEventToActions';
 import { projectCodexRolloutActions } from './projectCodexRolloutActions';
@@ -38,7 +38,7 @@ export function mapCodexRolloutLineToDirectMessages(params: Readonly<{
   lineValue: unknown;
   actions: ReadonlyArray<CodexRolloutAction>;
   sidechainId?: string | null;
-}>): DirectTranscriptRawMessageV1[] {
+}>): ExternalSessionTranscriptRawMessageV1[] {
   const createdAtMs = extractEnvelopeTimestampMs(params.lineValue);
   // Direct transcript rendering should include "debug-only" tool calls (e.g., Codex-internal read/write tools),
   // but must still filter harness/system blobs that Codex sometimes embeds as user messages.
@@ -47,7 +47,7 @@ export function mapCodexRolloutLineToDirectMessages(params: Readonly<{
     { sidechainId: params.sidechainId ?? null },
   );
 
-  const out: DirectTranscriptRawMessageV1[] = [];
+  const out: ExternalSessionTranscriptRawMessageV1[] = [];
   for (let i = 0; i < projected.length; i++) {
     const action = projected[i]!;
     const idPrefix = `codex:${params.fileRelPath}`;

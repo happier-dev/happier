@@ -1,4 +1,4 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { normalizeClaudeToolUseNamesInRawJsonLines } from '../../utils/normalizeClaudeToolUseNames';
 import { parseRawJsonLinesObject } from '../../utils/parseRawJsonLines';
@@ -52,7 +52,7 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
     fileRelPath: string;
     lineStartOffsetBytes: number;
     lineValue: unknown;
-}>): DirectTranscriptRawMessageV1[] {
+}>): ExternalSessionTranscriptRawMessageV1[] {
     const createdAtMs = extractEnvelopeTimestampMs(params.lineValue);
     const idPrefix = `claude:${params.fileRelPath}`;
     const stableId = stableOffsetId(idPrefix, params.lineStartOffsetBytes);

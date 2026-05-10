@@ -1,4 +1,4 @@
-import type { PermissionMode } from '@/api/types';
+import type { Metadata, PermissionMode } from '@/api/types';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 
@@ -8,10 +8,11 @@ import os from 'node:os';
 import { join } from 'node:path';
 
 import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess';
-import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { logger } from '@/ui/logger';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { writeSessionStateFieldWithMetadataPort } from '@/agent/runtime/state/writeSessionStateFieldWithMetadataPort';
 import { configuration } from '@/configuration';
 import { requireTerminalRuntimeBindTranscript } from '@/agent/terminalRuntime/providers/bindTranscript';
 import { resolveCodexCliInvocation } from '../utils/resolveCodexCliInvocation';
@@ -58,6 +59,20 @@ function resolveCodexSessionsRootDir(): string {
   const codexHome = typeof process.env.CODEX_HOME === 'string' ? process.env.CODEX_HOME.trim() : '';
   if (codexHome) return join(codexHome, 'sessions');
   return join(os.homedir(), '.codex', 'sessions');
+}
+
+async function writeCodexVendorSessionId(session: ApiSessionClient, value: string): Promise<boolean> {
+  return await writeSessionStateFieldWithMetadataPort({
+    sessionId: session.sessionId,
+    fieldId: 'identity.vendorSessionId',
+    value: {
+      metadataKey: 'codexSessionId',
+      value,
+    },
+    updateMetadata: (updater) => session.updateMetadata(updater),
+    reason: 'reconciliation',
+    metadataReason: 'publish_codex_session_id',
+  });
 }
 
 async function resolveCodexTuiInvocation(opts: {
@@ -216,12 +231,7 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
       return;
     }
     lastMetadataPublishAttemptMs = now;
-    updateMetadataBestEffort(
-      opts.session,
-      (current) => ({ ...current, codexSessionId: pending }),
-      '[codex]',
-      'publish_codex_session_id',
-    );
+    void writeCodexVendorSessionId(opts.session, pending);
   };
 
   const publishPendingCodexSessionIdNow = async (): Promise<void> => {
@@ -247,12 +257,9 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
 
         lastMetadataPublishAttemptMs = Date.now();
         logger.debug('[codex] codexSessionId publish: attempting', { id: pending });
-        await Promise.resolve(
-          opts.session.updateMetadata((current) => ({
-            ...current,
-            codexSessionId: pending,
-          })),
-        );
+        const ok = await writeCodexVendorSessionId(opts.session, pending);
+        if (!ok) return;
+        pendingMetadataSessionId.value = null;
         logger.debug('[codex] codexSessionId publish: succeeded', { id: pending });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

@@ -1,4 +1,4 @@
-import type { DirectSessionActivitySample, DirectSessionTranscriptPage, DirectSessionTranscriptReadAfter } from '@/session/external/providerOps';
+import type { ExternalSessionActivitySample, ExternalSessionTranscriptPage, ExternalSessionTranscriptReadAfter } from '@/session/external/providerOps';
 
 export type ClaudeJsonlSessionStorePageOlderParams = Readonly<{
     cursor?: string;
@@ -12,6 +12,6 @@ export type ClaudeJsonlSessionStoreReadAfterParams = Readonly<{
     maxItems: number;
 }>;
 
-export type ClaudeJsonlSessionStoreActivity = DirectSessionActivitySample;
-export type ClaudeJsonlSessionStorePageResult = DirectSessionTranscriptPage;
-export type ClaudeJsonlSessionStoreReadAfterResult = DirectSessionTranscriptReadAfter;
+export type ClaudeJsonlSessionStoreActivity = ExternalSessionActivitySample;
+export type ClaudeJsonlSessionStorePageResult = ExternalSessionTranscriptPage;
+export type ClaudeJsonlSessionStoreReadAfterResult = ExternalSessionTranscriptReadAfter;

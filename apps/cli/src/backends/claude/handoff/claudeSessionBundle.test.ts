@@ -93,7 +93,7 @@ describe('claude session handoff bundle', () => {
       metadata: {
         path: workspacePath,
         claudeSessionId: 'claude_session_direct',
-        directSessionV1: {
+        externalSessionV1: {
           source: {
             kind: 'claudeConfig',
             configDir,
@@ -127,7 +127,7 @@ describe('claude session handoff bundle', () => {
         path: workspacePath,
         claudeSessionId: 'claude_session_direct',
         claudeTranscriptPath: staleTranscriptPath,
-        directSessionV1: {
+        externalSessionV1: {
           source: {
             kind: 'claudeConfig',
             configDir,

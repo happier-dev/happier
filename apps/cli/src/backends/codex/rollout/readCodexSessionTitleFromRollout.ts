@@ -1,5 +1,6 @@
 import { readJsonlFileForward } from '../../../api/session/fileBackedTranscripts/jsonl/readJsonlForward';
-import { readDirectSessionTitleCandidate } from '../../../api/session/external/title/readDirectSessionTitleCandidate';
+import { readExternalSessionTitleCandidate } from '../../../api/session/external/title/readExternalSessionTitleCandidate';
+import { isChangeTitleToolNameAlias } from '@happier-dev/protocol';
 
 import { mapCodexRolloutEventToActions } from './projection/mapCodexRolloutEventToActions';
 
@@ -13,7 +14,11 @@ function readTitleFromToolInput(input: unknown): string | null {
   const title = typeof (input as Record<string, unknown>).title === 'string'
     ? String((input as Record<string, unknown>).title)
     : '';
-  return readDirectSessionTitleCandidate(title);
+  return readExternalSessionTitleCandidate(title);
+}
+
+function isHappierChangeTitleToolName(name: string): boolean {
+  return isChangeTitleToolNameAlias(name);
 }
 
 export async function readCodexSessionTitleFromRollout(filePath: string): Promise<string | null> {
@@ -33,16 +38,16 @@ export async function readCodexSessionTitleFromRollout(filePath: string): Promis
     for (const line of page.items) {
       const actions = mapCodexRolloutEventToActions(line.value, { debug: false });
       for (const action of actions) {
-        if (action.type === 'tool-call' && action.name === 'change_title') {
+        if (action.type === 'tool-call' && isHappierChangeTitleToolName(action.name)) {
           const fromTool = readTitleFromToolInput(action.input);
           if (fromTool) return fromTool;
         }
         if (action.type === 'user-text') {
-          const title = readDirectSessionTitleCandidate(action.text);
+          const title = readExternalSessionTitleCandidate(action.text);
           if (title) return title;
         }
         if (action.type === 'assistant-text' && fallbackAssistantText === null) {
-          fallbackAssistantText = readDirectSessionTitleCandidate(action.text);
+          fallbackAssistantText = readExternalSessionTitleCandidate(action.text);
         }
       }
     }

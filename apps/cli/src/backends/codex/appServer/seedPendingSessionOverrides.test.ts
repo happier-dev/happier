@@ -7,7 +7,7 @@ describe('seedCodexAppServerPendingSessionOverrides', () => {
     const runtime = {
       setSessionMode: vi.fn(async (_modeId: string) => {}),
       setSessionModel: vi.fn(async (_modelId: string) => {}),
-      setSessionConfigOption: vi.fn(async (_configId: string, _valueId: string) => {}),
+      setSessionConfigOption: vi.fn(async (_configId: string, _valueId: string | number | boolean | null) => {}),
     };
 
     await seedCodexAppServerPendingSessionOverrides({

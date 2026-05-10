@@ -5,6 +5,7 @@ import { canonicalizeCodexMcpToolName } from '../utils/canonicalizeCodexMcpToolN
 type RecordLike = Record<string, unknown>;
 
 type ToolKind = 'command' | 'mcp' | 'file-change';
+type PermissionRequestToolName = 'request_permissions';
 
 type NotificationEnvelope = Readonly<{
     method: string;
@@ -30,7 +31,7 @@ export type CodexAppServerStreamUpdate =
     | Readonly<{ type: 'reasoning-final'; itemId: string; text: string }>
     | Readonly<{ type: 'turn-diff-updated'; turnId: string | null; unifiedDiff: string }>
     | Readonly<{ type: 'tool-call'; toolKind: ToolKind; callId: string; name: string; input: unknown }>
-    | Readonly<{ type: 'tool-result'; toolKind: ToolKind; callId: string; output: unknown }>
+    | Readonly<{ type: 'tool-result'; toolKind: ToolKind; callId: string; name?: string; input?: unknown; output: unknown }>
     | Readonly<{
         type: 'approval-request';
         requestKind: 'command-execution' | 'file-change';
@@ -38,6 +39,17 @@ export type CodexAppServerStreamUpdate =
         toolName: string;
         input: unknown;
         approval: RecordLike;
+    }>
+    | Readonly<{
+        type: 'permissions-request';
+        callId: string;
+        toolName: PermissionRequestToolName;
+        input: {
+            cwd?: string;
+            reason?: string;
+            permissions: unknown;
+        };
+        permissions: unknown;
     }>
     | Readonly<{
         type: 'user-input-request';
@@ -253,6 +265,8 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
                     type: 'tool-result',
                     toolKind: rememberedToolContext.toolKind,
                     callId: itemId,
+                    name: rememberedToolContext.name,
+                    input: rememberedToolContext.input,
                     output: readToolResultOutput(item, itemType),
                 }];
             }
@@ -268,6 +282,8 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
                     type: 'tool-result',
                     toolKind: synthesizedToolContext.toolKind,
                     callId: itemId,
+                    name: synthesizedToolContext.name,
+                    input: synthesizedToolContext.input,
                     output: readToolResultOutput(item, itemType, synthesizedToolContext.input),
                 },
             ];
@@ -278,6 +294,23 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
             if (!params) return [];
             const callId = readItemId(params);
             if (!callId) return [];
+
+            if (request.method === 'item/permissions/requestApproval') {
+                const permissions = params.permissions ?? {};
+                const cwd = readString(params.cwd);
+                const reason = readString(params.reason);
+                return [{
+                    type: 'permissions-request',
+                    callId,
+                    toolName: 'request_permissions',
+                    input: {
+                        ...(cwd ? { cwd } : {}),
+                        ...(reason ? { reason } : {}),
+                        permissions,
+                    },
+                    permissions,
+                }];
+            }
 
             const resolved = resolveToolContext(params);
             if (!resolved) return [];

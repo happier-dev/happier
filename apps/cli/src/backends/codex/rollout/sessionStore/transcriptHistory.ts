@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises';
 
-import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import { createSessionStateSyncEngine } from '@happier-dev/agents';
+import type { ExternalSessionsSource, ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { readJsonlFileForward } from '../../../../api/session/fileBackedTranscripts/jsonl/readJsonlForward';
 import { readJsonlFileForwardLines } from '../../../../api/session/fileBackedTranscripts/jsonl/readJsonlForwardLines';
@@ -11,10 +12,10 @@ import {
     type CodexDirectForwardCursor,
 } from '../../externalSessions/codexDirectForwardCursor';
 import {
-    mapCodexDirectSessionAppServerPreviewToMessage,
-    resolveCodexDirectSessionAppServerMetadata,
-} from '../resolveCodexDirectSessionAppServerMetadata';
-import { readCodexSessionTitleFromRollout } from '../readCodexSessionTitleFromRollout';
+    mapCodexExternalSessionAppServerPreviewToMessage,
+    resolveCodexExternalSessionAppServerMetadata,
+} from '../resolveCodexExternalSessionAppServerMetadata';
+import { CODEX_SESSION_STATE_CAPABILITIES, codexSessionStateFacet } from '../../sessionState';
 import { homeEntries as resolveHomeEntries } from '../../externalSessions/homeEntries';
 import { mapCodexRolloutLineToDirectMessages } from '../mapCodexRolloutLineToDirectMessages';
 import { createCodexRolloutSemanticTracker } from '../createCodexRolloutSemanticTracker';
@@ -47,7 +48,7 @@ type CodexRolloutStreamVectorEntry = Readonly<{
 }>;
 
 type CodexProjectedTranscriptRecord = Readonly<{
-    item: DirectTranscriptRawMessageV1;
+    item: ExternalSessionTranscriptRawMessageV1;
     streamId: string;
     lineStartOffsetBytes: number;
     lineEndOffsetBytes: number;
@@ -74,9 +75,9 @@ type CodexRolloutDirectTranscriptSnapshot = Readonly<{
     remoteSessionId: string;
     mergedRecords: readonly CodexProjectedTranscriptRecord[];
     rolloutHome: string | null;
-    rolloutSource: DirectSessionsSource | null;
+    rolloutSource: ExternalSessionsSource | null;
     rolloutSignature: string | null;
-    appServerMetadata: Awaited<ReturnType<typeof resolveCodexDirectSessionAppServerMetadata>> | null;
+    appServerMetadata: Awaited<ReturnType<typeof resolveCodexExternalSessionAppServerMetadata>> | null;
     title: string | null;
     workingDirectory: string | null;
     lastActivityAtMs: number | null;
@@ -91,29 +92,29 @@ type CodexResolvedStreamState = Readonly<{
     replacedExistingRecords: boolean;
 }>;
 
-export type CodexRolloutDirectTranscriptPageParams = Readonly<{
+export type CodexRolloutExternalSessionTranscriptPageParams = Readonly<{
     direction: 'older' | 'newer';
     cursor?: string;
     maxBytes: number;
     maxItems: number;
 }>;
 
-export type CodexRolloutDirectTranscriptPageResult = Readonly<{
-    items: DirectTranscriptRawMessageV1[];
+export type CodexRolloutExternalSessionTranscriptPageResult = Readonly<{
+    items: ExternalSessionTranscriptRawMessageV1[];
     nextCursor: string | null;
     tailCursor: string | null;
     hasMore: boolean;
     truncated: boolean;
 }>;
 
-export type CodexRolloutDirectTranscriptReadAfterParams = Readonly<{
+export type CodexRolloutExternalSessionTranscriptReadAfterParams = Readonly<{
     cursor: string;
     maxBytes: number;
     maxItems: number;
 }>;
 
-export type CodexRolloutDirectTranscriptReadAfterResult = Readonly<{
-    items: DirectTranscriptRawMessageV1[];
+export type CodexRolloutExternalSessionTranscriptReadAfterResult = Readonly<{
+    items: ExternalSessionTranscriptRawMessageV1[];
     nextCursor: string | null;
     truncated: boolean;
 }>;
@@ -148,11 +149,11 @@ function decodeBackwardCursor(raw: string | undefined): CodexBackwardMergedCurso
     }
 }
 
-function measureDirectTranscriptItemBytes(item: DirectTranscriptRawMessageV1): number {
+function measureDirectTranscriptItemBytes(item: ExternalSessionTranscriptRawMessageV1): number {
     return Buffer.byteLength(JSON.stringify(item), 'utf8');
 }
 
-function compareDirectTranscriptItemsOldestFirst(left: DirectTranscriptRawMessageV1, right: DirectTranscriptRawMessageV1): number {
+function compareDirectTranscriptItemsOldestFirst(left: ExternalSessionTranscriptRawMessageV1, right: ExternalSessionTranscriptRawMessageV1): number {
     if (left.createdAtMs !== right.createdAtMs) return left.createdAtMs - right.createdAtMs;
     return left.id.localeCompare(right.id);
 }
@@ -640,9 +641,19 @@ async function resolveSnapshotTitle(
             resolveRolloutChronologyMs(left.stream) - resolveRolloutChronologyMs(right.stream)
             || left.stream.mtimeMs - right.stream.mtimeMs
             || left.stream.fileRelPath.localeCompare(right.stream.fileRelPath),
-        )[0];
+    )[0];
     if (!primaryRootStream) return null;
-    return readCodexSessionTitleFromRollout(primaryRootStream.stream.filePath);
+    const result = await createSessionStateSyncEngine({
+        capabilities: CODEX_SESSION_STATE_CAPABILITIES,
+        facet: codexSessionStateFacet,
+    }).readProviderField({
+        ctx: {
+        sessionId: primaryRootStream.stream.threadId,
+        rolloutFilePath: primaryRootStream.stream.filePath,
+        },
+        fieldId: 'display.title',
+    });
+    return result.ok ? result.value : null;
 }
 
 function resolveSnapshotWorkingDirectory(
@@ -715,7 +726,7 @@ function resolveRolloutChronologyMs(stream: CodexDirectTranscriptRolloutStream):
 }
 
 export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     activeServerDir: string;
     env?: NodeJS.ProcessEnv;
     remoteSessionId: string;
@@ -736,7 +747,7 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
         if (params.previousSnapshot?.rolloutHome) {
             return params.previousSnapshot;
         }
-        const appServerMetadata = await resolveCodexDirectSessionAppServerMetadata({
+        const appServerMetadata = await resolveCodexExternalSessionAppServerMetadata({
             source: params.source,
             activeServerDir: params.activeServerDir,
             remoteSessionId: params.remoteSessionId,
@@ -788,7 +799,7 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
     const workingDirectoryFromRollout = resolveSnapshotWorkingDirectory(streamStates);
     const appServerMetadata = workingDirectoryFromRollout
         ? null
-        : await resolveCodexDirectSessionAppServerMetadata({
+        : await resolveCodexExternalSessionAppServerMetadata({
             source: params.source,
             activeServerDir: params.activeServerDir,
             remoteSessionId: params.remoteSessionId,
@@ -812,11 +823,11 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
 
 export function pageCodexRolloutDirectTranscriptSnapshot(
     snapshot: CodexRolloutDirectTranscriptSnapshot,
-    params: CodexRolloutDirectTranscriptPageParams,
-): CodexRolloutDirectTranscriptPageResult {
+    params: CodexRolloutExternalSessionTranscriptPageParams,
+): CodexRolloutExternalSessionTranscriptPageResult {
     if (snapshot.rolloutHome === null) {
         const previewItem = snapshot.appServerMetadata
-            ? mapCodexDirectSessionAppServerPreviewToMessage({
+            ? mapCodexExternalSessionAppServerPreviewToMessage({
                 remoteSessionId: snapshot.remoteSessionId,
                 metadata: snapshot.appServerMetadata,
             })
@@ -889,8 +900,8 @@ export function pageCodexRolloutDirectTranscriptSnapshot(
 
 export function readAfterCodexRolloutDirectTranscriptSnapshot(
     snapshot: CodexRolloutDirectTranscriptSnapshot,
-    params: CodexRolloutDirectTranscriptReadAfterParams,
-): CodexRolloutDirectTranscriptReadAfterResult {
+    params: CodexRolloutExternalSessionTranscriptReadAfterParams,
+): CodexRolloutExternalSessionTranscriptReadAfterResult {
     if (snapshot.rolloutHome === null) {
         if (params.cursor === 'tail' && snapshot.appServerMetadata) {
             return {
@@ -906,7 +917,7 @@ export function readAfterCodexRolloutDirectTranscriptSnapshot(
             const nextCursor = snapshot.appServerMetadata ? buildAppServerPreviewCursor(snapshot.appServerMetadata) : previousCursor;
             const changed = snapshot.appServerMetadata ? nextCursor !== previousCursor : false;
             const previewItem = changed && snapshot.appServerMetadata
-                ? mapCodexDirectSessionAppServerPreviewToMessage({
+                ? mapCodexExternalSessionAppServerPreviewToMessage({
                     remoteSessionId: snapshot.remoteSessionId,
                     metadata: snapshot.appServerMetadata,
                 })
@@ -948,7 +959,7 @@ export function readAfterCodexRolloutDirectTranscriptSnapshot(
 
     const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
-    const items: DirectTranscriptRawMessageV1[] = [];
+    const items: ExternalSessionTranscriptRawMessageV1[] = [];
     let usedBytes = 0;
     let truncated = false;
     const progressByStreamId = new Map(cursorOffsets);

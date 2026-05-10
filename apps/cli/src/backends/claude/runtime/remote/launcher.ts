@@ -55,13 +55,25 @@ function readRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
+function readNonEmptyString(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
 function readRemoteControlTerminalMode(session: Session): string | null {
     if (session.terminalRuntime?.mode) return session.terminalRuntime.mode;
+    if (readNonEmptyString(session.terminalRuntime?.tmuxTarget)) return 'tmux';
 
     const metadata = readRecord(session.client.getMetadataSnapshot?.());
     const terminal = readRecord(metadata?.terminal);
-    const mode = terminal?.mode;
-    return typeof mode === 'string' && mode.trim().length > 0 ? mode.trim() : null;
+    const mode = readNonEmptyString(terminal?.mode);
+    if (mode) return mode;
+
+    const tmux = readRecord(terminal?.tmux);
+    if (readNonEmptyString(tmux?.target)) return 'tmux';
+
+    return null;
 }
 
 export async function launchClaudeRemoteSession(session: Session): Promise<'switch' | 'exit'> {

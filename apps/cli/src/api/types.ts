@@ -10,7 +10,7 @@ import {
 import type {
   AcpConfigOptionOverridesV1,
   AcpSessionModeOverrideV1,
-  DirectSessionsSource,
+  ExternalSessionsSource,
   ModelOverrideV1,
   RuntimeDescriptorMetadataCarrier,
   SessionRollbackRangesV1,
@@ -423,12 +423,12 @@ export const MessageContentSchema = z.union([UserMessageSchema, AgentMessageSche
 
 export type MessageContent = z.infer<typeof MessageContentSchema>
 
-export type DirectSessionMetadataV1 = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
+export type ExternalSessionMetadataV1 = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   v: 1,
   providerId: string,
   machineId: string,
   remoteSessionId: string,
-  source: DirectSessionsSource,
+  source: ExternalSessionsSource,
   linkedAtMs: number,
   lastKnownActivityAtMs?: number,
   followPolicyV1?: {
@@ -436,7 +436,7 @@ export type DirectSessionMetadataV1 = Readonly<Partial<RuntimeDescriptorMetadata
     policy: 'attached_only' | 'background_follow',
     updatedAtMs: number,
   },
-  directSessionAttentionV1?: {
+  externalSessionAttentionV1?: {
     v: 1,
     observedProgressToken?: string,
     viewedProgressToken?: string,
@@ -451,7 +451,7 @@ export type ExternalHistoryImportMetadataV1 = {
   providerId: string,
   remoteSessionId: string,
   importedAtMs: number,
-  source: DirectSessionsSource,
+  source: ExternalSessionsSource,
 };
 
 export type SessionHandoffMetadataV1 = {
@@ -498,7 +498,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   opencodeBackendMode?: 'server' | 'acp',
   opencodeServerBaseUrl?: string,
   opencodeServerBaseUrlExplicit?: true,
-  directSessionV1?: DirectSessionMetadataV1,
+  externalSessionV1?: ExternalSessionMetadataV1,
   externalHistoryImportV1?: ExternalHistoryImportMetadataV1,
   handoffV1?: SessionHandoffMetadataV1,
   auggieSessionId?: string, // Auggie ACP session ID (opaque)

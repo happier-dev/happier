@@ -1,4 +1,4 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import type { FileBackedTranscriptSessionStore, FileBackedTranscriptSessionStoreKey } from '@/api/session/fileBackedTranscripts/store';
 
 import type {
@@ -10,12 +10,12 @@ import { createClaudeProjectedJsonlSessionStore } from './createClaudeProjectedJ
 import { pageClaudeJsonlSessionTranscript, readAfterClaudeJsonlSessionTranscript } from './operations';
 
 export function createClaudeJsonlSessionStore(key: FileBackedTranscriptSessionStoreKey): FileBackedTranscriptSessionStore<
-    DirectTranscriptRawMessageV1,
+    ExternalSessionTranscriptRawMessageV1,
     ClaudeJsonlSessionStoreActivity,
     string | null
 > {
     return createClaudeProjectedJsonlSessionStore<
-        DirectTranscriptRawMessageV1,
+        ExternalSessionTranscriptRawMessageV1,
         ClaudeJsonlSessionStoreActivity,
         ClaudeJsonlSessionStorePageOlderParams,
         ClaudeJsonlSessionStoreReadAfterParams

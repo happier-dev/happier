@@ -124,6 +124,7 @@ function resolveClaudeSessionRuntimeExtrasInternal(
       || arg === '--permission-mode'
       || arg.startsWith('--permission-mode=')
       || arg === '--permission-mode-updated-at'
+      || arg === '--account-settings-version-hint'
       || arg === '--existing-session'
       || arg === '--happy-starting-mode'
       || arg === '--started-by'
@@ -134,6 +135,7 @@ function resolveClaudeSessionRuntimeExtrasInternal(
         arg === '--profile'
         || arg === '--permission-mode'
         || arg === '--permission-mode-updated-at'
+        || arg === '--account-settings-version-hint'
         || arg === '--existing-session'
         || arg === '--happy-starting-mode'
         || arg === '--started-by'

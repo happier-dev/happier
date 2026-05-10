@@ -1,4 +1,4 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import type { FileBackedTranscriptSessionStore, FileBackedTranscriptSessionStoreKey } from '@/api/session/fileBackedTranscripts/store';
 import { createProjectedJsonlSessionStore } from '@/api/session/fileBackedTranscripts/jsonl/createProjectedJsonlSessionStore';
 
@@ -20,16 +20,16 @@ type PagingParams = Readonly<{
   maxItems?: number;
 }>;
 
-function measureItemBytes(item: DirectTranscriptRawMessageV1): number {
+function measureItemBytes(item: ExternalSessionTranscriptRawMessageV1): number {
   return Buffer.byteLength(JSON.stringify(item), 'utf8');
 }
 
-function pageOlderItems(items: readonly DirectTranscriptRawMessageV1[], params?: PagingParams) {
+function pageOlderItems(items: readonly ExternalSessionTranscriptRawMessageV1[], params?: PagingParams) {
   const endExclusive = decodeOhMyPiTranscriptCursor(params?.cursor ?? null, items.length);
   const maxItems = Math.max(1, Math.trunc(params?.maxItems ?? 100));
   const maxBytes = Math.max(1024, Math.trunc(params?.maxBytes ?? 1024 * 1024));
 
-  const selected: DirectTranscriptRawMessageV1[] = [];
+  const selected: ExternalSessionTranscriptRawMessageV1[] = [];
   let usedBytes = 0;
   let nextIndex = endExclusive;
   for (let index = Math.min(endExclusive, items.length) - 1; index >= 0; index -= 1) {
@@ -55,12 +55,12 @@ function pageOlderItems(items: readonly DirectTranscriptRawMessageV1[], params?:
   };
 }
 
-function readAfterItems(items: readonly DirectTranscriptRawMessageV1[], params?: PagingParams) {
+function readAfterItems(items: readonly ExternalSessionTranscriptRawMessageV1[], params?: PagingParams) {
   const startIndex = decodeOhMyPiTranscriptCursor(params?.cursor ?? null, items.length);
   const maxItems = Math.max(1, Math.trunc(params?.maxItems ?? 100));
   const maxBytes = Math.max(1024, Math.trunc(params?.maxBytes ?? 1024 * 1024));
 
-  const selected: DirectTranscriptRawMessageV1[] = [];
+  const selected: ExternalSessionTranscriptRawMessageV1[] = [];
   let usedBytes = 0;
   let nextIndex = Math.min(startIndex, items.length);
   for (let index = Math.min(startIndex, items.length); index < items.length; index += 1) {
@@ -85,7 +85,7 @@ function readAfterItems(items: readonly DirectTranscriptRawMessageV1[], params?:
 }
 
 export function createOhMyPiJsonlSessionStore(key: FileBackedTranscriptSessionStoreKey): FileBackedTranscriptSessionStore<
-  DirectTranscriptRawMessageV1,
+  ExternalSessionTranscriptRawMessageV1,
   OhMyPiSessionStoreActivity,
   string | null
 > {

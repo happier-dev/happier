@@ -40,7 +40,7 @@ async function resolveBindings(agent: Readonly<{ getRuntimeCore?: () => Promise<
         },
         executionSurfaces: {
             terminalRuntime: null,
-            directSessions: null,
+            externalSessions: null,
             attach: null,
             sessionHandoff: null,
         },

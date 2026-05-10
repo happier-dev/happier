@@ -5,15 +5,15 @@ import { getProjectPath } from '../utils/path';
 import { resolveClaudeConfigDirOverride } from '../utils/resolveClaudeConfigDirOverride';
 import type { ClaudeSessionBundle } from '../../../session/handoff/types';
 
-function resolveDirectSessionSourceTranscriptPath(params: Readonly<{
+function resolveExternalSessionSourceTranscriptPath(params: Readonly<{
   metadata: Record<string, unknown>;
   remoteSessionId: string;
 }>): string | null {
-  const directSession = params.metadata.directSessionV1;
-  if (!directSession || typeof directSession !== 'object' || Array.isArray(directSession)) {
+  const externalSession = params.metadata.externalSessionV1;
+  if (!externalSession || typeof externalSession !== 'object' || Array.isArray(externalSession)) {
     return null;
   }
-  const source = (directSession as { source?: unknown }).source;
+  const source = (externalSession as { source?: unknown }).source;
   if (!source || typeof source !== 'object' || Array.isArray(source)) {
     return null;
   }
@@ -38,8 +38,8 @@ function resolveTranscriptPath(params: Readonly<{
   remoteSessionId: string;
   env: NodeJS.ProcessEnv;
 }>): string {
-  const directSessionTranscriptPath = resolveDirectSessionSourceTranscriptPath(params);
-  if (directSessionTranscriptPath) return directSessionTranscriptPath;
+  const externalSessionTranscriptPath = resolveExternalSessionSourceTranscriptPath(params);
+  if (externalSessionTranscriptPath) return externalSessionTranscriptPath;
 
   const explicit = typeof params.metadata.claudeTranscriptPath === 'string' ? params.metadata.claudeTranscriptPath.trim() : '';
   if (explicit) return explicit;
@@ -67,7 +67,7 @@ async function resolveReadableTranscriptPath(params: Readonly<{
   env: NodeJS.ProcessEnv;
 }>): Promise<string> {
   const candidatePaths = [
-    resolveDirectSessionSourceTranscriptPath(params),
+    resolveExternalSessionSourceTranscriptPath(params),
     typeof params.metadata.claudeTranscriptPath === 'string' ? params.metadata.claudeTranscriptPath.trim() : '',
   ]
     .filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0);

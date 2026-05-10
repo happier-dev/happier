@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 
-import { canonicalizeDirectSessionsPath } from '@/session/external/sourceValidation';
+import { canonicalizeExternalSessionsPath } from '@/session/external/sourceValidation';
 import { getTerminalId } from '@/agent/terminalRuntime/providers/getTerminalId';
 
 import { resolveConfiguredOhMyPiAgentDir } from '../externalSessions/resolveOhMyPiAgentDir';
@@ -43,7 +43,7 @@ function parseRemoteSessionIdFromSessionFile(sessionFilePath: string): string | 
 
 function canonicalizePotentiallyMissingFilePath(rawPath: string): string {
     const resolvedPath = resolve(rawPath);
-    const canonicalDirectory = canonicalizeDirectSessionsPath(dirname(resolvedPath));
+    const canonicalDirectory = canonicalizeExternalSessionsPath(dirname(resolvedPath));
     return join(canonicalDirectory, basename(resolvedPath));
 }
 

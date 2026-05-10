@@ -1,4 +1,4 @@
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
 import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
 import { encodeClaudeRawJsonlTranscriptForwardCursor } from './claudeRawJsonlTranscriptForwardCursor';
@@ -36,7 +36,7 @@ function decodeBackwardCursor(raw: string | undefined): ClaudeRawBackwardCursorV
 }
 
 export async function pageClaudeRawJsonlSessionTranscript(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     env?: NodeJS.ProcessEnv;
     remoteSessionId: string;
     cursor?: string;

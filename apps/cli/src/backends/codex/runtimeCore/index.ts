@@ -9,6 +9,7 @@ import type { ResolvedBackendContribution, ResolvedProviderContribution } from '
 
 import { createCodexExecutionRunBackend } from './executionRuns';
 import { createCodexSessionRuntime } from '../runtime/session/createSessionRuntime';
+import { codexSessionStateFacet } from '../sessionState';
 
 type CodexRuntimeCoreParams = Readonly<{
     backend: ResolvedBackendContribution;
@@ -37,6 +38,9 @@ export function createCodexRuntimeCore(params: CodexRuntimeCoreParams): CliEngin
         throw new Error('Codex runtimeCore require codex backend/provider contributions');
     }
     return Object.freeze({
+        facets: {
+            sessionState: codexSessionStateFacet,
+        },
         runtimeCore: createCodexRuntimeCoreObject(),
     });
 }

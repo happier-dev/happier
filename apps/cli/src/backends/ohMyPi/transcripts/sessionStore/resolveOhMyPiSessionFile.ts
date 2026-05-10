@@ -1,12 +1,12 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { resolveOhMyPiAgentDir } from '@/backends/ohMyPi/externalSessions/resolveOhMyPiAgentDir';
 
 export async function resolveOhMyPiSessionFile(params: Readonly<{
-  source: DirectSessionsSource;
+  source: ExternalSessionsSource;
   remoteSessionId: string;
   env?: NodeJS.ProcessEnv;
 }>): Promise<Readonly<{ filePath: string }> | null> {

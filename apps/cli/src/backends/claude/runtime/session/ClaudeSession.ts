@@ -10,6 +10,10 @@ import { configuration } from '@/configuration';
 import { ClaudePermissionRpcRouter } from '../../utils/permissionRpcRouter';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import {
+    writeSessionStateFieldWithMetadataPort,
+    writeSessionStateFieldWithMetadataPortBestEffort,
+} from '@/agent/runtime/state/writeSessionStateFieldWithMetadataPort';
+import {
     recordPrimaryTurnCompleted,
     recordPrimaryTurnInProgress,
 } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
@@ -43,7 +47,7 @@ function resolveClaudeProjectIdFromTranscriptPath(params: Readonly<{
     return trimmedProjectId || null;
 }
 
-function buildClaudeDirectSessionMetadata(params: Readonly<{
+function buildClaudeExternalSessionMetadata(params: Readonly<{
     metadata: Metadata;
     sessionId: string;
     transcriptPath: string | null;
@@ -61,7 +65,7 @@ function buildClaudeDirectSessionMetadata(params: Readonly<{
 
     return {
         ...params.metadata,
-        directSessionV1: {
+        externalSessionV1: {
             v: 1,
             providerId: 'claude',
             machineId,
@@ -358,16 +362,18 @@ export class Session {
         }
         this.lastPermissionMode = canonical;
         this.lastPermissionModeUpdatedAt = updatedAt;
-        updateMetadataBestEffort(
-            this.client,
-            (metadata) => ({
-                ...metadata,
+        writeSessionStateFieldWithMetadataPortBestEffort({
+            sessionId: this.client.sessionId,
+            fieldId: 'intent.permissionMode',
+            value: {
+                v: 1,
                 permissionMode: canonical,
-                permissionModeUpdatedAt: updatedAt
-            }),
-            '[Session]',
-            'set_last_permission_mode',
-        );
+                updatedAt,
+            },
+            updateMetadata: (updater) => this.client.updateMetadata(updater),
+            reason: 'reconciliation',
+            metadataReason: 'set_last_permission_mode',
+        });
     }
 
     adoptLastPermissionModeFromMetadata = (mode: PermissionMode, updatedAt: number): boolean => {
@@ -464,15 +470,27 @@ export class Session {
         // Update metadata with Claude Code session ID
         if (didSessionIdChange) {
             this.trackCriticalMetadataWrite(
-                () => this.client.updateMetadata((metadata) => buildClaudeDirectSessionMetadata({
-                    metadata: clearClaudeLastAssistantUuid({
-                        ...metadata,
-                        claudeSessionId: sessionId,
-                        claudeTranscriptPath: this.transcriptPath,
-                    }),
-                    sessionId,
-                    transcriptPath: this.transcriptPath,
-                })),
+                async () => {
+                    await writeSessionStateFieldWithMetadataPort({
+                        sessionId: this.client.sessionId,
+                        fieldId: 'identity.vendorSessionId',
+                        value: {
+                            metadataKey: 'claudeSessionId',
+                            value: sessionId,
+                        },
+                        updateMetadata: (updater) => this.client.updateMetadata(updater),
+                        reason: 'reconciliation',
+                        metadataReason: 'claude_session_found',
+                        postprocess: (metadata) => buildClaudeExternalSessionMetadata({
+                            metadata: clearClaudeLastAssistantUuid({
+                                ...metadata,
+                                claudeTranscriptPath: this.transcriptPath,
+                            }),
+                            sessionId,
+                            transcriptPath: this.transcriptPath,
+                        }),
+                    });
+                },
                 'claude_session_found',
             );
             logger.debug(`[Session] Claude Code session ID ${sessionId} added to metadata`);
@@ -481,7 +499,7 @@ export class Session {
             // Same session, but we learned a more precise transcript path from hooks.
             updateMetadataBestEffort(
                 this.client,
-                (metadata) => buildClaudeDirectSessionMetadata({
+                (metadata) => buildClaudeExternalSessionMetadata({
                     metadata: didKnownTranscriptPathChange
                         ? clearClaudeLastAssistantUuid({
                             ...metadata,

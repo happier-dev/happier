@@ -1,4 +1,4 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { createLocalHostedDirectTranscriptMirror } from '@/agent/terminalRuntime/createLocalHostedDirectTranscriptMirror';
 import type { LocalHostedDirectTranscriptBinding } from '@/agent/terminalRuntime/directTranscriptBinding';
@@ -217,13 +217,13 @@ export class CodexTerminalRuntimeMirror {
         }
     }
 
-    private async handleSharedStoreTranscriptItems(items: readonly DirectTranscriptRawMessageV1[]): Promise<void> {
+    private async handleSharedStoreTranscriptItems(items: readonly ExternalSessionTranscriptRawMessageV1[]): Promise<void> {
         for (const item of items) {
             await this.handleSharedStoreTranscriptItem(item);
         }
     }
 
-    private async handleSharedStoreTranscriptItem(item: DirectTranscriptRawMessageV1): Promise<void> {
+    private async handleSharedStoreTranscriptItem(item: ExternalSessionTranscriptRawMessageV1): Promise<void> {
         const stableItemId = typeof item.id === 'string' && item.id.trim().length > 0 ? item.id : null;
         if (stableItemId) {
             if (this.processedSharedStoreItemIds.has(stableItemId)) {

@@ -1,4 +1,4 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 type SessionHeader = Readonly<{
   type: 'session';
@@ -18,7 +18,7 @@ type SessionEntry = Readonly<{
 }>;
 
 type ProjectedSnapshot = Readonly<{
-  items: readonly DirectTranscriptRawMessageV1[];
+  items: readonly ExternalSessionTranscriptRawMessageV1[];
   title: string | null;
   workingDirectory: string | null;
   createdAtMs: number | null;
@@ -57,7 +57,7 @@ function projectSummaryMessage(params: Readonly<{
   createdAtMs: number;
   summary: string;
   compact: boolean;
-}>): DirectTranscriptRawMessageV1 {
+}>): ExternalSessionTranscriptRawMessageV1 {
   return {
     id: buildStableId(params.sessionFilePath, params.entryId, params.compact ? 'compaction' : 'branch_summary'),
     localId: buildStableId(params.sessionFilePath, params.entryId, params.compact ? 'compaction' : 'branch_summary'),
@@ -82,7 +82,7 @@ function projectUserMessage(params: Readonly<{
   entryId: string;
   createdAtMs: number;
   message: Record<string, unknown>;
-}>): DirectTranscriptRawMessageV1[] {
+}>): ExternalSessionTranscriptRawMessageV1[] {
   const content = params.message.content;
   if (typeof content === 'string') {
     return [{
@@ -132,7 +132,7 @@ function projectAssistantMessage(params: Readonly<{
   entryId: string;
   createdAtMs: number;
   message: Record<string, unknown>;
-}>): DirectTranscriptRawMessageV1[] {
+}>): ExternalSessionTranscriptRawMessageV1[] {
   const content = params.message.content;
   const usage = asRecord(params.message.usage) ?? undefined;
   if (typeof content === 'string') {
@@ -159,7 +159,7 @@ function projectAssistantMessage(params: Readonly<{
     return [];
   }
 
-  const out: DirectTranscriptRawMessageV1[] = [];
+  const out: ExternalSessionTranscriptRawMessageV1[] = [];
   for (let index = 0; index < content.length; index += 1) {
     const block = asRecord(content[index]);
     if (!block) continue;
@@ -287,7 +287,7 @@ export function projectOhMyPiSessionSnapshotToDirectMessages(params: Readonly<{
   }
   visibleEntries.reverse();
 
-  const items: DirectTranscriptRawMessageV1[] = [];
+  const items: ExternalSessionTranscriptRawMessageV1[] = [];
   let lastActivityAtMs = parseTimestampMs(header?.timestamp);
   for (const entry of visibleEntries) {
     const entryId = String(entry.id);

@@ -7,7 +7,7 @@ import {
   resolvePersistedCodexRuntimeIdentity,
 } from '@happier-dev/agents';
 import {
-  DirectSessionsSourceSchema,
+  ExternalSessionsSourceSchema,
   readCanonicalRuntimeDescriptorV1ForProvider,
 } from '@happier-dev/protocol';
 
@@ -18,7 +18,7 @@ function resolveCodexRuntimeSourceAffinity(source: unknown): Readonly<{
   connectedServiceId?: string;
   connectedServiceProfileId?: string;
 }> {
-  const parsedSource = DirectSessionsSourceSchema.safeParse(source);
+  const parsedSource = ExternalSessionsSourceSchema.safeParse(source);
   if (!parsedSource.success || parsedSource.data.kind !== 'codexHome') {
     return {};
   }

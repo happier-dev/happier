@@ -31,7 +31,7 @@ function parseRemoteSessionTimestampMs(remoteSessionId: string): number | null {
 }
 
 function readTargetedDayScanLimitDays(env?: NodeJS.ProcessEnv): number {
-  const raw = Number.parseInt(String(env?.HAPPIER_CODEX_DIRECT_SESSIONS_MAX_DAY_SCAN_DAYS ?? ''), 10);
+  const raw = Number.parseInt(String(env?.HAPPIER_CODEX_EXTERNAL_SESSIONS_MAX_DAY_SCAN_DAYS ?? ''), 10);
   const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 365;
   return Math.max(1, Math.min(3_650, configured));
 }

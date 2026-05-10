@@ -3,9 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { buildCodexAgentRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 import {
-  DirectSessionsSourceSchema,
+  ExternalSessionsSourceSchema,
   readCanonicalRuntimeDescriptorV1ForProvider,
   readRuntimeDescriptorV1ForProvider,
   readRuntimeDescriptorV1FromMetadata,
@@ -25,11 +25,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function sanitizeDirectCodexSourceForHandoff(source: DirectSessionsSource | undefined): DirectSessionsSource | undefined {
+function sanitizeDirectCodexSourceForHandoff(source: ExternalSessionsSource | undefined): ExternalSessionsSource | undefined {
   if (!source || source.kind !== 'codexHome') return source;
   // Absolute home paths are machine-specific and must not be transported via handoff bundles.
-  const { homePath: _homePath, ...rest } = source as DirectSessionsSource & { homePath?: string };
-  return rest as DirectSessionsSource;
+  const { homePath: _homePath, ...rest } = source as ExternalSessionsSource & { homePath?: string };
+  return rest as ExternalSessionsSource;
 }
 
 async function resolvePreferredCodexHomes(params: Readonly<{
@@ -51,14 +51,14 @@ async function resolvePreferredCodexHomes(params: Readonly<{
   return resolvedHomes.includes(fallbackCodexHome) ? resolvedHomes : [...resolvedHomes, fallbackCodexHome];
 }
 
-function resolveCodexSource(metadata: Record<string, unknown>): DirectSessionsSource | undefined {
+function resolveCodexSource(metadata: Record<string, unknown>): ExternalSessionsSource | undefined {
   const runtimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(
     readRuntimeDescriptorV1FromMetadata(metadata),
     'codex',
   );
-  const directSession = asRecord(metadata.directSessionV1);
-  const parsedDirectSource = directSession?.providerId === 'codex'
-    ? DirectSessionsSourceSchema.safeParse(directSession.source)
+  const externalSession = asRecord(metadata.externalSessionV1);
+  const parsedDirectSource = externalSession?.providerId === 'codex'
+    ? ExternalSessionsSourceSchema.safeParse(externalSession.source)
     : null;
   if (parsedDirectSource?.success && parsedDirectSource.data.kind === 'codexHome') {
     return parsedDirectSource.data;
@@ -77,11 +77,11 @@ function resolveCodexSource(metadata: Record<string, unknown>): DirectSessionsSo
       home: 'connectedService' as const,
       ...(connectedServiceId ? { connectedServiceId } : {}),
       ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
-    } satisfies DirectSessionsSource
+    } satisfies ExternalSessionsSource
     : {
       kind: 'codexHome' as const,
       home: 'user' as const,
-    } satisfies DirectSessionsSource;
+    } satisfies ExternalSessionsSource;
 }
 
 export async function exportCodexSessionBundle(params: Readonly<{

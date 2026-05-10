@@ -1,11 +1,11 @@
 import { stat } from 'node:fs/promises';
 
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { resolveClaudeJsonlSessionFile } from './resolveClaudeJsonlSessionFile';
 
 export async function readClaudeJsonlSessionActivity(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     remoteSessionId: string;
     env?: NodeJS.ProcessEnv;
 }>): Promise<Readonly<{ lastActivityAtMs: number | null }>> {

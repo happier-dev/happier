@@ -1,9 +1,9 @@
+import { existsSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
-import { getExecutionRunBackendDescriptor } from '@/agent/executionRuns/registry/executionRunBackendRegistry';
-
 describe('gemini execution-run legacy registry', () => {
-  it('does not keep gemini in the legacy built-in execution-run registry', () => {
-    expect(getExecutionRunBackendDescriptor('gemini')).toBeNull();
+  it('does not keep a legacy built-in execution-run registry module', () => {
+    expect(existsSync(new URL('../../../agent/executionRuns/registry/executionRunBackendRegistry.ts', import.meta.url))).toBe(false);
   });
 });

@@ -1,12 +1,14 @@
 import type { AgentState, Metadata } from '@/api/types';
-import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { writeSessionStateFieldWithMetadataPortBestEffort } from '@/agent/runtime/state/writeSessionStateFieldWithMetadataPort';
 import {
     applyAgentStateRequestPushNotifiedAt,
     clonePlainObjectToNullProto,
     cloneStringKeyedRecordToNullProto,
 } from '@/api/session/agentStateRecords';
-import { computeNextMetadataStringOverrideV1, SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
-import { isClaudeLocalPermissionBridgeAgentStateRequest } from '@happier-dev/agents';
+import {
+    isClaudeLocalPermissionBridgeAgentStateRequest,
+} from '@happier-dev/agents';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 import { seedAllowlistFromCompletedRequests } from '@/agent/permissions/applyPermissionAllowlistUpdates';
 
@@ -163,19 +165,21 @@ export function clearClaudePendingRequestsBestEffort(params: Readonly<{
 
 export function clearClaudeSessionModeOverrideBestEffort(sessionClient: ClaudeSessionClient): void {
     const updatedAt = Date.now();
-    updateMetadataBestEffort(
-        sessionClient,
-        (metadata): Metadata =>
-            computeNextMetadataStringOverrideV1({
-                metadata: cloneStringKeyedRecordToNullProto(metadata),
-                overrideKey: SESSION_MODE_OVERRIDE_KEY,
-                valueKey: 'modeId',
-                value: '',
-                updatedAt,
-            }) as unknown as Metadata,
-        '[Claude]',
-        'exit_plan_mode_clear_session_mode_override',
-    );
+    writeSessionStateFieldWithMetadataPortBestEffort({
+        sessionId: sessionClient.sessionId,
+        fieldId: 'intent.acpSessionMode',
+        value: {
+            v: 1,
+            modeId: null,
+            updatedAt,
+        },
+        updateMetadata: (updater) =>
+            sessionClient.updateMetadata((metadata) =>
+                updater(cloneStringKeyedRecordToNullProto(metadata) as Metadata),
+            ),
+        reason: 'reconciliation',
+        metadataReason: 'exit_plan_mode_clear_session_mode_override',
+    });
 }
 
 export function applyClaudePermissionRequestPushNotifiedAt(

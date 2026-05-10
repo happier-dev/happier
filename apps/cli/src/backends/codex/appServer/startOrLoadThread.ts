@@ -34,7 +34,13 @@ export async function startOrLoadCodexAppServerThread(params: Readonly<{
     const existingSessionId = trimSessionId(options.existingSessionId);
     // null policy (Happier 'default') → omit approvalPolicy/sandbox so Codex uses ~/.codex/config.toml.
     const policy = params.resolveCurrentPolicy();
-    const policyFields = policy ? { approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox } : {};
+    const policyFields = policy
+        ? {
+            approvalPolicy: policy.approvalPolicy,
+            ...(policy.approvalsReviewer ? { approvalsReviewer: policy.approvalsReviewer } : {}),
+            sandbox: policy.sandbox,
+        }
+        : {};
 
     let response: unknown;
     let nextThreadId: string | null = null;

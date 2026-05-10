@@ -83,4 +83,27 @@ describe('createCodexRuntimeCore', () => {
     });
     expect(runtimeRun).not.toHaveBeenCalled();
   });
+
+  it('exposes display.title sync through the runtime session-state facet', async () => {
+    const runtimeCore = createCodexRuntimeCore({
+      backend: {
+        id: 'codex',
+      } as never,
+      provider: {
+        id: 'codex',
+      } as never,
+    });
+
+    expect(runtimeCore.facets?.sessionState?.capabilities).toMatchObject({
+      display: {
+        title: {
+          supported: true,
+          happierToProvider: {
+            supported: true,
+            transport: 'runtime-hook',
+          },
+        },
+      },
+    });
+  });
 });

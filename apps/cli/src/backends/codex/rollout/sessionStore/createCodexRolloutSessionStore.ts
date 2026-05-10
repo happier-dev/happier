@@ -3,7 +3,7 @@ import type {
     FileBackedTranscriptSessionStoreLifecycleState,
     FileBackedTranscriptSubscriptionListener,
 } from '@/api/session/fileBackedTranscripts/store';
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { createCodexRolloutSemanticTracker } from '../createCodexRolloutSemanticTracker';
 import { mapCodexRolloutEventToActions } from '../projection/mapCodexRolloutEventToActions';
@@ -26,13 +26,13 @@ import {
 
 type CodexRolloutStoreActivity = Readonly<{ lastActivityAtMs: number | null }>;
 
-class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<DirectTranscriptRawMessageV1, CodexRolloutStoreActivity, string | null> {
+class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<ExternalSessionTranscriptRawMessageV1, CodexRolloutStoreActivity, string | null> {
     private lifecycleState: FileBackedTranscriptSessionStoreLifecycleState = 'warm_detached';
     private readonly discoveryPollIntervalMs = 250;
     private readonly subscriptionDrainMaxBytes = 8 * 1024 * 1024;
     private readonly subscriptionDrainMaxItems = 100;
     private tailCursor: string | null = null;
-    private readonly subscriptionListeners = new Set<FileBackedTranscriptSubscriptionListener<DirectTranscriptRawMessageV1>>();
+    private readonly subscriptionListeners = new Set<FileBackedTranscriptSubscriptionListener<ExternalSessionTranscriptRawMessageV1>>();
     private subscriptionRuntime: CodexRolloutFollowerRuntime | null = null;
     private subscriptionRuntimeStartupPromise: Promise<void> | null = null;
     private subscriptionRuntimeStartupGeneration = 0;
@@ -101,7 +101,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Direc
         return this.tailCursor;
     }
 
-    subscribe(listener?: FileBackedTranscriptSubscriptionListener<DirectTranscriptRawMessageV1>): () => void {
+    subscribe(listener?: FileBackedTranscriptSubscriptionListener<ExternalSessionTranscriptRawMessageV1>): () => void {
         if (!listener) {
             return () => {};
         }
@@ -423,6 +423,6 @@ function buildStartCursorFromSnapshot(snapshot: Awaited<ReturnType<typeof resolv
 
 export function createCodexRolloutSessionStore(
     options: CodexRolloutSessionStoreOptions,
-): FileBackedTranscriptSessionStore<DirectTranscriptRawMessageV1, CodexRolloutStoreActivity, string | null> {
+): FileBackedTranscriptSessionStore<ExternalSessionTranscriptRawMessageV1, CodexRolloutStoreActivity, string | null> {
     return new CodexRolloutSessionStore(options);
 }

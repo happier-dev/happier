@@ -12,13 +12,13 @@ export type OhMyPiJsonlSessionStore = ReturnType<typeof createOhMyPiJsonlSession
 const registriesByCachePolicyKey = new Map<string, FileBackedTranscriptSessionRegistry<OhMyPiJsonlSessionStore>>();
 
 function resolveDetachedGraceMs(env: NodeJS.ProcessEnv): number {
-  const raw = Number.parseInt(String(env.HAPPIER_DIRECT_SESSIONS_OH_MY_PI_DETACHED_GRACE_MS ?? ''), 10);
+  const raw = Number.parseInt(String(env.HAPPIER_EXTERNAL_SESSIONS_OH_MY_PI_DETACHED_GRACE_MS ?? ''), 10);
   const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 10_000;
   return Math.max(0, Math.min(10 * 60_000, configured));
 }
 
 function resolveColdIdleMs(env: NodeJS.ProcessEnv): number {
-  const raw = Number.parseInt(String(env.HAPPIER_DIRECT_SESSIONS_OH_MY_PI_COLD_IDLE_MS ?? ''), 10);
+  const raw = Number.parseInt(String(env.HAPPIER_EXTERNAL_SESSIONS_OH_MY_PI_COLD_IDLE_MS ?? ''), 10);
   const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 60_000;
   return Math.max(0, Math.min(60 * 60_000, configured));
 }

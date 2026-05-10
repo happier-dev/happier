@@ -1,11 +1,11 @@
 import { readFile } from 'node:fs/promises';
 
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { projectOhMyPiSessionSnapshotToDirectMessages } from './projectOhMyPiSessionSnapshotToDirectMessages';
 
 export type OhMyPiSessionSnapshot = Readonly<{
-  items: readonly DirectTranscriptRawMessageV1[];
+  items: readonly ExternalSessionTranscriptRawMessageV1[];
   tailCursor: string;
   title: string | null;
   workingDirectory: string | null;

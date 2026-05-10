@@ -1,5 +1,6 @@
 import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '@/daemon/types';
+import { buildSessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 
 import { resolveConfiguredClaudeConfigDir } from '../externalSessions/resolveClaudeConfigDir';
 import { resolveClaudeProjectId } from '../utils/path';
@@ -18,8 +19,8 @@ export function buildClaudeRuntimeLocalHandoffMetadata(params: Readonly<{
     vendorResumeId?: string | null;
     nowMs?: number;
     processEnv?: NodeJS.ProcessEnv;
-}>): Partial<Pick<Metadata, 'claudeSessionId' | 'directSessionV1'>> {
-    const runtimeLocalMetadata: Partial<Pick<Metadata, 'claudeSessionId' | 'directSessionV1'>> = {};
+}>): Partial<Pick<Metadata, 'claudeSessionId' | 'externalSessionV1'>> {
+    const runtimeLocalMetadata: Partial<Pick<Metadata, 'claudeSessionId' | 'externalSessionV1'>> = {};
     const vendorResumeId =
         normalizeOptionalString(params.vendorResumeId)
         ?? normalizeOptionalString(params.trackedSession.vendorResumeId)
@@ -29,7 +30,13 @@ export function buildClaudeRuntimeLocalHandoffMetadata(params: Readonly<{
         return runtimeLocalMetadata;
     }
 
-    runtimeLocalMetadata.claudeSessionId = vendorResumeId;
+    Object.assign(
+        runtimeLocalMetadata,
+        buildSessionStateFieldMetadataPatch('identity.vendorSessionId', {
+            metadataKey: 'claudeSessionId',
+            value: vendorResumeId,
+        }),
+    );
 
     if (params.trackedSession.spawnOptions?.transcriptStorage !== 'direct') {
         return runtimeLocalMetadata;
@@ -42,7 +49,7 @@ export function buildClaudeRuntimeLocalHandoffMetadata(params: Readonly<{
         },
     });
     const machineId = typeof params.metadata.machineId === 'string' ? params.metadata.machineId.trim() : '';
-    runtimeLocalMetadata.directSessionV1 = {
+    runtimeLocalMetadata.externalSessionV1 = {
         v: 1,
         providerId: 'claude',
         machineId,

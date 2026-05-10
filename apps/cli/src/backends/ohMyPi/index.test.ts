@@ -7,7 +7,7 @@ describe('backends/ohMyPi/index', () => {
     expect(agent.id).toBe('ohMyPi');
     expect(agent.cliSubcommand).toBe('ohMyPi');
     expect(agent.vendorResumeSupport).toBe('supported');
-    expect(agent.getDirectSessionProviderOps).toBeTypeOf('function');
+    expect(agent.getExternalSessionProviderOps).toBeTypeOf('function');
     expect(agent.getConnectedServicesMaterializer).toBeTypeOf('function');
     expect(agent.getTerminalRuntimeOps).toBeTypeOf('function');
     expect(agent.getRuntimeCore).toBeTypeOf('function');

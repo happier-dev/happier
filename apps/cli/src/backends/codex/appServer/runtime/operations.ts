@@ -35,6 +35,7 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
     beginTurnDiffProjection: () => void;
     resolveCurrentPolicy: () => Readonly<{
         approvalPolicy: unknown;
+        approvalsReviewer?: string;
         sandboxPolicy: unknown;
     }> | null;
     getThreadId: () => string | null;
@@ -180,7 +181,11 @@ export function createCodexAppServerRuntimeOperations(params: Readonly<{
                 // null policy (Happier 'default') → omit approvalPolicy/sandboxPolicy so Codex uses ~/.codex/config.toml.
                 const policy = params.resolveCurrentPolicy();
                 const policyFields = policy
-                    ? { approvalPolicy: policy.approvalPolicy, sandboxPolicy: policy.sandboxPolicy }
+                    ? {
+                        approvalPolicy: policy.approvalPolicy,
+                        ...(policy.approvalsReviewer ? { approvalsReviewer: policy.approvalsReviewer } : {}),
+                        sandboxPolicy: policy.sandboxPolicy,
+                    }
                     : {};
                 const currentModeId = params.getCurrentModeId();
                 const collaborationMode = currentModeId

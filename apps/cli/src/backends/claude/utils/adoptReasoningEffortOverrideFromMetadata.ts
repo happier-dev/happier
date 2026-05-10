@@ -17,8 +17,10 @@ export function adoptReasoningEffortOverrideFromMetadata(opts: Readonly<{
   let match: { configId: string; valueId: string; updatedAt: number } | null = null;
   for (const candidate of candidates) {
     if (candidate.configId !== 'reasoning_effort') continue;
+    const valueId = normalizeValueId(candidate.valueId);
+    if (!valueId) continue;
     if (!match || candidate.updatedAt > match.updatedAt) {
-      match = candidate;
+      match = { ...candidate, valueId };
     }
   }
   if (!match) {
@@ -29,10 +31,5 @@ export function adoptReasoningEffortOverrideFromMetadata(opts: Readonly<{
     return { valueId: opts.currentValueId, updatedAt: opts.currentUpdatedAt, didChange: false };
   }
 
-  const valueId = normalizeValueId(match.valueId);
-  if (!valueId) {
-    return { valueId: opts.currentValueId, updatedAt: opts.currentUpdatedAt, didChange: false };
-  }
-
-  return { valueId, updatedAt: match.updatedAt, didChange: true };
+  return { valueId: match.valueId, updatedAt: match.updatedAt, didChange: true };
 }

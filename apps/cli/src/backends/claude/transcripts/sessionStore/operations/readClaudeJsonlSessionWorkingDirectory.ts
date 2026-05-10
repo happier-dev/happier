@@ -1,12 +1,12 @@
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { resolveClaudeJsonlSessionFile } from './resolveClaudeJsonlSessionFile';
 
 export async function readClaudeJsonlSessionWorkingDirectory(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     remoteSessionId: string;
     env?: NodeJS.ProcessEnv;
 }>): Promise<string | null> {

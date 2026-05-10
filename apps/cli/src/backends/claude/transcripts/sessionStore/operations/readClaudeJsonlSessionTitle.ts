@@ -1,5 +1,5 @@
 import { readJsonlFileForward } from '../../../../../api/session/fileBackedTranscripts/jsonl/readJsonlForward';
-import { readDirectSessionTitleCandidate } from '../../../../../api/session/external/title/readDirectSessionTitleCandidate';
+import { readExternalSessionTitleCandidate } from '../../../../../api/session/external/title/readExternalSessionTitleCandidate';
 
 const TITLE_SCAN_CHUNK_MAX_BYTES = 128 * 1024;
 const TITLE_SCAN_CHUNK_MAX_ITEMS = 64;
@@ -8,7 +8,7 @@ const TITLE_SCAN_TOTAL_MAX_ITEMS = 512;
 
 function coerceTextContent(content: unknown): string | null {
     if (typeof content === 'string') {
-        return readDirectSessionTitleCandidate(content);
+        return readExternalSessionTitleCandidate(content);
     }
     if (!Array.isArray(content)) return null;
 
@@ -21,7 +21,7 @@ function coerceTextContent(content: unknown): string | null {
         })
         .filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
 
-    return readDirectSessionTitleCandidate(parts.join(' '));
+    return readExternalSessionTitleCandidate(parts.join(' '));
 }
 
 export async function readClaudeJsonlSessionTitle(filePath: string): Promise<string | null> {
@@ -46,7 +46,7 @@ export async function readClaudeJsonlSessionTitle(filePath: string): Promise<str
             const type = typeof record.type === 'string' ? record.type : '';
 
             if (type === 'summary' && summaryTitle === null) {
-                summaryTitle = readDirectSessionTitleCandidate(typeof record.summary === 'string' ? record.summary : '');
+                summaryTitle = readExternalSessionTitleCandidate(typeof record.summary === 'string' ? record.summary : '');
                 if (summaryTitle) return summaryTitle;
                 continue;
             }

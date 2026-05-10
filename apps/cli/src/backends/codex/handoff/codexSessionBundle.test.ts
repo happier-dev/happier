@@ -97,7 +97,7 @@ describe('codex session handoff bundle', () => {
         path: '/repo',
         codexSessionId: 'thread_connected',
         codexBackendMode: 'appServer',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'codex',
           machineId: 'machine_1',
@@ -179,7 +179,7 @@ describe('codex session handoff bundle', () => {
     });
   });
 
-  it('uses codex runtime descriptor source affinity for persisted handoff export when directSessionV1 is absent', async () => {
+  it('uses codex runtime descriptor source affinity for persisted handoff export when externalSessionV1 is absent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-runtime-source-'));
     const userCodexHome = join(root, 'user-codex-home');
     const connectedCodexHome = join(
@@ -252,7 +252,7 @@ describe('codex session handoff bundle', () => {
         path: '/repo',
         codexSessionId: 'thread_homepath',
         codexBackendMode: 'appServer',
-        directSessionV1: {
+        externalSessionV1: {
           v: 1,
           providerId: 'codex',
           machineId: 'machine_1',

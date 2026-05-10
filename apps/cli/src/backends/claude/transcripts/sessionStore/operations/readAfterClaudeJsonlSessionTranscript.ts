@@ -1,4 +1,4 @@
-import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionsSource, ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { readJsonlFileForward } from '@/api/session/fileBackedTranscripts/jsonl/readJsonlForward';
 
@@ -11,13 +11,13 @@ import { readClaudeJsonlFileSize } from './readClaudeJsonlFileSize';
 import { resolveClaudeJsonlSessionFile } from './resolveClaudeJsonlSessionFile';
 
 export async function readAfterClaudeJsonlSessionTranscript(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     env?: NodeJS.ProcessEnv;
     remoteSessionId: string;
     cursor: string;
     maxBytes: number;
     maxItems: number;
-}>): Promise<Readonly<{ items: DirectTranscriptRawMessageV1[]; nextCursor: string | null; truncated: boolean }>> {
+}>): Promise<Readonly<{ items: ExternalSessionTranscriptRawMessageV1[]; nextCursor: string | null; truncated: boolean }>> {
     const resolved = await resolveClaudeJsonlSessionFile({
         source: params.source,
         env: params.env,
@@ -83,7 +83,7 @@ export async function readAfterClaudeJsonlSessionTranscript(params: Readonly<{
         };
     }
 
-    const items: DirectTranscriptRawMessageV1[] = [];
+    const items: ExternalSessionTranscriptRawMessageV1[] = [];
     for (const line of read.items) {
         if (items.length >= maxItems) break;
         const mapped = projectClaudeJsonlLineToDirectMessages({

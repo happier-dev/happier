@@ -1,5 +1,5 @@
 import type { AgentId } from '../agent/core';
-import type { DirectSessionsProviderId } from '@happier-dev/protocol';
+import type { ExternalSessionsProviderId } from '@happier-dev/protocol';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 import {
   resolveBackendEngineAdapterResolution as resolveBackendEngineAdapterResolutionFromRegistry,
@@ -17,7 +17,7 @@ import type {
   CatalogAgentId,
   CatalogAgentLookupId,
   ConnectedServicesMaterializer,
-  DirectSessionProviderOps,
+  ExternalSessionProviderOps,
   ManagedServerShutdownCleanup,
   ProviderCliLaunchSpec,
   ProviderAttachOps,
@@ -90,7 +90,7 @@ export function requireCatalogEntry(agentId: CatalogAgentLookupId): AgentCatalog
 }
 
 const cachedVendorResumeSupportPromises = new Map<CatalogAgentId, Promise<VendorResumeSupportFn>>();
-const cachedDirectSessionProviderOpsPromises = new Map<DirectSessionsProviderId, Promise<DirectSessionProviderOps>>();
+const cachedExternalSessionProviderOpsPromises = new Map<ExternalSessionsProviderId, Promise<ExternalSessionProviderOps>>();
 const cachedConnectedServicesMaterializerPromises = new Map<CatalogAgentId, Promise<ConnectedServicesMaterializer | null>>();
 const cachedManagedServerLaunchSpecPromises = new Map<CatalogAgentId, Promise<ProviderCliLaunchSpec | null>>();
 const cachedManagedServerShutdownCleanupPromises = new Map<CatalogAgentId, Promise<ManagedServerShutdownCleanup | null>>();
@@ -124,17 +124,17 @@ export async function getVendorResumeSupport(agentId?: AgentId | null): Promise<
   return await promise;
 }
 
-export async function getDirectSessionProviderOps(providerId: DirectSessionsProviderId): Promise<DirectSessionProviderOps> {
-  const existing = cachedDirectSessionProviderOpsPromises.get(providerId);
+export async function getExternalSessionProviderOps(providerId: ExternalSessionsProviderId): Promise<ExternalSessionProviderOps> {
+  const existing = cachedExternalSessionProviderOpsPromises.get(providerId);
   if (existing) return await existing;
 
   const entry = AGENTS[providerId];
-  if (!entry?.getDirectSessionProviderOps) {
+  if (!entry?.getExternalSessionProviderOps) {
     throw new Error(`Missing direct-session provider ops for ${providerId}`);
   }
 
-  const promise = entry.getDirectSessionProviderOps();
-  cachedDirectSessionProviderOpsPromises.set(providerId, promise);
+  const promise = entry.getExternalSessionProviderOps();
+  cachedExternalSessionProviderOpsPromises.set(providerId, promise);
   return await promise;
 }
 

@@ -1,4 +1,4 @@
-import type { DirectSessionsSource, DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionsSource, ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { projectClaudeJsonlLineToDirectMessages } from '../../projection/projectClaudeJsonlLineToDirectMessages';
 import { encodeClaudeJsonlTranscriptForwardCursor } from './claudeJsonlTranscriptForwardCursor';
@@ -37,7 +37,7 @@ function decodeBackwardCursor(raw: string | undefined): ClaudeJsonlBackwardCurso
 }
 
 export async function pageClaudeJsonlSessionTranscript(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     env?: NodeJS.ProcessEnv;
     remoteSessionId: string;
     cursor?: string;
@@ -45,7 +45,7 @@ export async function pageClaudeJsonlSessionTranscript(params: Readonly<{
     maxItems: number;
 }>): Promise<
     Readonly<{
-        items: DirectTranscriptRawMessageV1[];
+        items: ExternalSessionTranscriptRawMessageV1[];
         nextCursor: string | null;
         tailCursor: string | null;
         hasMore: boolean;

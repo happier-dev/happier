@@ -39,6 +39,8 @@ export type CodexAppServerApprovalPolicy =
       };
     };
 
+export type CodexAppServerApprovalsReviewer = 'user' | 'auto_review';
+
 export type CodexAppServerSandbox = 'read-only' | 'workspace-write' | 'danger-full-access';
 
 export type CodexAppServerSandboxPolicy =
@@ -55,6 +57,7 @@ export type CodexAppServerSandboxPolicy =
 
 export type CodexAppServerPolicy = {
   approvalPolicy: CodexAppServerApprovalPolicy;
+  approvalsReviewer?: CodexAppServerApprovalsReviewer;
   sandbox: CodexAppServerSandbox;
   sandboxPolicy: CodexAppServerSandboxPolicy;
 };
@@ -85,24 +88,31 @@ export function resolveCodexMcpPolicyForPermissionMode(permissionMode: Permissio
 
 export function resolveCodexAppServerPolicyForPermissionMode(
   permissionMode: PermissionMode,
-  params: Readonly<{ directory: string }>,
+  params: Readonly<{ directory: string; autoReviewAvailable?: boolean }>,
 ): CodexAppServerPolicy {
   const policy = resolveCodexMcpPolicyForPermissionMode(permissionMode);
+  const useWorkspaceApprovalRequests =
+    policy.sandbox === 'workspace-write'
+    && (permissionMode === 'safe-yolo' || policy.approvalPolicy !== 'never');
+  const autoReviewAvailable = params.autoReviewAvailable !== false;
+  const granularApprovalPolicy: CodexAppServerApprovalPolicy = {
+    granular: {
+      // Enable MCP elicitations so Codex can ask our permission handler before invoking MCP tools.
+      // This allows Happier to auto-approve low-risk session-control tools (e.g. change_title) while
+      // still gating higher-risk tools through our unified approvals flow.
+      mcp_elicitations: true,
+      request_permissions: true,
+      rules: true,
+      sandbox_approval: true,
+      skill_approval: false,
+    },
+  };
 
   return {
-    approvalPolicy:
-      policy.approvalPolicy === 'never'
-        ? 'never'
-        : {
-            granular: {
-              // Enable MCP elicitations so Codex can ask our permission handler before invoking MCP tools.
-              // This allows Happier to auto-approve low-risk session-control tools (e.g. change_title) while
-              // still gating higher-risk tools through our unified approvals flow.
-              mcp_elicitations: true,
-              rules: true,
-              sandbox_approval: true,
-            },
-          },
+    approvalPolicy: useWorkspaceApprovalRequests ? granularApprovalPolicy : 'never',
+    ...(useWorkspaceApprovalRequests
+      ? { approvalsReviewer: permissionMode === 'safe-yolo' && autoReviewAvailable ? 'auto_review' : 'user' }
+      : {}),
     sandbox:
       policy.sandbox === 'workspace-write'
         ? 'workspace-write'

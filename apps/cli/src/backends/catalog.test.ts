@@ -6,7 +6,7 @@ import {
   AGENTS,
   getAcpForkContinuationHandler,
   getConnectedServicesMaterializer,
-  getDirectSessionProviderOps,
+  getExternalSessionProviderOps,
   getManagedServerLaunchSpec,
   normalizeSessionControlPermissionModeForBackendTarget,
   getProviderAttachOps,
@@ -120,7 +120,7 @@ describe('AGENTS', () => {
   });
 
   it('loads direct-session provider ops through backend catalog hooks', async () => {
-    await expect(getDirectSessionProviderOps('claude')).resolves.toMatchObject({
+    await expect(getExternalSessionProviderOps('claude')).resolves.toMatchObject({
       listCandidates: expect.any(Function),
       pageTranscript: expect.any(Function),
       readAfterTranscript: expect.any(Function),
@@ -129,15 +129,15 @@ describe('AGENTS', () => {
       acquireFollowLease: expect.any(Function),
       resolveTakeoverSpawnOptions: expect.any(Function),
     });
-    await expect(getDirectSessionProviderOps('codex')).resolves.toMatchObject({
+    await expect(getExternalSessionProviderOps('codex')).resolves.toMatchObject({
       listCandidates: expect.any(Function),
       validateSource: expect.any(Function),
       acquireFollowLease: expect.any(Function),
     });
-    await expect(getDirectSessionProviderOps('opencode')).resolves.toMatchObject({
+    await expect(getExternalSessionProviderOps('opencode')).resolves.toMatchObject({
       listCandidates: expect.any(Function),
     });
-    await expect(getDirectSessionProviderOps('ohMyPi')).resolves.toMatchObject({
+    await expect(getExternalSessionProviderOps('ohMyPi')).resolves.toMatchObject({
       listCandidates: expect.any(Function),
       validateSource: expect.any(Function),
       pageTranscript: expect.any(Function),

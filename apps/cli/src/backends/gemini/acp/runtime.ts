@@ -1,6 +1,6 @@
 import type { McpServerConfig } from '@/agent';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createProviderAcpRuntime';
+import { createCatalogProviderSessionIdentityRuntime } from '@/agent/acp/runtime/createProviderSessionIdentityRuntime';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { PermissionMode } from '@/api/types';
@@ -40,20 +40,20 @@ export function createGeminiAcpRuntime(params: {
 
   const diffProcessor = new GeminiDiffProcessor();
 
-  return createCatalogProviderAcpRuntime<GeminiBackendOptions>({
+  return createCatalogProviderSessionIdentityRuntime<GeminiBackendOptions>({
     provider: 'gemini',
+    agentId: 'gemini',
+    vendorResumeIdField: 'geminiSessionId',
     loggerLabel: 'GeminiACP',
     directory: params.directory,
+    machineId: params.machineId,
     session: params.session,
     transcriptSession: params.transcriptSession,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    memoryRecallGuidance: {
-      enabled: params.memoryRecallGuidanceEnabled === true,
-      machineId: params.machineId,
-    },
+    memoryRecallGuidanceEnabled: params.memoryRecallGuidanceEnabled,
     getPermissionMode: params.getPermissionMode,
     backendOptions: params.backendOptions,
     hooks: {

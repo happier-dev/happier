@@ -7,14 +7,14 @@ import { describe, expect, it } from 'vitest';
 import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 
 describe('ohMyPi execution surfaces (engine registry)', () => {
-    it('resolves terminalRuntime + directSessions surfaces via the engine registry path', async () => {
+    it('resolves terminalRuntime + externalSessions surfaces via the engine registry path', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-engine-surfaces-home-'));
 
         const surfaces = await resolveBackendExecutionSurfaces('ohMyPi', { happyHomeDir });
 
         expect(surfaces.terminalRuntime?.bindTranscript).toBeTypeOf('function');
 
-        expect(surfaces.directSessions).toMatchObject({
+        expect(surfaces.externalSessions).toMatchObject({
             validateSource: expect.any(Function),
             listCandidates: expect.any(Function),
             pageTranscript: expect.any(Function),
@@ -23,7 +23,7 @@ describe('ohMyPi execution surfaces (engine registry)', () => {
             resolveTakeoverSpawnOptions: expect.any(Function),
         });
 
-        expect(surfaces.directSessions?.validateSource?.({
+        expect(surfaces.externalSessions?.validateSource?.({
             source: { kind: 'ohMyPiAgentDir', agentDir: null },
             env: {
                 ...process.env,

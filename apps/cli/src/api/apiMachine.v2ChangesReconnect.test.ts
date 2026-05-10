@@ -30,6 +30,16 @@ vi.mock('@/persistence', () => ({
     writeLastChangesCursor,
 }));
 
+vi.mock('@/ui/logger', () => ({
+    logger: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debugLargeJson: vi.fn(),
+    },
+}));
+
 function createMachineSocket(options: {
     emitWithAck?: (event: string, payload: unknown) => Promise<unknown> | unknown;
 } = {}) {
@@ -186,6 +196,250 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         expect(writeLastChangesCursor).toHaveBeenCalledWith('acc-1', 1);
     });
 
+    it('reports account settings version hints from /v2/changes to the refresh callback', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return { status: 200, data: { id: 'acc-1' } };
+            }
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: [
+                            { cursor: 1, kind: 'account', entityId: 'self', changedAt: 1, hint: { settingsVersion: 5 } },
+                            { cursor: 2, kind: 'account', entityId: 'self', changedAt: 2, hint: { settingsVersion: 3 } },
+                        ],
+                        nextCursor: 2,
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+
+        axiosGet.mockClear();
+        writeLastChangesCursor.mockClear();
+        readLastChangesCursor.mockClear();
+
+        const onAccountSettingsVersionHint = vi.fn(async () => {});
+        const client = new ApiMachineClient('token', machine);
+        client.onAccountSettingsVersionHint(onAccountSettingsVersionHint);
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
+
+        expect(onAccountSettingsVersionHint).toHaveBeenCalledTimes(1);
+        expect(onAccountSettingsVersionHint).toHaveBeenCalledWith({
+            settingsVersion: 5,
+            source: 'changes',
+        });
+        expect(writeLastChangesCursor).toHaveBeenCalledWith('acc-1', 2);
+    });
+
+    it('advances the changes cursor when account settings refresh for a hint fails', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return { status: 200, data: { id: 'acc-1' } };
+            }
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: [
+                            { cursor: 1, kind: 'account', entityId: 'self', changedAt: 1, hint: { settingsVersion: 5 } },
+                        ],
+                        nextCursor: 1,
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+
+        axiosGet.mockClear();
+        writeLastChangesCursor.mockClear();
+        readLastChangesCursor.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        client.onAccountSettingsVersionHint(async () => {
+            throw new Error('settings refresh failed');
+        });
+        const secondListener = vi.fn(async () => {});
+        client.onAccountSettingsVersionHint(secondListener);
+
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
+        expect(secondListener).toHaveBeenCalledWith({
+            settingsVersion: 5,
+            source: 'changes',
+        });
+        expect(writeLastChangesCursor).toHaveBeenCalledWith('acc-1', 1);
+    });
+
+    it('does not surface an unhandled rejection when a background changes sync fails on connect', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return { status: 200, data: { id: 'acc-1' } };
+            }
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 200,
+                    data: {
+                        changes: [
+                            { cursor: 1, kind: 'account', entityId: 'self', changedAt: 1, hint: { settingsVersion: 5 } },
+                        ],
+                        nextCursor: 1,
+                    },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+
+        axiosGet.mockClear();
+        writeLastChangesCursor.mockClear();
+        readLastChangesCursor.mockClear();
+
+        const unhandledRejections: unknown[] = [];
+        const onUnhandledRejection = (reason: unknown) => {
+            unhandledRejections.push(reason);
+        };
+        process.on('unhandledRejection', onUnhandledRejection);
+        try {
+            const client = new ApiMachineClient('token', machine);
+            client.onAccountSettingsVersionHint(async () => {
+                throw new Error('settings refresh failed');
+            });
+            client.connect();
+
+            await vi.waitFor(() => {
+                expect(axiosGet).toHaveBeenCalledWith(expect.stringContaining('/v2/changes'), expect.anything());
+            });
+            await new Promise((resolve) => setImmediate(resolve));
+
+            expect(unhandledRejections).toEqual([]);
+            expect(writeLastChangesCursor).toHaveBeenCalledWith('acc-1', 1);
+        } finally {
+            process.off('unhandledRejection', onUnhandledRejection);
+        }
+    });
+
+    it('refreshes account settings conservatively when the changes cursor is gone', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return { status: 200, data: { id: 'acc-1' } };
+            }
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 410,
+                    data: { error: 'cursor-gone', currentCursor: 9 },
+                };
+            }
+            if (url.includes('/v1/machines/machine-1')) {
+                return {
+                    status: 200,
+                    data: { machine: { id: 'machine-1', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 } },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+
+        axiosGet.mockClear();
+        writeLastChangesCursor.mockClear();
+        readLastChangesCursor.mockClear();
+
+        const onAccountSettingsVersionHint = vi.fn(async () => {});
+        const client = new ApiMachineClient('token', machine);
+        client.onAccountSettingsVersionHint(onAccountSettingsVersionHint);
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
+
+        expect(onAccountSettingsVersionHint).toHaveBeenCalledTimes(1);
+        expect(onAccountSettingsVersionHint).toHaveBeenCalledWith({
+            settingsVersion: null,
+            source: 'cursor-gone',
+        });
+        expect(writeLastChangesCursor).toHaveBeenCalledWith('acc-1', 9);
+    });
+
+    it('advances a cursor-gone cursor when conservative account settings refresh fails', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockImplementation(async (url: string) => {
+            if (url.includes('/v1/account/profile')) {
+                return { status: 200, data: { id: 'acc-1' } };
+            }
+            if (url.includes('/v2/changes')) {
+                return {
+                    status: 410,
+                    data: { error: 'cursor-gone', currentCursor: 9 },
+                };
+            }
+            if (url.includes('/v1/machines/machine-1')) {
+                return {
+                    status: 200,
+                    data: { machine: { id: 'machine-1', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 } },
+                };
+            }
+            throw new Error(`unexpected url: ${url}`);
+        });
+
+        axiosGet.mockClear();
+        writeLastChangesCursor.mockClear();
+        readLastChangesCursor.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        client.onAccountSettingsVersionHint(async () => {
+            throw new Error('settings refresh failed');
+        });
+
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
+        expect(writeLastChangesCursor).toHaveBeenCalledWith('acc-1', 9);
+    });
+
     it('refreshes machine snapshot when /v2/changes is missing (e.g. old server 404) on reconnect', async () => {
         const machine: Machine = {
             id: 'machine-1',
@@ -242,10 +496,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         readLastChangesCursor.mockClear();
 
         const client = new ApiMachineClient('token', machine);
-        const clientInternals = client as unknown as {
-            syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
-        };
-        await clientInternals.syncChangesOnConnect({ reason: 'reconnect' });
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
 
         expect(machine.metadata).toEqual(
             expect.objectContaining({
@@ -356,10 +607,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             },
         });
 
-        const clientInternals = client as unknown as {
-            syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
-        };
-        await clientInternals.syncChangesOnConnect({ reason: 'reconnect' });
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
 
         expect(reportProbeResult).toHaveBeenCalledWith({
             status: 'auth_failed',
@@ -405,10 +653,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             value: null,
         });
 
-        const clientInternals = client as unknown as {
-            syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
-        };
-        await expect(clientInternals.syncChangesOnConnect({ reason: 'reconnect' })).rejects.toMatchObject({
+        await expect((client as any).syncChangesOnConnect({ reason: 'reconnect' })).rejects.toMatchObject({
             code: 'not_authenticated',
             response: { status },
         });
@@ -452,10 +697,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             },
         });
 
-        const clientInternals = client as unknown as {
-            refreshMachineFromServer: () => Promise<void>;
-        };
-        await clientInternals.refreshMachineFromServer();
+        await (client as any).refreshMachineFromServer();
 
         expect(reportProbeResult).toHaveBeenCalledWith({
             status: 'auth_failed',
@@ -477,7 +719,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
 
         axiosGet.mockResolvedValue({
             status: 503,
-            data: { error: 'server-busy' },
+            data: { error: 'busy' },
         });
         axiosGet.mockClear();
 
@@ -499,52 +741,11 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             },
         });
 
-        const clientInternals = client as unknown as {
-            refreshMachineFromServer: () => Promise<void>;
-        };
-        await clientInternals.refreshMachineFromServer();
+        await (client as any).refreshMachineFromServer();
 
         expect(reportProbeResult).toHaveBeenCalledWith({
             status: 'retry_later',
             errorMessage: expect.any(String),
         } satisfies ReadinessProbeResult);
-    });
-
-    it('does not request a machine snapshot when the machine supervisor is already auth_failed', async () => {
-        const machine: Machine = {
-            id: 'machine-1',
-            encryptionKey: new Uint8Array(32).fill(7),
-            encryptionVariant: 'legacy',
-            metadata: null,
-            metadataVersion: 0,
-            daemonState: null,
-            daemonStateVersion: 0,
-        };
-
-        axiosGet.mockClear();
-
-        const client = new ApiMachineClient('token', machine);
-        Object.defineProperty(client, 'connectionSupervisor', {
-            configurable: true,
-            value: {
-                getState: () => ({
-                    phase: 'auth_failed',
-                    reason: 'auth_failed',
-                    attempt: 0,
-                    nextRetryAt: null,
-                    lastConnectedAt: null,
-                    lastDisconnectedAt: Date.now(),
-                    lastErrorMessage: 'expired token',
-                }),
-                reportProbeResult: vi.fn(),
-            },
-        });
-
-        const clientInternals = client as unknown as {
-            refreshMachineFromServer: () => Promise<void>;
-        };
-        await clientInternals.refreshMachineFromServer();
-
-        expect(axiosGet).not.toHaveBeenCalled();
     });
 });

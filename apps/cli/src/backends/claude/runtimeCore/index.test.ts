@@ -69,7 +69,7 @@ describe('createClaudeRuntimeCore', () => {
       provider: { id: 'claude' } as never,
       executionSurfaces: {
         terminalRuntime: null,
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
       },
@@ -91,7 +91,7 @@ describe('createClaudeRuntimeCore', () => {
       provider: { id: 'claude' } as never,
       executionSurfaces: {
         terminalRuntime: { launch },
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
       },
@@ -140,7 +140,7 @@ describe('createClaudeRuntimeCore', () => {
       provider: { id: 'claude' } as never,
       executionSurfaces: {
         terminalRuntime: { launch: vi.fn(async () => ({ type: 'exit', code: 0 })) },
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
       },
@@ -184,7 +184,7 @@ describe('createClaudeRuntimeCore', () => {
       provider: { id: 'claude' } as never,
       executionSurfaces: {
         terminalRuntime: { launch: vi.fn(async () => ({ type: 'exit', code: 0 })) },
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
       },
@@ -229,7 +229,7 @@ describe('createClaudeRuntimeCore', () => {
       provider: { id: 'claude' } as never,
       executionSurfaces: {
         terminalRuntime: { launch: vi.fn(async () => ({ type: 'exit', code: 0 })) },
-        directSessions: null,
+        externalSessions: null,
         attach: null,
         sessionHandoff: null,
       },

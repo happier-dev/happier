@@ -9,7 +9,7 @@ import { logger } from '@/ui/logger';
 type CodexAppServerOverrideSeedRuntime = Readonly<{
   setSessionMode: (modeId: string) => Promise<void>;
   setSessionModel: (modelId: string) => Promise<void>;
-  setSessionConfigOption: (configId: string, valueId: string) => Promise<void>;
+  setSessionConfigOption: (configId: string, valueId: string | number | boolean | null) => Promise<void>;
 }>;
 
 export async function seedCodexAppServerPendingSessionOverrides(params: Readonly<{

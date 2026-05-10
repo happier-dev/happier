@@ -71,6 +71,27 @@ export function createCodexAppServerRequestHandlers(params: Readonly<{
         }
     };
 
+    const mapPermissionsDecision = (
+        update: Extract<CodexAppServerStreamUpdate, { type: 'permissions-request' }>,
+        result: CodexAppServerPermissionResult,
+    ): Readonly<Record<string, unknown>> => {
+        if (
+            result.decision === 'approved'
+            || result.decision === 'approved_for_session'
+            || result.decision === 'approved_execpolicy_amendment'
+        ) {
+            return {
+                permissions: update.permissions,
+                scope: result.decision === 'approved_for_session' ? 'session' : 'turn',
+            };
+        }
+
+        return {
+            permissions: {},
+            scope: 'turn',
+        };
+    };
+
     const buildUserInputResponse = (
         update: Extract<CodexAppServerStreamUpdate, { type: 'user-input-request' }>,
         result: CodexAppServerPermissionResult,
@@ -250,6 +271,13 @@ export function createCodexAppServerRequestHandlers(params: Readonly<{
                     ? await params.permissionHandler.handleToolCall(update.callId, update.toolName, update.input)
                     : { decision: 'denied' as const };
                 return mapApprovalDecision(update.requestKind, result);
+            }
+
+            if (update.type === 'permissions-request') {
+                const result = params.permissionHandler
+                    ? await params.permissionHandler.handleToolCall(update.callId, update.toolName, update.input)
+                    : { decision: 'denied' as const };
+                return mapPermissionsDecision(update, result);
             }
 
             if (update.type === 'user-input-request') {

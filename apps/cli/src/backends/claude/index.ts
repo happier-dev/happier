@@ -13,7 +13,7 @@ export const agent = {
   getCliAuthSpec: async () => (await import('./cli/auth/claudeCliAuthSpec')).claudeCliAuthSpec,
   getCloudConnectTarget: async () => (await import('./cloud/connect')).claudeCloudConnect,
   getDaemonSpawnHooks: async () => claudeDaemonSpawnHooks,
-  getDirectSessionProviderOps: async () => (await import('./externalSessions/providerOps')).claudeDirectSessionProviderOps,
+  getExternalSessionProviderOps: async () => (await import('./externalSessions/providerOps')).claudeExternalSessionProviderOps,
   getConnectedServicesMaterializer: async () =>
     (await import('./connectedServices/createClaudeConnectedServicesMaterializer'))
       .createClaudeConnectedServicesMaterializer(),

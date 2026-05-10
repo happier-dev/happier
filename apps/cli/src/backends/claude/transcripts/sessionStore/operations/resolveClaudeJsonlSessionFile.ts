@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { resolveClaudeConfigDir } from '../../../externalSessions/resolveClaudeConfigDir';
 
@@ -18,7 +18,7 @@ function isSafePathSegment(value: string): boolean {
     return true;
 }
 
-function resolvePreferredProjectId(source: DirectSessionsSource): string | null {
+function resolvePreferredProjectId(source: ExternalSessionsSource): string | null {
     if (source.kind !== 'claudeConfig') return null;
     const raw = typeof source.projectId === 'string' ? source.projectId.trim() : '';
     if (!raw) return null;
@@ -26,7 +26,7 @@ function resolvePreferredProjectId(source: DirectSessionsSource): string | null 
 }
 
 export async function resolveClaudeJsonlSessionFile(params: Readonly<{
-    source: DirectSessionsSource;
+    source: ExternalSessionsSource;
     env?: NodeJS.ProcessEnv;
     remoteSessionId: string;
 }>): Promise<ResolvedClaudeJsonlSessionFile | null> {

@@ -1,4 +1,5 @@
 import { buildCodexAgentRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity, resolveVendorResumeIdFromSessionMetadata, readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
+import { buildSessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 import type { ProviderNativeForkHandler } from '@/session/fork/providerNativeForkHandler';
 
 import { forkCodexAppServerConversationNative } from './nativeFork';
@@ -20,6 +21,26 @@ export const codexAppServerProviderNativeForkHandler: ProviderNativeForkHandler 
   }).catch(() => null);
   const vendorSessionId = typeof forked?.vendorSessionId === 'string' ? forked.vendorSessionId.trim() : '';
   if (!vendorSessionId) return null;
+  const vendorSessionMetadata = buildSessionStateFieldMetadataPatch('identity.vendorSessionId', {
+    metadataKey: 'codexSessionId',
+    value: vendorSessionId,
+  });
+  const runtimeDescriptor = runtimeIdentity
+    ? buildCodexAgentRuntimeDescriptor({
+        backendMode: 'appServer',
+        vendorSessionId,
+        home: runtimeIdentity.home,
+        connectedServiceId: runtimeIdentity.connectedServiceId,
+        connectedServiceProfileId: runtimeIdentity.connectedServiceProfileId,
+        homePath: runtimeIdentity.homePath,
+      })
+    : null;
+  const runtimeDescriptorMetadata = runtimeDescriptor
+    ? buildSessionStateFieldMetadataPatch(
+        'identity.runtimeDescriptor',
+        runtimeDescriptor,
+      )
+    : {};
 
   return {
     vendorSessionId,
@@ -29,20 +50,9 @@ export const codexAppServerProviderNativeForkHandler: ProviderNativeForkHandler 
         ...(runtimeIdentity?.homePath ? { environmentVariables: { CODEX_HOME: runtimeIdentity.homePath } } : {}),
       },
       metadata: {
-        codexSessionId: vendorSessionId,
+        ...vendorSessionMetadata,
         codexBackendMode: 'appServer',
-        ...(runtimeIdentity
-          ? {
-              runtimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
-                backendMode: 'appServer',
-                vendorSessionId,
-                home: runtimeIdentity.home,
-                connectedServiceId: runtimeIdentity.connectedServiceId,
-                connectedServiceProfileId: runtimeIdentity.connectedServiceProfileId,
-                homePath: runtimeIdentity.homePath,
-              }),
-            }
-          : {}),
+        ...runtimeDescriptorMetadata,
       },
     providerHint: {
       providerId: params.agentId,

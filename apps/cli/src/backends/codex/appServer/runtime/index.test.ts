@@ -1,5 +1,7 @@
+import { execFile as execFileCallback } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -9,9 +11,14 @@ import {
 } from '@happier-dev/agents';
 
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { buildRepositoryCheckpointRefs } from '@/scm/checkpoints';
+import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
 
 import { createCodexAppServerRuntime } from './index';
 import { createCodexAppServerProcessEnv, createCodexAppServerTestEnvScope } from '../testkit/fakeCodexAppServer';
+import { codexSessionStateFacet } from '../../sessionState';
+
+const execFile = promisify(execFileCallback);
 
 type CommittedSnapshotBody = Readonly<{
     type?: string;
@@ -69,6 +76,10 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        process.stdout.write(JSON.stringify({ id: msg.id, result: [{ id: "gpt-5.4", displayName: "GPT-5.4", isDefault: true, supportedReasoningEfforts: ["low", "medium", "high", "xhigh"], defaultReasoningEffort: "medium" }, { id: "gpt-5.4-mini", displayName: "GPT-5.4 Mini", supportedReasoningEfforts: ["medium", "high"], defaultReasoningEffort: "medium" }] }) + "\\n");',
         '        continue;',
         '    }',
+        '    if (msg.method === "thread/name/set") {',
+        '        process.stdout.write(JSON.stringify({ id: msg.id, result: { ok: true } }) + "\\n");',
+        '        continue;',
+        '    }',
         '    if (msg.method === "turn/start") {',
         '        const text = Array.isArray(msg.params?.input) ? String(msg.params.input[0]?.text ?? "unknown") : "unknown";',
         '        const turnId = `turn-${text}`;',
@@ -117,9 +128,33 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            }, 20);',
         '            continue;',
         '        }',
-        '        if (text === "usage-telemetry") {',
+        '        if (text === "mirror-change-title") {',
         '            setTimeout(() => {',
-        '                process.stdout.write(JSON.stringify({ method: "thread/tokenUsage/updated", params: { threadId: msg.params?.threadId ?? null, turnId: turnId, tokenUsage: { total: { total_tokens: 184, input_tokens: 120, cached_input_tokens: 20, output_tokens: 35, reasoning_output_tokens: 9 }, last: { total_tokens: 23, input_tokens: 10, cached_input_tokens: 5, output_tokens: 7, reasoning_output_tokens: 1 }, model_context_window: 258400 } } }) + "\\n");',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "title_tool_1", type: "mcpToolCall", server: "happier", tool: "change_title", arguments: { title: "Mirrored Title" } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "title_tool_1", type: "mcpToolCall", result: { status: "ok" } } } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
+        '        if (text === "non-happier-change-title") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "title_tool_acme_1", type: "mcpToolCall", server: "acme", tool: "change_title", arguments: { title: "Acme Title" } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "item/completed", params: { item: { id: "title_tool_acme_1", type: "mcpToolCall", result: { status: "ok" } } } }) + "\\n");',
+        '            }, 8);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 20);',
+        '            continue;',
+        '        }',
+        '        if (text === "usage-telemetry") {',
+            '            setTimeout(() => {',
+            '                process.stdout.write(JSON.stringify({ method: "thread/tokenUsage/updated", params: { threadId: msg.params?.threadId ?? null, turnId: turnId, tokenUsage: { total: { total_tokens: 184, input_tokens: 120, cached_input_tokens: 20, output_tokens: 35, reasoning_output_tokens: 9 }, last: { total_tokens: 23, input_tokens: 10, cached_input_tokens: 5, output_tokens: 7, reasoning_output_tokens: 1 }, model_context_window: 258400 } } }) + "\\n");',
         '            }, 8);',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
@@ -328,6 +363,15 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '            }, 24);',
         '            continue;',
         '        }',
+        '        if (text === "bridge-request-permissions") {',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ id: "request-permissions", method: "item/permissions/requestApproval", params: { threadId: msg.params?.threadId ?? null, turnId, itemId: "perm_request_1", cwd: "/repo", reason: "Needs network access", permissions: { network: { enabled: true }, fileSystem: { write: ["/repo/generated"] } } } }) + "\\n");',
+        '            }, 6);',
+        '            setTimeout(() => {',
+        '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: turnId } } }) + "\\n");',
+        '            }, 16);',
+        '            continue;',
+        '        }',
         '        if (text === "bridge-user-action") {',
         '            setTimeout(() => {',
         '                process.stdout.write(JSON.stringify({ method: "item/started", params: { item: { id: "tool_input_general", type: "mcpToolCall", server: "functions", tool: "request_user_input", arguments: {} } } }) + "\\n");',
@@ -431,6 +475,27 @@ describe('createCodexAppServerRuntime', () => {
         return { root, requestLogPath, fakeAppServer };
     }
 
+    async function runGit(cwd: string, args: readonly string[]): Promise<string> {
+        const { stdout } = await execFile('git', [...args], { cwd });
+        return stdout.trim();
+    }
+
+    async function createGitRepo(root: string): Promise<string> {
+        const repoRoot = join(root, 'repo');
+        await mkdir(repoRoot, { recursive: true });
+        await runGit(repoRoot, ['init']);
+        await runGit(repoRoot, ['config', 'user.email', 'test@example.com']);
+        await runGit(repoRoot, ['config', 'user.name', 'Happier Test']);
+        await writeFile(join(repoRoot, 'tracked.txt'), 'base\n', 'utf8');
+        await runGit(repoRoot, ['add', 'tracked.txt']);
+        await runGit(repoRoot, ['commit', '-m', 'initial']);
+        return repoRoot;
+    }
+
+    function checkpointScopeId(sessionId: string, repoRoot: string): string {
+        return `${sessionId}:${repoRoot}`;
+    }
+
     it('allows app-server startup when Codex credentials are missing so the backend can surface auth errors itself', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-auth-missing-');
 
@@ -474,11 +539,19 @@ describe('createCodexAppServerRuntime', () => {
 
         expect(runtime.getSessionId()).toBe('thread-started');
         expect(updateMetadata).toHaveBeenCalled();
-        expect(updateMetadata.mock.results[0]?.value).toMatchObject({
+        const threadMetadataUpdate = updateMetadata.mock.results.find((result) => {
+            const value = result.value as Record<string, unknown> | undefined;
+            return value?.codexSessionId === 'thread-started';
+        })?.value;
+        expect(threadMetadataUpdate).toMatchObject({
             codexSessionId: 'thread-started',
             codexBackendMode: 'appServer',
         });
-        expect(updateMetadata.mock.results[1]?.value).toMatchObject({
+        const sessionModelsMetadataUpdate = updateMetadata.mock.results.find((result) => {
+            const value = result.value as Record<string, unknown> | undefined;
+            return value?.[SESSION_MODELS_STATE_KEY] != null;
+        })?.value;
+        expect(sessionModelsMetadataUpdate).toMatchObject({
             [SESSION_MODELS_STATE_KEY]: expect.objectContaining({
                 currentModelId: 'gpt-5.4',
                 availableModels: expect.arrayContaining([
@@ -491,7 +564,11 @@ describe('createCodexAppServerRuntime', () => {
                 ]),
             }),
         });
-        expect(updateMetadata.mock.results[1]?.value).toMatchObject({
+        const sessionModesMetadataUpdate = updateMetadata.mock.results.find((result) => {
+            const value = result.value as Record<string, unknown> | undefined;
+            return value?.[SESSION_MODES_STATE_KEY] != null;
+        })?.value;
+        expect(sessionModesMetadataUpdate).toMatchObject({
             [SESSION_MODES_STATE_KEY]: expect.objectContaining({
                 v: 1,
                 provider: 'codex',
@@ -512,10 +589,13 @@ describe('createCodexAppServerRuntime', () => {
                         approvalPolicy: expect.objectContaining({
                             granular: expect.objectContaining({
                                 mcp_elicitations: true,
+                                request_permissions: true,
                                 rules: true,
                                 sandbox_approval: true,
+                                skill_approval: false,
                             }),
                         }),
+                        approvalsReviewer: 'user',
                         sandbox: 'workspace-write',
                         experimentalRawEvents: true,
                         persistExtendedHistory: true,
@@ -523,6 +603,38 @@ describe('createCodexAppServerRuntime', () => {
                 }),
                 expect.objectContaining({ method: 'collaborationMode/list' }),
                 expect.objectContaining({ method: 'model/list' }),
+            ]),
+        );
+    });
+
+    it('starts safe-yolo app-server threads with auto-reviewer approvals instead of disabling approvals', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-safe-yolo-start-');
+
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+            permissionMode: 'safe-yolo',
+        });
+
+        await runtime.startOrLoad({});
+
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    method: 'thread/start',
+                    params: expect.objectContaining({
+                        approvalPolicy: {
+                            granular: expect.objectContaining({
+                                request_permissions: true,
+                                sandbox_approval: true,
+                            }),
+                        },
+                        approvalsReviewer: 'auto_review',
+                        sandbox: 'workspace-write',
+                    }),
+                }),
             ]),
         );
     });
@@ -552,8 +664,12 @@ describe('createCodexAppServerRuntime', () => {
 
         await runtime.startOrLoad({});
 
-        expect(updateMetadata.mock.results[0]?.value).toMatchObject({
-            directSessionV1: {
+        const externalSessionMetadataUpdate = updateMetadata.mock.results.find((result) => {
+            const value = result.value as { externalSessionV1?: unknown } | undefined;
+            return Boolean(value?.externalSessionV1);
+        })?.value;
+        expect(externalSessionMetadataUpdate).toMatchObject({
+            externalSessionV1: {
                 source: {
                     kind: 'codexHome',
                     home: 'connectedService',
@@ -1050,6 +1166,219 @@ describe('createCodexAppServerRuntime', () => {
         );
     });
 
+    it('does not use Codex stream-observed change_title results as display.title mutation triggers', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-title-mirror-');
+
+        let metadata: Record<string, unknown> = {};
+        const sessionState = {
+            writeHappierField: vi.fn(async () => ({ ok: true, version: 1 })),
+            applyHappierField: vi.fn(async () => ({ ok: true })),
+        };
+        const session = {
+            sessionId: 'sess_title_mirror_1',
+            updateMetadata: vi.fn(async (updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
+                metadata = updater(metadata);
+            }),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+            sendSessionEvent: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('mirror-change-title');
+        await runtime.flushTurn();
+
+        expect(metadata).not.toMatchObject({
+            summary: expect.objectContaining({ text: 'Mirrored Title' }),
+        });
+        expect(sessionState.writeHappierField).not.toHaveBeenCalled();
+        expect(sessionState.applyHappierField).not.toHaveBeenCalled();
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).not.toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    method: 'thread/name/set',
+                    params: expect.objectContaining({
+                        name: 'Mirrored Title',
+                    }),
+                }),
+            ]),
+        );
+    });
+
+    it('does not apply non-Happier change_title stream results as display.title mutations', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-title-non-happier-');
+
+        let metadata: Record<string, unknown> = {};
+        const session = {
+            sessionId: 'sess_title_non_happier_1',
+            updateMetadata: vi.fn(async (updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
+                metadata = updater(metadata);
+            }),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+            sendSessionEvent: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('non-happier-change-title');
+        await runtime.flushTurn();
+
+        expect(metadata).not.toMatchObject({
+            summary: expect.objectContaining({
+                text: 'Acme Title',
+            }),
+        });
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).not.toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    method: 'thread/name/set',
+                    params: expect.objectContaining({
+                        name: 'Acme Title',
+                    }),
+                }),
+            ]),
+        );
+    });
+
+    it('does not observe canonical metadata title updates inside the Codex runtime', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-title-metadata-mirror-');
+
+        let metadata: Record<string, unknown> = {};
+        const metadataUpdateResolvers: Array<(value: boolean) => void> = [];
+        const sessionState = {
+            writeHappierField: vi.fn(async () => ({ ok: true, version: 1 })),
+            applyHappierField: vi.fn(async () => ({ ok: true })),
+        };
+        const session = {
+            sessionId: 'sess_title_metadata_mirror_1',
+            updateMetadata: vi.fn(async (updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
+                metadata = updater(metadata);
+            }),
+            getMetadataSnapshot: () => metadata,
+            waitForMetadataUpdate: vi.fn(() => new Promise<boolean>((resolve) => {
+                metadataUpdateResolvers.push(resolve);
+            })),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+            sendSessionEvent: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await session.updateMetadata((current) => ({
+            ...current,
+            summary: { text: 'Canonical Metadata Title', updatedAt: 123 },
+        }));
+        metadataUpdateResolvers.shift()?.(true);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+
+        expect(sessionState.applyHappierField).not.toHaveBeenCalled();
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).not.toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    method: 'thread/name/set',
+                    params: expect.objectContaining({ name: 'Canonical Metadata Title' }),
+                }),
+            ]),
+        );
+    });
+
+    it('unregisters the display.title provider handler when the runtime resets', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-title-reset-');
+
+        const sessionId = 'sess_title_reset_1';
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                sessionId,
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+                sendSessionEvent: vi.fn(),
+            } as any,
+        });
+
+        await runtime.startOrLoad({});
+        await expect(codexSessionStateFacet.applyHappierField?.(
+            { sessionId },
+            'display.title',
+            'Before Reset',
+            { reason: 'user-mutation' },
+        )).resolves.toBeUndefined();
+
+        await runtime.reset();
+
+        await expect(codexSessionStateFacet.applyHappierField?.(
+            { sessionId },
+            'display.title',
+            'After Reset',
+            { reason: 'user-mutation' },
+        )).rejects.toMatchObject({ code: 'unsupported' });
+    });
+
+    it('does not own canonical title metadata observation after runtime reset', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-title-observer-reset-');
+
+        let metadata: Record<string, unknown> = {};
+        const metadataUpdateResolvers: Array<(value: boolean) => void> = [];
+        const sessionState = {
+            writeHappierField: vi.fn(async () => ({ ok: true, version: 1 })),
+            applyHappierField: vi.fn(async () => ({ ok: true })),
+        };
+        const session = {
+            sessionId: 'sess_title_observer_reset_1',
+            updateMetadata: vi.fn(async (updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
+                metadata = updater(metadata);
+            }),
+            getMetadataSnapshot: () => metadata,
+            waitForMetadataUpdate: vi.fn(() => new Promise<boolean>((resolve) => {
+                metadataUpdateResolvers.push(resolve);
+            })),
+            sendAgentMessageCommitted: vi.fn(async () => {}),
+            sendCodexMessage: vi.fn(),
+            sendSessionEvent: vi.fn(),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: session as any,
+        });
+
+        await runtime.startOrLoad({});
+        await runtime.reset();
+        await session.updateMetadata((current) => ({
+            ...current,
+            summary: { text: 'After Reset Title', updatedAt: 124 },
+        }));
+        metadataUpdateResolvers.shift()?.(true);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+
+        expect(sessionState.applyHappierField).not.toHaveBeenCalledWith({
+            ctx: { sessionId: 'sess_title_observer_reset_1' },
+            fieldId: 'display.title',
+            value: 'After Reset Title',
+            reason: 'user-mutation',
+        });
+    });
+
     it('bridges completed-only command results as a synthetic tool-call plus tool-result', async () => {
         const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-completed-only-command-');
 
@@ -1230,6 +1559,59 @@ describe('createCodexAppServerRuntime', () => {
                                 answers: ['Approve Once'],
                             },
                         },
+                    },
+                    error: null,
+                }),
+            ]),
+        );
+    });
+
+    it('bridges permission escalation server requests through the generic permission handler', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-bridge-request-permissions-');
+
+        const permissionHandler = {
+            handleToolCall: vi.fn().mockResolvedValueOnce({ decision: 'approved_for_session' }),
+        };
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                sendAgentMessageCommitted: vi.fn(async () => {}),
+                sendCodexMessage: vi.fn(),
+            } as any,
+            permissionHandler: permissionHandler as any,
+        } as any);
+
+        await runtime.startOrLoad({});
+        await runtime.sendPrompt('bridge-request-permissions');
+
+        expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
+            'perm_request_1',
+            'request_permissions',
+            {
+                cwd: '/repo',
+                reason: 'Needs network access',
+                permissions: {
+                    network: { enabled: true },
+                    fileSystem: { write: ['/repo/generated'] },
+                },
+            },
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+        expect(requestLog).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'request-permissions',
+                    params: null,
+                    result: {
+                        permissions: {
+                            network: { enabled: true },
+                            fileSystem: { write: ['/repo/generated'] },
+                        },
+                        scope: 'session',
                     },
                     error: null,
                 }),
@@ -1882,5 +2264,58 @@ describe('createCodexAppServerRuntime', () => {
             errorCode: 'unsupported_action',
             errorMessage: expect.stringContaining('invalid params'),
         });
+    });
+
+    it('runs checkpoint code rollback through the host-owned Git checkpoint adapter', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-checkpoint-code-rollback-');
+        const repoRoot = await createGitRepo(root);
+        const sessionId = 'session-1';
+        const turnId = 'turn-1';
+        const context = await resolveGitCheckpointBackendContext({
+            cwd: repoRoot,
+            workingDirectory: repoRoot,
+        });
+        if (!context?.detection.rootPath) {
+            throw new Error('expected temporary Git repository to resolve for checkpoint rollback');
+        }
+        const refs = buildRepositoryCheckpointRefs({
+            scopeId: checkpointScopeId(sessionId, context.detection.rootPath),
+            turnId,
+        });
+
+        await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnStart! });
+        await writeFile(join(repoRoot, 'tracked.txt'), 'changed by turn\n', 'utf8');
+        await gitCheckpointAdapter.capture({ context, checkpointRef: refs.turnFinal! });
+
+        const runtime = createCodexAppServerRuntime({
+            directory: repoRoot,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) => updater({ machineId: 'machine_1' })),
+                getLastObservedMessageSeq: vi.fn(() => 11),
+                sendAgentMessageCommitted: vi.fn(async () => undefined),
+                sendCodexMessage: vi.fn(),
+            } as any,
+        });
+
+        const result = await runtime.checkpointCodeRollback({
+            v: 1,
+            sessionId,
+            turnId,
+            cwd: repoRoot,
+            codeMode: 'code_only_without_stash',
+            backupMode: 'happier_checkpoint_only',
+            codeOnlyTranscriptDivergenceConfirmed: true,
+            expectedStartRef: refs.turnStart!.ref,
+            expectedFinalRef: refs.turnFinal!.ref,
+        });
+
+        expect(result.diagnostics).toEqual([]);
+        expect(result).toMatchObject({
+            status: 'applied',
+            changedPaths: ['tracked.txt'],
+            receipts: ['checkpoint.rollback_backup_captured', 'checkpoint.rollback_applied'],
+        });
+        await expect(readFile(join(repoRoot, 'tracked.txt'), 'utf8')).resolves.toBe('base\n');
     });
 });

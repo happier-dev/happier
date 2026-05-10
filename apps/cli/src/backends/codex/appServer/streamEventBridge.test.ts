@@ -186,6 +186,42 @@ describe('createCodexAppServerStreamEventBridge', () => {
         ]);
     });
 
+    it('maps permission escalation approval requests without requiring a prior tool item', () => {
+        const bridge = createCodexAppServerStreamEventBridge();
+
+        expect(
+            bridge.onServerRequest({
+                method: 'item/permissions/requestApproval',
+                params: {
+                    threadId: 'thread_1',
+                    turnId: 'turn_1',
+                    itemId: 'perm_1',
+                    cwd: '/repo',
+                    reason: 'Needs network access',
+                    permissions: {
+                        network: { enabled: true },
+                    },
+                },
+            }),
+        ).toEqual([
+            {
+                type: 'permissions-request',
+                callId: 'perm_1',
+                toolName: 'request_permissions',
+                input: {
+                    cwd: '/repo',
+                    reason: 'Needs network access',
+                    permissions: {
+                        network: { enabled: true },
+                    },
+                },
+                permissions: {
+                    network: { enabled: true },
+                },
+            },
+        ]);
+    });
+
     it('synthesizes a command tool-call before the result when completion arrives without a prior started event', () => {
         const bridge = createCodexAppServerStreamEventBridge();
 

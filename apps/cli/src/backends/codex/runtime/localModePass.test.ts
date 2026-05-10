@@ -34,7 +34,7 @@ describe('runCodexLocalModePass', () => {
       terminalRuntime: {
         launch,
       },
-      directSessions: null,
+      externalSessions: null,
       attach: null,
       sessionHandoff: null,
     });

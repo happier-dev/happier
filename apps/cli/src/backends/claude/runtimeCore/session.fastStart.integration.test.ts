@@ -199,6 +199,7 @@ vi.mock('@/backends/claude/runtime/createTurnOperations', () => ({
     };
     const createDefaultLoopSession = () => ({
       cleanup: vi.fn(),
+      drainCriticalMetadataWrites: vi.fn(async () => {}),
       setPushSender: vi.fn(),
       onThinkingChange: vi.fn(),
       client: {
@@ -536,6 +537,7 @@ afterEach(() => {
     const noteUserAbortRequested = vi.fn();
     currentLoopSessionOverride = {
       cleanup: vi.fn(),
+      drainCriticalMetadataWrites: vi.fn(async () => {}),
       setPushSender: vi.fn(),
       onThinkingChange: vi.fn(),
       client: {
@@ -713,6 +715,7 @@ afterEach(() => {
       cleanup: vi.fn(() => {
         orderedEvents.push('session_cleanup');
       }),
+      drainCriticalMetadataWrites: vi.fn(async () => {}),
       setPushSender: vi.fn(),
       onThinkingChange: vi.fn(),
       client: {

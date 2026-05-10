@@ -173,6 +173,46 @@ describe('handleClaudeCliCommand --version', () => {
     );
   });
 
+  it('ignores obsolete child account settings version hints for daemon-started Claude sessions', async () => {
+    const credentials = { token: 'x' } as any;
+
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'network',
+      settings: {} as any,
+      settingsVersion: 14,
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+    runSessionCommandSpy.mockResolvedValue(undefined);
+
+    await handleClaudeCliCommand({
+      args: ['--started-by', 'daemon', '--happy-starting-mode', 'remote', '--account-settings-version-hint', '14'],
+      terminalRuntime: null,
+      rawArgv: ['happier', '--started-by', 'daemon', '--happy-starting-mode', 'remote', '--account-settings-version-hint', '14'],
+    } as any);
+
+    expect(accountSettingsModule.bootstrapAccountSettingsContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'claude',
+        credentials,
+        mode: 'blocking',
+        refresh: 'force',
+      }),
+    );
+    expect(accountSettingsModule.bootstrapAccountSettingsContext).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        minSettingsVersion: expect.any(Number),
+      }),
+    );
+    expect(runSessionCommandSpy).toHaveBeenCalledWith(
+      'claude',
+      expect.objectContaining({ credentials, startedBy: 'daemon', startingMode: 'remote' }),
+    );
+    expect(runSessionCommandSpy.mock.calls[0]?.[1]).not.toHaveProperty('claudeArgs');
+  });
+
   it('does not block on account settings bootstrap for terminal remote Claude starts', async () => {
     const credentials = { token: 'x' } as any;
 
