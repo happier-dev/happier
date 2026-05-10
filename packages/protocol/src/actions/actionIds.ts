@@ -14,6 +14,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.fork',
     'session.continue_with_replay',
     'session.rollback',
+    'session.checkpoint_code_rollback',
     'session.handoff',
     'session.handoff.prepare_target',
     'session.handoff.prepare_target_result.get',
@@ -153,6 +154,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'scm.pullRequest.runStacked',
   ],
   scm_repository: [
+    'scm.repository.clone',
     'scm.repository.init',
     'scm.repository.removeIndexLock',
     'scm.hostingRepository.describePublishTargets',

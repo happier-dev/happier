@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+import {
+  ProviderRefreshPolicySchema,
+  VcsRemoteStateFreshnessSchema,
+} from './scmFreshness.js';
+
 const SCM_PULL_REQUEST_OPERATION_ERROR_CODES = {
   NOT_REPOSITORY: 'NOT_REPOSITORY',
   INVALID_PATH: 'INVALID_PATH',
@@ -164,12 +169,14 @@ const ScmHostingProviderReviewThreadCapabilitiesSchema = z.object({
 });
 
 export const ScmHostingProviderCapabilitiesSchema = z.object({
+  capabilityScope: z.literal('remote-hosting-provider').default('remote-hosting-provider'),
   compareUrl: z.boolean().default(false),
   openUrl: z.boolean().default(false),
   pullRequests: ScmHostingProviderPullRequestCapabilitiesSchema,
   repositoryProvisioning: ScmHostingProviderRepositoryProvisioningCapabilitiesSchema,
   reviewThreads: ScmHostingProviderReviewThreadCapabilitiesSchema,
 }).strict().default({
+  capabilityScope: 'remote-hosting-provider',
   compareUrl: false,
   openUrl: false,
   pullRequests: {
@@ -256,6 +263,8 @@ export const ScmPullRequestSummarySchema = z
     url: z.string().url(),
     baseBranch: z.string().min(1),
     headBranch: z.string().min(1),
+    headRepositoryNameWithOwner: z.string().min(1).optional(),
+    isCrossRepository: z.boolean().optional(),
     headSha: z.string().min(1).nullable().optional(),
     baseSha: z.string().min(1).nullable().optional(),
     state: ScmPullRequestStateSchema,
@@ -291,6 +300,8 @@ export const ScmPullRequestStatusProjectionSchema = z
     authState: ScmPullRequestAuthStateSchema.optional(),
     checkedAt: z.number().int().nonnegative().optional(),
     cacheTtlMs: z.number().int().nonnegative().optional(),
+    freshness: VcsRemoteStateFreshnessSchema.optional(),
+    refreshPolicy: ProviderRefreshPolicySchema.optional(),
   })
   .passthrough();
 export type ScmPullRequestStatusProjection = z.infer<typeof ScmPullRequestStatusProjectionSchema>;
@@ -331,6 +342,8 @@ export const ScmPullRequestListResponseSchema = z.union([
     .object({
       success: z.literal(true),
       pullRequests: z.array(ScmPullRequestSummarySchema),
+      freshness: VcsRemoteStateFreshnessSchema.optional(),
+      refreshPolicy: ProviderRefreshPolicySchema.optional(),
     })
     .passthrough(),
   ScmPullRequestErrorResponseSchema,
@@ -347,6 +360,8 @@ export const ScmPullRequestGetResponseSchema = z.union([
     .object({
       success: z.literal(true),
       pullRequest: ScmPullRequestSummarySchema.nullable(),
+      freshness: VcsRemoteStateFreshnessSchema.optional(),
+      refreshPolicy: ProviderRefreshPolicySchema.optional(),
     })
     .passthrough(),
   ScmPullRequestErrorResponseSchema,
@@ -376,6 +391,7 @@ export const ScmPullRequestOpenOrReuseRequestSchema = ScmRequestBaseSchema.exten
   providerId: z.string().min(1).optional(),
   base: ScmBranchSourceRefSchema,
   head: ScmOptionalBranchSourceRefSchema,
+  headRepositoryNameWithOwner: z.string().trim().min(1).optional(),
   title: z.string().min(1).optional(),
   body: z.string().optional(),
 }).passthrough();

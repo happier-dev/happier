@@ -13,6 +13,22 @@
     "./acp": {
       "types": "./dist/acp/index.d.ts",
       "default": "./dist/acp/index.js"
+    },
+    "./manifest/connectedAccountDescriptors": {
+      "types": "./dist/manifest/connectedAccountDescriptors.d.ts",
+      "default": "./dist/manifest/connectedAccountDescriptors.js"
+    },
+    "./manifest/scmBackends": {
+      "types": "./dist/manifest/scmBackends.d.ts",
+      "default": "./dist/manifest/scmBackends.js"
+    },
+    "./scm/backend": {
+      "types": "./dist/scm/backend.d.ts",
+      "default": "./dist/scm/backend.js"
+    },
+    "./scm/hostingProvider": {
+      "types": "./dist/scm/hostingProvider.d.ts",
+      "default": "./dist/scm/hostingProvider.js"
     }
   },
   "files": [

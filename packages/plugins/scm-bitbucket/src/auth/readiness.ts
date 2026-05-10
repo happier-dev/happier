@@ -4,11 +4,13 @@ export type BitbucketAuthReadinessState =
   | 'missing_email'
   | 'missing_token'
   | 'invalid_host'
+  | 'invalid_workspace'
   | 'api_probe_unavailable';
 
 export type BitbucketAuthReadinessInput = Readonly<{
   descriptorMaterializationKinds: readonly string[];
   host: string;
+  workspaceOrTeam: string;
   username: string | null;
   apiTokenAvailable: boolean;
   apiProbe: 'available' | 'unavailable';
@@ -30,9 +32,8 @@ function normalizeHost(value: string): string {
   }
 }
 
-function redactedUsername(value: string | null): string {
-  const trimmed = value?.trim() ?? '';
-  return trimmed || 'configured account';
+function redactedUsername(_value: string | null): string {
+    return 'configured account';
 }
 
 export function resolveBitbucketAuthReadiness(input: BitbucketAuthReadinessInput): BitbucketAuthReadiness {
@@ -48,6 +49,13 @@ export function resolveBitbucketAuthReadiness(input: BitbucketAuthReadinessInput
       state: 'invalid_host',
       diagnostic: 'Bitbucket Server and Data Center hosts are not supported by this V1 credential descriptor.',
       remediation: 'Use a Bitbucket Cloud remote on bitbucket.org.',
+    };
+  }
+  if (!input.workspaceOrTeam.trim()) {
+    return {
+      state: 'invalid_workspace',
+      diagnostic: 'Bitbucket Cloud workspace or team metadata is missing from the remote.',
+      remediation: 'Use a Bitbucket Cloud remote with a workspace and repository path.',
     };
   }
   if (!input.username?.trim()) {

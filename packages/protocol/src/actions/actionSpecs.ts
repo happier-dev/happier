@@ -25,22 +25,22 @@ import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.j
 import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
 import { ExecutionRunStartRequestSchema } from '../executionRunStartRequest.js';
 import {
-  DirectSessionAttachRequestSchema,
-  DirectSessionAttachResponseSchema,
-  DirectSessionDetachRequestSchema,
-  DirectSessionDetachResponseSchema,
-  DirectSessionFollowPolicySetRequestSchema,
-  DirectSessionFollowPolicySetResponseSchema,
-  DirectSessionLinkEnsureRequestSchema,
-  DirectSessionLinkEnsureResponseSchema,
-  DirectSessionsCandidatesListRequestSchema,
-  DirectSessionsCandidatesListResponseSchema,
-  DirectSessionStatusGetRequestSchema,
-  DirectSessionStatusGetResponseSchema,
-  DirectTranscriptPageRequestSchema,
-  DirectTranscriptPageResponseSchema,
-  DirectTranscriptReadAfterRequestSchema,
-  DirectTranscriptReadAfterResponseSchema,
+  ExternalSessionAttachRequestSchema,
+  ExternalSessionAttachResponseSchema,
+  ExternalSessionDetachRequestSchema,
+  ExternalSessionDetachResponseSchema,
+  ExternalSessionFollowPolicySetRequestSchema,
+  ExternalSessionFollowPolicySetResponseSchema,
+  ExternalSessionLinkEnsureRequestSchema,
+  ExternalSessionLinkEnsureResponseSchema,
+  ExternalSessionsCandidatesListRequestSchema,
+  ExternalSessionsCandidatesListResponseSchema,
+  ExternalSessionStatusGetRequestSchema,
+  ExternalSessionStatusGetResponseSchema,
+  ExternalSessionTranscriptPageRequestSchema,
+  ExternalSessionTranscriptPageResponseSchema,
+  ExternalSessionTranscriptReadAfterRequestSchema,
+  ExternalSessionTranscriptReadAfterResponseSchema,
 } from '../sessions/external/daemonRpcV1.js';
 import {
   ScmPullRequestCheckoutRequestSchema,
@@ -58,6 +58,12 @@ import {
   ScmPullRequestRunStackedRequestSchema,
   ScmPullRequestRunStackedResponseSchema,
 } from '../scmPullRequests.js';
+import {
+  ScmRepositoryCloneInputSchema,
+  ScmRepositoryCloneOutputSchema,
+  SourceControlCloneProtocolSchema,
+  type SourceControlCloneProtocol,
+} from '../scmRepositoryClone.js';
 import {
   ScmHostingRepositoryDescribePublishTargetsRequestSchema,
   ScmHostingRepositoryDescribePublishTargetsResponseSchema,
@@ -83,6 +89,11 @@ import {
   SubagentStatusV1Schema,
 } from '../sessions/subagents/subagentRefV1.js';
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
+import {
+  CheckpointCodeRollbackRequestSchema,
+  CheckpointCodeRollbackActionRequestSchema,
+  CheckpointCodeRollbackResultSchema,
+} from '../sessions/control/rollback/checkpointCodeRollback.js';
 import {
   SessionHandoffAbortRequestSchema,
   SessionHandoffCommitRequestSchema,
@@ -1889,6 +1900,34 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     },
     outputSchema: z.unknown(),
     inputSchema: SessionRollbackInputSchema,
+  },
+  {
+    id: 'session.checkpoint_code_rollback',
+    title: 'Rollback code to checkpoint',
+    description: 'Apply a checkpoint-backed code rollback for the selected session turn.',
+    safety: 'danger',
+    placements: [],
+    bindings: { rpcMethod: SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Rollback session code to a checkpoint',
+      description: 'Creates a mandatory backup checkpoint before applying a same-worktree reverse patch.',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'turnId', title: 'Turn id', widget: 'text', required: true },
+        { path: 'cwd', title: 'Working directory', widget: 'text', required: true },
+      ],
+    },
+    outputSchema: CheckpointCodeRollbackResultSchema,
+    inputSchema: CheckpointCodeRollbackActionRequestSchema,
   },
   {
     id: 'session.handoff',
@@ -3730,8 +3769,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       sdk: true,
     },
     sideEffectClass: 'read',
-    outputSchema: DirectSessionsCandidatesListResponseSchema,
-    inputSchema: DirectSessionsCandidatesListRequestSchema,
+    outputSchema: ExternalSessionsCandidatesListResponseSchema,
+    inputSchema: ExternalSessionsCandidatesListRequestSchema,
     inputHints: {
       title: 'List external session candidates',
       fields: [
@@ -3764,8 +3803,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       sdk: false,
     },
     sideEffectClass: 'write',
-    outputSchema: DirectSessionLinkEnsureResponseSchema,
-    inputSchema: DirectSessionLinkEnsureRequestSchema,
+    outputSchema: ExternalSessionLinkEnsureResponseSchema,
+    inputSchema: ExternalSessionLinkEnsureRequestSchema,
     inputHints: {
       title: 'Ensure external session link',
       fields: [
@@ -3798,8 +3837,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       sdk: false,
     },
     sideEffectClass: 'write',
-    outputSchema: DirectSessionAttachResponseSchema,
-    inputSchema: DirectSessionAttachRequestSchema,
+    outputSchema: ExternalSessionAttachResponseSchema,
+    inputSchema: ExternalSessionAttachRequestSchema,
     inputHints: {
       title: 'Attach external session lease',
       fields: [
@@ -3833,8 +3872,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       sdk: false,
     },
     sideEffectClass: 'write',
-    outputSchema: DirectSessionDetachResponseSchema,
-    inputSchema: DirectSessionDetachRequestSchema,
+    outputSchema: ExternalSessionDetachResponseSchema,
+    inputSchema: ExternalSessionDetachRequestSchema,
     inputHints: {
       title: 'Detach external session lease',
       fields: [
@@ -3864,8 +3903,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       sdk: false,
     },
     sideEffectClass: 'write',
-    outputSchema: DirectSessionFollowPolicySetResponseSchema,
-    inputSchema: DirectSessionFollowPolicySetRequestSchema,
+    outputSchema: ExternalSessionFollowPolicySetResponseSchema,
+    inputSchema: ExternalSessionFollowPolicySetRequestSchema,
     inputHints: {
       title: 'Set external session follow policy',
       fields: [
@@ -3898,8 +3937,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       sdk: false,
     },
     sideEffectClass: 'read',
-    outputSchema: DirectSessionStatusGetResponseSchema,
-    inputSchema: DirectSessionStatusGetRequestSchema,
+    outputSchema: ExternalSessionStatusGetResponseSchema,
+    inputSchema: ExternalSessionStatusGetRequestSchema,
     inputHints: {
       title: 'Get external session status',
       fields: [
@@ -3932,8 +3971,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       sdk: true,
     },
     sideEffectClass: 'read',
-    outputSchema: DirectTranscriptPageResponseSchema,
-    inputSchema: DirectTranscriptPageRequestSchema,
+    outputSchema: ExternalSessionTranscriptPageResponseSchema,
+    inputSchema: ExternalSessionTranscriptPageRequestSchema,
     inputHints: {
       title: 'Page external session transcript',
       fields: [
@@ -3972,8 +4011,8 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
       sdk: true,
     },
     sideEffectClass: 'read',
-    outputSchema: DirectTranscriptReadAfterResponseSchema,
-    inputSchema: DirectTranscriptReadAfterRequestSchema,
+    outputSchema: ExternalSessionTranscriptReadAfterResponseSchema,
+    inputSchema: ExternalSessionTranscriptReadAfterRequestSchema,
     inputHints: {
       title: 'Read external session transcript after cursor',
       fields: [
@@ -4302,6 +4341,50 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
             { value: 'deny', label: 'Deny' },
           ],
         },
+      ],
+    },
+  },
+  {
+    id: 'scm.repository.clone',
+    title: 'Clone source-control repository',
+    description: 'Clone a hosting-provider repository into an explicitly selected local destination.',
+    safety: 'danger',
+    placements: [],
+    bindings: {
+      rpcMethod: 'scm.repository.clone',
+      sdkMethod: 'scm.repository.clone',
+    },
+    surfaces: {
+      ui: false,
+      voice: false,
+      session_agent: false,
+      mcp: false,
+      cli: false,
+      rpc: true,
+      sdk: true,
+    },
+    sideEffectClass: 'external',
+    outputSchema: ScmRepositoryCloneOutputSchema,
+    inputSchema: ScmRepositoryCloneInputSchema,
+    inputHints: {
+      title: 'Clone source-control repository',
+      fields: [
+        { path: 'provider', title: 'Hosting provider (json)', widget: 'textarea', required: true },
+        { path: 'repository', title: 'Repository (json)', widget: 'textarea', required: true },
+        { path: 'destinationParentPath', title: 'Destination parent directory', widget: 'text', required: true },
+        { path: 'destinationDirectoryName', title: 'Destination directory name', widget: 'text', required: true },
+        {
+          path: 'protocol',
+          title: 'Clone protocol',
+          widget: 'select',
+          required: true,
+          options: SourceControlCloneProtocolSchema.options.map((value: SourceControlCloneProtocol) => ({
+            value,
+            label: value.toUpperCase(),
+          })),
+        },
+        { path: 'confirmed', title: 'Confirm repository clone', widget: 'checkbox', required: true },
+        { path: 'authorizationToken', title: 'Authorization token', widget: 'text', required: true },
       ],
     },
   },

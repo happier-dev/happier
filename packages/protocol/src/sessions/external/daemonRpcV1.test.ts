@@ -1,29 +1,40 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  DirectSessionsProviderIdSchema,
-  DirectSessionAttachRequestSchema,
-  DirectSessionDetachRequestSchema,
-  DirectSessionFollowPolicySetRequestSchema,
-  DirectSessionLinkEnsureRequestSchema,
-  DirectSessionsSourceSchema,
+  ExternalSessionsProviderIdSchema,
+  ExternalSessionAttachRequestSchema,
+  ExternalSessionDetachRequestSchema,
+  ExternalSessionFollowPolicySetRequestSchema,
+  ExternalSessionLinkEnsureRequestSchema,
+  ExternalSessionsSourceSchema,
 } from './daemonRpcV1';
+import * as daemonRpcV1 from './daemonRpcV1';
 import { AgentProviderIdV1Schema } from '../../providers/agentProviderIdsV1';
-import { resolveDirectSessionsSourceKey } from '../../providers/externalSessionsCatalog';
+import { resolveExternalSessionsSourceKey } from '../../providers/externalSessionsCatalog';
 
-describe('DirectSessionsProviderIdSchema', () => {
+describe('ExternalSessionsProviderIdSchema', () => {
   it('stays scoped to direct-session browsing providers even when daemon-facing provider ids grow', () => {
     expect(AgentProviderIdV1Schema.parse('pi')).toBe('pi');
     expect(AgentProviderIdV1Schema.parse('ohMyPi')).toBe('ohMyPi');
-    expect(DirectSessionsProviderIdSchema.parse('codex')).toBe('codex');
-    expect(DirectSessionsProviderIdSchema.parse('ohMyPi')).toBe('ohMyPi');
-    expect(() => DirectSessionsProviderIdSchema.parse('pi')).toThrow();
+    expect(ExternalSessionsProviderIdSchema.parse('codex')).toBe('codex');
+    expect(ExternalSessionsProviderIdSchema.parse('ohMyPi')).toBe('ohMyPi');
+    expect(() => ExternalSessionsProviderIdSchema.parse('pi')).toThrow();
   });
 });
 
-describe('DirectSessionsSourceSchema', () => {
+describe('external-session transcript schemas', () => {
+  it('exports canonical external-session transcript symbols', () => {
+    expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptRawMessageV1Schema?.safeParse).toBe('function');
+    expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptPageRequestSchema?.safeParse).toBe('function');
+    expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptPageResponseSchema?.safeParse).toBe('function');
+    expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
+    expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptReadAfterResponseSchema?.safeParse).toBe('function');
+  });
+});
+
+describe('ExternalSessionsSourceSchema', () => {
   it('accepts exact Codex user-home identity', () => {
-    const parsed = DirectSessionsSourceSchema.parse({
+    const parsed = ExternalSessionsSourceSchema.parse({
       kind: 'codexHome',
       home: 'user',
       homePath: '/tmp/custom-codex-home',
@@ -38,7 +49,7 @@ describe('DirectSessionsSourceSchema', () => {
   });
 
   it('accepts exact Codex connected-service profile identity', () => {
-    expect(DirectSessionsSourceSchema.parse({
+    expect(ExternalSessionsSourceSchema.parse({
       kind: 'codexHome',
       home: 'connectedService',
       connectedServiceId: 'openai-codex',
@@ -54,7 +65,7 @@ describe('DirectSessionsSourceSchema', () => {
   });
 
   it('validates runtimeDescriptor as a schema-owned direct-session link field', () => {
-    const parsed = DirectSessionLinkEnsureRequestSchema.parse({
+    const parsed = ExternalSessionLinkEnsureRequestSchema.parse({
       machineId: 'machine-1',
       providerId: 'codex',
       remoteSessionId: 'remote-1',
@@ -85,7 +96,7 @@ describe('DirectSessionsSourceSchema', () => {
   });
 
   it('rejects invalid runtimeDescriptorV1 shapes', () => {
-    expect(() => DirectSessionLinkEnsureRequestSchema.parse({
+    expect(() => ExternalSessionLinkEnsureRequestSchema.parse({
       machineId: 'machine-1',
       providerId: 'codex',
       remoteSessionId: 'remote-1',
@@ -105,7 +116,7 @@ describe('DirectSessionsSourceSchema', () => {
   });
 
   it('accepts direct-session attach renew requests with an existing lease id', () => {
-    const parsed = DirectSessionAttachRequestSchema.parse({
+    const parsed = ExternalSessionAttachRequestSchema.parse({
       machineId: 'machine-1',
       sessionId: 'session-1',
       providerId: 'codex',
@@ -135,7 +146,7 @@ describe('DirectSessionsSourceSchema', () => {
   });
 
   it('accepts direct-session detach requests', () => {
-    expect(DirectSessionDetachRequestSchema.parse({
+    expect(ExternalSessionDetachRequestSchema.parse({
       machineId: 'machine-1',
       sessionId: 'session-1',
       leaseId: 'lease-1',
@@ -147,7 +158,7 @@ describe('DirectSessionsSourceSchema', () => {
   });
 
   it('accepts direct-session background follow policy updates', async () => {
-    expect(DirectSessionFollowPolicySetRequestSchema.parse({
+    expect(ExternalSessionFollowPolicySetRequestSchema.parse({
       machineId: 'machine-1',
       sessionId: 'session-1',
       providerId: 'claude',
@@ -173,7 +184,7 @@ describe('DirectSessionsSourceSchema', () => {
   });
 
   it('accepts exact ohMyPi agent-dir identity', () => {
-    expect(DirectSessionsSourceSchema.parse({
+    expect(ExternalSessionsSourceSchema.parse({
       kind: 'ohMyPiAgentDir',
       agentDir: '/tmp/omp-agent',
     })).toEqual({
@@ -183,12 +194,12 @@ describe('DirectSessionsSourceSchema', () => {
   });
 
   it('resolves source keys by source kind without provider-specific branching in core callers', () => {
-    expect(resolveDirectSessionsSourceKey({
+    expect(resolveExternalSessionsSourceKey({
       kind: 'codexHome',
       home: 'user',
       homePath: '/tmp/codex-home',
     })).toBe('codexHome:user:::/tmp/codex-home');
-    expect(resolveDirectSessionsSourceKey({
+    expect(resolveExternalSessionsSourceKey({
       kind: 'ohMyPiAgentDir',
       agentDir: '/tmp/omp-agent',
     })).toBe('ohMyPiAgentDir:/tmp/omp-agent');

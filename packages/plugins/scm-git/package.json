@@ -1,0 +1,47 @@
+{
+  "name": "@happier-dev/plugins-scm-git",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./checkpoints": {
+      "types": "./dist/checkpoints/index.d.ts",
+      "default": "./dist/checkpoints/index.js"
+    },
+    "./checkpoints/rollback": {
+      "types": "./dist/checkpoints/rollback/index.d.ts",
+      "default": "./dist/checkpoints/rollback/index.js"
+    },
+    "./operations/stashOperations": {
+      "types": "./dist/operations/stashOperations.d.ts",
+      "default": "./dist/operations/stashOperations.js"
+    },
+    "./hostingProviders": {
+      "types": "./dist/hostingProviders/index.d.ts",
+      "default": "./dist/hostingProviders/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/protocol": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

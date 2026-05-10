@@ -4,7 +4,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 // Substantive capabilities + contributions land during E.10 (Pi — Tier 3 native, single-role RPC leaf through ACP factory).
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'pi',
+  id: 'happier.agent.pi',
   version: '0.0.0',
   displayName: 'pi',
   description: undefined,

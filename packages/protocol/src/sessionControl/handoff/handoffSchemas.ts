@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DirectSessionsSourceSchema } from '../../providers/externalSessionsCatalog.js';
+import { ExternalSessionsSourceSchema } from '../../providers/externalSessionsCatalog.js';
 import { AgentProviderIdV1Schema } from '../../providers/agentProviderIdsV1.js';
 import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
 
@@ -245,7 +245,7 @@ export const SessionHandoffPrepareTargetResponseSchema = z
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusSchema,
     remoteSessionId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH).optional(),
-    directSource: DirectSessionsSourceSchema.optional(),
+    directSource: ExternalSessionsSourceSchema.optional(),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     resume: SessionHandoffResumePlanSchema.optional(),
     workspaceReplicationJobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
@@ -259,7 +259,7 @@ export const SessionHandoffPrepareTargetResultGetResponseSchema = z
     handoffId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
     status: SessionHandoffStatusSchema,
     remoteSessionId: z.string().min(1).max(MAX_HANDOFF_ID_LENGTH),
-    directSource: DirectSessionsSourceSchema,
+    directSource: ExternalSessionsSourceSchema,
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     resume: SessionHandoffResumePlanSchema,
     workspaceReplicationJobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),

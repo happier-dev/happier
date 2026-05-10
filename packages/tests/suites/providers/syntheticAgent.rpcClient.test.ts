@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { stringifySerializedJsonValue } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
 
@@ -34,7 +35,7 @@ describe('testkit: synthetic agent rpc client', () => {
     };
 
     const client = createDataKeyRpcClient(socket as any, dataKey);
-    const res = await client.call('machine:daemon.directSessions.candidates.list', { providerId: 'claude' });
+    const res = await client.call(`machine:${RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST}`, { providerId: 'claude' });
 
     expect(res).toEqual({
       ok: true,
@@ -67,7 +68,7 @@ describe('testkit: synthetic agent rpc client', () => {
     };
 
     const client = createDataKeyRpcClient(socket as any, dataKey);
-    const res = await client.call('machine:daemon.directSessions.candidates.list', { providerId: 'claude' });
+    const res = await client.call(`machine:${RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST}`, { providerId: 'claude' });
 
     expect(res).toEqual({
       ok: true,

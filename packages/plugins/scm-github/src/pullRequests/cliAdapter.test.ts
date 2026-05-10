@@ -69,7 +69,7 @@ describe('GitHub CLI pull request adapter', () => {
           '--state',
           'open',
           '--json',
-          expect.any(String),
+          expect.stringContaining('headRepository'),
           '--base',
           'main',
           '--head',

@@ -42,6 +42,7 @@ import {
   type RuntimeControlSurface,
   type RuntimeFacets,
   type RuntimeTranscriptSourceFacet,
+  type SessionStateFacet,
   type AgentId,
   type AgentAuthProbeConfig,
   type AgentLocalCliConfig,
@@ -221,6 +222,7 @@ describe('agents package exports', () => {
     expectTypeOf<RuntimeControlSurface>().toEqualTypeOf<AgentCoreRuntimeControlSurface>();
     expectTypeOf<RuntimeFacets>().toEqualTypeOf<Readonly<{
       transcriptSource?: RuntimeTranscriptSourceFacet;
+      sessionState?: SessionStateFacet;
     }>>();
     expectTypeOf<RuntimeCapabilities>().toEqualTypeOf<Readonly<{
       localControl?: AgentCoreRuntimeControlSurface['localControl'] | null;

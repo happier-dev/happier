@@ -33,6 +33,11 @@ import {
 } from '../sessionControl/handoff/handoffSchemas.js';
 import type { SessionContinueWithReplayRpcParams } from '../sessionContinueWithReplay.js';
 import { SessionControlErrorCodeSchema } from '../sessionControl/contract.js';
+import type {
+  CheckpointCodeRollbackRequest,
+  CheckpointCodeRollbackActionRequest,
+  CheckpointCodeRollbackResult,
+} from '../sessions/control/rollback/checkpointCodeRollback.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 
 export type ActionExecuteResult =
@@ -117,6 +122,10 @@ export type ActionExecutorDeps = Readonly<{
   sessionFork: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
   sessionContinueWithReplay?: (args: SessionContinueWithReplayRpcParams) => Promise<unknown>;
   sessionRollback: (args: Readonly<{ sessionId: string; serverId?: string | null; target?: SessionRollbackTarget }>) => Promise<unknown>;
+  checkpointCodeRollback?: (args: Readonly<{
+    request: CheckpointCodeRollbackRequest;
+    serverId?: string | null;
+  }>) => Promise<CheckpointCodeRollbackResult | unknown>;
   sessionHandoffStart?: (args: Readonly<{
     sessionId: string;
     targetMachineId: string;
@@ -467,6 +476,19 @@ function normalizeExecutionBackendOptionValue(value: string): string {
   return normalized;
 }
 
+function buildAvailableExecutionBackendOptionKeys(value: unknown): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const option of normalizeResolvedOptions(value)) {
+    if (option.disabled === true) continue;
+    const normalized = tryNormalizeExecutionBackendOptionValue(option.value);
+    if (!normalized) continue;
+    const raw = normalizeId(option.value);
+    if (raw) keys.add(raw);
+    keys.add(normalized);
+  }
+  return keys;
+}
+
 async function resolveDynamicActionOptions(params: Readonly<{
   deps: ActionExecutorDeps;
   ctx: ActionExecutorContext;
@@ -745,15 +767,31 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const engineIds: readonly string[] = Array.isArray((parsed.data as any).engineIds) ? (parsed.data as any).engineIds : [];
         const instructions = String((parsed.data as any).instructions ?? '').trim();
         const intentInputBase = { ...(parsed.data as any) };
+        const availableReviewEngineKeys = buildAvailableExecutionBackendOptionKeys(await deps.reviewEnginesList({
+          sessionId,
+          includeDisabled: false,
+        }));
 
         const results = await fanoutStarts({
           keys: engineIds,
-          startOne: async (engineId) =>
-            deps.executionRunStart(
+          startOne: async (engineId) => {
+            const normalizedBackendTargetKey = normalizeExecutionBackendOptionValue(engineId);
+            const rawEngineId = normalizeId(engineId);
+            if (
+              !availableReviewEngineKeys.has(normalizedBackendTargetKey)
+              && (!rawEngineId || !availableReviewEngineKeys.has(rawEngineId))
+            ) {
+              return {
+                ok: false,
+                errorCode: 'review_engine_unavailable',
+                error: 'review_engine_unavailable',
+              };
+            }
+            return deps.executionRunStart(
               sessionId,
               {
                 intent: 'review',
-                backendTarget: parseBackendTargetKey(normalizeExecutionBackendOptionValue(engineId)),
+                backendTarget: parseBackendTargetKey(normalizedBackendTargetKey),
                 instructions,
                 permissionMode: (parsed.data as any).permissionMode ?? 'read_only',
                 retentionPolicy: 'resumable',
@@ -763,7 +801,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 intentInput: { ...intentInputBase, engineId },
               },
               opts,
-            ),
+            );
+          },
         });
 
         return { ok: true, result: { intent: 'review', sessionId, results } };
@@ -1170,6 +1209,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const rawTarget = (parsed.data as any)?.target;
           const target = rawTarget && typeof rawTarget === 'object' ? (rawTarget as SessionRollbackTarget) : undefined;
           const res = await deps.sessionRollback({ sessionId, ...(serverId ? { serverId } : {}), ...(target ? { target } : {}) });
+          return { ok: true, result: res };
+        }
+
+        if (actionId === 'session.checkpoint_code_rollback') {
+          if (!deps.checkpointCodeRollback) {
+            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.checkpoint_code_rollback' };
+          }
+          const request = parsed.data as CheckpointCodeRollbackActionRequest;
+          const serverId = resolveServerIdForSession(deps, ctx, request.sessionId);
+          const res = await deps.checkpointCodeRollback({ request, ...(serverId ? { serverId } : {}) });
           return { ok: true, result: res };
         }
 

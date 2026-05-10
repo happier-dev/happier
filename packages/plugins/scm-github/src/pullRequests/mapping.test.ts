@@ -34,6 +34,9 @@ describe('GitHub pull request mapping', () => {
       head: {
         ref: 'feature/scm-pr-4',
         sha: 'head-sha',
+        repo: {
+          full_name: 'happier-dev/happier',
+        },
       },
     })).toMatchObject({
       provider,
@@ -43,6 +46,8 @@ describe('GitHub pull request mapping', () => {
       url: 'https://github.com/happier-dev/happier/pull/42',
       baseBranch: 'main',
       headBranch: 'feature/scm-pr-4',
+      headRepositoryNameWithOwner: 'happier-dev/happier',
+      isCrossRepository: false,
       baseSha: 'base-sha',
       headSha: 'head-sha',
       state: 'draft',
@@ -72,6 +77,9 @@ describe('GitHub pull request mapping', () => {
       },
       baseRefName: 'main',
       headRefName: 'feature/provider-hook',
+      headRepository: {
+        nameWithOwner: 'happier-dev/happier',
+      },
       baseRefOid: 'cli-base-sha',
       headRefOid: 'cli-head-sha',
       statusCheckRollup: [
@@ -82,6 +90,8 @@ describe('GitHub pull request mapping', () => {
       title: 'Read through provider hook',
       baseBranch: 'main',
       headBranch: 'feature/provider-hook',
+      headRepositoryNameWithOwner: 'happier-dev/happier',
+      isCrossRepository: false,
       baseSha: 'cli-base-sha',
       headSha: 'cli-head-sha',
       state: 'merged',

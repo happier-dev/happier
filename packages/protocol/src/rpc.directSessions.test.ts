@@ -3,6 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from './rpc.js';
 
 describe('RPC_METHODS (daemon direct sessions)', () => {
+  it('does not expose unsuffixed daemon.directSessions.* constants as canonical API', () => {
+    const rpcMethods = RPC_METHODS as Record<string, string>;
+
+    expect(rpcMethods.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST).toBeUndefined();
+    expect(rpcMethods.DAEMON_DIRECT_SESSION_LINK_ENSURE).toBeUndefined();
+    expect(rpcMethods.DAEMON_DIRECT_SESSION_ATTACH).toBeUndefined();
+    expect(rpcMethods.DAEMON_DIRECT_SESSION_DETACH).toBeUndefined();
+    expect(rpcMethods.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET).toBeUndefined();
+    expect(rpcMethods.DAEMON_DIRECT_SESSION_STATUS_GET).toBeUndefined();
+    expect(rpcMethods.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE).toBeUndefined();
+    expect(rpcMethods.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER).toBeUndefined();
+    expect(rpcMethods.DAEMON_DIRECT_SESSION_TAKEOVER).toBeUndefined();
+    expect(rpcMethods.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST).toBeUndefined();
+  });
+
   it('includes canonical daemon.externalSessions.* methods', () => {
     expect((RPC_METHODS as Record<string, string>).DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST).toBe(
       'daemon.externalSessions.candidates.list',
@@ -33,7 +48,7 @@ describe('RPC_METHODS (daemon direct sessions)', () => {
     );
   });
 
-  it('includes daemon.directSessions.* methods', () => {
+  it('includes legacy daemon.directSessions.* methods', () => {
     expect((RPC_METHODS as Record<string, string>).DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY).toBe(
       'daemon.directSessions.candidates.list',
     );

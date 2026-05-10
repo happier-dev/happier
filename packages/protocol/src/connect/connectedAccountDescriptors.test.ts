@@ -123,7 +123,6 @@ describe('connectedAccountDescriptors', () => {
             'claude-subscription',
             'gemini',
             'github',
-            'bitbucket',
         ]);
         expect(descriptorExports.getConnectedAccountDescriptor?.('openai-codex')?.aliases).toContain('codex');
         expect(descriptorExports.getConnectedAccountDescriptor?.('claude-subscription')?.connectModes).toEqual(
@@ -163,34 +162,7 @@ describe('connectedAccountDescriptors', () => {
             administration: 'write',
         });
 
-        const bitbucket = descriptorExports.getConnectedAccountDescriptor?.('bitbucket');
-        expect(bitbucket).toMatchObject({
-            aliases: ['bitbucket'],
-            credentialKinds: ['token'],
-            defaultCredentialKind: 'token',
-            connectModes: [
-                expect.objectContaining({
-                    targetId: 'bitbucket',
-                    mode: 'token',
-                    credentialKind: 'token',
-                    tokenKind: 'api-token',
-                    default: true,
-                }),
-            ],
-            materialization: {
-                materializationKinds: ['scm_hosting_basic_auth'],
-            },
-        });
-        expect(bitbucket?.oauth).toBeUndefined();
-        expect(bitbucket?.tokenSetup).toMatchObject({
-            tokenKind: 'api-token',
-            credentialPayloadKind: 'bitbucket_basic_auth',
-            identity: {
-                kind: 'email_or_username',
-                promptLabelKey: 'connectedServices.tokenPrompts.bitbucketEmailOrUsername',
-                missingValueErrorKey: 'connectedServices.tokenPrompts.errors.missingBitbucketEmailOrUsername',
-            },
-        });
+        expect(descriptorExports.getConnectedAccountDescriptor?.('bitbucket')).toBeNull();
     });
 
     it('rejects descriptor metadata that stores raw secret-shaped values', () => {

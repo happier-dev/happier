@@ -6,6 +6,10 @@ import {
   type ActionsSettingsV1,
 } from '../../actions/actionSettings.js';
 import { AcpCatalogSettingsV1Schema } from '../../acpCatalog/settingsV1.js';
+import {
+  CodingPromptBehaviorV1Schema,
+  DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
+} from '../../prompts/codingPromptBehaviorV1.js';
 import { WorkspaceRefV1Schema } from '../../workspaces/workspaceRefV1.js';
 import {
   AttentionDeliveryPolicyV1Schema,
@@ -223,6 +227,7 @@ export const AccountSettingsSchema = z.preprocess(
       notificationChannelsV1: NotificationChannelsV1Schema.default([
         deriveExpoPushNotificationChannelFromLegacySettings(DEFAULT_NOTIFICATIONS_SETTINGS_V1),
       ]),
+      codingPromptBehaviorV1: CodingPromptBehaviorV1Schema.default(DEFAULT_CODING_PROMPT_BEHAVIOR_V1),
       attentionDeliveryPolicyV1: AttentionDeliveryPolicyV1Schema
         .catch(DEFAULT_ATTENTION_DELIVERY_POLICY_V1)
         .default(DEFAULT_ATTENTION_DELIVERY_POLICY_V1),

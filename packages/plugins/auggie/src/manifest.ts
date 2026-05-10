@@ -4,7 +4,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 // Substantive capabilities + contributions land during E.2 (Auggie — Tier 2 activate-hook).
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'auggie',
+  id: 'happier.agent.auggie',
   version: '0.0.0',
   displayName: 'auggie',
   description: undefined,

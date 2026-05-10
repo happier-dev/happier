@@ -1,0 +1,153 @@
+import type { SessionMetadata, SessionStateFieldId } from '@happier-dev/protocol';
+
+import type { MetadataUpdatePort, SessionStateBinding, SessionStateFieldWriteValue } from '../_types.js';
+import {
+  acpConfigOptionIntentBinding,
+  acpSessionModeIntentBinding,
+  modelIntentBinding,
+  permissionModeIntentBinding,
+} from './intent.js';
+import { runtimeDescriptorBinding } from './runtimeDescriptor.js';
+import { summaryTextBinding } from './summaryText.js';
+import { getLegacyVendorSessionIdMetadataKeys, vendorSessionIdBinding } from './vendorSessionId.js';
+
+const SESSION_STATE_METADATA_BINDINGS = {
+  'identity.runtimeDescriptor': runtimeDescriptorBinding,
+  'identity.vendorSessionId': vendorSessionIdBinding,
+  'intent.model': modelIntentBinding,
+  'intent.permissionMode': permissionModeIntentBinding,
+  'intent.acpSessionMode': acpSessionModeIntentBinding,
+  'intent.acpConfigOption': acpConfigOptionIntentBinding,
+  'display.title': summaryTextBinding,
+} satisfies Partial<{ [F in SessionStateFieldId]: SessionStateBinding<F> }>;
+
+function getBinding<F extends SessionStateFieldId>(fieldId: F): SessionStateBinding<F> | null {
+  const binding = SESSION_STATE_METADATA_BINDINGS[fieldId as keyof typeof SESSION_STATE_METADATA_BINDINGS];
+  return binding ? (binding as SessionStateBinding<F>) : null;
+}
+
+export function hasSessionStateFieldMetadataBinding(fieldId: SessionStateFieldId): boolean {
+  return fieldId in SESSION_STATE_METADATA_BINDINGS;
+}
+
+export function writeSessionStateFieldToMetadata<F extends SessionStateFieldId>(
+  metadata: SessionMetadata,
+  fieldId: F,
+  value: SessionStateFieldWriteValue<F>,
+): SessionMetadata {
+  // Mirror engine's `unsupported` gate: view.* and other unbound fields are no-ops here.
+  // Wave-20: prevents standalone helper from throwing when a binding-less field id is passed,
+  // matching syncEngine.writeHappierField (which returns { ok: false, reason: 'unsupported' }).
+  const binding = getBinding(fieldId);
+  if (!binding) {
+    return metadata;
+  }
+  return binding.write(metadata, { value });
+}
+
+export function clearSessionStateFieldFromMetadata(
+  metadata: SessionMetadata,
+  fieldId: SessionStateFieldId,
+): SessionMetadata {
+  const next = { ...metadata } as Record<string, unknown>;
+  switch (fieldId) {
+    case 'identity.runtimeDescriptor':
+      delete next.runtimeDescriptorV1;
+      delete next.agentRuntimeDescriptorV1;
+      break;
+    case 'identity.vendorSessionId':
+      for (const key of getLegacyVendorSessionIdMetadataKeys()) {
+        delete next[key];
+      }
+      break;
+    case 'intent.permissionMode':
+      delete next.permissionMode;
+      delete next.permissionModeUpdatedAt;
+      break;
+    case 'intent.acpSessionMode':
+      delete next.sessionModeOverrideV1;
+      delete next.acpSessionModeOverrideV1;
+      break;
+    case 'intent.model':
+      delete next.modelOverrideV1;
+      break;
+    case 'intent.acpConfigOption':
+      delete next.sessionConfigOptionOverridesV1;
+      delete next.acpConfigOptionOverridesV1;
+      break;
+    case 'display.title':
+      delete next.summary;
+      break;
+    case 'view.readState':
+    case 'view.attention':
+      break;
+  }
+  return next as SessionMetadata;
+}
+
+export function createSessionStateFieldMetadataUpdater<F extends SessionStateFieldId>(
+  fieldId: F,
+  value: SessionStateFieldWriteValue<F>,
+): (metadata: SessionMetadata) => SessionMetadata {
+  return (metadata) => writeSessionStateFieldToMetadata(metadata, fieldId, value);
+}
+
+export function applySessionStateFieldMetadataPatch<F extends SessionStateFieldId>(
+  metadata: SessionMetadata,
+  fieldId: F,
+  value: SessionStateFieldWriteValue<F>,
+): SessionMetadata {
+  return writeSessionStateFieldToMetadata(metadata, fieldId, value);
+}
+
+export function buildSessionStateFieldMetadataPatch<F extends SessionStateFieldId>(
+  fieldId: F,
+  value: SessionStateFieldWriteValue<F>,
+): SessionMetadata {
+  return applySessionStateFieldMetadataPatch({}, fieldId, value);
+}
+
+type PublishSessionStateFieldToMetadataParams<F extends SessionStateFieldId> = Readonly<{
+  sessionId: string;
+  fieldId: F;
+  value: SessionStateFieldWriteValue<F>;
+} & (
+  | Readonly<{
+    updateSessionMetadataWithRetry: (
+    sessionId: string,
+    updater: (metadata: SessionMetadata) => SessionMetadata,
+    ) => Promise<unknown>;
+  }>
+  | Readonly<{
+    metadataPort: MetadataUpdatePort;
+    reason: string;
+    maxAttempts?: number;
+  }>
+)>;
+
+export async function publishSessionStateFieldToMetadata<F extends SessionStateFieldId>(
+  params: PublishSessionStateFieldToMetadataParams<F>,
+): Promise<void> {
+  // Mirror engine's `unsupported` gate: view.* and other binding-less fields short-circuit silently.
+  // Wave-20: keeps standalone helper symmetric with syncEngine.writeHappierField behavior.
+  if (!hasSessionStateFieldMetadataBinding(params.fieldId)) {
+    return;
+  }
+  const updater = createSessionStateFieldMetadataUpdater(params.fieldId, params.value);
+  if ('metadataPort' in params) {
+    const result = await params.metadataPort.update(
+      params.sessionId,
+      updater,
+      {
+        reason: params.reason,
+        ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
+      },
+    );
+    if (!result.ok) {
+      throw new Error(`Session state metadata update failed: ${result.reason}`);
+    }
+    return;
+  }
+
+  await params.updateSessionMetadataWithRetry(params.sessionId, updater);
+}

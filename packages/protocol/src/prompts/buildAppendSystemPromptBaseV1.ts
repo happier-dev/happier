@@ -6,7 +6,7 @@ import {
 } from './executionRunsGuidanceV1.js';
 import { buildMemoryRecallGuidanceBlockV1 } from './memoryRecallGuidanceV1.js';
 import { buildPromptPlanV1, renderPromptPlanV1, type PromptPlanV1 } from './promptPlanV1.js';
-import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from './systemPromptBaseV1.js';
+import { buildHappierBaseSystemPromptV1 } from './systemPromptBaseV1.js';
 
 function coerceExecutionRunsGuidanceEntriesV1(raw: unknown): ExecutionRunsGuidanceEntryV1[] {
   if (!Array.isArray(raw)) return [];
@@ -68,10 +68,12 @@ export function buildCodingSessionPromptPlanBaseV1(args: Readonly<{
   executionRunsFeatureEnabled: boolean;
   memoryRecallGuidanceEnabled?: boolean;
 }>): PromptPlanV1 {
-  const base = typeof args.base === 'string' ? args.base : HAPPIER_BASE_SYSTEM_PROMPT_V1;
   const settings = args.settings && typeof args.settings === 'object' && !Array.isArray(args.settings)
     ? args.settings
     : null;
+  const base = typeof args.base === 'string'
+    ? args.base
+    : buildHappierBaseSystemPromptV1({ settings });
 
   const blocks = [{
     id: 'coding.base',

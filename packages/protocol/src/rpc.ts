@@ -90,16 +90,6 @@ export const RPC_METHODS = {
   DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER_LEGACY: 'daemon.directSessions.transcript.readAfter',
   DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY: 'daemon.directSessions.takeover',
   DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY: 'daemon.directSessions.takeoverPersist',
-  DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST: 'daemon.directSessions.candidates.list',
-  DAEMON_DIRECT_SESSION_LINK_ENSURE: 'daemon.directSessions.link.ensure',
-  DAEMON_DIRECT_SESSION_ATTACH: 'daemon.directSessions.attach',
-  DAEMON_DIRECT_SESSION_DETACH: 'daemon.directSessions.detach',
-  DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET: 'daemon.directSessions.followPolicy.set',
-  DAEMON_DIRECT_SESSION_STATUS_GET: 'daemon.directSessions.status.get',
-  DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE: 'daemon.directSessions.transcript.page',
-  DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER: 'daemon.directSessions.transcript.readAfter',
-  DAEMON_DIRECT_SESSION_TAKEOVER: 'daemon.directSessions.takeover',
-  DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST: 'daemon.directSessions.takeoverPersist',
   DAEMON_SESSION_HANDOFF_START: 'daemon.sessionHandoff.start',
   DAEMON_SESSION_HANDOFF_PREPARE_TARGET: 'daemon.sessionHandoff.prepareTarget',
   DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET: 'daemon.sessionHandoff.prepareTargetResult.get',
@@ -180,6 +170,7 @@ export const RPC_METHODS = {
   SCM_PULL_REQUEST_CHECKOUT: 'scm.pullRequest.checkout',
   SCM_PULL_REQUEST_PREPARE_WORKTREE: 'scm.pullRequest.prepareWorktree',
   SCM_PULL_REQUEST_RUN_STACKED: 'scm.pullRequest.runStacked',
+  SCM_REPOSITORY_CLONE: 'scm.repository.clone',
   SCM_REPOSITORY_INIT: 'scm.repository.init',
   SCM_REPOSITORY_REMOVE_INDEX_LOCK: 'scm.repository.removeIndexLock',
   SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS: 'scm.hostingRepository.describePublishTargets',
@@ -223,6 +214,7 @@ export const SESSION_RPC_METHODS = {
   EXECUTION_RUN_GET: 'execution.run.get',
   EXECUTION_RUN_ACTION: 'execution.run.action',
   SESSION_ROLLBACK: 'session.rollback',
+  SESSION_CHECKPOINT_CODE_ROLLBACK: 'session.checkpointCodeRollback',
 } as const;
 
 export function isRpcMethodNotFoundResult(value: unknown): value is { error: string; errorCode?: string } {

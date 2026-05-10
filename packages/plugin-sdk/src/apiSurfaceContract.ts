@@ -8,6 +8,7 @@ import type {
   PluginApiNotificationChannelRegistrationV1,
   PluginApiRegisterMethodV1,
   PluginApiV1,
+  ScmBackendRuntimeRegistration,
 } from './api';
 
 type AssertNever<T extends never> = T;
@@ -40,6 +41,12 @@ type _PluginApiMustExposeNotificationRegistration = AssertTrue<
 type _PluginApiMustExposeExecutionRunProfileRegistration = AssertTrue<
   PluginApiV1 extends Readonly<{
     registerExecutionRunProfile: PluginApiRegisterMethodV1<PluginApiExecutionRunProfileRegistrationV1>;
+  }> ? true : false
+>;
+
+type _PluginApiMustExposeScmBackendRegistration = AssertTrue<
+  PluginApiV1 extends Readonly<{
+    registerScmBackend: PluginApiRegisterMethodV1<ScmBackendRuntimeRegistration>;
   }> ? true : false
 >;
 

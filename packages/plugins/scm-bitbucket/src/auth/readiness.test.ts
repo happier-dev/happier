@@ -7,12 +7,13 @@ describe('resolveBitbucketAuthReadiness', () => {
     expect(resolveBitbucketAuthReadiness({
       descriptorMaterializationKinds: ['scm_hosting_basic_auth'],
       host: 'bitbucket.org',
+      workspaceOrTeam: 'happier-dev',
       username: 'dev@example.com',
       apiTokenAvailable: true,
       apiProbe: 'available',
     })).toEqual({
       state: 'ready',
-      diagnostic: 'Bitbucket Cloud API credentials are configured for dev@example.com.',
+      diagnostic: 'Bitbucket Cloud API credentials are configured for configured account.',
       remediation: null,
     });
   });
@@ -21,6 +22,7 @@ describe('resolveBitbucketAuthReadiness', () => {
     expect(resolveBitbucketAuthReadiness({
       descriptorMaterializationKinds: [],
       host: 'bitbucket.org',
+      workspaceOrTeam: 'happier-dev',
       username: 'dev@example.com',
       apiTokenAvailable: true,
       apiProbe: 'available',
@@ -29,6 +31,7 @@ describe('resolveBitbucketAuthReadiness', () => {
     expect(resolveBitbucketAuthReadiness({
       descriptorMaterializationKinds: ['scm_hosting_basic_auth'],
       host: 'bitbucket.org',
+      workspaceOrTeam: 'happier-dev',
       username: '',
       apiTokenAvailable: true,
       apiProbe: 'available',
@@ -37,6 +40,7 @@ describe('resolveBitbucketAuthReadiness', () => {
     const missingToken = resolveBitbucketAuthReadiness({
       descriptorMaterializationKinds: ['scm_hosting_basic_auth'],
       host: 'bitbucket.org',
+      workspaceOrTeam: 'happier-dev',
       username: 'dev@example.com',
       apiTokenAvailable: false,
       apiProbe: 'available',
@@ -47,6 +51,7 @@ describe('resolveBitbucketAuthReadiness', () => {
     expect(resolveBitbucketAuthReadiness({
       descriptorMaterializationKinds: ['scm_hosting_basic_auth'],
       host: 'bitbucket.internal.test',
+      workspaceOrTeam: 'happier-dev',
       username: 'dev@example.com',
       apiTokenAvailable: true,
       apiProbe: 'available',
@@ -55,6 +60,16 @@ describe('resolveBitbucketAuthReadiness', () => {
     expect(resolveBitbucketAuthReadiness({
       descriptorMaterializationKinds: ['scm_hosting_basic_auth'],
       host: 'bitbucket.org',
+      workspaceOrTeam: '',
+      username: 'dev@example.com',
+      apiTokenAvailable: true,
+      apiProbe: 'available',
+    }).state).toBe('invalid_workspace');
+
+    expect(resolveBitbucketAuthReadiness({
+      descriptorMaterializationKinds: ['scm_hosting_basic_auth'],
+      host: 'bitbucket.org',
+      workspaceOrTeam: 'happier-dev',
       username: 'dev@example.com',
       apiTokenAvailable: true,
       apiProbe: 'unavailable',

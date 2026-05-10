@@ -181,6 +181,24 @@ export const FeatureGatesSchema = z.object({
           allowTailscale: DEFAULT_GATE_DISABLED,
           allowCloudflareTunnel: DEFAULT_GATE_DISABLED,
         }),
+      machine: z
+        .object({
+          allowLocalMachineSetup: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          allowRemoteSshMachineSetup: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({
+          allowLocalMachineSetup: DEFAULT_GATE_DISABLED,
+          allowRemoteSshMachineSetup: DEFAULT_GATE_DISABLED,
+        }),
+      ssh: z
+        .object({
+          nativeTransport: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({
+          nativeTransport: DEFAULT_GATE_DISABLED,
+        }),
     })
     .optional()
     .default({
@@ -194,6 +212,13 @@ export const FeatureGatesSchema = z.object({
       relayAccess: {
         allowTailscale: DEFAULT_GATE_DISABLED,
         allowCloudflareTunnel: DEFAULT_GATE_DISABLED,
+      },
+      machine: {
+        allowLocalMachineSetup: DEFAULT_GATE_DISABLED,
+        allowRemoteSshMachineSetup: DEFAULT_GATE_DISABLED,
+      },
+      ssh: {
+        nativeTransport: DEFAULT_GATE_DISABLED,
       },
     }),
   terminal: z

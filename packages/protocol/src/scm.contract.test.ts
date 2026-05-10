@@ -112,6 +112,25 @@ describe('scm protocol contracts', () => {
         expect(parsed.backendPreference?.backendId).toBe('sapling');
     });
 
+    it('supports authored external SCM backend ids in backend contracts', () => {
+        const statusRequest = ScmStatusSnapshotRequestSchema.parse({
+            cwd: '.',
+            backendPreference: {
+                kind: 'prefer',
+                backendId: 'acme-vcs',
+            },
+        });
+        const describeResponse = ScmBackendDescribeResponseSchema.parse({
+            success: true,
+            backendId: 'acme-vcs',
+            repoMode: '.git',
+            isRepo: true,
+        });
+
+        expect(statusRequest.backendPreference?.backendId).toBe('acme-vcs');
+        expect(describeResponse.backendId).toBe('acme-vcs');
+    });
+
     it('parses normalized working snapshots', () => {
         const snapshot = ScmWorkingSnapshotSchema.parse({
             projectKey: 'machine-1:/repo',
@@ -121,6 +140,7 @@ describe('scm protocol contracts', () => {
                 rootPath: '/repo',
                 backendId: 'git',
                 mode: '.git',
+                defaultBranch: 'release/2026',
                 worktrees: [
                     {
                         id: 'gitwt_main',
@@ -220,6 +240,7 @@ describe('scm protocol contracts', () => {
         });
 
         expect(response.snapshot?.repo.backendId).toBe('git');
+        expect(response.snapshot?.repo.defaultBranch).toBe('release/2026');
         expect(response.snapshot?.repo.worktrees).toHaveLength(2);
         expect(response.snapshot?.repo.worktrees?.[1]?.branch).toBe('feature/auth');
         expect(response.snapshot?.repo.worktrees?.[0]?.isMain).toBe(true);

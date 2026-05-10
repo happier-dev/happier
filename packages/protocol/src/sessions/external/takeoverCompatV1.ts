@@ -1,13 +1,13 @@
 import type { SessionId } from '../idsV1.js';
 import type { ExternalSessionTakeoverInputV1 } from './takeoverV1.js';
 
-export type DirectSessionsTakeoverLegacyInputV1 = Readonly<{
+export type ExternalSessionsTakeoverLegacyInputV1 = Readonly<{
   linkedSessionId: SessionId;
   forceStop?: boolean;
 }>;
 
-export function mapDirectSessionsTakeoverToExternalSessionTakeoverInputV1(
-  legacy: DirectSessionsTakeoverLegacyInputV1,
+export function mapExternalSessionsTakeoverToExternalSessionTakeoverInputV1(
+  legacy: ExternalSessionsTakeoverLegacyInputV1,
 ): ExternalSessionTakeoverInputV1 {
   return {
     linkedSessionId: legacy.linkedSessionId,
@@ -17,8 +17,8 @@ export function mapDirectSessionsTakeoverToExternalSessionTakeoverInputV1(
   };
 }
 
-export function mapDirectSessionsTakeoverPersistToExternalSessionTakeoverInputV1(
-  legacy: DirectSessionsTakeoverLegacyInputV1,
+export function mapExternalSessionsTakeoverPersistToExternalSessionTakeoverInputV1(
+  legacy: ExternalSessionsTakeoverLegacyInputV1,
 ): ExternalSessionTakeoverInputV1 {
   return {
     linkedSessionId: legacy.linkedSessionId,

@@ -465,6 +465,18 @@ export {
   type ScmHostingProviderContributionKind,
 } from './plugins/contributions/scmHostingProviders.js';
 export {
+  ScmBackendContributionDetectionSchema,
+  ScmBackendContributionSafetyConstraintsSchema,
+  ScmBackendContributionSchema,
+  ScmBackendContributionToolCommandSchema,
+  ScmBackendContributionToolingSchema,
+  type ScmBackendContribution,
+  type ScmBackendContributionDetection,
+  type ScmBackendContributionSafetyConstraints,
+  type ScmBackendContributionToolCommand,
+  type ScmBackendContributionTooling,
+} from './plugins/contributions/scmBackends.js';
+export {
   PluginInstallableContributionV2Schema,
   type PluginInstallableContributionV2,
 } from './plugins/contributions/installables.js';
@@ -502,10 +514,19 @@ export {
   type PluginPermissionDeclarationV1,
 } from './plugins/permissions/v1.js';
 export {
+  isReservedHappierPluginId,
   PluginIdSchema,
   encodePluginIdForFilesystem,
   type PluginId,
 } from './plugins/pluginId.js';
+export {
+  PluginContributionIdentityV1Schema,
+  PluginContributionProvenanceV1Schema,
+  buildQualifiedPluginContributionKey,
+  createPluginContributionIdentity,
+  type PluginContributionIdentityV1,
+  type PluginContributionProvenanceV1,
+} from './plugins/contributionIdentity.js';
 export {
   PluginRuntimeApiV1Schema,
   PluginRuntimeCapabilityFamilyV1Schema,
@@ -1572,6 +1593,39 @@ export {
   type SessionMessageMeta,
   createSessionMessageMetaSchema,
 } from './sessionMessages/sessionMessageMeta.js';
+
+export {
+  SESSION_STATE_FIELD_CLASSES,
+  SESSION_STATE_FIELD_IDS,
+  SessionStateCapabilitiesV1Schema,
+  SessionStateFieldCapabilitySchema,
+  SessionStateFieldClassSchema,
+  SessionStateFieldDescriptorSchema,
+  SessionStateFieldIdSchema,
+  SessionStateHappierToProviderCapabilitySchema,
+  SessionStateHappierToProviderTransportSchema,
+  SessionStateProviderToHappierCapabilitySchema,
+  SessionStateProviderToHappierSourceSchema,
+  SessionStateRuntimeDescriptorValueSchema,
+  SessionStateVendorSessionIdValueSchema,
+  SessionStateModelValueSchema,
+  SessionStatePermissionModeValueSchema,
+  SessionStateAcpSessionModeValueSchema,
+  SessionStateAcpConfigOptionValueSchema,
+  SessionStateTitleValueSchema,
+  SessionStateReadStateValueSchema,
+  SessionStateAttentionValueSchema,
+  type AcpConfigOptionIntentV1,
+  type AcpSessionModeIntentV1,
+  type PermissionModeIntentV1,
+  type ReadStateV1,
+  type SessionStateCapabilitiesV1,
+  type SessionStateFieldCapabilityV1,
+  type SessionStateFieldClass,
+  type SessionStateFieldId,
+  type SessionStateFieldRegistry,
+  type SessionStateFieldValue,
+} from './session/state/index.js';
 export {
   ChangeConfidenceSchema,
   ChangeEvidenceSourceSchema,
@@ -1626,6 +1680,28 @@ export {
   type ServerTestResult,
   type ServerUseResult,
 } from './serverControl/contract.js';
+export {
+  ProviderRefreshPolicySchema,
+  VcsFreshnessSchema,
+  VcsFreshnessSourceSchema,
+  type ProviderRefreshPolicy,
+  type VcsFreshness,
+  type VcsFreshnessSource,
+} from './scmFreshness.js';
+export {
+  SCM_BACKEND_CAPABILITY_GROUPS,
+  ScmBackendCapabilitiesSchema,
+  ScmBackendCapabilityLeafSchema,
+  ScmBackendCapabilitySupportLevelSchema,
+  ScmBackendCapabilityUnavailableReasonSchema,
+  experimentalCapability,
+  supportedCapability,
+  unsupportedCapability,
+  type ScmBackendCapabilities,
+  type ScmBackendCapabilityLeaf,
+  type ScmBackendCapabilitySupportLevel,
+  type ScmBackendCapabilityUnavailableReason,
+} from './scmBackendCapabilities.js';
 export {
   SCM_COMMIT_MESSAGE_MAX_LENGTH,
   SCM_COMMIT_PATCH_MAX_COUNT,
@@ -1855,6 +1931,22 @@ export {
   type ScmDiffSummaryTruncationReason,
 } from './scmDiffSummary.js';
 export {
+  ScmRepositoryCloneAuthorizationTokenSchema,
+  ScmRepositoryCloneInputSchema,
+  ScmRepositoryCloneOutputSchema,
+  ScmRepositoryCloneRepositorySelectorSchema,
+  ScmRepositoryCloneTargetDescriptionSchema,
+  ScmRepositoryCloneTargetSchema,
+  SourceControlCloneProtocolSchema,
+  type ScmRepositoryCloneAuthorizationToken,
+  type ScmRepositoryCloneInput,
+  type ScmRepositoryCloneOutput,
+  type ScmRepositoryCloneRepositorySelector,
+  type ScmRepositoryCloneTarget,
+  type ScmRepositoryCloneTargetDescription,
+  type SourceControlCloneProtocol,
+} from './scmRepositoryClone.js';
+export {
   ScmHostingRepositoryAuthProfileKindSchema,
   ScmHostingRepositoryAuthStateSchema,
   ScmHostingRepositoryAuthSummarySchema,
@@ -1972,6 +2064,7 @@ export {
 export {
   createGitScmCapabilities,
   createSaplingScmCapabilities,
+  createScmCapabilitiesFromBackendCapabilities,
   createScmCapabilities,
 } from './scmCapabilities.js';
 
@@ -2843,7 +2936,24 @@ export {
   type PromptModalityV1,
   type PromptPlanV1,
 } from './prompts/promptPlanV1.js';
-export { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from './prompts/systemPromptBaseV1.js';
+export {
+  HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_V1,
+  HAPPIER_BASE_SYSTEM_PROMPT_V1,
+  buildHappierBaseSystemPromptV1,
+} from './prompts/systemPromptBaseV1.js';
+export {
+  CodingPromptBehaviorModeV1Schema,
+  CodingPromptBehaviorV1Schema,
+  DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
+  isCodingPromptResponseOptionsEnabled,
+  isCodingPromptSessionTitleUpdatesEnabled,
+  resolveCodingPromptBehaviorV1,
+  type CodingPromptBehaviorModeV1,
+  type CodingPromptBehaviorV1,
+} from './prompts/codingPromptBehaviorV1.js';
 export {
   CHANGE_TITLE_INSTRUCTION_V1,
   buildChangeTitleInstructionV1,
@@ -2921,6 +3031,7 @@ export {
   DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES,
   DEFAULT_PETS_CAPABILITIES,
   DEFAULT_PETS_PACKAGE_LIMITS_CAPABILITIES,
+  CapabilitiesSchema,
   FeatureGateSchema,
   FeatureGatesSchema,
   FeaturesResponseSchema,

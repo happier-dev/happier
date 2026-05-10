@@ -3,6 +3,10 @@ import {
   ScmHostingProviderRefSchema,
   ScmPullRequestStatusProjectionSchema,
 } from './scmPullRequests.js';
+import {
+  ProviderRefreshPolicySchema,
+  VcsLocalStateFreshnessSchema,
+} from './scmFreshness.js';
 
 export const SCM_COMMIT_MESSAGE_MAX_LENGTH = 4096;
 export const SCM_COMMIT_PATCH_MAX_COUNT = 256;
@@ -53,7 +57,10 @@ export const ScmOperationErrorCodeSchema = z.enum([
   SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
 ]);
 
-export const ScmBackendIdSchema = z.enum(['git', 'sapling']);
+export const ScmBuiltInBackendIdSchema = z.enum(['git', 'sapling']);
+export type ScmBuiltInBackendId = z.infer<typeof ScmBuiltInBackendIdSchema>;
+
+export const ScmBackendIdSchema = z.string().trim().min(1);
 export type ScmBackendId = z.infer<typeof ScmBackendIdSchema>;
 
 export const ScmRepoModeSchema = z.enum(['.git', '.sl']);
@@ -82,6 +89,7 @@ export const ScmDefaultBranchPushPolicySchema = z.enum([
 export type ScmDefaultBranchPushPolicy = z.infer<typeof ScmDefaultBranchPushPolicySchema>;
 
 const ScmCapabilitiesSchemaCore = z.object({
+  capabilityScope: z.literal('local-backend').default('local-backend'),
   readStatus: z.boolean(),
   readDiffFile: z.boolean(),
   readDiffCommit: z.boolean(),
@@ -209,11 +217,14 @@ export type ScmOperationState = z.infer<typeof ScmOperationStateSchema>;
 export const ScmWorkingSnapshotSchema = z.object({
   projectKey: z.string(),
   fetchedAt: z.number().int(),
+  freshness: VcsLocalStateFreshnessSchema.optional(),
+  refreshPolicy: ProviderRefreshPolicySchema.optional(),
   repo: z.object({
     isRepo: z.boolean(),
     rootPath: z.string().nullable(),
     backendId: ScmBackendIdSchema.nullable(),
     mode: ScmRepoModeSchema.nullable(),
+    defaultBranch: z.string().min(1).nullable().optional(),
     worktrees: z.array(ScmWorktreeSchema).default([]),
     remotes: z.array(ScmRemoteInfoSchema).default([]),
   }),
@@ -269,6 +280,8 @@ export type ScmStatusSnapshotRequest = z.infer<typeof ScmStatusSnapshotRequestSc
 export const ScmStatusSnapshotResponseSchema = z.object({
   success: z.boolean(),
   snapshot: ScmWorkingSnapshotSchema.optional(),
+  freshness: VcsLocalStateFreshnessSchema.optional(),
+  refreshPolicy: ProviderRefreshPolicySchema.optional(),
   error: z.string().optional(),
   errorCode: ScmOperationErrorCodeSchema.optional(),
 });

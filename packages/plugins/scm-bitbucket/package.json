@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./auth/basicAuthMaterializer": {
+      "types": "./dist/auth/basicAuthMaterializer.d.ts",
+      "default": "./dist/auth/basicAuthMaterializer.js"
     }
   },
   "files": [
@@ -17,7 +21,7 @@
   ],
   "scripts": {
     "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout 15000",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {

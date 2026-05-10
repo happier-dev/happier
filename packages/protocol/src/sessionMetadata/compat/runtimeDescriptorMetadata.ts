@@ -51,7 +51,7 @@ export function writeRuntimeDescriptorV1ToMetadata<TMetadata extends Record<stri
   descriptor: RuntimeDescriptorV1 | null,
   options: WriteRuntimeDescriptorMetadataOptions = {},
 ): TMetadata & RuntimeDescriptorMetadataCarrier {
-  const { runtimeDescriptorV1: _runtimeDescriptorV1, agentRuntimeDescriptorV1: _agentRuntimeDescriptorV1, ...rest } = metadata;
+  const { runtimeDescriptorV1: _runtimeDescriptorV1, ...rest } = metadata;
   if (!descriptor) {
     return rest as TMetadata & RuntimeDescriptorMetadataCarrier;
   }

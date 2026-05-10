@@ -4,7 +4,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 // Substantive capabilities + contributions land during E.8.
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'gemini',
+  id: 'happier.agent.gemini',
   version: '0.0.0',
   displayName: 'gemini',
   description: undefined,

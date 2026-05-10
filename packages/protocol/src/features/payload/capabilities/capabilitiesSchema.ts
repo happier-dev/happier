@@ -46,6 +46,7 @@ import {
   DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
   LiveActivityRemoteUpdateCapabilityDiagnosticsSchema,
 } from '../../../liveActivities/remoteUpdateCapabilities.js';
+import { SessionStateCapabilitiesV1Schema } from '../../../session/state/capabilitySchema.js';
 
 export const CapabilitiesSchema = z.object({
   bugReports: BugReportsCapabilitiesSchema.optional().default(DEFAULT_BUG_REPORTS_CAPABILITIES),
@@ -80,6 +81,13 @@ export const CapabilitiesSchema = z.object({
     .optional()
     .default({ providers: {} }),
   auth: AuthCapabilitiesSchema.optional().default(DEFAULT_AUTH_CAPABILITIES),
+  session: z
+    .object({
+      state: SessionStateCapabilitiesV1Schema.optional().default({}),
+    })
+    .strict()
+    .optional()
+    .default({ state: {} }),
   liveActivities: z
     .object({
       remoteUpdates: LiveActivityRemoteUpdateCapabilityDiagnosticsSchema.optional().default(

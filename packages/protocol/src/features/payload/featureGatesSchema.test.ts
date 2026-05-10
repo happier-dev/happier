@@ -102,6 +102,27 @@ describe('FeatureGatesSchema', () => {
     expect((parsed.features.machines as unknown as { rpc?: { serverRouted?: unknown } }).rpc?.serverRouted).toBeUndefined();
   });
 
+  it('preserves setup machine and ssh gate namespaces', () => {
+    const parsed = FeaturesResponseSchema.parse({
+      features: {
+        setup: {
+          machine: {
+            allowLocalMachineSetup: { enabled: true },
+            allowRemoteSshMachineSetup: { enabled: true },
+          },
+          ssh: {
+            nativeTransport: { enabled: true },
+          },
+        },
+      },
+      capabilities: {},
+    });
+
+    expect(readServerEnabledBit(parsed, 'setup.machine.allowLocalMachineSetup' as never)).toBe(true);
+    expect(readServerEnabledBit(parsed, 'setup.machine.allowRemoteSshMachineSetup' as never)).toBe(true);
+    expect(readServerEnabledBit(parsed, 'setup.ssh.nativeTransport' as never)).toBe(true);
+  });
+
   it('treats missing voice enabled bits as disabled (and does not crash parsing)', () => {
     const parsed = FeaturesResponseSchema.parse({
       features: {

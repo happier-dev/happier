@@ -151,7 +151,10 @@ function dedupeFiles(files: readonly PermissionTtlValidatorFile[]): PermissionTt
 
 function validateAllowlistMarker(files: readonly PermissionTtlValidatorFile[]): string[] {
   const acceptedFiles = files.filter((file) => isAcceptedAllowlistPath(file.filePath));
-  const acceptedMarkerFiles = acceptedFiles.filter((file) => file.content.includes(LOCAL_PERMISSION_BRIDGE_ALLOWLIST_MARKER));
+  const acceptedMarkerFiles = acceptedFiles.filter((file) => {
+    const lines = splitLines(file.content);
+    return lines.some((line, index) => TIMER_PATTERN.test(line) && hasAllowlistMarkerWithinThreeLines(lines, index));
+  });
   if (acceptedMarkerFiles.length > 0) {
     return [];
   }
@@ -204,14 +207,14 @@ function validateWallClockExpiration(file: PermissionTtlValidatorFile): string[]
     if (!pathIsPermissionOwned && !PERMISSION_CONTEXT_PATTERN.test(context)) {
       continue;
     }
-    if (!isWallClockExpirationContext(context)) {
-      const splitClockExpiration = findSplitClockExpiration(lines, index);
-      if (!splitClockExpiration) {
-        continue;
-      }
+    const splitClockExpiration = findSplitClockExpiration(lines, index);
+    if (splitClockExpiration) {
       errors.push(
         `${formatLocation(file.filePath, index)}: forbidden Date.now/performance.now split-clock permission expiration logic using ${splitClockExpiration.fieldName}.`,
       );
+      continue;
+    }
+    if (!isWallClockExpirationContext(context)) {
       continue;
     }
     errors.push(
@@ -237,6 +240,18 @@ function findSplitClockExpiration(
   clockLineIndex: number,
 ): Readonly<{ fieldName: string }> | null {
   const clockLine = lines[clockLineIndex] ?? '';
+  const directAgeAssignment = extractDirectClockAgeAssignment(clockLine);
+  if (directAgeAssignment) {
+    const forwardContext = lines.slice(clockLineIndex, Math.min(lines.length, clockLineIndex + 12)).join('\n');
+    const directAgeComparisonPattern = new RegExp(
+      `\\b${escapeRegExp(directAgeAssignment.ageVariable)}\\b\\s*(?:[<>]=?)\\s*[^;\\n]*(?:TTL|TIMEOUT|MAX_?AGE|MAX_PERMISSION_AGE|AGE_MS|\\d)`,
+      'i',
+    );
+    if (directAgeComparisonPattern.test(forwardContext)) {
+      return { fieldName: directAgeAssignment.fieldName };
+    }
+  }
+
   const clockVariable = extractAssignedVariable(clockLine, CLOCK_PATTERN);
   if (!clockVariable) {
     return null;
@@ -265,13 +280,26 @@ function findSplitClockExpiration(
   }
 
   const ageComparisonPattern = new RegExp(
-    `\\b${escapeRegExp(ageVariable)}\\b\\s*(?:[<>]=?)\\s*[^;\\n]*(?:TTL|TIMEOUT|MAX_AGE|MAX_PERMISSION_AGE|\\d)`,
+    `\\b${escapeRegExp(ageVariable)}\\b\\s*(?:[<>]=?)\\s*[^;\\n]*(?:TTL|TIMEOUT|MAX_?AGE|MAX_PERMISSION_AGE|AGE_MS|\\d)`,
     'i',
   );
   if (!ageComparisonPattern.test(forwardContext)) {
     return null;
   }
   return { fieldName };
+}
+
+function extractDirectClockAgeAssignment(line: string): Readonly<{ ageVariable: string; fieldName: string }> | null {
+  const match = line.match(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:Date\.now|performance\.now)\s*\(\s*\)\s*-\s*[^;\n]*(createdAt|timestamp|requestedAt|startedAt)\b/i,
+  );
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+  return {
+    ageVariable: match[1],
+    fieldName: match[2],
+  };
 }
 
 function extractAssignedVariable(line: string, valuePattern: RegExp): string | null {

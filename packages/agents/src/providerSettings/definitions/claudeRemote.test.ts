@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildClaudeRemoteOutgoingMessageMetaExtras,
-} from '../../runtime/messageMeta/claudeRemote.js';
+} from '../../providers/claude/messageMeta.js';
 import { CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS } from './claudeRemote.js';
 import { CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION } from './claudeRemote.js';
 

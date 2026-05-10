@@ -2,8 +2,8 @@ import type { PluginDisposable } from '@happier-dev/plugin-sdk';
 
 import {
   AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID,
-  azureDevopsHostingProviderAdapter,
 } from './detection/adapter.js';
+import { azureDevopsOperationsAdapter } from './operations/azureDevopsAdapter.js';
 
 type ScmHostingProviderActivationApi = Readonly<{
   registerScmHostingProvider(registration: Readonly<{
@@ -15,6 +15,6 @@ type ScmHostingProviderActivationApi = Readonly<{
 export function activate(api: ScmHostingProviderActivationApi): void {
   api.registerScmHostingProvider({
     id: AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID,
-    adapter: azureDevopsHostingProviderAdapter,
+    adapter: azureDevopsOperationsAdapter,
   });
 }

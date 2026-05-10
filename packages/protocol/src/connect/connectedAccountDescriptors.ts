@@ -4,6 +4,7 @@ import { PluginDescriptorBaseV1Schema } from '../plugins/contributions/_descript
 import {
     ConnectedServiceCredentialKindSchema,
     ConnectedServiceIdSchema,
+    type ConnectedServiceCredentialKind,
     type ConnectedServiceId,
 } from './connectedServiceSchemas.js';
 
@@ -115,8 +116,7 @@ const ConnectedAccountQuotaDescriptorSchema = z.object({
     hookKey: z.string().trim().min(1).optional(),
 }).strict().default({ capabilityIds: [] });
 
-export const ConnectedAccountDescriptorSchema = PluginDescriptorBaseV1Schema.safeExtend({
-    id: ConnectedServiceIdSchema,
+const ConnectedAccountDescriptorFields = {
     kind: z.literal('auth.connectedAccount'),
     displayKey: z.string().trim().min(1),
     aliases: z.array(z.string().trim().min(1)).default([]),
@@ -128,7 +128,15 @@ export const ConnectedAccountDescriptorSchema = PluginDescriptorBaseV1Schema.saf
     ui: ConnectedAccountUiProjectionDescriptorSchema,
     materialization: ConnectedAccountMaterializationDescriptorSchema,
     quota: ConnectedAccountQuotaDescriptorSchema,
-}).strict().superRefine((value, ctx) => {
+} as const;
+
+function refineConnectedAccountDescriptor(value: Readonly<{
+    credentialKinds: readonly ConnectedServiceCredentialKind[];
+    defaultCredentialKind: ConnectedServiceCredentialKind;
+    oauth?: unknown;
+    tokenSetup?: Readonly<{ tokenKind: ConnectedAccountTokenKind }>;
+    connectModes: readonly ConnectedAccountConnectModeDescriptor[];
+}>, ctx: z.RefinementCtx): void {
     if (value.credentialKinds.includes('oauth') && !value.oauth) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -166,12 +174,22 @@ export const ConnectedAccountDescriptorSchema = PluginDescriptorBaseV1Schema.saf
             });
         }
     }
-});
+}
+
+export const ConnectedAccountDescriptorSchema = PluginDescriptorBaseV1Schema.safeExtend({
+    id: ConnectedServiceIdSchema,
+    ...ConnectedAccountDescriptorFields,
+}).strict().superRefine(refineConnectedAccountDescriptor);
+
+export const PluginConnectedAccountDescriptorSchema = PluginDescriptorBaseV1Schema.safeExtend({
+    id: z.string().trim().min(1),
+    ...ConnectedAccountDescriptorFields,
+}).strict().superRefine(refineConnectedAccountDescriptor);
 
 export type ConnectedAccountDescriptor = z.infer<typeof ConnectedAccountDescriptorSchema>;
 type ConnectedAccountDescriptorInput = z.input<typeof ConnectedAccountDescriptorSchema>;
 
-function defineConnectedAccountDescriptor(value: ConnectedAccountDescriptorInput): ConnectedAccountDescriptor {
+export function defineConnectedAccountDescriptor(value: ConnectedAccountDescriptorInput): ConnectedAccountDescriptor {
     return ConnectedAccountDescriptorSchema.parse(value);
 }
 
@@ -453,45 +471,6 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
         materialization: {
             materializationKinds: ['scm_hosting_token'],
             hookKey: 'connectedServices.materialization.githubScmHostingToken',
-        },
-        quota: { capabilityIds: [] },
-    }),
-    defineConnectedAccountDescriptor({
-        id: 'bitbucket',
-        kind: 'auth.connectedAccount',
-        version: '1',
-        displayKey: 'connectedServices.serviceNames.bitbucket',
-        aliases: ['bitbucket'],
-        credentialKinds: ['token'],
-        defaultCredentialKind: 'token',
-        connectModes: [
-            {
-                targetId: 'bitbucket',
-                mode: 'token',
-                credentialKind: 'token',
-                default: true,
-                tokenKind: 'api-token',
-            },
-        ],
-        tokenSetup: {
-            tokenKind: 'api-token',
-            promptLabelKey: 'connectedServices.tokenPrompts.bitbucketApiToken',
-            missingValueErrorKey: 'connectedServices.tokenPrompts.errors.missingApiToken',
-            setupUrl: 'https://bitbucket.org/account/settings/app-passwords/',
-            credentialPayloadKind: 'bitbucket_basic_auth',
-            identity: {
-                kind: 'email_or_username',
-                promptLabelKey: 'connectedServices.tokenPrompts.bitbucketEmailOrUsername',
-                missingValueErrorKey: 'connectedServices.tokenPrompts.errors.missingBitbucketEmailOrUsername',
-            },
-        },
-        ui: {
-            connectCommand: 'happier connect bitbucket --token',
-            oauthAddActionModes: [],
-        },
-        materialization: {
-            materializationKinds: ['scm_hosting_basic_auth'],
-            hookKey: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
         },
         quota: { capabilityIds: [] },
     }),

@@ -1,20 +1,20 @@
 import type {
-    DirectSessionCandidateV1,
-    DirectSessionsSource,
-    DirectTranscriptPageResponse,
-    DirectTranscriptRawMessageV1,
-    DirectTranscriptReadAfterResponse,
+    ExternalSessionCandidateV1 as ProtocolExternalSessionCandidateV1,
+    ExternalSessionsSource,
+    ExternalSessionTranscriptPageResponse,
+    ExternalSessionTranscriptRawMessageV1,
+    ExternalSessionTranscriptReadAfterResponse,
     ExternalSessionTakeoverInputV1,
     ExternalSessionTakeoverResultV1,
 } from '@happier-dev/protocol';
 
 import type { SubscriptionV1 } from '../context';
 
-export type ExternalSessionSourceV1 = DirectSessionsSource;
-export type ExternalSessionCandidateV1 = DirectSessionCandidateV1;
-export type ExternalSessionTranscriptItemV1 = DirectTranscriptRawMessageV1;
-export type ExternalSessionTranscriptPageResultV1 = DirectTranscriptPageResponse;
-export type ExternalSessionTranscriptReadAfterResultV1 = DirectTranscriptReadAfterResponse;
+export type ExternalSessionSourceV1 = ExternalSessionsSource;
+export type ExternalSessionCandidateV1 = ProtocolExternalSessionCandidateV1;
+export type ExternalSessionTranscriptItemV1 = ExternalSessionTranscriptRawMessageV1;
+export type ExternalSessionTranscriptPageResultV1 = ExternalSessionTranscriptPageResponse;
+export type ExternalSessionTranscriptReadAfterResultV1 = ExternalSessionTranscriptReadAfterResponse;
 
 // Canonical plugin SDK access is ctx.sessions.external.*; top-level
 // namespaces remain intentionally absent during the wire-compat migration window.

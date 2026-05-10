@@ -11,6 +11,8 @@ import {
 } from '@happier-dev/agents';
 import { PluginManifestV2Schema } from '@happier-dev/protocol';
 
+type TsImport = (specifier: string, parentURL: string) => Promise<unknown>;
+
 const PLUGIN_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
 type Mode = 'write' | 'check';
@@ -95,6 +97,14 @@ function isReservationOnlyPluginPackage(pkgJson: { happier?: unknown } | null | 
   return pluginScaffold.shipping === 'reservation_only';
 }
 
+function readBundledPluginPackageAllowlist(repoRoot: string): ReadonlySet<string> | null {
+  const cliPackageJsonPath = resolve(repoRoot, 'apps/cli/package.json');
+  if (!existsSync(cliPackageJsonPath)) return null;
+  const pkgJson = readJson(cliPackageJsonPath) as { bundledDependencies?: unknown };
+  if (!Array.isArray(pkgJson.bundledDependencies)) return null;
+  return new Set(pkgJson.bundledDependencies.filter((entry): entry is string => typeof entry === 'string'));
+}
+
 function assertJsonSerializable(value: unknown, path: string[] = []): asserts value is JsonValue {
   if (value === null) return;
   const t = typeof value;
@@ -134,6 +144,15 @@ function renderJsonLiteral(value: JsonValue, indent = 2): string {
   return JSON.stringify(deepSortJson(value), null, indent) ?? 'null';
 }
 
+async function importTypescriptModule(path: string): Promise<unknown> {
+  const { tsImport } = await import('tsx/esm/api') as Readonly<{ tsImport: TsImport }>;
+  const mod = await tsImport(path, import.meta.url);
+  if (isRecord(mod) && isRecord(mod.default)) {
+    return mod.default;
+  }
+  return mod;
+}
+
 function readManifestContributionArray(manifest: PluginManifestJson, family: string): readonly JsonValue[] {
   const contributes = manifest.contributes;
   if (!isRecord(contributes)) return [];
@@ -154,7 +173,7 @@ async function loadPluginAgentDefinition(repoRoot: string, pluginPackageId: stri
     throw new Error(`Missing required agent definition at ${definitionPath}`);
   }
 
-  const mod = await import(pathToFileURL(definitionPath).href) as { AGENT_DEFINITION?: unknown };
+  const mod = await importTypescriptModule(definitionPath) as { AGENT_DEFINITION?: unknown };
   if (!('AGENT_DEFINITION' in mod)) {
     throw new Error(`Expected AGENT_DEFINITION export in ${definitionPath}`);
   }
@@ -175,13 +194,18 @@ async function loadPluginManifest(repoRoot: string, pluginPackageId: string): Pr
     throw new Error(`Missing required plugin manifest for shippable plugin package ${pluginPackageId}: ${manifestPath}`);
   }
 
-  const mod = await import(pathToFileURL(manifestPath).href) as { PLUGIN_MANIFEST?: unknown };
+  const mod = await importTypescriptModule(manifestPath) as { PLUGIN_MANIFEST?: unknown };
   if (!('PLUGIN_MANIFEST' in mod)) {
     throw new Error(`Expected PLUGIN_MANIFEST export in ${manifestPath}`);
   }
 
   const manifest = JSON.parse(JSON.stringify(mod.PLUGIN_MANIFEST)) as unknown;
   assertJsonSerializable(manifest);
+  if (!isRecord(manifest) || typeof manifest.id !== 'string' || !manifest.id.startsWith('happier.')) {
+    throw new Error(
+      `Invalid PLUGIN_MANIFEST in ${manifestPath}: bundled plugins must use a canonical first-party plugin owner id under happier.*`,
+    );
+  }
 
   const parsed = PluginManifestV2Schema.safeParse(manifest);
   if (!parsed.success) {
@@ -209,6 +233,7 @@ function manifestDeclaresAgentRuntime(manifest: JsonValue): boolean {
 async function readBundledPluginPackages(repoRoot: string): Promise<readonly BundledPluginPackage[]> {
   const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
   if (!existsSync(pluginsRoot)) return [];
+  const packageNameAllowlist = readBundledPluginPackageAllowlist(repoRoot);
 
   const out: BundledPluginPackage[] = [];
   for (const dirent of readdirSync(pluginsRoot, { withFileTypes: true })) {
@@ -225,6 +250,9 @@ async function readBundledPluginPackages(repoRoot: string): Promise<readonly Bun
     }
 
     const expectedPackageName = `${PLUGIN_PACKAGE_PREFIX}${pluginPackageId}`;
+    if (packageNameAllowlist && !packageNameAllowlist.has(expectedPackageName)) {
+      continue;
+    }
     if (pkgJson.name !== expectedPackageName) {
       throw new Error(`Invalid plugin package name for ${pluginPackageId}: expected ${expectedPackageName}, got ${String(pkgJson.name)}`);
     }
@@ -324,6 +352,48 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
       };
     })
   ));
+  const connectedAccountDescriptorContributions = params.pluginPackages.flatMap((entry) => (
+    readManifestContributionArray(entry.manifest, 'connectedAccountDescriptors').map((definition) => {
+      const contributionId = readRequiredContributionId(definition, 'connectedAccountDescriptors', entry.pluginPackageId);
+      const contributionMetadata = metadataByPluginPackageId.get(entry.pluginPackageId);
+      if (!contributionMetadata) {
+        throw new Error(`Missing bundled plugin metadata for ${entry.pluginPackageId}`);
+      }
+      return {
+        id: contributionId,
+        definition,
+        metadata: contributionMetadata,
+      };
+    })
+  ));
+  const installableContributions = params.pluginPackages.flatMap((entry) => (
+    readManifestContributionArray(entry.manifest, 'installables').map((definition) => {
+      const contributionId = readRequiredContributionId(definition, 'installables', entry.pluginPackageId);
+      const contributionMetadata = metadataByPluginPackageId.get(entry.pluginPackageId);
+      if (!contributionMetadata) {
+        throw new Error(`Missing bundled plugin metadata for ${entry.pluginPackageId}`);
+      }
+      return {
+        id: contributionId,
+        definition,
+        metadata: contributionMetadata,
+      };
+    })
+  ));
+  const scmBackendContributions = params.pluginPackages.flatMap((entry) => (
+    readManifestContributionArray(entry.manifest, 'scmBackends').map((definition) => {
+      const contributionId = readRequiredContributionId(definition, 'scmBackends', entry.pluginPackageId);
+      const contributionMetadata = metadataByPluginPackageId.get(entry.pluginPackageId);
+      if (!contributionMetadata) {
+        throw new Error(`Missing bundled plugin metadata for ${entry.pluginPackageId}`);
+      }
+      return {
+        id: contributionId,
+        definition,
+        metadata: contributionMetadata,
+      };
+    })
+  ));
 
   const lines: string[] = [];
   lines.push('/* eslint-disable @typescript-eslint/naming-convention */');
@@ -350,7 +420,10 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   lines.push('  ResolvedActivationTarget,');
   lines.push('  ResolvedBackendContribution,');
   lines.push('  ResolvedCatalogEntry,');
+  lines.push('  ResolvedConnectedAccountDescriptorContribution,');
+  lines.push('  ResolvedInstallableContribution,');
   lines.push('  ResolvedProviderContribution,');
+  lines.push('  ResolvedScmBackendContribution,');
   lines.push('  ResolvedScmHostingProviderContribution,');
   lines.push('} from \'../types\';');
   lines.push('');
@@ -422,7 +495,7 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
   lines.push('');
   lines.push('export const BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS: readonly ResolvedActivationTarget[] = Object.freeze(');
   lines.push('  BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map((metadata): ResolvedActivationTarget => ({');
-  lines.push('    provenance: \'external\',');
+  lines.push('    provenance: \'first_party\',');
   lines.push('    source: { kind: \'bundled\' },');
   lines.push('    pluginId: metadata.pluginId,');
   lines.push('    manifestPath: metadata.manifestPath,');
@@ -467,6 +540,12 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
     lines.push('    provenance: \'first_party\',');
     lines.push('    source: { kind: \'bundled\' },');
     lines.push(`    pluginId: ${JSON.stringify(contribution.metadata.pluginId)},`);
+    lines.push('    identity: {');
+    lines.push(`      pluginId: ${JSON.stringify(contribution.metadata.pluginId)},`);
+    lines.push('      family: \'scmHostingProviders\',');
+    lines.push(`      contributionId: ${JSON.stringify(contribution.id)},`);
+    lines.push('      provenance: \'first_party\',');
+    lines.push('    },');
     lines.push(`    manifestPath: ${JSON.stringify(contribution.metadata.manifestPath)},`);
     lines.push(`    manifestDigest: ${JSON.stringify(contribution.metadata.manifestDigest)},`);
     lines.push(`    daemonEntryPath: ${JSON.stringify(contribution.metadata.packageName)},`);
@@ -478,8 +557,81 @@ function renderCliBundledPluginEntriesTs(params: Readonly<{
       resolvedVersion: contribution.metadata.packageVersion,
       resolvedDigest: contribution.metadata.manifestDigest,
     })},`);
-    lines.push(`    definition: Object.freeze(${renderJsonLiteral(contribution.definition)}),`);
+    lines.push(`    definition: Object.freeze(${renderJsonLiteral(contribution.definition)} as const satisfies ResolvedScmHostingProviderContribution['definition']),`);
     lines.push('  } satisfies ResolvedScmHostingProviderContribution),');
+  }
+  lines.push(']);');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS: readonly ResolvedInstallableContribution[] = Object.freeze([');
+  for (const contribution of installableContributions) {
+    lines.push('  Object.freeze({');
+    lines.push('    provenance: \'first_party\',');
+    lines.push('    source: { kind: \'bundled\' },');
+    lines.push(`    pluginId: ${JSON.stringify(contribution.metadata.pluginId)},`);
+    lines.push(`    manifestPath: ${JSON.stringify(contribution.metadata.manifestPath)},`);
+    lines.push(`    manifestDigest: ${JSON.stringify(contribution.metadata.manifestDigest)},`);
+    lines.push(`    daemonEntryPath: ${JSON.stringify(contribution.metadata.packageName)},`);
+    lines.push(`    sourceSpec: ${renderJsonLiteral({
+      kind: 'package',
+      locator: contribution.metadata.packageName,
+      trustPolicy: 'local_trusted',
+      installPolicy: 'link',
+      resolvedVersion: contribution.metadata.packageVersion,
+      resolvedDigest: contribution.metadata.manifestDigest,
+    })},`);
+    lines.push(`    definition: Object.freeze(${renderJsonLiteral(contribution.definition)} as const satisfies ResolvedInstallableContribution['definition']),`);
+    lines.push('  } satisfies ResolvedInstallableContribution),');
+  }
+  lines.push(']);');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS: readonly ResolvedScmBackendContribution[] = Object.freeze([');
+  for (const contribution of scmBackendContributions) {
+    lines.push('  Object.freeze({');
+    lines.push(`    id: ${JSON.stringify(contribution.id)},`);
+    lines.push('    provenance: \'first_party\',');
+    lines.push('    source: { kind: \'bundled\' },');
+    lines.push(`    pluginId: ${JSON.stringify(contribution.metadata.pluginId)},`);
+    lines.push('    identity: {');
+    lines.push(`      pluginId: ${JSON.stringify(contribution.metadata.pluginId)},`);
+    lines.push('      family: \'scmBackends\',');
+    lines.push(`      contributionId: ${JSON.stringify(contribution.id)},`);
+    lines.push('      provenance: \'first_party\',');
+    lines.push('    },');
+    lines.push(`    manifestPath: ${JSON.stringify(contribution.metadata.manifestPath)},`);
+    lines.push(`    manifestDigest: ${JSON.stringify(contribution.metadata.manifestDigest)},`);
+    lines.push(`    daemonEntryPath: ${JSON.stringify(contribution.metadata.packageName)},`);
+    lines.push(`    sourceSpec: ${renderJsonLiteral({
+      kind: 'package',
+      locator: contribution.metadata.packageName,
+      trustPolicy: 'local_trusted',
+      installPolicy: 'link',
+      resolvedVersion: contribution.metadata.packageVersion,
+      resolvedDigest: contribution.metadata.manifestDigest,
+    })},`);
+    lines.push(`    definition: Object.freeze(${renderJsonLiteral(contribution.definition)} as const satisfies ResolvedScmBackendContribution['definition']),`);
+    lines.push('  } satisfies ResolvedScmBackendContribution),');
+  }
+  lines.push(']);');
+  lines.push('');
+  lines.push('export const BUNDLED_FIRST_PARTY_CONNECTED_ACCOUNT_DESCRIPTOR_CONTRIBUTIONS: readonly ResolvedConnectedAccountDescriptorContribution[] = Object.freeze([');
+  for (const contribution of connectedAccountDescriptorContributions) {
+    lines.push('  Object.freeze({');
+    lines.push('    provenance: \'first_party\',');
+    lines.push('    source: { kind: \'bundled\' },');
+    lines.push(`    pluginId: ${JSON.stringify(contribution.metadata.pluginId)},`);
+    lines.push(`    manifestPath: ${JSON.stringify(contribution.metadata.manifestPath)},`);
+    lines.push(`    manifestDigest: ${JSON.stringify(contribution.metadata.manifestDigest)},`);
+    lines.push(`    daemonEntryPath: ${JSON.stringify(contribution.metadata.packageName)},`);
+    lines.push(`    sourceSpec: ${renderJsonLiteral({
+      kind: 'package',
+      locator: contribution.metadata.packageName,
+      trustPolicy: 'local_trusted',
+      installPolicy: 'link',
+      resolvedVersion: contribution.metadata.packageVersion,
+      resolvedDigest: contribution.metadata.manifestDigest,
+    })},`);
+    lines.push(`    definition: Object.freeze(${renderJsonLiteral(contribution.definition)} satisfies ResolvedConnectedAccountDescriptorContribution['definition']),`);
+    lines.push('  } satisfies ResolvedConnectedAccountDescriptorContribution),');
   }
   lines.push(']);');
   lines.push('');

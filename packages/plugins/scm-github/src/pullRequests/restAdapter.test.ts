@@ -44,7 +44,10 @@ describe('GitHub REST pull request adapter', () => {
             html_url: 'https://github.com/happier-dev/happier/pull/1',
             state: 'open',
             base: { ref: 'main' },
-            head: { ref: 'feature/rest' },
+            head: {
+              ref: 'feature/rest',
+              repo: { full_name: 'happier-dev/happier' },
+            },
           },
         ]);
       },
@@ -61,6 +64,7 @@ describe('GitHub REST pull request adapter', () => {
         title: 'PR from REST',
         baseBranch: 'main',
         headBranch: 'feature/rest',
+        headRepositoryNameWithOwner: 'happier-dev/happier',
       }),
     ]);
 

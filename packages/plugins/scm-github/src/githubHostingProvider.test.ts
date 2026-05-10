@@ -26,7 +26,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     if (!mod) return;
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
-      id: 'scm-github',
+      id: 'happier.scm.hosting.github',
       source: {
         kind: 'package',
         locator: '@happier-dev/plugins-scm-github',
@@ -35,7 +35,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       },
       runtime: {
         apiVersion: 1,
-        capabilities: ['scmHostingProviders'],
+        capabilities: ['scmHostingProviders', 'connectedAccountDescriptors', 'hooks'],
       },
       contributes: {
         scmHostingProviders: [
@@ -71,6 +71,23 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
             }),
           },
         ],
+        hooks: [
+          expect.objectContaining({
+            id: 'connectedServices.materialization.githubScmHostingToken',
+            category: 'integration',
+            scope: 'plugin',
+            executionKind: 'integrate',
+          }),
+        ],
+        connectedAccountDescriptors: [
+          expect.objectContaining({
+            id: 'github',
+            materialization: expect.objectContaining({
+              materializationKinds: expect.arrayContaining(['scm_hosting_token']),
+              hookKey: 'connectedServices.materialization.githubScmHostingToken',
+            }),
+          }),
+        ],
       },
     });
   });
@@ -81,9 +98,14 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     if (!mod) return;
 
     const registered: unknown[] = [];
+    const hooks: unknown[] = [];
     mod.activate({
       registerScmHostingProvider(registration: unknown) {
         registered.push(registration);
+        return () => undefined;
+      },
+      registerHook(registration: unknown) {
+        hooks.push(registration);
         return () => undefined;
       },
     });
@@ -100,9 +122,16 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
           getDefaultBranch: expect.any(Function),
           resolvePullRequestCheckoutReference: expect.any(Function),
           describePublishTargets: expect.any(Function),
+          describeCloneTargets: expect.any(Function),
           createRepository: expect.any(Function),
           getRepository: expect.any(Function),
         }),
+      }),
+    ]);
+    expect(hooks).toEqual([
+      expect.objectContaining({
+        hookId: 'connectedServices.materialization.githubScmHostingToken',
+        handler: expect.any(Function),
       }),
     ]);
   });
@@ -116,6 +145,9 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     mod.activate({
       registerScmHostingProvider(registration: Readonly<{ adapter: Readonly<Record<string, unknown>> }>) {
         registered.push(registration);
+        return () => undefined;
+      },
+      registerHook() {
         return () => undefined;
       },
     });

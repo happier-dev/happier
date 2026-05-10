@@ -89,9 +89,21 @@ describe('SCM repository provisioning protocol contracts', () => {
   });
 
   it('parses hosting repository target discovery without GitHub-only auth vocabulary', () => {
+    const requestSchema = readProtocolSchema<protocol.ScmHostingRepositoryDescribePublishTargetsRequest>(
+      'ScmHostingRepositoryDescribePublishTargetsRequestSchema',
+    );
     const schema = readProtocolSchema<protocol.ScmHostingRepositoryDescribePublishTargetsResponse>(
       'ScmHostingRepositoryDescribePublishTargetsResponseSchema',
     );
+
+    expect(requestSchema.parse({
+      cwd: '/repo',
+      providerId: 'scm.github.enterprise',
+      providerKind: 'github',
+    })).toMatchObject({
+      providerId: 'scm.github.enterprise',
+      providerKind: 'github',
+    });
 
     const parsed = schema.parse({
       success: true,
@@ -134,6 +146,7 @@ describe('SCM repository provisioning protocol contracts', () => {
 
     const request = requestSchema.parse({
       cwd: '/repo',
+      providerId: 'scm.github',
       providerKind: 'github',
       owner: 'happier-dev',
       ownerKind: 'org',
@@ -146,6 +159,7 @@ describe('SCM repository provisioning protocol contracts', () => {
     });
     expect(request).toMatchObject({
       cwd: '/repo',
+      providerId: 'scm.github',
       providerKind: 'github',
       remoteConflictStrategy: 'set-url',
       pushCurrentBranch: false,

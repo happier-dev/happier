@@ -90,8 +90,12 @@ export function buildConnectedAccountCredentialRecordFromTokenInput(params: Read
   token: string;
   providerAccountId?: string | null;
   providerEmail?: string | null;
+  descriptor?: ConnectedAccountDescriptor;
 }>): Extract<ConnectedServiceCredentialRecordV1, { kind: 'token' }> {
-  const descriptor = requireConnectedAccountDescriptor(params.serviceId);
+  const descriptor = params.descriptor ?? requireConnectedAccountDescriptor(params.serviceId);
+  if (descriptor.id !== params.serviceId) {
+    throw new Error(`Connected account descriptor id mismatch: ${descriptor.id} !== ${params.serviceId}`);
+  }
   if (!descriptor.tokenSetup || !descriptor.credentialKinds.includes('token')) {
     throw new Error(`Connected account does not support token credentials: ${params.serviceId}`);
   }

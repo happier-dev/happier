@@ -180,7 +180,66 @@ export {
     isClaudeLocalPermissionBridgeAgentStateRequest,
 } from './providers/claude/permissionRequestSource.js';
 
-export { computeMonotonicUpdatedAt, type MonotonicUpdatedAtPolicy } from './sessionControls/monotonic.js';
+export {
+  computeMonotonicUpdatedAt,
+  createFingerprintPublicationState,
+  createSessionStateFacetFromHandlers,
+  createSessionStateSyncEngine,
+  emitSessionStateTelemetry,
+  getSessionStateFieldCapability,
+  getSessionStateFieldDescriptor,
+  inferLatestUserPermissionModeIntent,
+  LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
+  LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
+  MODEL_OVERRIDE_KEY,
+  PERMISSION_MODE_KEY,
+  PERMISSION_MODE_UPDATED_AT_KEY,
+  readRuntimeDescriptorSessionState,
+  readVendorSessionIdSessionState,
+  readAcpConfigOptionIntentFromMetadata,
+  readAcpSessionModeIntentFromMetadata,
+  readModelIntentFromMetadata,
+  readPermissionModeIntentFromMetadata,
+  readStringOverrideIntentFromMetadata,
+  SESSION_CONFIG_OPTION_OVERRIDES_KEY,
+  SESSION_MODE_OVERRIDE_KEY,
+  isSessionStateDirectionSupported,
+  resolveFingerprintPublication,
+  resolveTimestampedFieldUpdate,
+  rollbackFingerprintPublication,
+  sanitizeSessionStateErrorCode,
+  SESSION_STATE_FIELD_REGISTRY,
+  runtimeDescriptorBinding,
+  resolveMetadataStringOverrideV1,
+  resolvePermissionIntentFromSessionMetadata,
+  clearSessionStateFieldFromMetadata,
+  type FingerprintPublicationDecision,
+  type FingerprintPublicationState,
+  type InferredPermissionModeIntent,
+  type MetadataUpdatePort,
+  type MonotonicUpdatedAtPolicy,
+  type RuntimeFacetCtx,
+  type SessionStateApplyReason,
+  type SessionStateBinding,
+  type SessionStateCapabilityGateResult,
+  type SessionStateDirection,
+  type SessionStateDisposable,
+  type SessionStateFacet,
+  type SessionStateFieldDescriptor,
+  type SessionStateFieldWriteValue,
+  type SessionStateMetadataWriteResult,
+  type SessionStateProviderFieldHandler,
+  type SessionStateProviderHandlerMap,
+  type SessionStateStoredValue,
+  type SessionStateSyncEngine,
+  type SessionStateSyncEngineOptions,
+  type SessionStateTelemetryEvent,
+  type SessionStateWrite,
+  type TimestampedFieldStaleBehavior,
+  type TimestampedFieldUpdateResult,
+  type TimestampedFieldValue,
+  type VendorSessionIdMetadataKey,
+} from './session/state/index.js';
 export {
   UNSUPPORTED_AGENT_SESSION_CAPABILITIES,
   evaluateAgentSessionCapabilitySupport,
@@ -189,7 +248,7 @@ export {
   isAgentSessionCapabilitySupported,
   readRuntimeCapabilitiesForSession,
   type AgentSessionCapabilityKey,
-} from './sessionControls/sessionCapabilities.js';
+} from './session/controls/sessionCapabilities.js';
 export {
   buildCodexSpawnRuntimeAffinityCompatFields,
   resolvePersistedCodexRuntimeIdentity,
@@ -246,48 +305,42 @@ export {
   applyAgentRuntimeKindOverrideToAccountSettings,
   normalizeAgentRuntimeKindOverride,
   resolveAgentConfiguredRuntimeKind,
+} from './session/controls/runtimeKindOverride.js';
+export {
   resolveAgentRuntimeControlSurfaceForSession,
+} from './session/controls/runtimeControlSurface.js';
+export {
   resolveCodexSessionBackendMode,
   resolveOpenCodeSessionBackendMode,
-} from './sessionControls/providerSessionBackends.js';
-export { resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from './sessionControls/metadata.js';
+} from './session/controls/providerBackendModes.js';
 export {
   LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
-  LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
   LEGACY_ACP_SESSION_MODELS_STATE_KEY,
   LEGACY_ACP_SESSION_MODES_STATE_KEY,
-  LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
   getMetadataKeysForAlias,
   readMetadataAliasValue,
   SESSION_CONFIG_OPTIONS_STATE_KEY,
-  SESSION_CONFIG_OPTION_OVERRIDES_KEY,
   SESSION_MODELS_STATE_KEY,
   SESSION_MODES_STATE_KEY,
-  SESSION_MODE_OVERRIDE_KEY,
-} from './sessionControls/metadataKeys.js';
-export {
-  computeNextMetadataStringOverrideV1,
-  computeNextPermissionIntentMetadata,
-  computeNextMetadataConfigOptionOverrideV1,
-} from './sessionControls/publish.js';
+} from './session/controls/metadataKeys.js';
 export {
   resolveVendorResumeIdFromSessionMetadata,
   evaluateVendorResumeEligibility,
   type VendorResumeEligibility,
   type VendorResumeEligibilityReasonCode,
-} from './sessionControls/vendorResumePolicy.js';
+} from './session/controls/vendorResumePolicy.js';
 export {
   evaluateExistingSessionAutomationEligibility,
   type ExistingSessionAutomationEligibility,
   type ExistingSessionAutomationEligibilityReasonCode,
-} from './sessionControls/existingSessionAutomationPolicy.js';
+} from './session/controls/existingSessionAutomationPolicy.js';
 export {
   resolveVendorHandoffIdFromSessionMetadata,
   evaluateVendorHandoffEligibility,
   type VendorHandoffEligibility,
   type VendorHandoffEligibilityReasonCode,
   type VendorHandoffStorageMode,
-} from './sessionControls/vendorHandoffPolicy.js';
+} from './session/controls/vendorHandoffPolicy.js';
 
 export {
   buildHappierReplayPromptFromDialog,
@@ -375,8 +428,10 @@ export {
   resolveOpenCodeSessionRuntimePreferences,
 } from './runtime/preferences/index.js';
 export {
-  buildClaudeRemoteOutgoingMessageMetaExtras,
   resolveProviderOutgoingMessageMetaExtras,
 } from './runtime/adjunctAdapters/messageMetaRegistry.js';
+export {
+  buildClaudeRemoteOutgoingMessageMetaExtras,
+} from './providers/claude/messageMeta.js';
 
 export * from './voice/index.js';

@@ -4,7 +4,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 // Substantive capabilities + contributions land during E.7 (Copilot — Tier 2 activate-hook).
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'copilot',
+  id: 'happier.agent.copilot',
   version: '0.0.0',
   displayName: 'copilot',
   description: undefined,

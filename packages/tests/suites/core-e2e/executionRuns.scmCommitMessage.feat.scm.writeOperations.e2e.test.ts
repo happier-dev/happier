@@ -30,6 +30,13 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+function requireCompletedRun(value: ExecutionRunGetResponse | null): ExecutionRunGetResponse {
+  if (!value) {
+    throw new Error('Missing completed execution run');
+  }
+  return value;
+}
+
 const run = createRunDirs({ runLabel: 'core' });
 
 describe('core e2e: execution run scm_commit_message.v1', () => {
@@ -156,8 +163,8 @@ describe('core e2e: execution run scm_commit_message.v1', () => {
       return true;
     }, { timeoutMs: 40_000 });
 
-    if (!completed) throw new Error('Missing completed execution run');
-    expect(completed.run.status).toBe('succeeded');
-    expect(readRecord(completed.latestToolResult)?.message).toBe('feat: ephemeral commit message');
+    const completedRun = requireCompletedRun(completed);
+    expect(completedRun.run.status).toBe('succeeded');
+    expect(readRecord(completedRun.latestToolResult)?.message).toBe('feat: ephemeral commit message');
   }, 240_000);
 });

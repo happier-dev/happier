@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DirectTranscriptRawMessageV1Schema } from './sessions/external/daemonRpcV1.js';
+import { ExternalSessionTranscriptRawMessageV1Schema } from './sessions/external/daemonRpcV1.js';
 import { ExecutionRunPublicStateSchema } from './executionRuns.js';
 import { SessionStoredMessageContentSchema } from './sessionMessages/sessionStoredMessageContent.js';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from './sessions/control/runtimeIssueV1.js';
@@ -119,6 +119,10 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('update-account'),
     id: z.string(),
+  }).passthrough(),
+  z.object({
+    t: z.literal('account-settings-changed'),
+    settingsVersion: z.number().int().min(0),
   }).passthrough(),
   z.object({
     t: z.literal('new-machine'),
@@ -257,10 +261,10 @@ export const TranscriptStreamSegmentEphemeralMessageSchema = z.object({
   updatedAt: TimestampMsSchema,
 }).passthrough();
 
-export const DirectSessionTranscriptDeltaEphemeralSchema = z.object({
+export const ExternalSessionTranscriptDeltaEphemeralSchema = z.object({
   type: z.literal('direct-session-transcript-delta'),
   sessionId: z.string(),
-  items: z.array(DirectTranscriptRawMessageV1Schema),
+  items: z.array(ExternalSessionTranscriptRawMessageV1Schema),
   nextCursor: z.string().min(1).nullable().optional(),
   truncated: z.boolean(),
 }).passthrough();
@@ -283,7 +287,7 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
     sessionId: z.string(),
     message: TranscriptStreamSegmentEphemeralMessageSchema,
   }).passthrough(),
-  DirectSessionTranscriptDeltaEphemeralSchema,
+  ExternalSessionTranscriptDeltaEphemeralSchema,
   z.object({
     type: z.literal('machine-activity'),
     id: z.string(),
@@ -307,7 +311,7 @@ export const EphemeralUpdateSchema = z.discriminatedUnion('type', [
 ]);
 
 export type EphemeralUpdate = z.infer<typeof EphemeralUpdateSchema>;
-export type DirectSessionTranscriptDeltaEphemeral = z.infer<typeof DirectSessionTranscriptDeltaEphemeralSchema>;
+export type ExternalSessionTranscriptDeltaEphemeral = z.infer<typeof ExternalSessionTranscriptDeltaEphemeralSchema>;
 
 // Broadcast-safe events (cursorless).
 //

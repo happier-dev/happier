@@ -20,6 +20,32 @@ function expectActionSurfaceEnabled(
 }
 
 describe('accountSettings', () => {
+  it('defaults coding prompt behavior to current agent-managed behavior', () => {
+    const parsed = accountSettingsParse({});
+
+    expect(parsed.codingPromptBehaviorV1).toEqual({
+      v: 1,
+      sessionTitleUpdates: 'agent',
+      responseOptions: 'agent',
+    });
+  });
+
+  it('accepts disabled coding prompt behavior options', () => {
+    const parsed = accountSettingsParse({
+      codingPromptBehaviorV1: {
+        v: 1,
+        sessionTitleUpdates: 'disabled',
+        responseOptions: 'disabled',
+      },
+    });
+
+    expect(parsed.codingPromptBehaviorV1).toEqual({
+      v: 1,
+      sessionTitleUpdates: 'disabled',
+      responseOptions: 'disabled',
+    });
+  });
+
   it('defaults peer mediation preferences to direct routes disabled by product posture', () => {
     const parsed = accountSettingsParse({});
     const parsedRecord = parsed as unknown as { peerMediationPreferencesV1?: unknown };

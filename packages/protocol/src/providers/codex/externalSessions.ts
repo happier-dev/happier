@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-export const CODEX_DIRECT_SESSIONS_PROVIDER_ID = 'codex' as const;
+export const CODEX_EXTERNAL_SESSIONS_PROVIDER_ID = 'codex' as const;
 
-export const CodexDirectSessionsSourceSchema = z
+export const CodexExternalSessionsSourceSchema = z
   .object({
     kind: z.literal('codexHome'),
     home: z.enum(['user', 'connectedService']),
@@ -30,7 +30,7 @@ function normalizeNullableString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export function resolveCodexDirectSessionsSourceKey(source: z.infer<typeof CodexDirectSessionsSourceSchema>): string {
+export function resolveCodexExternalSessionsSourceKey(source: z.infer<typeof CodexExternalSessionsSourceSchema>): string {
   const home = source.home === 'connectedService' ? 'connectedService' : 'user';
   const connectedServiceId = home === 'connectedService' ? normalizeNullableString(source.connectedServiceId) : '';
   const connectedServiceProfileId = home === 'connectedService' ? normalizeNullableString(source.connectedServiceProfileId) : '';

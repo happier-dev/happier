@@ -107,6 +107,14 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
       path: '/tmp/session',
       host: 'localhost',
       agentRuntimeCapabilitiesV1: { executionRun: { supported: true } },
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'opencode',
+        provider: {
+          backendMode: 'server',
+          vendorSessionId: 'legacy-oc',
+        },
+      },
     }, {
       v: 1,
       providerId: 'opencode',
@@ -118,6 +126,14 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
       path: '/tmp/session',
       host: 'localhost',
       agentRuntimeCapabilitiesV1: { executionRun: { supported: true } },
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'opencode',
+        provider: {
+          backendMode: 'server',
+          vendorSessionId: 'legacy-oc',
+        },
+      },
       runtimeDescriptorV1: {
         v: 1,
         providerId: 'opencode',
@@ -164,7 +180,7 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
     });
   });
 
-  it('removes both canonical and legacy runtime descriptor metadata when clearing the descriptor', () => {
+  it('removes canonical runtime descriptor metadata and preserves the legacy read alias when clearing the descriptor', () => {
     expect(writeRuntimeDescriptorV1ToMetadata({
       path: '/tmp/session',
       host: 'localhost',
@@ -181,6 +197,11 @@ describe('runtimeDescriptorMetadata compat helpers', () => {
     }, null)).toEqual({
       path: '/tmp/session',
       host: 'localhost',
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: { backendMode: 'acp' },
+      },
     });
   });
 });

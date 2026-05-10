@@ -84,7 +84,7 @@ describe('openSshLocalPortForward', () => {
       remotePort: 8787,
       controlPath: '/tmp/happier-ssh-control/tunnel-4321-123456-49152.sock',
     });
-    expect(deps.mkdirSync).toHaveBeenCalledWith('/tmp/happier-ssh-control', { recursive: true });
+    expect(deps.mkdirSync).toHaveBeenCalledWith('/tmp/happier-ssh-control', { recursive: true, mode: 0o700 });
 
     const [command, args, options] = deps.spawnSync.mock.calls[0] ?? [];
     expect(command).toBe('ssh');

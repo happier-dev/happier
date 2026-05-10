@@ -48,7 +48,7 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/claude/src/manifest.ts'),
-    pluginManifestSource({ id: 'claude', capabilities: ['agents'] }),
+    pluginManifestSource({ id: 'happier.agent.claude', capabilities: ['agents'] }),
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src/agent'), { recursive: true });
@@ -61,7 +61,7 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   mkdirSync(resolve(repoRoot, 'packages/plugins/codex/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/codex/src/manifest.ts'),
-    pluginManifestSource({ id: 'codex', capabilities: ['agents'] }),
+    pluginManifestSource({ id: 'happier.agent.codex', capabilities: ['agents'] }),
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/codex/src/agent'), { recursive: true });
@@ -104,6 +104,10 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS/);
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_BACKEND_CONTRIBUTIONS/);
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS/);
+  assert.match(
+    cliOut,
+    /BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS[\s\S]{0,220}provenance:\s*'first_party'/,
+  );
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
   assert.match(cliOut, /@happier-dev\/plugins-claude/);
   assert.match(cliOut, /@happier-dev\/plugins-codex/);
@@ -142,6 +146,33 @@ test('generateBundledPluginEntries writes deterministic bundled plugin contribut
   await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
 });
 
+test('generateBundledPluginEntries rejects short bundled plugin owner ids', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-short-id-'));
+
+  writeJson(resolve(repoRoot, 'packages/plugins/codex/package.json'), {
+    name: '@happier-dev/plugins-codex',
+    version: '0.0.0',
+  });
+
+  mkdirSync(resolve(repoRoot, 'packages/plugins/codex/src'), { recursive: true });
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/codex/src/manifest.ts'),
+    pluginManifestSource({ id: 'codex', capabilities: ['agents'] }),
+    'utf8',
+  );
+  mkdirSync(resolve(repoRoot, 'packages/plugins/codex/src/agent'), { recursive: true });
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/codex/src/agent/definition.ts'),
+    'export const AGENT_DEFINITION = Object.freeze({ id: \"codex\" });\n',
+    'utf8',
+  );
+
+  await assert.rejects(
+    generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']),
+    /canonical first-party plugin owner id/i,
+  );
+});
+
 test('generateBundledPluginEntries skips reservation-only plugin packages', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-skip-'));
 
@@ -163,7 +194,7 @@ test('generateBundledPluginEntries skips reservation-only plugin packages', asyn
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/claude/src/manifest.ts'),
-    pluginManifestSource({ id: 'claude', capabilities: ['agents'] }),
+    pluginManifestSource({ id: 'happier.agent.claude', capabilities: ['agents'] }),
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src/agent'), { recursive: true });
@@ -218,7 +249,7 @@ test('generateBundledPluginEntries projects non-agent plugin packages without ag
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/scm-github/src/manifest.ts'),
     pluginManifestSource({
-      id: 'scm-github',
+      id: 'happier.scm.hosting.github',
       capabilities: ['scmHostingProviders'],
       contributes: '{ scmHostingProviders: [{ id: "github", kind: "github", displayName: "GitHub", baseUrl: "https://github.com" }] }',
     }),
@@ -248,7 +279,7 @@ test('generateBundledPluginEntries projects non-agent plugin packages without ag
     'utf8',
   );
   assert.match(cliOut, /@happier-dev\/plugins-scm-github/);
-  assert.match(cliOut, /"pluginId":\s*"scm-github"/);
+  assert.match(cliOut, /"pluginId":\s*"happier\.scm\.hosting\.github"/);
   assert.match(cliOut, /BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS/);
   assert.match(cliOut, /id:\s*"github"/);
   assert.match(cliOut, /definition:\s*Object\.freeze\(\{/);
@@ -260,6 +291,106 @@ test('generateBundledPluginEntries projects non-agent plugin packages without ag
     'utf8',
   );
   assert.doesNotMatch(agentsOut, /scm-github/);
+});
+
+test('generateBundledPluginEntries projects bundled SCM backend and installable contributions', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-generate-scm-backend-'));
+
+  writeJson(resolve(repoRoot, 'packages/plugins/scm-sapling/package.json'), {
+    name: '@happier-dev/plugins-scm-sapling',
+    version: '0.0.0',
+  });
+
+  mkdirSync(resolve(repoRoot, 'packages/plugins/scm-sapling/src'), { recursive: true });
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/scm-sapling/src/manifest.ts'),
+    [
+      'const supported = Object.freeze({ support: "supported" });',
+      'const unsupported = Object.freeze({ support: "unsupported", reason: "not_implemented" });',
+      'export const PLUGIN_MANIFEST = Object.freeze({',
+      '  schemaVersion: 2,',
+      '  id: "happier.scm.backend.sapling",',
+      '  version: "0.0.0",',
+      '  displayName: "Sapling SCM backend",',
+      '  description: "Sapling SCM backend.",',
+      '  engines: { happier: "^0.0.0" },',
+      '  runtime: { apiVersion: 1, capabilities: ["scmBackends"] },',
+      '  targets: {},',
+      '  capabilities: { permissions: [] },',
+      '  contributes: {',
+      '    installables: [{',
+      '      id: "sapling",',
+      '      key: "sapling",',
+      '      kind: "dep",',
+      '      version: "1",',
+      '      capabilityId: "dep.sapling",',
+      '      display: { name: "Sapling" },',
+      '      description: "Sapling source control CLI.",',
+      '      source: { kind: "manual_only", setupUrl: "https://sapling-scm.com/docs/introduction/installation" },',
+      '      binary: { commands: ["sl"], systemFirst: true, managedFallback: false },',
+      '      defaultPolicy: { autoInstallWhenNeeded: false, autoUpdateMode: "notify" },',
+      '      consent: { install: "required", update: "required" },',
+      '    }],',
+      '    scmBackends: [{',
+      '      id: "sapling",',
+      '      displayName: "Sapling",',
+      '      description: "Sapling local source control backend.",',
+      '      repoModes: [".sl", ".git"],',
+      '      detection: { rootMarkers: [".sl"] },',
+      '      installableDependencies: ["dep.sapling"],',
+      '      tooling: { commands: [{ installableKey: "dep.sapling", command: "sl" }], systemFirst: true, managedFallback: false },',
+      '      safetyConstraints: { mutatesWorkingTree: true, requiresUserConfirmationForDestructiveWrites: true },',
+      '      capabilities: {',
+      '        detection: { repository: supported, repoIdentity: supported, ignoredPath: supported, repoMode: supported, executable: supported },',
+      '        read: { status: supported, diffFile: supported, diffCommit: supported, log: supported, branches: unsupported, stash: unsupported, defaultBranch: unsupported, hostingProvider: unsupported, pullRequestStatus: unsupported },',
+      '        changeSet: { model: "working-copy", diffAreas: ["pending", "both"], include: unsupported, exclude: unsupported, discard: supported },',
+      '        commit: { create: supported, pathSelection: supported, lineSelection: unsupported, backout: supported },',
+      '        remote: { read: supported, add: unsupported, setUrl: unsupported, remove: unsupported, fetch: unsupported, pull: unsupported, push: unsupported, publish: unsupported },',
+      '        branch: { list: unsupported, create: unsupported, checkout: unsupported, merge: unsupported, rebase: unsupported, operationControl: unsupported },',
+      '        worktree: { create: unsupported, remove: unsupported, prune: unsupported, prepare: unsupported },',
+      '        lifecycle: { init: unsupported, clone: unsupported, publish: unsupported, identityRediscovery: supported, removeIndexLock: unsupported },',
+      '        hosting: { providerDetection: unsupported, repositoryPublishTargets: unsupported, repositoryPublish: unsupported, pullRequestRead: unsupported, pullRequestStatus: unsupported, pullRequestCreate: unsupported, pullRequestReuse: unsupported, pullRequestCheckout: unsupported, pullRequestPrepareWorktree: unsupported, pullRequestRunStacked: unsupported },',
+      '        checkpoints: { capture: unsupported, aliasFinalize: unsupported, diff: unsupported, cleanup: unsupported, backup: unsupported, rollbackApply: unsupported },',
+      '        workspaceIntegration: { inspectLocation: unsupported, checkoutMaterialization: unsupported, workspaceTransfer: unsupported, exportPortability: unsupported, portablePathClassification: unsupported },',
+      '        tooling: { systemCliResolution: supported, managedCliResolution: unsupported, binarySafe: supported },',
+      '        freshness: { observed: supported, expiry: supported },',
+      '      },',
+      '    }],',
+      '  },',
+      '});',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  mkdirSync(resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources'), { recursive: true });
+  mkdirSync(resolve(repoRoot, 'apps/ui/sources/agents/registry'), { recursive: true });
+  mkdirSync(resolve(repoRoot, 'packages/agents/src/generated'), { recursive: true });
+  mkdirSync(resolve(repoRoot, 'packages/agents/src/definitions'), { recursive: true });
+
+  writeFileSync(
+    resolve(repoRoot, 'apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts'),
+    'export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES: readonly string[] = Object.freeze([]);\n',
+    'utf8',
+  );
+  writeFileSync(
+    resolve(repoRoot, 'packages/agents/src/definitions/agentDefinition.ts'),
+    'export type AgentDefinition = Readonly<{ id: string } & Record<string, unknown>>;\n',
+    'utf8',
+  );
+
+  await generateBundledPluginEntries(['--root', repoRoot, '--mode', 'write']);
+
+  const cliOut = readFileSync(
+    resolve(repoRoot, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts'),
+    'utf8',
+  );
+  assert.match(cliOut, /BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS/);
+  assert.match(cliOut, /BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS/);
+  assert.match(cliOut, /pluginId:\s*"happier\.scm\.backend\.sapling"/);
+  assert.match(cliOut, /id:\s*"sapling"/);
+  assert.match(cliOut, /capabilityId":\s*"dep\.sapling"/);
+  assert.match(cliOut, /autoInstallWhenNeeded":\s*false/);
 });
 
 test('generateBundledPluginEntries rejects malformed bundled SCM provider contributions', async () => {
@@ -276,7 +407,7 @@ test('generateBundledPluginEntries rejects malformed bundled SCM provider contri
     [
       'export const PLUGIN_MANIFEST = Object.freeze({',
       '  schemaVersion: 2,',
-      '  id: "scm-github",',
+      '  id: "happier.scm.hosting.github",',
       '  version: "0.0.0",',
       '  displayName: "GitHub SCM hosting provider",',
       '  description: "Detects GitHub remotes.",',
@@ -323,7 +454,7 @@ test('generateBundledPluginEntries fails for agent-capable plugin packages witho
   mkdirSync(resolve(repoRoot, 'packages/plugins/placeholder/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/placeholder/src/manifest.ts'),
-    pluginManifestSource({ id: 'placeholder', capabilities: ['agents'] }),
+    pluginManifestSource({ id: 'happier.agent.placeholder', capabilities: ['agents'] }),
     'utf8',
   );
 
@@ -360,7 +491,7 @@ test('generateBundledPluginEntries uses AGENT_DEFINITION.id as the runtime agent
   mkdirSync(resolve(repoRoot, 'packages/plugins/ohmypi/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/ohmypi/src/manifest.ts'),
-    pluginManifestSource({ id: 'ohmypi', capabilities: ['agents'] }),
+    pluginManifestSource({ id: 'happier.agent.ohmypi', capabilities: ['agents'] }),
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/ohmypi/src/agent'), { recursive: true });

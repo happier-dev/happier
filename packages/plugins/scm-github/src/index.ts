@@ -1,5 +1,6 @@
 export * from './adapter.js';
 export * from './activate.js';
+export * from './auth/tokenMaterializer.js';
 export * from './manifest.js';
 export * from './pullRequests/authChain.js';
 export * from './pullRequests/checkoutReference.js';

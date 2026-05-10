@@ -1,0 +1,81 @@
+import { buildBackendTargetKey } from '@happier-dev/protocol';
+import type { AgentId } from '../../types.js';
+import { getProviderSessionControlAdapter } from '../../runtime/controlSurface/sessionControlAdapterRegistry.js';
+import { resolveAgentRuntimeControlSurfaceForSession } from './runtimeControlSurface.js';
+import { resolveVendorResumeIdFromSessionMetadata } from './vendorResumePolicy.js';
+
+export type VendorHandoffStorageMode = 'direct' | 'persisted';
+
+export type VendorHandoffEligibilityReasonCode =
+  | 'storage_mode_unsupported'
+  | 'handoff_unsupported'
+  | 'vendor_handoff_id_missing'
+  | 'experimental_disabled'
+  | 'backend_disabled_by_account_settings';
+
+export type VendorHandoffEligibility =
+  | Readonly<{ eligible: true; vendorHandoffId: string }>
+  | Readonly<{ eligible: false; reasonCode: VendorHandoffEligibilityReasonCode }>;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function isBackendDisabledByAccountSettings(agentId: AgentId, accountSettings: Record<string, unknown> | null): boolean {
+  const backendEnabledByTargetKey = accountSettings?.backendEnabledByTargetKey;
+  const backendEnabledByTargetKeyRecord = asRecord(backendEnabledByTargetKey);
+  if (!backendEnabledByTargetKeyRecord) return false;
+  return backendEnabledByTargetKeyRecord[buildBackendTargetKey({ kind: 'builtInAgent', agentId })] === false;
+}
+
+export function resolveVendorHandoffIdFromSessionMetadata(agentId: AgentId, metadata: unknown): string | null {
+  return resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
+}
+
+export function evaluateVendorHandoffEligibility(input: Readonly<{
+  agentId: AgentId;
+  storageMode: VendorHandoffStorageMode;
+  metadata: unknown;
+  accountSettings?: Record<string, unknown> | null;
+}>): VendorHandoffEligibility {
+  const accountSettings = asRecord(input.accountSettings) ?? null;
+  const runtimeControlSurface = resolveAgentRuntimeControlSurfaceForSession({
+    agentId: input.agentId,
+    metadata: input.metadata,
+    accountSettings,
+  });
+  if (!runtimeControlSurface) {
+    return { eligible: false, reasonCode: 'handoff_unsupported' };
+  }
+  const resolvedRuntimeControlSurface = runtimeControlSurface;
+
+  if (isBackendDisabledByAccountSettings(input.agentId, accountSettings)) {
+    return { eligible: false, reasonCode: 'backend_disabled_by_account_settings' };
+  }
+
+  if (!resolvedRuntimeControlSurface.sessionStorage[input.storageMode]) {
+    return { eligible: false, reasonCode: 'storage_mode_unsupported' };
+  }
+
+  if (resolvedRuntimeControlSurface.handoff.vendorStateTransfer === 'unsupported') {
+    return { eligible: false, reasonCode: 'handoff_unsupported' };
+  }
+
+  if (resolvedRuntimeControlSurface.handoff.vendorStateTransfer === 'experimental') {
+    const enabled = getProviderSessionControlAdapter(input.agentId)?.isExperimentalVendorHandoffEnabled?.({
+      metadata: input.metadata,
+      accountSettings,
+    }) === true;
+    if (!enabled) {
+      return { eligible: false, reasonCode: 'experimental_disabled' };
+    }
+  }
+
+  const vendorHandoffId = resolveVendorHandoffIdFromSessionMetadata(input.agentId, input.metadata);
+  if (!vendorHandoffId) {
+    return { eligible: false, reasonCode: 'vendor_handoff_id_missing' };
+  }
+
+  return { eligible: true, vendorHandoffId };
+}

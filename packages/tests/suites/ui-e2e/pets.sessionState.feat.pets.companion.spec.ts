@@ -121,6 +121,8 @@ test.describe('ui e2e: pets session state mapping', () => {
     test.setTimeout(540_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
+    await page.setViewportSize({ width: 1440, height: 900 });
+
     const testDir = resolve(join(suiteDir, 'session-state'));
     const fakeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
     const delayedFakeClaudePath = resolve(join(testDir, 'fake-claude-delayed.cjs'));

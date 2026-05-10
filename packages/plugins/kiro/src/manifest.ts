@@ -9,7 +9,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 // .project/plans/runtime-unification/stages/stage-E/E.6.md.
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'kiro',
+  id: 'happier.agent.kiro',
   version: '0.0.0',
   displayName: 'kiro',
   description: undefined,

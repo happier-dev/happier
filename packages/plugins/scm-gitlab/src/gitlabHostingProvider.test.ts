@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { gitlabHostingProviderAdapter } from './adapter.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
+
 type DetectionResult = Readonly<{
   id: string;
   kind: string;
@@ -21,12 +24,8 @@ type Adapter = Readonly<{
 
 describe('bundled GitLab SCM hosting provider plugin', () => {
   it('declares a first-party SCM hosting-provider manifest contribution with URL safety metadata', async () => {
-    const mod = await import('./manifest.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    expect(mod.PLUGIN_MANIFEST).toMatchObject({
-      id: 'scm-gitlab',
+    expect(PLUGIN_MANIFEST).toMatchObject({
+      id: 'happier.scm.hosting.gitlab',
       source: {
         kind: 'package',
         locator: '@happier-dev/plugins-scm-gitlab',
@@ -63,6 +62,14 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
             capabilities: expect.objectContaining({
               compareUrl: true,
               openUrl: true,
+              pullRequests: {
+                list: true,
+                get: true,
+                create: true,
+                checkout: false,
+                prepareWorktree: false,
+                runStacked: false,
+              },
             }),
           },
         ],
@@ -71,11 +78,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
   });
 
   it('detects GitLab remotes and preserves multi-segment group paths', async () => {
-    const mod = await import('./adapter.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const adapter = mod.gitlabHostingProviderAdapter as Adapter;
+    const adapter = gitlabHostingProviderAdapter as Adapter;
 
     expect(adapter.detectRemote({
       remoteName: 'origin',
@@ -119,11 +122,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
   });
 
   it('builds encoded GitLab compare URLs without write or CLI behavior', async () => {
-    const mod = await import('./adapter.js').catch(() => null);
-    expect(mod).not.toBeNull();
-    if (!mod) return;
-
-    const adapter = mod.gitlabHostingProviderAdapter as Adapter & Record<string, unknown>;
+    const adapter = gitlabHostingProviderAdapter as Adapter & Record<string, unknown>;
     const provider = adapter.detectRemote({
       remoteName: 'origin',
       remoteUrl: 'git@gitlab.com:happier-dev/mobile/app.git',
@@ -161,7 +160,9 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       base: 'main',
       head: 'feature/pr-support',
     })).toBeNull();
-    expect(adapter[`create${'PullRequest'}`]).toBeUndefined();
-    expect(adapter[`listOpen${'PullRequests'}`]).toBeUndefined();
+    expect(adapter[`create${'PullRequest'}`]).toEqual(expect.any(Function));
+    expect(adapter[`list${'PullRequests'}`]).toEqual(expect.any(Function));
+    expect(adapter[`get${'PullRequest'}`]).toEqual(expect.any(Function));
+    expect(adapter[`get${'PullRequestAuthProfileKey'}`]).toEqual(expect.any(Function));
   });
 });

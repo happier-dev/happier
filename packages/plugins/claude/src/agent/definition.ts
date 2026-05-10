@@ -10,7 +10,7 @@ import {
 
 // IMPORTANT: this must stay JSON-serializable (data-only).
 export const AGENT_DEFINITION = Object.freeze({
-  id: 'claude',
+  id: CANONICAL_AGENTS_CORE.claude.id,
   core: CANONICAL_AGENTS_CORE.claude,
   sessionModeDescriptor: CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS.claude,
   sessionModesKind: CANONICAL_AGENT_SESSION_MODES.claude,

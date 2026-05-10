@@ -393,6 +393,18 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  'app.ui.releaseNotes': {
+    description: 'Curated release-notes story-deck modal (Notelet-style cards). Shares renderer with onboarding showcase.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
+  'app.ui.onboardingShowcase': {
+    description: 'First-launch onboarding story-deck modal (shares renderer with release notes).',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
   'app.ui.liveActivities': {
     description: 'iOS Live Activities and Dynamic Island UI surfaces.',
     defaultFailMode: 'fail_closed',

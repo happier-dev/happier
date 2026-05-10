@@ -6,6 +6,7 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import {
+  createAccountAndReachConnectMachineState,
   gotoDomContentLoadedWithPathFallback,
   gotoDomContentLoadedWithRetries,
   normalizeLoopbackBaseUrl,
@@ -27,15 +28,13 @@ async function createAccountWithoutDaemon(params: Readonly<{
 async function createAccountIfNeeded(page: Page): Promise<void> {
   const createAccountByTestId = page.getByTestId('welcome-create-account');
   if (await createAccountByTestId.count()) {
-    await createAccountByTestId.click({ timeout: 60_000, force: true });
-    await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+    await createAccountAndReachConnectMachineState({ page });
     return;
   }
 
   const createAccountByRole = page.getByRole('button', { name: 'Create account' });
   if (await createAccountByRole.count()) {
-    await createAccountByRole.click({ timeout: 60_000, force: true });
-    await expect(page.getByTestId('session-getting-started-kind-connect_machine')).not.toHaveCount(0, { timeout: 120_000 });
+    await createAccountAndReachConnectMachineState({ page });
   }
 }
 

@@ -116,7 +116,7 @@ describe('core e2e: direct Codex session detach watcher release', () => {
 
             const machineRpc = createDataKeyRpcClient(ui, machineKey);
 
-            const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+            const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
                 machineId: seeded.machineId,
                 providerId: 'codex',
                 remoteSessionId,
@@ -131,7 +131,7 @@ describe('core e2e: direct Codex session detach watcher release', () => {
             }));
             const sessionId = (linkResult as { sessionId: string }).sessionId;
 
-            const attach = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH}`, {
+            const attach = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH}`, {
                 machineId: seeded.machineId,
                 sessionId,
                 providerId: 'codex',
@@ -145,7 +145,7 @@ describe('core e2e: direct Codex session detach watcher release', () => {
                 renewed: false,
             }));
 
-            const detach = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_DETACH}`, {
+            const detach = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH}`, {
                 machineId: seeded.machineId,
                 sessionId,
                 leaseId: (attachResult as { leaseId: string }).leaseId,

@@ -2,7 +2,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'scm-azure-devops',
+  id: 'happier.scm.hosting.azure-devops',
   version: '0.0.0',
   displayName: 'Azure DevOps SCM hosting provider',
   description: 'Detects Azure DevOps remotes and builds compare URLs.',
@@ -37,16 +37,16 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
           compareUrl: true,
           openUrl: true,
           pullRequests: {
-            list: false,
-            get: false,
-            create: false,
+            list: true,
+            get: true,
+            create: true,
             checkout: false,
             prepareWorktree: false,
             runStacked: false,
           },
           repositoryProvisioning: {
-            describeTargets: false,
-            createRepository: false,
+            describeTargets: true,
+            createRepository: true,
             publish: false,
           },
           reviewThreads: {

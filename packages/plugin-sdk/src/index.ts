@@ -178,6 +178,7 @@ export type {
     ScmHostingProviderDefaultBranchInput,
     ScmHostingProviderDefaultBranchMetadata,
     ScmHostingProviderRepositoryCreateInput,
+    ScmHostingProviderRepositoryDescribeCloneTargetsInput,
     ScmHostingProviderRepositoryDescribePublishTargetsInput,
     ScmHostingProviderRepositoryDescribePublishTargetsResult,
     ScmHostingProviderRepositoryGetInput,
@@ -195,6 +196,59 @@ export type {
     ScmHostingProviderRuntimeServices,
     ScmHostingProviderRuntimeTokenMaterializationResult,
 } from './scm/hostingProvider';
+export {
+    readCurrentScmHostingProviderRuntimeServices,
+    runWithScmHostingProviderRuntimeServices,
+} from './scm/hostingProvider.js';
+export type {
+    ScmBackendCommandRunResult,
+    ScmBackendRuntimeContext,
+    ScmBackendRuntimeDetection,
+    ScmBackendRuntimeHandlerInput,
+    ScmBackendRuntimeHandlers,
+    ScmBackendRuntimeRegistration,
+    ScmBackendRuntimeServices,
+    ScmBackendRuntimeWorkspaceIntegrationHandlers,
+    ScmWorkspaceIntegrationCheckoutMaterializationRequest,
+    ScmWorkspaceIntegrationPortableWorkspacePathClassification,
+    ScmWorkspaceIntegrationPortableWorkspacePathRequest,
+    ScmWorkspaceIntegrationWorkspaceCheckoutCreationRequest,
+    ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult,
+    ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest,
+    ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult,
+    ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest,
+    ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult,
+    ScmWorkspaceIntegrationWorkspaceLocationInspection,
+    ScmWorkspaceIntegrationWorkspaceTransferEntry,
+    ScmWorkspaceIntegrationWorkspaceTransferMetadata,
+    ScmWorkspaceIntegrationWorkspaceTransferRequest,
+    ScmWorkspaceIntegrationWorkspaceTransferResult,
+} from './scm/backend';
+export {
+    ConnectedAccountConnectModeDescriptorSchema,
+    ConnectedAccountTokenKindSchema,
+    PluginConnectedAccountDescriptorContributionV2Schema,
+    PluginConnectedAccountDescriptorSchema,
+} from './manifest/connectedAccountDescriptors.js';
+export type {
+    ConnectedAccountConnectModeDescriptor,
+    ConnectedAccountTokenKind,
+    PluginConnectedAccountDescriptorContributionV2,
+} from './manifest/connectedAccountDescriptors.js';
+export {
+    ScmBackendContributionDetectionSchema,
+    ScmBackendContributionSafetyConstraintsSchema,
+    ScmBackendContributionSchema,
+    ScmBackendContributionToolCommandSchema,
+    ScmBackendContributionToolingSchema,
+} from './manifest/scmBackends.js';
+export type {
+    ScmBackendContribution,
+    ScmBackendContributionDetection,
+    ScmBackendContributionSafetyConstraints,
+    ScmBackendContributionToolCommand,
+    ScmBackendContributionTooling,
+} from './manifest/scmBackends.js';
 export type {
     ExternalSessionAttachParamsV1,
     ExternalSessionAttachResultV1,

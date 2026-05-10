@@ -1,10 +1,12 @@
 import type { PluginManifestV2 } from '@happier-dev/protocol';
 
+const OPENCODE_BACKEND_ID = 'opencode';
+
 // Thin composition file that declares this plugin’s canonical manifest.
 // Keep this mostly declarative; executable behavior lives in domain folders.
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'opencode',
+  id: 'happier.agent.opencode',
   version: '0.0.0',
   displayName: 'opencode',
   description: undefined,
@@ -16,7 +18,7 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
     backends: [
       {
         kindVersion: 1,
-        id: 'opencode',
+        id: OPENCODE_BACKEND_ID,
         agentId: 'opencode',
         engine: { kind: 'custom' },
         capabilities: {

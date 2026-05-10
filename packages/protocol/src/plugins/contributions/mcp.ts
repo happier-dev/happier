@@ -30,12 +30,26 @@ function isCanonicalMcpToolName(value: string): boolean {
     return false;
   }
   if (parts[0] === 'happier') {
-    return parts.length >= 2;
+    return parts.length >= 3;
   }
   if (parts[0] === 'ext') {
     return parts.length >= 3;
   }
   return parts.length >= 3;
+}
+
+function isCanonicalMcpToolNamespace(value: string): boolean {
+  const parts = value.split('.');
+  if (parts.length < 2 || parts.some((part) => !MCP_SEGMENT_PATTERN.test(part))) {
+    return false;
+  }
+  if (parts[0] === 'happier') {
+    return parts.length === 2;
+  }
+  if (parts[0] === 'ext') {
+    return parts.length >= 2;
+  }
+  return parts.length === 2;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -103,6 +117,13 @@ export const PluginMcpToolNameV1Schema = z
   .refine(isCanonicalMcpToolName, 'MCP tool names must use happier.*, ext.<pluginId>.*, or <providerId>.<server>.* prefixes');
 export type PluginMcpToolNameV1 = z.infer<typeof PluginMcpToolNameV1Schema>;
 
+export const PluginMcpToolNamespaceV1Schema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(isCanonicalMcpToolNamespace, 'MCP tool namespaces must use happier.*, ext.<pluginId>, or <providerId>.<server> prefixes');
+export type PluginMcpToolNamespaceV1 = z.infer<typeof PluginMcpToolNamespaceV1Schema>;
+
 export const PluginMcpServerTransportV1Schema = z.enum(['hosted', 'stdio', 'http', 'sse']);
 export type PluginMcpServerTransportV1 = z.infer<typeof PluginMcpServerTransportV1Schema>;
 
@@ -137,7 +158,7 @@ export type PluginMcpServerContributionV1 = z.infer<typeof PluginMcpServerContri
 export const PluginMcpBackendClientContributionV1Schema = PluginDescriptorBaseV1Schema.safeExtend({
   kind: z.literal('mcp.backendClient'),
   serverName: z.string().trim().min(1).regex(MCP_SERVER_NAME_PATTERN, 'Invalid MCP server name'),
-  toolNamespace: z.string().trim().min(1),
+  toolNamespace: PluginMcpToolNamespaceV1Schema,
 }).passthrough().superRefine((value, ctx) => {
   rejectRawMcpSecretMaterial(value, ctx);
 });

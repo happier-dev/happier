@@ -8,9 +8,11 @@ import type {
   ScmHostingProviderPullRequestListInput,
 } from '@happier-dev/plugin-sdk';
 import type {
+  ScmOperationErrorCode,
   ScmHostingProviderRef,
   ScmPullRequestSummary,
 } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import { githubHostingProviderAdapter } from '../adapter.js';
 import { createGithubCliAdapter, type GithubCliPullRequestAdapter } from './cliAdapter.js';
@@ -43,6 +45,34 @@ function shouldTryRest(provider: ScmHostingProviderRef): boolean {
   return isGithubDotComProvider(provider);
 }
 
+function readErrorCode(error: unknown): ScmOperationErrorCode | null {
+  if (!error || typeof error !== 'object') return null;
+  const code = (error as { errorCode?: unknown }).errorCode;
+  return typeof code === 'string' && Object.values(SCM_OPERATION_ERROR_CODES).includes(code as ScmOperationErrorCode)
+    ? code as ScmOperationErrorCode
+    : null;
+}
+
+function hasRecoverableHttpStatus(message: string): boolean {
+  const match = /\bstatus\s+(\d{3})\b/i.exec(message);
+  if (!match) return false;
+  const status = Number(match[1]);
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function isRecoverableGithubRestFailure(error: unknown): boolean {
+  if (isGithubAuthRequiredError(error)) return true;
+  if (error instanceof TypeError) return true;
+  if (!error || typeof error !== 'object') return false;
+  const code = readErrorCode(error);
+  if (code === SCM_OPERATION_ERROR_CODES.COMMAND_FAILED) {
+    const message = error instanceof Error ? error.message : '';
+    return hasRecoverableHttpStatus(message)
+      || /\b(fetch failed|network|econnreset|etimedout|socket hang up)\b/i.test(message);
+  }
+  return false;
+}
+
 async function runWithAuthChain<TResult>(
   input: Readonly<{
     provider: ScmHostingProviderRef;
@@ -57,7 +87,7 @@ async function runWithAuthChain<TResult>(
   try {
     return await input.runRest();
   } catch (error) {
-    if (!isGithubAuthRequiredError(error)) throw error;
+    if (!isRecoverableGithubRestFailure(error)) throw error;
     return input.runCli();
   }
 }

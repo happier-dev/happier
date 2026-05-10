@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  PluginMcpBackendClientContributionV1Schema,
   PluginMcpContributesV1Schema,
   PluginMcpToolContributionV1Schema,
 } from './mcp.js';
@@ -216,5 +217,38 @@ describe('MCP plugin contribution schemas', () => {
       version: '1.0.0',
       name: 'search',
     }).success).toBe(false);
+
+    expect(PluginMcpToolContributionV1Schema.safeParse({
+      id: 'acme.badHappierNamespaceOnlyTool',
+      kind: 'mcp.tool',
+      version: '1.0.0',
+      name: 'happier.session',
+    }).success).toBe(false);
+  });
+
+  it('rejects backend-client tool namespaces that are not canonical namespace prefixes', () => {
+    expect(PluginMcpBackendClientContributionV1Schema.safeParse({
+      id: 'acme.badClient',
+      kind: 'mcp.backendClient',
+      version: '1.0.0',
+      serverName: 'acme-hosted',
+      toolNamespace: 'search',
+    }).success).toBe(false);
+
+    expect(PluginMcpBackendClientContributionV1Schema.safeParse({
+      id: 'acme.goodClient',
+      kind: 'mcp.backendClient',
+      version: '1.0.0',
+      serverName: 'acme-hosted',
+      toolNamespace: 'codex.github',
+    }).success).toBe(true);
+
+    expect(PluginMcpBackendClientContributionV1Schema.safeParse({
+      id: 'acme.goodDottedExtensionClient',
+      kind: 'mcp.backendClient',
+      version: '1.0.0',
+      serverName: 'acme-hosted',
+      toolNamespace: 'ext.acme.search',
+    }).success).toBe(true);
   });
 });

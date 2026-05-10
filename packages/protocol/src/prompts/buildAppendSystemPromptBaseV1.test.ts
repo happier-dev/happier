@@ -53,4 +53,43 @@ describe('buildAppendSystemPromptBaseV1', () => {
     expect(withMemory).toContain('use `memory_get_window`');
     expect(withoutMemory).toBe('BASE');
   });
+
+  it('omits session title instructions when coding prompt title updates are disabled', () => {
+    const out = buildAppendSystemPromptBaseV1({
+      settings: {
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'disabled',
+          responseOptions: 'agent',
+        },
+      },
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: false,
+    });
+
+    expect(out).not.toContain('# Session title');
+    expect(out).not.toContain('change_title');
+    expect(out).toContain('# Options');
+    expect(out).toContain('# Attachments');
+  });
+
+  it('omits options instructions when coding prompt response options are disabled', () => {
+    const out = buildAppendSystemPromptBaseV1({
+      settings: {
+        codingPromptBehaviorV1: {
+          v: 1,
+          sessionTitleUpdates: 'agent',
+          responseOptions: 'disabled',
+        },
+      },
+      executionRunsFeatureEnabled: false,
+      memoryRecallGuidanceEnabled: false,
+    });
+
+    expect(out).toContain('# Session title');
+    expect(out).not.toContain('# Options');
+    expect(out).not.toContain('# Plan mode with options');
+    expect(out).not.toContain('<options>');
+    expect(out).toContain('# Attachments');
+  });
 });

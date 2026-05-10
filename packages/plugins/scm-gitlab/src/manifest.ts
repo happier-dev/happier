@@ -2,7 +2,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'scm-gitlab',
+  id: 'happier.scm.hosting.gitlab',
   version: '0.0.0',
   displayName: 'GitLab SCM hosting provider',
   description: 'Detects GitLab remotes and builds compare URLs.',
@@ -35,6 +35,14 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
         capabilities: {
           compareUrl: true,
           openUrl: true,
+          pullRequests: {
+            list: true,
+            get: true,
+            create: true,
+            checkout: false,
+            prepareWorktree: false,
+            runStacked: false,
+          },
         },
       },
     ],

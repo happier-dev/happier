@@ -1,8 +1,10 @@
 // IMPORTANT: this must stay JSON-serializable (data-only).
+const OPENCODE_AGENT_ID = 'opencode';
+
 export const AGENT_DEFINITION = Object.freeze({
-  id: 'opencode',
+  id: OPENCODE_AGENT_ID,
   core: {
-    id: 'opencode',
+    id: OPENCODE_AGENT_ID,
     cliSubcommand: 'opencode',
     detectKey: 'opencode',
     resume: { vendorResume: 'unsupported', vendorResumeIdField: null },
@@ -38,7 +40,7 @@ export const AGENT_DEFINITION = Object.freeze({
     loginLaunch: null,
   },
   providerCliRuntime: {
-    id: 'opencode',
+    id: OPENCODE_AGENT_ID,
     title: 'opencode CLI',
     binaryName: 'opencode',
     sourcePreferenceDefault: 'system-first',

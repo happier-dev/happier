@@ -1,6 +1,10 @@
 import { trimIdent } from '../strings/trimIdent.js';
+import {
+  isCodingPromptResponseOptionsEnabled,
+  isCodingPromptSessionTitleUpdatesEnabled,
+} from './codingPromptBehaviorV1.js';
 
-export const HAPPIER_BASE_SYSTEM_PROMPT_V1 = trimIdent(`
+export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_V1 = trimIdent(`
   # Session title
 
   At the start of the session (before you respond to the first user message), you MUST call the change_title tool once to set a short, descriptive session title based on the user's message.
@@ -10,7 +14,9 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_V1 = trimIdent(`
   The tool may be exposed under different names depending on the provider. Prefer "mcp__happier__change_title" when available; otherwise use an equivalent alias (for example: change_title).
 
   Call the title tool again if the task changes significantly.
+`);
 
+export const HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 = trimIdent(`
   # Options
 
   You have a way to give a user a easy way to answer your questions if you know possible answers. To provide this, you need to output in your final response an XML:
@@ -27,7 +33,9 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_V1 = trimIdent(`
   # Plan mode with options
 
   When you are in the plan mode, you must use the options mode to give the user a easy way to answer your questions if you know possible answers. Do not assume what is needed, when there is discrepancy between what you need and what you have, you must use the options mode.
+`);
 
+export const HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1 = trimIdent(`
   # Attachments
 
   A user message may include an attachments block:
@@ -37,10 +45,31 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_V1 = trimIdent(`
   [/attachments]
 
   When present, open and analyze the referenced file paths before answering. If a file cannot be opened, explain the error and ask the user how to proceed.
+`);
 
+export const HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 = trimIdent(`
   # Linked workspace files
 
   A user may also reference project/workspace files inline using \`@path\` (for example: \`@src/app.ts\` or \`@README.md\`).
 
   Treat these \`@path\` references as file paths relative to the session/worktree. When you see them, open and analyze the referenced files before answering.
 `);
+
+export function buildHappierBaseSystemPromptV1(args?: Readonly<{
+  settings?: Record<string, unknown> | null | undefined;
+}>): string {
+  const blocks: string[] = [];
+  if (isCodingPromptSessionTitleUpdatesEnabled(args?.settings)) {
+    blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_V1);
+  }
+  if (isCodingPromptResponseOptionsEnabled(args?.settings)) {
+    blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1);
+  }
+  blocks.push(
+    HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
+    HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
+  );
+  return blocks.join('\n\n').trim();
+}
+
+export const HAPPIER_BASE_SYSTEM_PROMPT_V1 = buildHappierBaseSystemPromptV1();

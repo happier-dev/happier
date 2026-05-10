@@ -17,9 +17,15 @@ import type {
     McpResolveForSessionInputV1,
     McpServerSpecV1,
 } from './mcp';
+import type { ScmBackendRuntimeRegistration } from './scm/backend';
 import type { ScmHostingProviderRuntimeRegistration } from './scm/hostingProvider';
 
 export type { PluginApiRequestInterceptorRegistrationV1 } from './fetch';
+export type {
+    ScmBackendCommandRunResult,
+    ScmBackendRuntimeRegistration,
+    ScmBackendRuntimeServices,
+} from './scm/backend';
 
 export type PluginDisposable = (() => void | Promise<void>) | Readonly<{
     dispose: () => void | Promise<void>;
@@ -228,6 +234,7 @@ export type PluginApiCoreV1 = Readonly<{
     registerNotificationChannel: (registration: PluginApiNotificationChannelRegistrationV1) => PluginDisposable;
     registerExecutionRunProfile: (registration: PluginApiExecutionRunProfileRegistrationV1) => PluginDisposable;
     registerScmHostingProvider: (registration: ScmHostingProviderRuntimeRegistration) => PluginDisposable;
+    registerScmBackend: (registration: ScmBackendRuntimeRegistration) => PluginDisposable;
     registerMcpServer: (registration: PluginApiMcpServerRegistrationV1) => PluginDisposable;
     registerMcpBackendClient: (registration: PluginApiMcpBackendClientRegistrationV1) => PluginDisposable;
     registerMcpTool: (registration: PluginApiMcpToolRegistrationV1) => PluginDisposable;

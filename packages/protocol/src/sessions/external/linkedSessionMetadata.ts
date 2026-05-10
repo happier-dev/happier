@@ -1,28 +1,89 @@
-import type { DirectTranscriptRawMessageV1 } from './daemonRpcV1.js';
+import { z } from 'zod';
 
-export type DirectSessionFollowPolicy = 'attached_only' | 'background_follow';
+import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
+import { CODEX_BACKEND_MODES } from '../../providers/codex/backendMode.js';
+import {
+  ExternalSessionsProviderIdSchema,
+  ExternalSessionsSourceSchema,
+} from '../../providers/externalSessionsCatalog.js';
+import type { ExternalSessionTranscriptRawMessageV1 } from './daemonRpcV1.js';
 
-export type DirectSessionFollowPolicyV1 = Readonly<{
+export type ExternalSessionFollowPolicy = 'attached_only' | 'background_follow';
+
+export type ExternalSessionFollowPolicyV1 = Readonly<{
   v: 1;
-  policy: DirectSessionFollowPolicy;
+  policy: ExternalSessionFollowPolicy;
   updatedAtMs?: number;
 }>;
 
-export type DirectSessionAttentionV1 = Readonly<{
+export type ExternalSessionAttentionV1 = Readonly<{
   observedProgressToken?: string;
   viewedProgressToken?: string;
   observedAtMs?: number;
   viewedAtMs?: number;
 }>;
 
-export type DirectSessionObservedProgress = Readonly<{
+export type ExternalSessionObservedProgress = Readonly<{
   token: string;
   atMs: number;
 }>;
 
+const LinkedExternalSessionV1Schema = z
+  .object({
+    v: z.literal(1),
+    providerId: ExternalSessionsProviderIdSchema,
+    machineId: z.string().min(1),
+    remoteSessionId: z.string().min(1),
+    source: ExternalSessionsSourceSchema,
+    linkedAtMs: z.number().int().min(0).optional(),
+    lastKnownActivityAtMs: z.number().int().min(0).optional(),
+    codexBackendMode: z.enum(CODEX_BACKEND_MODES).optional(),
+    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
+  })
+  .passthrough();
+
+export type LinkedExternalSessionV1 = z.infer<typeof LinkedExternalSessionV1Schema>;
+
+const LEGACY_LINKED_SESSION_METADATA_KEY = 'direct' + 'SessionV1';
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+export function readLinkedExternalSessionV1FromMetadata(metadata: unknown): LinkedExternalSessionV1 | null {
+  const record = asRecord(metadata);
+  if (!record) return null;
+
+  const canonical = LinkedExternalSessionV1Schema.safeParse(record.externalSessionV1);
+  if (canonical.success) return canonical.data;
+
+  const legacy = LinkedExternalSessionV1Schema.safeParse(record[LEGACY_LINKED_SESSION_METADATA_KEY]);
+  return legacy.success ? legacy.data : null;
+}
+
+export function normalizeLinkedExternalSessionMetadataV1(metadata: unknown): Record<string, unknown> | null {
+  const record = asRecord(metadata);
+  if (!record) return null;
+
+  const canonical = LinkedExternalSessionV1Schema.safeParse(record.externalSessionV1);
+  if (canonical.success) return record;
+
+  const legacy = LinkedExternalSessionV1Schema.safeParse(record[LEGACY_LINKED_SESSION_METADATA_KEY]);
+  if (!legacy.success) return record;
+
+  return {
+    ...record,
+    externalSessionV1: legacy.data,
+  };
+}
+
+export function removeLinkedExternalSessionMetadataV1(metadata: unknown): Record<string, unknown> {
+  const record = asRecord(metadata);
+  const next: Record<string, unknown> = record ? { ...record } : {};
+  delete next.externalSessionV1;
+  delete next[LEGACY_LINKED_SESSION_METADATA_KEY];
+  return next;
 }
 
 function normalizeOptionalToken(value: unknown): string | undefined {
@@ -36,7 +97,7 @@ function normalizeOptionalTimestamp(value: unknown): number | undefined {
     : undefined;
 }
 
-function buildProgressToken(message: Pick<DirectTranscriptRawMessageV1, 'createdAtMs' | 'id'>): string {
+function buildProgressToken(message: Pick<ExternalSessionTranscriptRawMessageV1, 'createdAtMs' | 'id'>): string {
   return `${message.createdAtMs}:${message.id}`;
 }
 
@@ -44,7 +105,7 @@ function compareProgressTokens(left: string, right: string): number {
   return left.localeCompare(right);
 }
 
-export function readDirectSessionFollowPolicyV1(value: unknown): DirectSessionFollowPolicyV1 | null {
+export function readExternalSessionFollowPolicyV1(value: unknown): ExternalSessionFollowPolicyV1 | null {
   const candidate = asRecord(value);
   if (!candidate || candidate.v !== 1) return null;
 
@@ -59,12 +120,12 @@ export function readDirectSessionFollowPolicyV1(value: unknown): DirectSessionFo
   };
 }
 
-export function buildDirectSessionFollowPolicyV1(
+export function buildExternalSessionFollowPolicyV1(
   value: Readonly<{
-    policy: DirectSessionFollowPolicy;
+    policy: ExternalSessionFollowPolicy;
     updatedAtMs?: number;
   }>,
-): DirectSessionFollowPolicyV1 {
+): ExternalSessionFollowPolicyV1 {
   const updatedAtMs = normalizeOptionalTimestamp(value.updatedAtMs);
   return {
     v: 1,
@@ -73,7 +134,7 @@ export function buildDirectSessionFollowPolicyV1(
   };
 }
 
-export function readDirectSessionAttentionV1(value: unknown): DirectSessionAttentionV1 | null {
+export function readExternalSessionAttentionV1(value: unknown): ExternalSessionAttentionV1 | null {
   const candidate = asRecord(value);
   if (!candidate || candidate.v !== 1) return null;
 
@@ -94,7 +155,7 @@ export function readDirectSessionAttentionV1(value: unknown): DirectSessionAtten
   };
 }
 
-export function buildDirectSessionAttentionV1(value: DirectSessionAttentionV1) {
+export function buildExternalSessionAttentionV1(value: ExternalSessionAttentionV1) {
   return {
     v: 1 as const,
     ...(value.observedProgressToken ? { observedProgressToken: value.observedProgressToken } : {}),
@@ -104,10 +165,10 @@ export function buildDirectSessionAttentionV1(value: DirectSessionAttentionV1) {
   };
 }
 
-export function deriveDirectSessionObservedProgress(
-  items: ReadonlyArray<Pick<DirectTranscriptRawMessageV1, 'createdAtMs' | 'id'>>,
-): DirectSessionObservedProgress | null {
-  let latest: Pick<DirectTranscriptRawMessageV1, 'createdAtMs' | 'id'> | null = null;
+export function deriveExternalSessionObservedProgress(
+  items: ReadonlyArray<Pick<ExternalSessionTranscriptRawMessageV1, 'createdAtMs' | 'id'>>,
+): ExternalSessionObservedProgress | null {
+  let latest: Pick<ExternalSessionTranscriptRawMessageV1, 'createdAtMs' | 'id'> | null = null;
   let latestToken: string | null = null;
   for (const item of items) {
     const itemToken = buildProgressToken(item);
@@ -134,10 +195,10 @@ export function deriveDirectSessionObservedProgress(
   };
 }
 
-export function applyObservedProgressToDirectSessionAttentionV1(
-  current: DirectSessionAttentionV1 | null | undefined,
-  progress: DirectSessionObservedProgress | null | undefined,
-): DirectSessionAttentionV1 | null {
+export function applyObservedProgressToExternalSessionAttentionV1(
+  current: ExternalSessionAttentionV1 | null | undefined,
+  progress: ExternalSessionObservedProgress | null | undefined,
+): ExternalSessionAttentionV1 | null {
   const nextObservedProgress = progress ?? null;
   if (!nextObservedProgress) {
     return current ?? null;
@@ -173,9 +234,9 @@ export function applyObservedProgressToDirectSessionAttentionV1(
   };
 }
 
-export function markDirectSessionAttentionViewedV1(
-  current: DirectSessionAttentionV1 | null | undefined,
-): DirectSessionAttentionV1 | null {
+export function markExternalSessionAttentionViewedV1(
+  current: ExternalSessionAttentionV1 | null | undefined,
+): ExternalSessionAttentionV1 | null {
   if (!current) return null;
 
   const nextViewedProgressToken = current.observedProgressToken ?? current.viewedProgressToken;
@@ -196,9 +257,9 @@ export function markDirectSessionAttentionViewedV1(
   };
 }
 
-export function markDirectSessionAttentionUnreadV1(
-  current: DirectSessionAttentionV1 | null | undefined,
-): DirectSessionAttentionV1 | null {
+export function markExternalSessionAttentionUnreadV1(
+  current: ExternalSessionAttentionV1 | null | undefined,
+): ExternalSessionAttentionV1 | null {
   if (!current) return null;
 
   const hasObservedProgress = Boolean(current.observedProgressToken) || current.observedAtMs !== undefined;
@@ -216,8 +277,8 @@ export function markDirectSessionAttentionUnreadV1(
   };
 }
 
-export function deriveDirectSessionAttentionHasUnread(
-  attention: DirectSessionAttentionV1 | null | undefined,
+export function deriveExternalSessionAttentionHasUnread(
+  attention: ExternalSessionAttentionV1 | null | undefined,
 ): boolean | null {
   if (!attention) return null;
 

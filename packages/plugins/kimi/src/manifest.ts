@@ -5,7 +5,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 // L-2 violation in current source (`src/permissions/` flat) will be fixed during extraction.
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'kimi',
+  id: 'happier.agent.kimi',
   version: '0.0.0',
   displayName: 'kimi',
   description: undefined,

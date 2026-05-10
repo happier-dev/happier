@@ -4,7 +4,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 // Substantive capabilities + contributions land during E.3 (Qwen — Tier 1 declarative ACP backend).
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'qwen',
+  id: 'happier.agent.qwen',
   version: '0.0.0',
   displayName: 'qwen',
   description: undefined,

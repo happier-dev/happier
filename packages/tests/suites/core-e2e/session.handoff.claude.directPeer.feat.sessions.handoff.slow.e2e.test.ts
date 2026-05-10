@@ -461,7 +461,7 @@ describe('core e2e: session handoff via direct peer', () => {
     expect(machineIds).toEqual(expect.arrayContaining([sourceSeed.machineId, targetSeed.machineId]));
 
     const linked = unwrapDataKeyRpcResult(
-      await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: sourceSeed.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-handoff-direct',
@@ -961,7 +961,7 @@ describe('core e2e: session handoff via direct peer', () => {
       projectId: 'proj-handoff-direct-late',
     } as const;
     const linked = unwrapDataKeyRpcResult(
-      await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: sourceSeed.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-handoff-direct-late',
@@ -1193,7 +1193,7 @@ describe('core e2e: session handoff via direct peer', () => {
     expect(machineIds).toContain(sourceSeed.machineId);
 
     const linked = unwrapDataKeyRpcResult(
-      await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      await sourceMachineRpc.call(`${sourceSeed.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: sourceSeed.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-handoff-home-root',

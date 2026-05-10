@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createDataKeyRpcClient } from './rpcClient';
 import { encryptDataKeyBase64 } from '../rpcCrypto';
@@ -16,13 +17,16 @@ describe('createDataKeyRpcClient', () => {
     };
 
     const client = createDataKeyRpcClient({ rpcCall }, dataKey);
-    await expect(client.call('daemon.directSessions.takeoverPersist', { sessionId: 'sess_1' }, 60_000)).resolves.toEqual({
+    await expect(client.call(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER, {
+      linkedSessionId: 'sess_1',
+      storageMode: 'persisted',
+    }, 60_000)).resolves.toEqual({
       ok: true,
       result: { persisted: true },
     });
 
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0]?.method).toBe('daemon.directSessions.takeoverPersist');
+    expect(rpcCalls[0]?.method).toBe(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER);
     expect(rpcCalls[0]?.timeoutMs).toBe(60_000);
     expect(rpcCalls[0]?.params).toEqual(expect.any(String));
   });

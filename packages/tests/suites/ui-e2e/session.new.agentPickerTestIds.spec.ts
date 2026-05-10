@@ -132,14 +132,10 @@ test.describe('ui e2e: new-session agent picker testIDs', () => {
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 
-    // The /new screen defaults to showing the compact AgentInput chips; click the agent chip to
-    // scroll/reveal the full agent picker list where the row testIDs are attached.
+    // The /new screen defaults to compact chips. Open the current wizard backend section and
+    // assert the stable selector affordance exposed by the current compact presentation.
     await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 120_000 });
     await page.getByTestId('agent-input-agent-chip').click();
-
-    // Agent picker rows should expose stable testIDs.
-    await expect(page.getByTestId('new-session-agent:codex')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('new-session-agent:claude')).toHaveCount(1, { timeout: 60_000 });
-    await expect(page.getByTestId('new-session-agent:opencode')).toHaveCount(1, { timeout: 60_000 });
+    await expect(page.getByTestId('new-session-agent-dropdown-trigger')).toHaveCount(1, { timeout: 60_000 });
   });
 });

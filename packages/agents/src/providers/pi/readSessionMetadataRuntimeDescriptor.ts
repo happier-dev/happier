@@ -7,6 +7,10 @@ import {
 import { asRecord, normalizeTrimmedString } from '../../runtime/identity/runtimeDescriptorShared.js';
 import type { SharedRuntimeDescriptorByProviderId } from '../../runtime/identity/runtimeDescriptorTypes.js';
 
+function buildPiRuntimeHandle(vendorSessionId: string | null): Readonly<Record<string, unknown>> | null {
+  return vendorSessionId ? { vendorSessionId } : null;
+}
+
 export function readPiSessionMetadataRuntimeDescriptor(
   metadata: unknown,
 ): SharedRuntimeDescriptorByProviderId['pi'] | null {
@@ -18,8 +22,11 @@ export function readPiSessionMetadataRuntimeDescriptor(
     'pi',
   );
   if (!descriptor) return null;
+  const vendorSessionId = normalizeTrimmedString(descriptor.provider.vendorSessionId);
   return {
     providerId: 'pi',
-    vendorSessionId: normalizeTrimmedString(descriptor.provider.vendorSessionId),
+    runtimeKind: null,
+    vendorSessionId,
+    runtimeHandle: buildPiRuntimeHandle(vendorSessionId),
   };
 }

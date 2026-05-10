@@ -131,4 +131,65 @@ describe('GitHub repository provisioning auth chain', () => {
       targets: [],
     });
   });
+
+  it('describes clone targets through provider-owned repository lookup', async () => {
+    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
+    expect(mod).not.toBeNull();
+    if (!mod) return;
+
+    const calls: string[] = [];
+    const adapter = mod.createGithubRepositoryProvisioningAdapter({
+      restAdapter: {
+        getRepository: async (input: Readonly<{ owner: string; repositoryName: string }>) => {
+          calls.push(`${input.owner}/${input.repositoryName}`);
+          return repository;
+        },
+      },
+      cliAdapter: {},
+    });
+    const describeCloneTargets = (adapter as {
+      describeCloneTargets?: (input: Readonly<{
+        provider: ScmHostingProviderRef;
+        repository: {
+          nameWithOwner: string;
+          cloneUrl?: string;
+          visibility: 'private' | 'public' | 'internal';
+        };
+      }>) => Promise<unknown>;
+    }).describeCloneTargets;
+
+    expect(describeCloneTargets).toEqual(expect.any(Function));
+    if (!describeCloneTargets) return;
+
+    await expect(describeCloneTargets({
+      provider: githubProvider,
+      repository: {
+        nameWithOwner: 'happier-dev/happier',
+        cloneUrl: 'file:///tmp/untrusted.git',
+        visibility: 'private',
+      },
+    })).resolves.toMatchObject({
+      auth: {
+        state: 'authenticated',
+        profileKind: 'connected_account',
+      },
+      repository: {
+        nameWithOwner: 'happier-dev/happier',
+        cloneUrl: 'https://github.com/happier-dev/happier.git',
+        sshUrl: 'git@github.com:happier-dev/happier.git',
+      },
+      targets: [
+        {
+          protocol: 'https',
+          url: 'https://github.com/happier-dev/happier.git',
+          isDefault: true,
+        },
+        {
+          protocol: 'ssh',
+          url: 'git@github.com:happier-dev/happier.git',
+        },
+      ],
+    });
+    expect(calls).toEqual(['happier-dev/happier']);
+  });
 });

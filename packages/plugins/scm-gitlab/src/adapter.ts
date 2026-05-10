@@ -1,5 +1,11 @@
 import type { ScmHostingProviderRef } from '@happier-dev/protocol';
+import type {
+  ScmHostingProviderCompareUrlInput,
+  ScmHostingProviderRemoteDetectionInput,
+  ScmHostingProviderRuntimeAdapter,
+} from '@happier-dev/plugin-sdk';
 
+import { gitlabCliPullRequestAdapter } from './pullRequests/index.js';
 import { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from './remoteUrl.js';
 
 export const GITLAB_SCM_HOSTING_PROVIDER_ID = 'scm.gitlab';
@@ -12,19 +18,8 @@ export const GITLAB_URL_SAFETY = Object.freeze({
   allowedOrigins: Object.freeze(GITLAB_REMOTE_HOST_MATCHERS.exactHosts.map((host) => `https://${host}`)),
 });
 
-export type ScmHostingProviderDetectionInput = Readonly<{
-  remoteName: string | null;
-  remoteUrl: string;
-}>;
-
-export type ScmHostingProviderCompareUrlInput = Readonly<{
-  provider: ScmHostingProviderRef;
-  base: string;
-  head: string;
-}>;
-
-export type GitlabScmHostingProviderAdapter = Readonly<{
-  detectRemote(input: ScmHostingProviderDetectionInput): ScmHostingProviderRef | null;
+export type GitlabScmHostingProviderAdapter = ScmHostingProviderRuntimeAdapter & Readonly<{
+  detectRemote(input: ScmHostingProviderRemoteDetectionInput): ScmHostingProviderRef | null;
   buildCompareUrl(input: ScmHostingProviderCompareUrlInput): string | null;
 }>;
 
@@ -78,7 +73,8 @@ export function createGitlabScmHostingProviderAdapter(
     ?? createExactHostMatcher(options?.exactHosts ?? GITLAB_REMOTE_HOST_MATCHERS.exactHosts);
 
   return Object.freeze({
-    detectRemote(input) {
+    ...gitlabCliPullRequestAdapter,
+    detectRemote(input: ScmHostingProviderRemoteDetectionInput) {
       const parsed = parseScmRemoteUrl(input.remoteUrl);
       if (!parsed || !matchesHost(parsed.host)) return null;
       const nameWithOwner = readNameWithOwner(parsed.path);
@@ -91,7 +87,7 @@ export function createGitlabScmHostingProviderAdapter(
       };
       return {
         id: GITLAB_SCM_HOSTING_PROVIDER_ID,
-        kind: 'gitlab',
+        kind: 'gitlab' as const,
         displayName: 'GitLab',
         baseUrl,
         nameWithOwner,
@@ -99,7 +95,7 @@ export function createGitlabScmHostingProviderAdapter(
         urlSafety,
       };
     },
-    buildCompareUrl(input) {
+    buildCompareUrl(input: ScmHostingProviderCompareUrlInput) {
       const { provider } = input;
       if (
         provider.id !== GITLAB_SCM_HOSTING_PROVIDER_ID

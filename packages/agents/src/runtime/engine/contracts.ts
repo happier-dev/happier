@@ -12,6 +12,7 @@ import type {
   TranscriptSourceReadAfter,
 } from '../facets/transcriptSource.js';
 import type { AgentRuntimeKindOverrides, AnyAgentRuntimeKindsManifest } from '../../runtimeKinds.js';
+import type { SessionStateFacet } from '../../session/state/index.js';
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -49,6 +50,7 @@ export type RuntimeFacets = Readonly<{
    * implemented runtime facets until a real shared owner lands.
    */
   transcriptSource?: RuntimeTranscriptSourceFacet;
+  sessionState?: SessionStateFacet;
 }>;
 
 export type RuntimeCore<

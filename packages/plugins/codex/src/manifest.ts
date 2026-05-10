@@ -4,7 +4,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 // Keep this mostly declarative; executable behavior lives in domain folders.
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'codex',
+  id: 'happier.agent.codex',
   version: '0.0.0',
   displayName: 'codex',
   description: undefined,

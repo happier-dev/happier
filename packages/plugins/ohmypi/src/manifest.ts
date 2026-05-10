@@ -6,7 +6,7 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
   // Package path/name stay lowercase (`packages/plugins/ohmypi`), while the runtime/provider id
   // remains the existing wire contract `ohMyPi`.
-  id: 'ohMyPi',
+  id: 'happier.agent.ohmypi',
   version: '0.0.0',
   displayName: 'ohmypi',
   description: undefined,

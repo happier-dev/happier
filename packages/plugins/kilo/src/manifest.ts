@@ -5,7 +5,7 @@ import type { PluginManifestV2 } from '@happier-dev/protocol';
 // L-2 violations in current source (`src/agent/acp.ts` plus `src/permissions/**`) will be fixed during extraction.
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
-  id: 'kilo',
+  id: 'happier.agent.kilo',
   version: '0.0.0',
   displayName: 'kilo',
   description: undefined,

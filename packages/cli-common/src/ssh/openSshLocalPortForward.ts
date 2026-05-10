@@ -59,7 +59,7 @@ export type OpenSshLocalPortForwardDeps = Readonly<{
     args: readonly string[],
     options: SpawnSyncOptionsWithStringEncoding,
   ) => SpawnSyncReturns<string>;
-  mkdirSync?: (path: string, options: Readonly<{ recursive: true }>) => unknown;
+  mkdirSync?: (path: string, options: Readonly<{ recursive: true; mode: number }>) => unknown;
   now?: () => number;
   pid?: number;
 }>;
@@ -174,7 +174,7 @@ export function openSshLocalPortForward(
   const makeDir = deps.mkdirSync ?? mkdirSync;
   const remoteHost = String(request.remoteHost ?? '').trim() || '127.0.0.1';
   const { controlDir, controlPath } = buildLocalPortForwardControlPath(request, deps);
-  makeDir(controlDir, { recursive: true });
+  makeDir(controlDir, { recursive: true, mode: 0o700 });
 
   const openInvocation = buildLocalPortForwardBaseInvocation(request);
   const openArgs = insertArgsBeforeTarget(openInvocation.args, request.target, [

@@ -25,6 +25,49 @@ function readNestedString(value: unknown, key: string): string | null {
   return isRecord(value) ? readGithubString(value[key]) : null;
 }
 
+function readGithubNameWithOwner(value: unknown): string | null {
+  const raw = readGithubString(value);
+  if (!raw) return null;
+  const segments = raw.split('/');
+  if (segments.length !== 2) return null;
+  const owner = segments[0]?.trim();
+  const name = segments[1]?.trim();
+  return owner && name ? `${owner}/${name}` : null;
+}
+
+function readGithubRepositoryNameWithOwner(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  const direct = readGithubNameWithOwner(value.nameWithOwner)
+    ?? readGithubNameWithOwner(value.full_name)
+    ?? readGithubNameWithOwner(value.fullName);
+  if (direct) return direct;
+  const name = readGithubString(value.name);
+  const owner = isRecord(value.owner)
+    ? readGithubString(value.owner.login) ?? readGithubString(value.owner.name)
+    : null;
+  return owner && name ? `${owner}/${name}` : null;
+}
+
+function readGithubHeadRepositoryNameWithOwner(raw: Record<string, unknown>): string | null {
+  const restHeadRepository = isRecord(raw.head) ? readGithubRepositoryNameWithOwner(raw.head.repo) : null;
+  if (restHeadRepository) return restHeadRepository;
+  const cliHeadRepository = readGithubRepositoryNameWithOwner(raw.headRepository);
+  if (cliHeadRepository) return cliHeadRepository;
+  const cliHeadRepositoryOwner = isRecord(raw.headRepositoryOwner)
+    ? readGithubString(raw.headRepositoryOwner.login) ?? readGithubString(raw.headRepositoryOwner.name)
+    : null;
+  const cliHeadRepositoryName = isRecord(raw.headRepository)
+    ? readGithubString(raw.headRepository.name)
+    : null;
+  return cliHeadRepositoryOwner && cliHeadRepositoryName
+    ? `${cliHeadRepositoryOwner}/${cliHeadRepositoryName}`
+    : null;
+}
+
+function sameNameWithOwner(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
 function mapGithubPullState(raw: Record<string, unknown>): ScmPullRequestState {
   if (readGithubBoolean(raw.draft) === true || readGithubBoolean(raw.isDraft) === true) return 'draft';
   if (readGithubString(raw.merged_at) || readGithubString(raw.mergedAt)) return 'merged';
@@ -82,6 +125,8 @@ export function mapGithubPullRequest(
     : undefined;
   const baseSha = readNestedString(raw.base, 'sha') ?? readGithubString(raw.baseRefOid);
   const headSha = readNestedString(raw.head, 'sha') ?? readGithubString(raw.headRefOid);
+  const headRepositoryNameWithOwner = readGithubHeadRepositoryNameWithOwner(raw);
+  const providerNameWithOwner = provider.nameWithOwner?.trim() || null;
   const isDraft = readGithubBoolean(raw.draft) ?? readGithubBoolean(raw.isDraft) ?? undefined;
   const author = mapGithubAuthor(raw);
   const checks = mapGithubChecks(raw);
@@ -94,6 +139,10 @@ export function mapGithubPullRequest(
     url,
     baseBranch,
     headBranch,
+    ...(headRepositoryNameWithOwner ? { headRepositoryNameWithOwner } : {}),
+    ...(headRepositoryNameWithOwner && providerNameWithOwner
+      ? { isCrossRepository: !sameNameWithOwner(headRepositoryNameWithOwner, providerNameWithOwner) }
+      : {}),
     ...(headSha !== null ? { headSha } : {}),
     ...(baseSha !== null ? { baseSha } : {}),
     state: mapGithubPullState(raw),

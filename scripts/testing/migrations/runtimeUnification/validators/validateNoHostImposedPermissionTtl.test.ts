@@ -188,6 +188,27 @@ test('validateNoHostImposedPermissionTtl rejects marker copies outside accepted 
   assert.ok(result.errors.some((error) => error.includes('packages/plugins/other')));
 });
 
+test('validateNoHostImposedPermissionTtl rejects accepted bridge marker without a nearby timer', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeRepoFile(
+    rootDir,
+    'apps/cli/src/backends/claude/runtime/terminal/permissions/localPermissionBridge.ts',
+    [
+      '// L-25 ALLOWLIST: localPermissionBridge non-interactive opt-in arrival latency',
+      'export function createLocalWaiter(requestId: string) {',
+      '  return requestId;',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('allowlist marker')));
+});
+
 test('validateNoHostImposedPermissionTtl rejects wall-clock late-decision cleanup', async () => {
   const { validateNoHostImposedPermissionTtl } = await loadValidator();
   const rootDir = createRepo();
@@ -227,6 +248,65 @@ test('validateNoHostImposedPermissionTtl rejects split-clock permission TTL chec
       '  const now = Date.now();',
       '  const requestAgeMs = now - entry.createdAt;',
       '  if (requestAgeMs > TTL_MS) {',
+      '    pendingRequests.delete(id);',
+      '  }',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('Date.now')));
+  assert.ok(result.errors.some((error) => error.includes('createdAt')));
+});
+
+test('validateNoHostImposedPermissionTtl rejects directly assigned split-clock permission TTL checks with separated comparison', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  writeRepoFile(
+    rootDir,
+    'packages/plugins/claude/src/backend/utils/permissionRuntime.ts',
+    [
+      'const TTL_MS = 30000;',
+      'const pendingRequests = new Map<string, { createdAt: number }>();',
+      'export function pruneCopiedLifecycle(id: string, entry: { createdAt: number }) {',
+      '  const requestAgeMs = Date.now() - entry.createdAt;',
+      '  const stillPending = pendingRequests.has(id);',
+      '  const shouldCheck = stillPending;',
+      '  const shouldDelete = shouldCheck;',
+      '  if (shouldDelete && requestAgeMs > TTL_MS) {',
+      '    pendingRequests.delete(id);',
+      '  }',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const result = validateNoHostImposedPermissionTtl({ rootDir });
+
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('Date.now')));
+  assert.ok(result.errors.some((error) => error.includes('createdAt')));
+});
+
+test('validateNoHostImposedPermissionTtl rejects split-clock max-age permission TTL checks', async () => {
+  const { validateNoHostImposedPermissionTtl } = await loadValidator();
+  const rootDir = createRepo();
+  writeCurrentAllowlistedBridge(rootDir);
+  writeRepoFile(
+    rootDir,
+    'packages/plugins/claude/src/backend/utils/permissionRuntime.ts',
+    [
+      'const pendingRequests = new Map<string, { createdAt: number }>();',
+      'export function pruneCopiedLifecycle(id: string, entry: { createdAt: number }, maxAgeMs: number) {',
+      '  const now = Date.now();',
+      '  const requestAgeMs = now - entry.createdAt;',
+      '  const stillPending = pendingRequests.has(id);',
+      '  const shouldCheck = stillPending && maxAgeMs > 0;',
+      '  if (shouldCheck && requestAgeMs > maxAgeMs) {',
       '    pendingRequests.delete(id);',
       '  }',
       '}',

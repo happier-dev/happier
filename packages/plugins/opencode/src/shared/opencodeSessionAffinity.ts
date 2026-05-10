@@ -22,15 +22,12 @@ export function buildOpenCodeSessionEnvironmentVariables(params: Readonly<{
 
 export function applyOpenCodeSessionAffinityMetadata(params: Readonly<{
     backendMode: OpenCodeBackendMode | null;
-    vendorSessionId?: string | null;
     serverBaseUrl?: string | null;
     serverBaseUrlExplicit?: boolean;
 }>): Readonly<Record<string, unknown>> {
-    const nextVendorSessionId = typeof params.vendorSessionId === 'string' ? params.vendorSessionId.trim() : '';
     const nextServerBaseUrl = params.serverBaseUrlExplicit ? params.serverBaseUrl : null;
 
     return {
-        ...(nextVendorSessionId ? { opencodeSessionId: nextVendorSessionId } : {}),
         ...(params.backendMode ? { opencodeBackendMode: params.backendMode } : {}),
         ...(nextServerBaseUrl ? { opencodeServerBaseUrl: nextServerBaseUrl } : {}),
         ...(nextServerBaseUrl ? { opencodeServerBaseUrlExplicit: true } : {}),

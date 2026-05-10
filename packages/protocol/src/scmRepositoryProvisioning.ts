@@ -193,6 +193,7 @@ export type ScmHostingRepositorySummary =
 
 export const ScmHostingRepositoryDescribePublishTargetsRequestSchema =
   ScmRequestBaseSchema.extend({
+    providerId: z.string().trim().min(1).optional(),
     providerKind: ScmHostingProviderKindSchema.optional(),
   }).passthrough();
 export type ScmHostingRepositoryDescribePublishTargetsRequest =
@@ -214,6 +215,7 @@ export type ScmHostingRepositoryDescribePublishTargetsResponse =
   z.infer<typeof ScmHostingRepositoryDescribePublishTargetsResponseSchema>;
 
 export const ScmHostingRepositoryPublishRequestSchema = ScmRequestBaseSchema.extend({
+  providerId: z.string().trim().min(1).optional(),
   providerKind: ScmHostingProviderKindSchema,
   owner: z.string().min(1),
   ownerKind: ScmHostingRepositoryOwnerKindSchema.optional(),

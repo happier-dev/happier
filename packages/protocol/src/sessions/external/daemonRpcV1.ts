@@ -3,38 +3,38 @@ import { z } from 'zod';
 import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
 import { CODEX_BACKEND_MODES } from '../../providers/codex/backendMode.js';
 import {
-  DirectSessionsProviderIdSchema,
-  DirectSessionsSourceSchema,
-  type DirectSessionsProviderId,
-  type DirectSessionsSource,
+  ExternalSessionsProviderIdSchema,
+  ExternalSessionsSourceSchema,
+  type ExternalSessionsProviderId,
+  type ExternalSessionsSource,
 } from '../../providers/externalSessionsCatalog.js';
 
 export {
-  DirectSessionsProviderIdSchema,
-  DirectSessionsSourceSchema,
+  ExternalSessionsProviderIdSchema,
+  ExternalSessionsSourceSchema,
 };
 export type {
-  DirectSessionsProviderId,
-  DirectSessionsSource,
+  ExternalSessionsProviderId,
+  ExternalSessionsSource,
 };
 
-export const DirectSessionsCandidatesListRequestSchema = z
+export const ExternalSessionsCandidatesListRequestSchema = z
   .object({
     machineId: z.string().min(1),
-    providerId: DirectSessionsProviderIdSchema,
-    source: DirectSessionsSourceSchema,
+    providerId: ExternalSessionsProviderIdSchema,
+    source: ExternalSessionsSourceSchema,
     cursor: z.string().min(1).optional(),
     limit: z.number().int().min(1).max(500).optional(),
     searchTerm: z.string().min(1).max(2000).optional(),
   })
   .passthrough();
-export type DirectSessionsCandidatesListRequest = z.infer<typeof DirectSessionsCandidatesListRequestSchema>;
+export type ExternalSessionsCandidatesListRequest = z.infer<typeof ExternalSessionsCandidatesListRequestSchema>;
 
-export const DirectSessionsCandidatesListResponseSchema = z.union([
+export const ExternalSessionsCandidatesListResponseSchema = z.union([
   z
     .object({
       ok: z.literal(true),
-      candidates: z.array(z.lazy(() => DirectSessionCandidateV1Schema)),
+      candidates: z.array(z.lazy(() => ExternalSessionCandidateV1Schema)),
       nextCursor: z.string().min(1).nullish(),
     })
     .passthrough(),
@@ -46,24 +46,24 @@ export const DirectSessionsCandidatesListResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectSessionsCandidatesListResponse = z.infer<typeof DirectSessionsCandidatesListResponseSchema>;
+export type ExternalSessionsCandidatesListResponse = z.infer<typeof ExternalSessionsCandidatesListResponseSchema>;
 
-export const DirectSessionLinkEnsureRequestSchema = z
+export const ExternalSessionLinkEnsureRequestSchema = z
   .object({
     machineId: z.string().min(1),
-    providerId: DirectSessionsProviderIdSchema,
+    providerId: ExternalSessionsProviderIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     titleHint: z.string().min(1).max(10_000).optional(),
     directoryHint: z.string().min(1).max(10_000).optional(),
     codexBackendMode: z.enum(CODEX_BACKEND_MODES).optional(),
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
-    source: DirectSessionsSourceSchema,
+    source: ExternalSessionsSourceSchema,
   })
   .passthrough();
-export type DirectSessionLinkEnsureRequest = z.infer<typeof DirectSessionLinkEnsureRequestSchema>;
+export type ExternalSessionLinkEnsureRequest = z.infer<typeof ExternalSessionLinkEnsureRequestSchema>;
 
 
-export const DirectSessionLinkEnsureResponseSchema = z.union([
+export const ExternalSessionLinkEnsureResponseSchema = z.union([
   z
     .object({
       ok: z.literal(true),
@@ -79,49 +79,49 @@ export const DirectSessionLinkEnsureResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectSessionLinkEnsureResponse = z.infer<typeof DirectSessionLinkEnsureResponseSchema>;
+export type ExternalSessionLinkEnsureResponse = z.infer<typeof ExternalSessionLinkEnsureResponseSchema>;
 
-export const DirectSessionActivityV1Schema = z.enum(['running', 'active_recently', 'idle', 'unknown']);
-export type DirectSessionActivityV1 = z.infer<typeof DirectSessionActivityV1Schema>;
+export const ExternalSessionActivityV1Schema = z.enum(['running', 'active_recently', 'idle', 'unknown']);
+export type ExternalSessionActivityV1 = z.infer<typeof ExternalSessionActivityV1Schema>;
 
-export const DirectSessionCandidateV1Schema = z
+export const ExternalSessionCandidateV1Schema = z
   .object({
     remoteSessionId: z.string().min(1).max(2000),
     title: z.string().min(1).max(10_000).optional(),
     updatedAtMs: z.number().int().min(0),
     createdAtMs: z.number().int().min(0).optional(),
-    activity: DirectSessionActivityV1Schema.optional(),
+    activity: ExternalSessionActivityV1Schema.optional(),
     archived: z.boolean().optional(),
     details: z.object({}).passthrough().optional(),
   })
   .passthrough();
-export type DirectSessionCandidateV1 = z.infer<typeof DirectSessionCandidateV1Schema>;
+export type ExternalSessionCandidateV1 = z.infer<typeof ExternalSessionCandidateV1Schema>;
 
-export const DirectSessionStatusGetRequestSchema = z
+export const ExternalSessionStatusGetRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
-    providerId: DirectSessionsProviderIdSchema,
+    providerId: ExternalSessionsProviderIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
-    source: DirectSessionsSourceSchema,
+    source: ExternalSessionsSourceSchema,
   })
   .passthrough();
-export type DirectSessionStatusGetRequest = z.infer<typeof DirectSessionStatusGetRequestSchema>;
+export type ExternalSessionStatusGetRequest = z.infer<typeof ExternalSessionStatusGetRequestSchema>;
 
-export const DirectSessionAttachRequestSchema = z
+export const ExternalSessionAttachRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
-    providerId: DirectSessionsProviderIdSchema,
+    providerId: ExternalSessionsProviderIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
-    source: DirectSessionsSourceSchema,
+    source: ExternalSessionsSourceSchema,
     leaseId: z.string().min(1).max(2000).optional(),
     ttlMs: z.number().int().min(1_000).max(15 * 60_000).optional(),
   })
   .passthrough();
-export type DirectSessionAttachRequest = z.infer<typeof DirectSessionAttachRequestSchema>;
+export type ExternalSessionAttachRequest = z.infer<typeof ExternalSessionAttachRequestSchema>;
 
-export const DirectSessionAttachResponseSchema = z.union([
+export const ExternalSessionAttachResponseSchema = z.union([
   z
     .object({
       ok: z.literal(true),
@@ -138,18 +138,18 @@ export const DirectSessionAttachResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectSessionAttachResponse = z.infer<typeof DirectSessionAttachResponseSchema>;
+export type ExternalSessionAttachResponse = z.infer<typeof ExternalSessionAttachResponseSchema>;
 
-export const DirectSessionDetachRequestSchema = z
+export const ExternalSessionDetachRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     leaseId: z.string().min(1).max(2000),
   })
   .passthrough();
-export type DirectSessionDetachRequest = z.infer<typeof DirectSessionDetachRequestSchema>;
+export type ExternalSessionDetachRequest = z.infer<typeof ExternalSessionDetachRequestSchema>;
 
-export const DirectSessionDetachResponseSchema = z.union([
+export const ExternalSessionDetachResponseSchema = z.union([
   z
     .object({
       ok: z.literal(true),
@@ -164,21 +164,21 @@ export const DirectSessionDetachResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectSessionDetachResponse = z.infer<typeof DirectSessionDetachResponseSchema>;
+export type ExternalSessionDetachResponse = z.infer<typeof ExternalSessionDetachResponseSchema>;
 
-export const DirectSessionFollowPolicySetRequestSchema = z
+export const ExternalSessionFollowPolicySetRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
-    providerId: DirectSessionsProviderIdSchema,
+    providerId: ExternalSessionsProviderIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
-    source: DirectSessionsSourceSchema,
+    source: ExternalSessionsSourceSchema,
     enabled: z.boolean(),
   })
   .passthrough();
-export type DirectSessionFollowPolicySetRequest = z.infer<typeof DirectSessionFollowPolicySetRequestSchema>;
+export type ExternalSessionFollowPolicySetRequest = z.infer<typeof ExternalSessionFollowPolicySetRequestSchema>;
 
-export const DirectSessionFollowPolicySetResponseSchema = z.union([
+export const ExternalSessionFollowPolicySetResponseSchema = z.union([
   z
     .object({
       ok: z.literal(true),
@@ -195,15 +195,15 @@ export const DirectSessionFollowPolicySetResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectSessionFollowPolicySetResponse = z.infer<typeof DirectSessionFollowPolicySetResponseSchema>;
+export type ExternalSessionFollowPolicySetResponse = z.infer<typeof ExternalSessionFollowPolicySetResponseSchema>;
 
-export const DirectSessionStatusGetResponseSchema = z.union([
+export const ExternalSessionStatusGetResponseSchema = z.union([
   z
     .object({
       ok: z.literal(true),
       machineOnline: z.boolean(),
       runnerActive: z.boolean(),
-      activity: DirectSessionActivityV1Schema,
+      activity: ExternalSessionActivityV1Schema,
       canTakeOverDirect: z.boolean(),
       canTakeOverPersist: z.boolean(),
       canForceStop: z.boolean(),
@@ -219,9 +219,9 @@ export const DirectSessionStatusGetResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectSessionStatusGetResponse = z.infer<typeof DirectSessionStatusGetResponseSchema>;
+export type ExternalSessionStatusGetResponse = z.infer<typeof ExternalSessionStatusGetResponseSchema>;
 
-export const DirectTranscriptRawMessageV1Schema = z
+export const ExternalSessionTranscriptRawMessageV1Schema = z
   .object({
     id: z.string().min(1),
     createdAtMs: z.number().int().min(0),
@@ -229,27 +229,27 @@ export const DirectTranscriptRawMessageV1Schema = z
     raw: z.object({}).passthrough(),
   })
   .passthrough();
-export type DirectTranscriptRawMessageV1 = z.infer<typeof DirectTranscriptRawMessageV1Schema>;
+export type ExternalSessionTranscriptRawMessageV1 = z.infer<typeof ExternalSessionTranscriptRawMessageV1Schema>;
 
-export const DirectTranscriptPageRequestSchema = z
+export const ExternalSessionTranscriptPageRequestSchema = z
   .object({
     machineId: z.string().min(1),
-    providerId: DirectSessionsProviderIdSchema,
+    providerId: ExternalSessionsProviderIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
-    source: DirectSessionsSourceSchema,
+    source: ExternalSessionsSourceSchema,
     direction: z.enum(['older', 'newer']),
     cursor: z.string().min(1).optional(),
     maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
     maxItems: z.number().int().min(1).max(5000).optional(),
   })
   .passthrough();
-export type DirectTranscriptPageRequest = z.infer<typeof DirectTranscriptPageRequestSchema>;
+export type ExternalSessionTranscriptPageRequest = z.infer<typeof ExternalSessionTranscriptPageRequestSchema>;
 
-export const DirectTranscriptPageResponseSchema = z.union([
+export const ExternalSessionTranscriptPageResponseSchema = z.union([
   z
     .object({
       ok: z.literal(true),
-      items: z.array(DirectTranscriptRawMessageV1Schema),
+      items: z.array(ExternalSessionTranscriptRawMessageV1Schema),
       nextCursor: z.string().min(1).nullish(),
       tailCursor: z.string().min(1).nullish(),
       hasMore: z.boolean(),
@@ -264,26 +264,26 @@ export const DirectTranscriptPageResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectTranscriptPageResponse = z.infer<typeof DirectTranscriptPageResponseSchema>;
+export type ExternalSessionTranscriptPageResponse = z.infer<typeof ExternalSessionTranscriptPageResponseSchema>;
 
-export const DirectTranscriptReadAfterRequestSchema = z
+export const ExternalSessionTranscriptReadAfterRequestSchema = z
   .object({
     machineId: z.string().min(1),
-    providerId: DirectSessionsProviderIdSchema,
+    providerId: ExternalSessionsProviderIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
-    source: DirectSessionsSourceSchema,
+    source: ExternalSessionsSourceSchema,
     cursor: z.string().min(1),
     maxBytes: z.number().int().min(1).max(10 * 1024 * 1024).optional(),
     maxItems: z.number().int().min(1).max(5000).optional(),
   })
   .passthrough();
-export type DirectTranscriptReadAfterRequest = z.infer<typeof DirectTranscriptReadAfterRequestSchema>;
+export type ExternalSessionTranscriptReadAfterRequest = z.infer<typeof ExternalSessionTranscriptReadAfterRequestSchema>;
 
-export const DirectTranscriptReadAfterResponseSchema = z.union([
+export const ExternalSessionTranscriptReadAfterResponseSchema = z.union([
   z
     .object({
       ok: z.literal(true),
-      items: z.array(DirectTranscriptRawMessageV1Schema),
+      items: z.array(ExternalSessionTranscriptRawMessageV1Schema),
       nextCursor: z.string().min(1).nullish(),
       truncated: z.boolean(),
     })
@@ -296,18 +296,18 @@ export const DirectTranscriptReadAfterResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectTranscriptReadAfterResponse = z.infer<typeof DirectTranscriptReadAfterResponseSchema>;
+export type ExternalSessionTranscriptReadAfterResponse = z.infer<typeof ExternalSessionTranscriptReadAfterResponseSchema>;
 
-export const DirectSessionTakeoverRequestSchema = z
+export const ExternalSessionTakeoverRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     forceStop: z.boolean().optional(),
   })
   .passthrough();
-export type DirectSessionTakeoverRequest = z.infer<typeof DirectSessionTakeoverRequestSchema>;
+export type ExternalSessionTakeoverRequest = z.infer<typeof ExternalSessionTakeoverRequestSchema>;
 
-export const DirectSessionTakeoverResponseSchema = z.union([
+export const ExternalSessionTakeoverResponseSchema = z.union([
   z.object({ ok: z.literal(true) }).passthrough(),
   z
     .object({
@@ -317,18 +317,18 @@ export const DirectSessionTakeoverResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectSessionTakeoverResponse = z.infer<typeof DirectSessionTakeoverResponseSchema>;
+export type ExternalSessionTakeoverResponse = z.infer<typeof ExternalSessionTakeoverResponseSchema>;
 
-export const DirectSessionTakeoverPersistRequestSchema = z
+export const ExternalSessionTakeoverPersistRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     forceStop: z.boolean().optional(),
   })
   .passthrough();
-export type DirectSessionTakeoverPersistRequest = z.infer<typeof DirectSessionTakeoverPersistRequestSchema>;
+export type ExternalSessionTakeoverPersistRequest = z.infer<typeof ExternalSessionTakeoverPersistRequestSchema>;
 
-export const DirectSessionTakeoverPersistResponseSchema = z.union([
+export const ExternalSessionTakeoverPersistResponseSchema = z.union([
   z.object({ ok: z.literal(true), converted: z.boolean().optional() }).passthrough(),
   z
     .object({
@@ -338,4 +338,4 @@ export const DirectSessionTakeoverPersistResponseSchema = z.union([
     })
     .passthrough(),
 ]);
-export type DirectSessionTakeoverPersistResponse = z.infer<typeof DirectSessionTakeoverPersistResponseSchema>;
+export type ExternalSessionTakeoverPersistResponse = z.infer<typeof ExternalSessionTakeoverPersistResponseSchema>;

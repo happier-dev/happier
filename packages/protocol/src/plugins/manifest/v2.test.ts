@@ -11,6 +11,39 @@ function readSchemaExport(name: string): z.ZodTypeAny | undefined {
 }
 
 describe('plugin manifest v2 contracts', () => {
+  it('requires globally namespaced plugin owner ids while accepting first-party owner ids', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const baseManifest = {
+      schemaVersion: 2,
+      version: '1.0.0',
+      displayName: 'Owner Id Test',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: [] },
+      contributes: {},
+      capabilities: { permissions: [] },
+    };
+    const firstPartyAgentPluginId = 'happier.agent.codex';
+    const firstPartyScmPluginId = 'happier.scm.hosting.github';
+
+    expect(manifestSchema!.parse({
+      ...baseManifest,
+      id: firstPartyAgentPluginId,
+    }).id).toBe(firstPartyAgentPluginId);
+    expect(manifestSchema!.parse({
+      ...baseManifest,
+      id: firstPartyScmPluginId,
+    }).id).toBe(firstPartyScmPluginId);
+
+    for (const id of ['codex', 'claude', 'opencode', 'scm-github', 'Acme.Plugin']) {
+      expect(manifestSchema!.safeParse({
+        ...baseManifest,
+        id,
+      }).success, id).toBe(false);
+    }
+  });
+
   it('accepts nested contributes and capabilities while rejecting stale flat keys', () => {
     const manifestSchema = readSchemaExport('PluginManifestV2Schema');
     expect(manifestSchema).toBeDefined();
@@ -288,6 +321,105 @@ describe('plugin manifest v2 contracts', () => {
     ]);
     expect(parsed.contributes.agents).toEqual([]);
     expect(parsed.contributes.backends).toEqual([]);
+  });
+
+  it('accepts connected-account descriptor contributions while rejecting secret-bearing descriptor metadata', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const parsed = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.auth',
+      version: '1.0.0',
+      displayName: 'Acme Auth',
+      engines: {
+        happier: '^1.0.0',
+      },
+      runtime: {
+        apiVersion: 1,
+        capabilities: ['connectedAccountDescriptors'],
+      },
+      contributes: {
+        connectedAccountDescriptors: [
+          {
+            id: 'gitlab',
+            kind: 'auth.connectedAccount',
+            version: '1',
+            displayKey: 'plugins.acme.auth.gitlab.name',
+            aliases: ['gitlab'],
+            credentialKinds: ['token'],
+            defaultCredentialKind: 'token',
+            connectModes: [
+              {
+                targetId: 'gitlab',
+                mode: 'token',
+                credentialKind: 'token',
+                default: true,
+                tokenKind: 'personal-access-token',
+              },
+            ],
+            tokenSetup: {
+              tokenKind: 'personal-access-token',
+              promptLabelKey: 'plugins.acme.auth.gitlab.tokenPrompt',
+              missingValueErrorKey: 'plugins.acme.auth.gitlab.missingToken',
+            },
+            ui: {
+              connectCommand: 'happier connect gitlab --token',
+              oauthAddActionModes: [],
+            },
+            materialization: {
+              materializationKinds: ['scm_hosting_token'],
+            },
+          },
+        ],
+      },
+      capabilities: {
+        permissions: [],
+      },
+    });
+
+    expect(parsed.contributes.connectedAccountDescriptors).toEqual([
+      expect.objectContaining({
+        id: 'gitlab',
+        kind: 'auth.connectedAccount',
+        materialization: expect.objectContaining({
+          materializationKinds: ['scm_hosting_token'],
+        }),
+      }),
+    ]);
+
+    expect(manifestSchema!.safeParse({
+      schemaVersion: 2,
+      id: 'acme.auth-secret',
+      version: '1.0.0',
+      displayName: 'Acme Auth Secret',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: ['connectedAccountDescriptors'] },
+      contributes: {
+        connectedAccountDescriptors: [
+          {
+            id: 'gitlab',
+            kind: 'auth.connectedAccount',
+            version: '1',
+            displayKey: 'plugins.acme.auth.gitlab.name',
+            credentialKinds: ['token'],
+            defaultCredentialKind: 'token',
+            connectModes: [],
+            tokenSetup: {
+              tokenKind: 'personal-access-token',
+              promptLabelKey: 'plugins.acme.auth.gitlab.tokenPrompt',
+              missingValueErrorKey: 'plugins.acme.auth.gitlab.missingToken',
+              accessToken: 'must-not-live-in-manifest',
+            },
+            ui: {
+              connectCommand: 'happier connect gitlab --token',
+              oauthAddActionModes: [],
+            },
+          },
+        ],
+      },
+      capabilities: { permissions: [] },
+    }).success).toBe(false);
   });
 
   it('accepts nested MCP contribution families and rejects raw credential fields', () => {

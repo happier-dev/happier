@@ -26,7 +26,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
     if (!mod) return;
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
-      id: 'scm-azure-devops',
+      id: 'happier.scm.hosting.azure-devops',
       source: {
         kind: 'package',
         locator: '@happier-dev/plugins-scm-azure-devops',
@@ -57,11 +57,14 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
               compareUrl: true,
               openUrl: true,
               pullRequests: {
-                create: false,
+                list: true,
+                get: true,
+                create: true,
                 runStacked: false,
               },
               repositoryProvisioning: {
-                createRepository: false,
+                describeTargets: true,
+                createRepository: true,
                 publish: false,
               },
               reviewThreads: {

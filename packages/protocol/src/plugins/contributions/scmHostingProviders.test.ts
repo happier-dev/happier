@@ -51,6 +51,7 @@ describe('SCM hosting-provider plugin contribution schema', () => {
       allowedOrigins: ['https://dev.azure.com', 'https://acme.visualstudio.com'],
     });
     expect(parsed.capabilities).toEqual({
+      capabilityScope: 'remote-hosting-provider',
       compareUrl: true,
       openUrl: true,
       pullRequests: {

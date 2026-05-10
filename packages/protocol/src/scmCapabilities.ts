@@ -1,4 +1,8 @@
 import type { ScmCapabilities } from './scm';
+import type {
+  ScmBackendCapabilities,
+  ScmBackendCapabilityLeaf,
+} from './scmBackendCapabilities.js';
 
 export function createScmCapabilities(input?: Partial<ScmCapabilities>): ScmCapabilities {
   const changeSetModel = input?.changeSetModel ?? 'working-copy';
@@ -7,6 +11,7 @@ export function createScmCapabilities(input?: Partial<ScmCapabilities>): ScmCapa
     (changeSetModel === 'index' ? ['included', 'pending', 'both'] : ['pending', 'both']);
 
   return {
+    capabilityScope: input?.capabilityScope ?? 'local-backend',
     readStatus: input?.readStatus ?? false,
     readDiffFile: input?.readDiffFile ?? false,
     readDiffCommit: input?.readDiffCommit ?? false,
@@ -89,6 +94,62 @@ export function createGitScmCapabilities(input?: Partial<ScmCapabilities>): ScmC
   });
 }
 
+function isCapabilityEnabled(capability: ScmBackendCapabilityLeaf | undefined): boolean {
+  return capability?.support === 'supported' || capability?.support === 'experimental';
+}
+
+export function createScmCapabilitiesFromBackendCapabilities(
+  input: ScmBackendCapabilities,
+  overrides?: Partial<ScmCapabilities>,
+): ScmCapabilities {
+  return createScmCapabilities({
+    readStatus: isCapabilityEnabled(input.read.status),
+    readDiffFile: isCapabilityEnabled(input.read.diffFile),
+    readDiffCommit: isCapabilityEnabled(input.read.diffCommit),
+    readLog: isCapabilityEnabled(input.read.log),
+    readBranches: isCapabilityEnabled(input.read.branches),
+    readStash: isCapabilityEnabled(input.read.stash),
+    writeInclude: isCapabilityEnabled(input.changeSet.include),
+    writeExclude: isCapabilityEnabled(input.changeSet.exclude),
+    writeDiscard: isCapabilityEnabled(input.changeSet.discard),
+    writeCommit: isCapabilityEnabled(input.commit.create),
+    writeCommitPathSelection: isCapabilityEnabled(input.commit.pathSelection),
+    writeCommitLineSelection: isCapabilityEnabled(input.commit.lineSelection),
+    writeBackout: isCapabilityEnabled(input.commit.backout),
+    writeBranchCreate: isCapabilityEnabled(input.branch.create),
+    writeBranchCheckout: isCapabilityEnabled(input.branch.checkout),
+    writeBranchMerge: isCapabilityEnabled(input.branch.merge),
+    writeBranchRebase: isCapabilityEnabled(input.branch.rebase),
+    writeBranchOperationControl: isCapabilityEnabled(input.branch.operationControl),
+    writeRemoteAdd: isCapabilityEnabled(input.remote.add),
+    writeRemoteSetUrl: isCapabilityEnabled(input.remote.setUrl),
+    writeRemoteRemove: isCapabilityEnabled(input.remote.remove),
+    writeRemoteFetch: isCapabilityEnabled(input.remote.fetch),
+    writeRemotePull: isCapabilityEnabled(input.remote.pull),
+    writeRemotePush: isCapabilityEnabled(input.remote.push),
+    writeRemotePublish: isCapabilityEnabled(input.remote.publish),
+    readHostingProvider: isCapabilityEnabled(input.read.hostingProvider)
+      || isCapabilityEnabled(input.hosting.providerDetection),
+    readPullRequestStatus: isCapabilityEnabled(input.read.pullRequestStatus)
+      || isCapabilityEnabled(input.hosting.pullRequestStatus),
+    writePullRequestCreate: isCapabilityEnabled(input.hosting.pullRequestCreate)
+      || isCapabilityEnabled(input.hosting.pullRequestReuse),
+    writePullRequestCheckout: isCapabilityEnabled(input.hosting.pullRequestCheckout),
+    writePullRequestPrepareWorktree: isCapabilityEnabled(input.hosting.pullRequestPrepareWorktree),
+    writePullRequestRunStacked: isCapabilityEnabled(input.hosting.pullRequestRunStacked),
+    writeRepositoryInit: isCapabilityEnabled(input.lifecycle.init),
+    readHostingRepositoryPublishTargets: isCapabilityEnabled(input.hosting.repositoryPublishTargets),
+    writeHostingRepositoryPublish: isCapabilityEnabled(input.hosting.repositoryPublish),
+    writeRepositoryRemoveIndexLock: isCapabilityEnabled(input.lifecycle.removeIndexLock),
+    writeStash: isCapabilityEnabled(input.read.stash),
+    worktreeCreate: isCapabilityEnabled(input.worktree.create),
+    changeSetModel: input.changeSet.model,
+    supportedDiffAreas: input.changeSet.diffAreas,
+    ...(input.operationLabels ? { operationLabels: input.operationLabels } : {}),
+    ...overrides,
+  });
+}
+
 export function createSaplingScmCapabilities(input?: Partial<ScmCapabilities>): ScmCapabilities {
   return createScmCapabilities({
     readStatus: true,
@@ -112,9 +173,9 @@ export function createSaplingScmCapabilities(input?: Partial<ScmCapabilities>): 
     writeRemoteAdd: false,
     writeRemoteSetUrl: false,
     writeRemoteRemove: false,
-    writeRemoteFetch: true,
-    writeRemotePull: true,
-    writeRemotePush: true,
+    writeRemoteFetch: false,
+    writeRemotePull: false,
+    writeRemotePush: false,
     writeRemotePublish: false,
     writeStash: false,
     worktreeCreate: false,

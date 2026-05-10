@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { RuntimeCore } from '@happier-dev/agents';
+import type { RuntimeCore, SessionStateFacet } from '@happier-dev/agents';
 import type {
     BackendEngineV1,
     ConnectionRuntimeServiceV1,
@@ -47,6 +47,19 @@ describe('plugin SDK engine contracts', () => {
 
         const engine: BackendEngineV1 = registration.create({} as PluginContextV1) as BackendEngineV1;
         expect(engine.runtimeCore).toBe(runtimeCore);
+    });
+
+    it('types session state as a runtime facet adjunct', () => {
+        const sessionState = {} as SessionStateFacet;
+
+        const engine: BackendEngineV1 = {
+            facets: {
+                sessionState,
+            },
+        };
+
+        expect(engine.facets?.sessionState).toBe(sessionState);
+        expect('sessionState' in engine).toBe(false);
     });
 
     it('rejects stale bindings-only backend engines at the SDK seam', () => {

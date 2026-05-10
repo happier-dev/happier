@@ -14,6 +14,8 @@ export const PluginRuntimeCapabilityFamilyV1Schema = z.enum([
   'mcp',
   'notifications',
   'scmHostingProviders',
+  'scmBackends',
+  'connectedAccountDescriptors',
   'lifecycle',
   'reload',
 ]);

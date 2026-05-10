@@ -134,7 +134,7 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
       let candidatesResult: any = null;
       await waitFor(
         async () => {
-          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST}`, {
+          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST}`, {
             machineId: seeded.machineId,
             providerId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
@@ -165,7 +165,7 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
         ]),
       }));
 
-      const firstLink = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      const firstLink = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: seeded.machineId,
         providerId: 'codex',
         remoteSessionId,
@@ -177,7 +177,7 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
         created: true,
       }));
 
-      const secondLink = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      const secondLink = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: seeded.machineId,
         providerId: 'codex',
         remoteSessionId,
@@ -190,7 +190,7 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
         created: false,
       }));
 
-      const page = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE}`, {
+      const page = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE}`, {
         machineId: seeded.machineId,
         providerId: 'codex',
         remoteSessionId,
@@ -214,7 +214,7 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
         ]),
       }));
 
-      const tailStart = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER}`, {
+      const tailStart = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER}`, {
         machineId: seeded.machineId,
         providerId: 'codex',
         remoteSessionId,
@@ -249,7 +249,7 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
       let refreshTailResult: any = null;
       await waitFor(
         async () => {
-          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER}`, {
+          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER}`, {
             machineId: seeded.machineId,
             providerId: 'codex',
             remoteSessionId,
@@ -281,7 +281,7 @@ describe('core e2e: direct Codex app-server sessions browse/link/tail', () => {
       let tailResult: any = null;
       await waitFor(
         async () => {
-          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER}`, {
+          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER}`, {
             machineId: seeded.machineId,
             providerId: 'codex',
             remoteSessionId,

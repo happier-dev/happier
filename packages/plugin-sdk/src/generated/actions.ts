@@ -3,6 +3,8 @@ import type {
   ScmHostingRepositoryDescribePublishTargetsResponse,
   ScmHostingRepositoryPublishRequest,
   ScmHostingRepositoryPublishResponse,
+  ScmRepositoryCloneInput,
+  ScmRepositoryCloneOutput,
   ScmDiffSummaryGenerateInput,
   ScmDiffSummaryGenerateOutput,
   ScmPullRequestCheckoutRequest,
@@ -51,6 +53,8 @@ export type PluginActionsV1 = Readonly<{
       >;
     }>;
     repository: Readonly<{
+      /** `ctx.actions.scm.repository.clone(...)`. */
+      clone: PluginSdkActionMethodV1<ScmRepositoryCloneInput, ScmRepositoryCloneOutput>;
       /** `ctx.actions.scm.repository.init(...)`. */
       init: PluginSdkActionMethodV1<ScmRepositoryInitRequest, ScmRepositoryInitResponse>;
       /** `ctx.actions.scm.repository.removeIndexLock(...)`. */

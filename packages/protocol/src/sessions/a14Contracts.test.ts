@@ -123,10 +123,10 @@ describe('A.14 session protocol contracts', () => {
   it('maps legacy direct-session takeover inputs into the canonical two-axis takeover shape', () => {
     const takeoverInput = schema('ExternalSessionTakeoverInputV1Schema');
     const takeoverResult = schema('ExternalSessionTakeoverResultV1Schema');
-    const mapLinked = (protocol as Record<string, unknown>).mapDirectSessionsTakeoverToExternalSessionTakeoverInputV1 as
+    const mapLinked = (protocol as Record<string, unknown>).mapExternalSessionsTakeoverToExternalSessionTakeoverInputV1 as
       | ((input: { linkedSessionId: string; forceStop?: boolean }) => unknown)
       | undefined;
-    const mapPersisted = (protocol as Record<string, unknown>).mapDirectSessionsTakeoverPersistToExternalSessionTakeoverInputV1 as
+    const mapPersisted = (protocol as Record<string, unknown>).mapExternalSessionsTakeoverPersistToExternalSessionTakeoverInputV1 as
       | ((input: { linkedSessionId: string; forceStop?: boolean }) => unknown)
       | undefined;
 

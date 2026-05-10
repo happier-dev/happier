@@ -27,8 +27,21 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).ScmRepositoryRemoveIndexLockRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ScmRepositoryProvisioningFailureResponseSchema?.safeParse)
             .toBe('function');
+        expect(typeof (protocol as any).ScmRepositoryCloneInputSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmRepositoryCloneOutputSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).SourceControlCloneProtocolSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ScmHostingRepositoryPublishRequestSchema?.safeParse).toBe('function');
         expect(typeof (protocol as any).ScmHostingRepositoryPublishResponseSchema?.safeParse).toBe('function');
+    });
+
+    it('exports SCM diff-summary cache and selector protocol schemas for downstream packets', () => {
+        expect((protocol as any).SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION).toBe(1);
+        expect(typeof (protocol as any).ScmDiffSummaryCacheEntrySchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmDiffSummaryCacheKeyDescriptorSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmDiffSummaryCachePolicySchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmDiffSummaryCostMetadataSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmDiffSummaryGenerationStateSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ScmDiffSummaryResolvedSelectorSchema?.safeParse).toBe('function');
     });
 
     it('exports automation change/update schemas through root exports', () => {
@@ -113,20 +126,22 @@ describe('protocol package root exports', () => {
         expect(typeof (protocol as any).DaemonPetImportResponseV1Schema?.safeParse).toBe('function');
     });
 
-    it('exports direct sessions daemon RPC schemas', () => {
-        expect(typeof (protocol as any).DirectSessionsProviderIdSchema?.safeParse).toBe('function');
-        expect((protocol as any).DirectSessionsProviderIdSchema.parse('codex')).toBe('codex');
-        expect((protocol as any).DirectSessionsProviderIdSchema.parse('claude')).toBe('claude');
-        expect((protocol as any).DirectSessionsProviderIdSchema.parse('opencode')).toBe('opencode');
-        expect((protocol as any).DirectSessionsProviderIdSchema.parse('ohMyPi')).toBe('ohMyPi');
-        expect((protocol as any).DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1.claudeConfig).toEqual(['claude']);
-        expect(typeof (protocol as any).DirectSessionsCandidatesListRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectTranscriptPageRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectSessionLinkEnsureRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectSessionFollowPolicySetRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectSessionTakeoverRequestSchema?.safeParse).toBe('function');
-        expect(typeof (protocol as any).DirectSessionTakeoverPersistRequestSchema?.safeParse).toBe('function');
+    it('exports external-session daemon RPC schemas', () => {
+        expect(typeof (protocol as any).ExternalSessionsProviderIdSchema?.safeParse).toBe('function');
+        expect((protocol as any).ExternalSessionsProviderIdSchema.parse('codex')).toBe('codex');
+        expect((protocol as any).ExternalSessionsProviderIdSchema.parse('claude')).toBe('claude');
+        expect((protocol as any).ExternalSessionsProviderIdSchema.parse('opencode')).toBe('opencode');
+        expect((protocol as any).ExternalSessionsProviderIdSchema.parse('ohMyPi')).toBe('ohMyPi');
+        expect((protocol as any).EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1.claudeConfig).toEqual(['claude']);
+        expect(typeof (protocol as any).ExternalSessionsCandidatesListRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ExternalSessionTranscriptPageRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ExternalSessionTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
+        expect((protocol as any).DirectTranscriptPageRequestSchema).toBeUndefined();
+        expect((protocol as any).DirectTranscriptReadAfterRequestSchema).toBeUndefined();
+        expect(typeof (protocol as any).ExternalSessionLinkEnsureRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ExternalSessionFollowPolicySetRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ExternalSessionTakeoverRequestSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).ExternalSessionTakeoverPersistRequestSchema?.safeParse).toBe('function');
     });
 
     it('exports the canonical action id family catalog', () => {

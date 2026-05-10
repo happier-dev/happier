@@ -13,6 +13,28 @@ import { readOpenCodeRuntimeDescriptorProviderExtra } from './runtimeDescriptorE
 import { asRecord, normalizeTrimmedString } from '../../runtime/identity/runtimeDescriptorShared.js';
 import type { SharedRuntimeDescriptorByProviderId } from '../../runtime/identity/runtimeDescriptorTypes.js';
 
+function assignRuntimeHandleValue(target: Record<string, unknown>, key: string, value: unknown): void {
+  if (value !== null && value !== undefined) {
+    target[key] = value;
+  }
+}
+
+function buildOpenCodeRuntimeHandle(params: Readonly<{
+  backendMode: SharedRuntimeDescriptorByProviderId['opencode']['backendMode'];
+  vendorSessionId: string | null;
+  serverBaseUrl: string | null;
+  serverBaseUrlExplicit: boolean;
+}>): Readonly<Record<string, unknown>> | null {
+  const runtimeHandle: Record<string, unknown> = {};
+  assignRuntimeHandleValue(runtimeHandle, 'backendMode', params.backendMode);
+  assignRuntimeHandleValue(runtimeHandle, 'vendorSessionId', params.vendorSessionId);
+  assignRuntimeHandleValue(runtimeHandle, 'serverBaseUrl', params.serverBaseUrl);
+  if (params.serverBaseUrlExplicit) {
+    runtimeHandle.serverBaseUrlExplicit = true;
+  }
+  return Object.keys(runtimeHandle).length > 0 ? runtimeHandle : null;
+}
+
 export function readOpenCodeSessionMetadataRuntimeDescriptor(
   metadata: unknown,
 ): SharedRuntimeDescriptorByProviderId['opencode'] | null {
@@ -29,12 +51,23 @@ export function readOpenCodeSessionMetadataRuntimeDescriptor(
   const providerExtra = readOpenCodeRuntimeDescriptorProviderExtra(rawProvider?.providerExtra);
   const provider = descriptor?.provider ?? rawProvider;
   if (!provider) return null;
+  const backendMode = providerExtra?.backendMode ?? normalizeOpenCodeBackendMode(provider.backendMode);
+  const vendorSessionId = providerExtra?.vendorSessionId ?? normalizeTrimmedString(provider.vendorSessionId);
+  const serverBaseUrl = providerExtra?.serverBaseUrl ?? normalizeOpenCodeServerBaseUrl(provider.serverBaseUrl);
+  const serverBaseUrlExplicit = providerExtra?.serverBaseUrlExplicit ?? normalizeOpenCodeServerBaseUrlExplicit(provider.serverBaseUrlExplicit);
 
   return {
     providerId: 'opencode',
-    backendMode: providerExtra?.backendMode ?? normalizeOpenCodeBackendMode(provider.backendMode),
-    vendorSessionId: providerExtra?.vendorSessionId ?? normalizeTrimmedString(provider.vendorSessionId),
-    serverBaseUrl: providerExtra?.serverBaseUrl ?? normalizeOpenCodeServerBaseUrl(provider.serverBaseUrl),
-    serverBaseUrlExplicit: providerExtra?.serverBaseUrlExplicit ?? normalizeOpenCodeServerBaseUrlExplicit(provider.serverBaseUrlExplicit),
+    runtimeKind: backendMode,
+    backendMode,
+    vendorSessionId,
+    runtimeHandle: buildOpenCodeRuntimeHandle({
+      backendMode,
+      vendorSessionId,
+      serverBaseUrl,
+      serverBaseUrlExplicit,
+    }),
+    serverBaseUrl,
+    serverBaseUrlExplicit,
   };
 }

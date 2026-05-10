@@ -20,6 +20,14 @@ export const ScmDiffSummarySourceSchema = z.discriminatedUnion('kind', [
 export type ScmDiffSummarySource =
   z.infer<typeof ScmDiffSummarySourceSchema>;
 
+export const ScmDiffSummaryTurnEvidenceModeSchema = z.enum([
+  'reconciled',
+  'agent_reported',
+  'checkpoint',
+]);
+export type ScmDiffSummaryTurnEvidenceMode =
+  z.infer<typeof ScmDiffSummaryTurnEvidenceModeSchema>;
+
 export const ScmDiffSummaryModelSelectorSchema = z
   .object({
     profileId: z.string().trim().min(1).optional(),
@@ -34,6 +42,20 @@ export const ScmDiffSummaryModelSelectorSchema = z
 export type ScmDiffSummaryModelSelector =
   z.infer<typeof ScmDiffSummaryModelSelectorSchema>;
 
+export const SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION = 1;
+
+export const ScmDiffSummaryResolvedSelectorSchema = z.object({
+  catalogId: z.string().trim().min(1),
+}).strict();
+export type ScmDiffSummaryResolvedSelector =
+  z.infer<typeof ScmDiffSummaryResolvedSelectorSchema>;
+
+export const ScmDiffSummaryCachePolicySchema = z.object({
+  mode: z.enum(['read_write', 'bypass']),
+}).passthrough();
+export type ScmDiffSummaryCachePolicy =
+  z.infer<typeof ScmDiffSummaryCachePolicySchema>;
+
 export const ScmDiffSummaryGenerateInputSchema = z
   .object({
     cwd: z.string().min(1),
@@ -41,7 +63,9 @@ export const ScmDiffSummaryGenerateInputSchema = z
     source: ScmDiffSummarySourceSchema,
     turnId: z.string().min(1).optional(),
     checkpointReceiptId: z.string().min(1).optional(),
+    turnEvidenceMode: ScmDiffSummaryTurnEvidenceModeSchema.optional(),
     modelSelector: ScmDiffSummaryModelSelectorSchema.optional(),
+    cachePolicy: ScmDiffSummaryCachePolicySchema.optional(),
   })
   .passthrough()
   .superRefine((value, ctx) => {
@@ -84,11 +108,27 @@ export const ScmDiffSummaryTruncationSchema = z.object({
 export type ScmDiffSummaryTruncation =
   z.infer<typeof ScmDiffSummaryTruncationSchema>;
 
+export const ScmDiffSummaryGenerationStateSchema = z.enum([
+  'complete',
+  'partial',
+]);
+export type ScmDiffSummaryGenerationState =
+  z.infer<typeof ScmDiffSummaryGenerationStateSchema>;
+
+export const ScmDiffSummaryCostMetadataSchema = z.object({
+  inputTokens: z.number().int().nonnegative().optional(),
+  outputTokens: z.number().int().nonnegative().optional(),
+  estimatedUsd: z.number().nonnegative().optional(),
+}).passthrough();
+export type ScmDiffSummaryCostMetadata =
+  z.infer<typeof ScmDiffSummaryCostMetadataSchema>;
+
 export const ScmDiffSummaryMetadataSchema = z.object({
   source: ScmDiffSummarySourceSchema,
   sourceKey: z.string().min(1),
   turnId: z.string().min(1).optional(),
   checkpointReceiptId: z.string().min(1).optional(),
+  turnEvidenceMode: ScmDiffSummaryTurnEvidenceModeSchema.optional(),
   contentConfidence: z.enum(['exact', 'unavailable']).optional(),
   attributionScope: z.enum([
     'exclusive_worktree',
@@ -117,6 +157,8 @@ export const ScmDiffSummaryGenerateSuccessSchema = z.object({
   checkpointReceiptId: z.string().min(1).optional(),
   metadata: ScmDiffSummaryMetadataSchema,
   truncation: ScmDiffSummaryTruncationSchema.optional(),
+  generationState: ScmDiffSummaryGenerationStateSchema.optional(),
+  cost: ScmDiffSummaryCostMetadataSchema.optional(),
   risks: z.array(z.string().min(1)).optional(),
   testImpact: z.string().min(1).optional(),
   suggestedPrBody: z.string().min(1).optional(),
@@ -131,6 +173,7 @@ export const ScmDiffSummaryGenerateFailureSchema = z.object({
   sourceKey: z.string().min(1).optional(),
   checkpointReceiptId: z.string().min(1).optional(),
   metadata: ScmDiffSummaryMetadataSchema.optional(),
+  cost: ScmDiffSummaryCostMetadataSchema.optional(),
 }).passthrough();
 export type ScmDiffSummaryGenerateFailure =
   z.infer<typeof ScmDiffSummaryGenerateFailureSchema>;
@@ -141,3 +184,68 @@ export const ScmDiffSummaryGenerateOutputSchema = z.union([
 ]);
 export type ScmDiffSummaryGenerateOutput =
   z.infer<typeof ScmDiffSummaryGenerateOutputSchema>;
+
+export const ScmDiffSummaryCacheKeyDescriptorSchema = z
+  .object({
+    source: ScmDiffSummarySourceSchema,
+    checkpointReceiptId: z.string().trim().min(1).optional(),
+    checkpointRef: z.string().trim().min(1).optional(),
+    volatileSourceVersion: z.string().trim().min(1).optional(),
+    summarySchemaVersion: z.number().int().positive(),
+    resolvedSelector: ScmDiffSummaryResolvedSelectorSchema,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.source.kind === 'turnCheckpoint') {
+      if (!value.checkpointReceiptId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['checkpointReceiptId'],
+          message: 'turnCheckpoint cache descriptors require checkpointReceiptId',
+        });
+      }
+      if (!value.checkpointRef) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['checkpointRef'],
+          message: 'turnCheckpoint cache descriptors require checkpointRef',
+        });
+      }
+      if (value.volatileSourceVersion) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['volatileSourceVersion'],
+          message: 'turnCheckpoint cache descriptors must not use volatileSourceVersion',
+        });
+      }
+    }
+
+    if (value.source.kind === 'workingTree') {
+      if (!value.volatileSourceVersion) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['volatileSourceVersion'],
+          message: 'workingTree cache descriptors require volatileSourceVersion',
+        });
+      }
+      if (value.checkpointReceiptId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['checkpointReceiptId'],
+          message: 'workingTree cache descriptors must not use checkpointReceiptId',
+        });
+      }
+    }
+  });
+export type ScmDiffSummaryCacheKeyDescriptor =
+  z.infer<typeof ScmDiffSummaryCacheKeyDescriptorSchema>;
+
+export const ScmDiffSummaryCacheEntrySchema = z.object({
+  key: ScmDiffSummaryCacheKeyDescriptorSchema,
+  checkpointRef: z.string().min(1).optional(),
+  value: ScmDiffSummaryGenerateOutputSchema,
+  createdAtMs: z.number().int().nonnegative().optional(),
+  updatedAtMs: z.number().int().nonnegative().optional(),
+}).passthrough();
+export type ScmDiffSummaryCacheEntry =
+  z.infer<typeof ScmDiffSummaryCacheEntrySchema>;

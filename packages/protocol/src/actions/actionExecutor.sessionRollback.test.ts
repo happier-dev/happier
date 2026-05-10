@@ -88,3 +88,60 @@ describe('createActionExecutor (session.rollback)', () => {
     });
   });
 });
+
+describe('createActionExecutor (session.checkpoint_code_rollback)', () => {
+  const checkpointRollbackRequest = {
+    v: 1,
+    sessionId: 'sess_1',
+    turnId: 'turn_1',
+    cwd: '/repo',
+    codeMode: 'code_only_without_stash',
+    backupMode: 'happier_checkpoint_only',
+    expectedStartRef: 'refs/happier/checkpoints/c2Vzc18x/turn-start/turn_1',
+    expectedFinalRef: 'refs/happier/checkpoints/c2Vzc18x/turn-final/turn_1',
+    codeOnlyTranscriptDivergenceConfirmed: true,
+  } as const;
+
+  it('delegates checkpoint code rollback with request and resolved server id', async () => {
+    const checkpointCodeRollback: NonNullable<ActionExecutorDeps['checkpointCodeRollback']> = vi.fn(async () => ({
+      status: 'applied',
+      changedPaths: [],
+      skippedPaths: [],
+      receipts: [],
+      diagnostics: [],
+    }));
+    const deps = createDeps({
+      checkpointCodeRollback,
+      resolveServerIdForSessionId: vi.fn(() => 'server_a'),
+    });
+    const executor = createActionExecutor(deps);
+
+    const result = await executor.execute(
+      'session.checkpoint_code_rollback',
+      checkpointRollbackRequest,
+      { defaultSessionId: 'sess_1' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(checkpointCodeRollback).toHaveBeenCalledWith({
+      request: checkpointRollbackRequest,
+      serverId: 'server_a',
+    });
+  });
+
+  it('fails closed when checkpoint code rollback dependency is unavailable', async () => {
+    const executor = createActionExecutor(createDeps());
+
+    const result = await executor.execute(
+      'session.checkpoint_code_rollback',
+      checkpointRollbackRequest,
+      { defaultSessionId: 'sess_1' },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'unsupported_action',
+      error: 'unsupported_action:session.checkpoint_code_rollback',
+    });
+  });
+});

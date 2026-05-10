@@ -177,7 +177,7 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
 
     let link: Awaited<ReturnType<typeof machineRpc.call>> | null = null;
     await waitFor(async () => {
-      link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: seeded.machineId,
         providerId: 'codex',
         remoteSessionId,
@@ -198,12 +198,14 @@ describe('core e2e: direct Codex app-server sessions takeover+continue', () => {
     }));
     const sessionId = (linkResult as { sessionId: string }).sessionId;
 
-    const takeoverPersist = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST}`, {
+    const takeoverPersist = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER}`, {
       machineId: seeded.machineId,
-      sessionId,
+      linkedSessionId: sessionId,
+      targetRuntimeMode: 'terminal',
+      storageMode: 'persisted',
     });
     const takeoverPersistResult = unwrapDataKeyRpcResult(takeoverPersist, 'direct Codex app-server takeover persist');
-    expect(takeoverPersistResult).toEqual({ ok: true, converted: true });
+    expect(takeoverPersistResult).toEqual(expect.objectContaining({ ok: true, converted: true }));
 
     await waitFor(async () => {
       const requests = await readFakeCodexAppServerRequestLog(appServerRequestLogPath);

@@ -182,6 +182,7 @@ describe('Action Spec Registry', () => {
 
   it('projects SCM repository provisioning actions through RPC and SDK surfaces only', () => {
     const expected: readonly [ActionId, 'read' | 'write' | 'external' | 'danger'][] = [
+      ['scm.repository.clone', 'external'],
       ['scm.repository.init', 'write'],
       ['scm.repository.removeIndexLock', 'danger'],
       ['scm.hostingRepository.describePublishTargets', 'read'],
@@ -202,6 +203,7 @@ describe('Action Spec Registry', () => {
       });
     }
 
+    expect(getActionSpec('scm.repository.clone').safety).toBe('danger');
     expect(getActionSpec('scm.repository.init').safety).toBe('danger');
     expect(getActionSpec('scm.repository.removeIndexLock').safety).toBe('danger');
     expect(getActionSpec('scm.hostingRepository.describePublishTargets').safety).toBe('safe');
@@ -726,6 +728,38 @@ describe('Action Spec Registry', () => {
     expect(spec.placements).toContain('session_action_menu');
   });
 
+  it('exposes checkpoint code rollback through RPC without raw menu placement', () => {
+    const spec = getActionSpec('session.checkpoint_code_rollback' as any);
+
+    expect(spec.id).toBe('session.checkpoint_code_rollback');
+    expect(spec.surfaces.ui).toBe(false);
+    expect(spec.surfaces.rpc).toBe(true);
+    expect(spec.placements).toEqual([]);
+    expect(spec.safety).toBe('danger');
+    expect(spec.bindings?.rpcMethod).toBe('session.checkpointCodeRollback');
+    expect(spec.inputSchema.safeParse({
+      v: 1,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      cwd: '/repo',
+      codeMode: 'code_only_without_stash',
+      backupMode: 'happier_checkpoint_only',
+      expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
+      expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
+      codeOnlyTranscriptDivergenceConfirmed: true,
+    }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({
+      v: 1,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      cwd: '/repo',
+      codeMode: 'conversation_and_code_without_stash',
+      backupMode: 'happier_checkpoint_only',
+      expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
+      expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
+    }).success).toBe(false);
+  });
+
   it('exposes session open action spec', () => {
     const spec = getActionSpec('session.open');
     expect(spec.id).toBe('session.open');
@@ -741,6 +775,7 @@ describe('Action Spec Registry', () => {
       ['session.fork', 'session.fork'],
       ['session.continue_with_replay', 'session.continueWithReplay'],
       ['session.rollback', 'session.rollback'],
+      ['session.checkpoint_code_rollback', 'session.checkpointCodeRollback'],
       ['session.handoff', 'daemon.sessionHandoff.start'],
       ['session.handoff.prepare_target', 'daemon.sessionHandoff.prepareTarget'],
       ['session.handoff.prepare_target_result.get', 'daemon.sessionHandoff.prepareTargetResult.get'],

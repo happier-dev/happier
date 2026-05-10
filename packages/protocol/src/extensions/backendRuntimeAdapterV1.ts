@@ -4,7 +4,7 @@ import { OptionalStringSchema } from './_shared.js';
 
 export const BackendRuntimeAdapterKindV1Schema = z.enum([
   'terminalRuntime',
-  'directSessions',
+  'externalSessions',
   'attach',
   'sessionHandoff',
 ]);
@@ -25,7 +25,7 @@ export const BackendRuntimeAdapterOperationCatalogV1 = Object.freeze({
     discoverIdentity: 'discoverIdentity',
     bindTranscript: 'bindTranscript',
   }),
-  directSessions: Object.freeze({
+  externalSessions: Object.freeze({
     validateSource: 'validateSource',
     listCandidates: 'listCandidates',
     getActivity: 'getActivity',
@@ -89,8 +89,8 @@ const TerminalRuntimeBackendRuntimeAdapterV1Schema = BackendRuntimeAdapterBaseV1
   kind: z.literal('terminalRuntime'),
 });
 
-const DirectSessionsBackendRuntimeAdapterV1Schema = BackendRuntimeAdapterBaseV1Schema.extend({
-  kind: z.literal('directSessions'),
+const ExternalSessionsBackendRuntimeAdapterV1Schema = BackendRuntimeAdapterBaseV1Schema.extend({
+  kind: z.literal('externalSessions'),
 });
 
 const AttachBackendRuntimeAdapterV1Schema = BackendRuntimeAdapterBaseV1Schema.extend({
@@ -103,7 +103,7 @@ const SessionHandoffBackendRuntimeAdapterV1Schema = BackendRuntimeAdapterBaseV1S
 
 export const BackendRuntimeAdapterV1Schema = z.discriminatedUnion('kind', [
   TerminalRuntimeBackendRuntimeAdapterV1Schema,
-  DirectSessionsBackendRuntimeAdapterV1Schema,
+  ExternalSessionsBackendRuntimeAdapterV1Schema,
   AttachBackendRuntimeAdapterV1Schema,
   SessionHandoffBackendRuntimeAdapterV1Schema,
 ]);

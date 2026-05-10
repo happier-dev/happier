@@ -59,6 +59,8 @@ const GITHUB_PR_JSON_FIELDS = [
   'isDraft',
   'baseRefName',
   'headRefName',
+  'headRepository',
+  'headRepositoryOwner',
   'baseRefOid',
   'headRefOid',
   'author',

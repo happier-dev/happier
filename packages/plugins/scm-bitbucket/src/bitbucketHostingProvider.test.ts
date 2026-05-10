@@ -17,6 +17,13 @@ type DetectionResult = Readonly<{
 type Adapter = Readonly<{
   detectRemote(input: Readonly<{ remoteName: string | null; remoteUrl: string }>): DetectionResult | null;
   buildCompareUrl(input: Readonly<{ provider: DetectionResult; base: string; head: string }>): string | null;
+  listPullRequests?: unknown;
+  getPullRequest?: unknown;
+  createPullRequest?: unknown;
+  resolvePullRequestCheckoutReference?: unknown;
+  describePublishTargets?: unknown;
+  createRepository?: unknown;
+  getRepository?: unknown;
 }>;
 
 describe('bundled Bitbucket SCM hosting provider plugin', () => {
@@ -26,7 +33,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     if (!mod) return;
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
-      id: 'scm-bitbucket',
+      id: 'happier.scm.hosting.bitbucket',
       source: {
         kind: 'package',
         locator: '@happier-dev/plugins-scm-bitbucket',
@@ -35,7 +42,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       },
       runtime: {
         apiVersion: 1,
-        capabilities: ['scmHostingProviders'],
+        capabilities: ['scmHostingProviders', 'connectedAccountDescriptors', 'hooks'],
       },
       contributes: {
         scmHostingProviders: [
@@ -55,8 +62,45 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
             capabilities: expect.objectContaining({
               compareUrl: true,
               openUrl: true,
+              pullRequests: {
+                list: true,
+                get: true,
+                create: true,
+                checkout: true,
+                prepareWorktree: false,
+                runStacked: false,
+              },
+              repositoryProvisioning: {
+                describeTargets: true,
+                createRepository: true,
+                publish: false,
+              },
             }),
           },
+        ],
+        connectedAccountDescriptors: [
+          expect.objectContaining({
+            id: 'bitbucket',
+            kind: 'auth.connectedAccount',
+            tokenSetup: expect.objectContaining({
+              tokenKind: 'api-token',
+              credentialPayloadKind: 'bitbucket_basic_auth',
+              identity: expect.objectContaining({
+                kind: 'email_or_username',
+              }),
+            }),
+            materialization: expect.objectContaining({
+              materializationKinds: ['scm_hosting_basic_auth'],
+            }),
+          }),
+        ],
+        hooks: [
+          expect.objectContaining({
+            id: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+            category: 'integration',
+            scope: 'plugin',
+            executionKind: 'integrate',
+          }),
         ],
       },
     });
@@ -98,7 +142,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     })).toBeNull();
   });
 
-  it('builds encoded Bitbucket compare URLs without write behavior', async () => {
+  it('builds encoded Bitbucket compare URLs and registers operation behavior at activation', async () => {
     const mod = await import('./adapter.js').catch(() => null);
     expect(mod).not.toBeNull();
     if (!mod) return;
@@ -141,7 +185,44 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       base: 'main',
       head: 'feature/pr-support',
     })).toBeNull();
-    expect(adapter[`create${'PullRequest'}`]).toBeUndefined();
-    expect(adapter[`listOpen${'PullRequests'}`]).toBeUndefined();
+  });
+
+  it('registers the Bitbucket API operations adapter during plugin activation', async () => {
+    const mod = await import('./activate.js').catch(() => null);
+    expect(mod).not.toBeNull();
+    if (!mod) return;
+
+    const registrations: Array<Readonly<{ id: string; adapter: Adapter }>> = [];
+    const hooks: Array<Readonly<{ hookId: string; handler: unknown }>> = [];
+    mod.activate({
+      registerScmHostingProvider(registration: Readonly<{ id: string; adapter: Adapter }>) {
+        registrations.push(registration);
+        return { dispose() {} };
+      },
+      registerHook(registration: Readonly<{ hookId: string; handler: unknown }>) {
+        hooks.push(registration);
+        return { dispose() {} };
+      },
+    });
+
+    expect(registrations).toHaveLength(1);
+    expect(hooks).toEqual([
+      expect.objectContaining({
+        hookId: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+        handler: expect.any(Function),
+      }),
+    ]);
+    expect(registrations[0]?.id).toBe('scm.bitbucket');
+    expect(registrations[0]?.adapter).toMatchObject({
+      detectRemote: expect.any(Function),
+      buildCompareUrl: expect.any(Function),
+      listPullRequests: expect.any(Function),
+      getPullRequest: expect.any(Function),
+      createPullRequest: expect.any(Function),
+      resolvePullRequestCheckoutReference: expect.any(Function),
+      describePublishTargets: expect.any(Function),
+      createRepository: expect.any(Function),
+      getRepository: expect.any(Function),
+    });
   });
 });

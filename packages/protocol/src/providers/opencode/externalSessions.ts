@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
-export const OPENCODE_DIRECT_SESSIONS_PROVIDER_ID = 'opencode' as const;
+export const OPENCODE_EXTERNAL_SESSIONS_PROVIDER_ID = 'opencode' as const;
 
-export const OpenCodeDirectSessionsSourceSchema = z
+export const OpenCodeExternalSessionsSourceSchema = z
   .object({
     kind: z.literal('opencodeServer'),
     baseUrl: z.string().url().nullish(),
@@ -14,7 +14,7 @@ function normalizeNullableString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export function resolveOpenCodeDirectSessionsSourceKey(source: z.infer<typeof OpenCodeDirectSessionsSourceSchema>): string {
+export function resolveOpenCodeExternalSessionsSourceKey(source: z.infer<typeof OpenCodeExternalSessionsSourceSchema>): string {
   const baseUrl = normalizeNullableString(source.baseUrl);
   const directory = normalizeNullableString(source.directory);
   return `opencodeServer:${baseUrl}:${directory}`;

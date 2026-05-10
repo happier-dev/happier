@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./session/state/metadataPatch": {
+      "types": "./dist/session/state/metadataPatch.d.ts",
+      "default": "./dist/session/state/metadataPatch.js"
     }
   },
   "files": [

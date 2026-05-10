@@ -4,6 +4,7 @@ import {
   buildConnectedAccountCredentialRecordFromTokenInput,
   buildConnectedServiceCredentialRecord,
 } from './buildConnectedServiceCredentialRecord';
+import { BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR } from '../providers/bitbucket/connectedAccountDescriptor';
 
 describe('buildConnectedServiceCredentialRecord', () => {
   it('builds an oauth record for codex tokens', () => {
@@ -127,6 +128,7 @@ describe('buildConnectedAccountCredentialRecordFromTokenInput', () => {
       token: '  bitbucket-api-token  ',
       providerEmail: '  dev@example.com  ',
       providerAccountId: '  dev@example.com  ',
+      descriptor: BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR,
     });
 
     expect(rec).toMatchObject({
@@ -149,6 +151,7 @@ describe('buildConnectedAccountCredentialRecordFromTokenInput', () => {
       serviceId: 'bitbucket',
       profileId: 'work',
       token: 'bitbucket-api-token',
+      descriptor: BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR,
     })).toThrow(/Missing Bitbucket email or username/);
   });
 

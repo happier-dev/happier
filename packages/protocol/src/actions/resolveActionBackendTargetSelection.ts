@@ -7,7 +7,7 @@ import {
   isLegacyCustomAcpId,
 } from '../backendTargets/compat/customAcp.js';
 import { isBuiltInBackendAgentId } from '../profiles/builtInBackendProfiles.js';
-import { DirectSessionsProviderIdSchema } from '../providers/externalSessionsCatalog.js';
+import { ExternalSessionsProviderIdSchema } from '../providers/externalSessionsCatalog.js';
 
 type ActionBackendTargetSelectionInput = Readonly<{
   agentId?: string;
@@ -39,7 +39,7 @@ function normalizeValue(value: unknown): string | null {
 }
 
 function canInferRuntimeCarrierFromCanonicalBackendId(backendId: string): boolean {
-  return DirectSessionsProviderIdSchema.safeParse(backendId).success || isBuiltInBackendAgentId(backendId);
+  return ExternalSessionsProviderIdSchema.safeParse(backendId).success || isBuiltInBackendAgentId(backendId);
 }
 
 function deriveAgentIdForConcreteBackendTarget(target: BackendTargetRefV2): string | null {

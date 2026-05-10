@@ -40,6 +40,7 @@ describe('RPC_METHODS scm surface', () => {
         expect(RPC_METHODS.SCM_PULL_REQUEST_CHECKOUT).toBe('scm.pullRequest.checkout');
         expect(RPC_METHODS.SCM_PULL_REQUEST_PREPARE_WORKTREE).toBe('scm.pullRequest.prepareWorktree');
         expect(RPC_METHODS.SCM_PULL_REQUEST_RUN_STACKED).toBe('scm.pullRequest.runStacked');
+        expect(RPC_METHODS.SCM_REPOSITORY_CLONE).toBe('scm.repository.clone');
         expect(RPC_METHODS.SCM_REPOSITORY_INIT).toBe('scm.repository.init');
         expect(RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK).toBe('scm.repository.removeIndexLock');
         expect(RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS)

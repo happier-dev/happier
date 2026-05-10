@@ -22,6 +22,12 @@ import {
   ScmHostingProviderContributionSchema,
 } from './scmHostingProviders.js';
 import {
+  ScmBackendContributionSchema,
+} from './scmBackends.js';
+import {
+  PluginConnectedAccountDescriptorSchema,
+} from '../../connect/connectedAccountDescriptors.js';
+import {
   PluginInstallableContributionV2Schema,
 } from './installables.js';
 import {
@@ -339,6 +345,11 @@ export const PluginLifecycleHandlerContributionV2Schema = z.object({
 }).strict();
 export type PluginLifecycleHandlerContributionV2 = z.infer<typeof PluginLifecycleHandlerContributionV2Schema>;
 
+export const PluginConnectedAccountDescriptorContributionV2Schema =
+  PluginConnectedAccountDescriptorSchema;
+export type PluginConnectedAccountDescriptorContributionV2 =
+  z.infer<typeof PluginConnectedAccountDescriptorContributionV2Schema>;
+
 export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'agents', schema: PluginAgentContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'backends', schema: PluginBackendContributionV2Schema }),
@@ -352,6 +363,8 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'notifications', schema: PluginNotificationCategoryContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'notificationChannels', schema: PluginNotificationChannelContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'scmHostingProviders', schema: ScmHostingProviderContributionSchema }),
+  definePluginContributionFamilyV2({ family: 'scmBackends', schema: ScmBackendContributionSchema }),
+  definePluginContributionFamilyV2({ family: 'connectedAccountDescriptors', schema: PluginConnectedAccountDescriptorContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'installables', schema: PluginInstallableContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'hooks', schema: PluginHookContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'lifecycleHandlers', schema: PluginLifecycleHandlerContributionV2Schema }),

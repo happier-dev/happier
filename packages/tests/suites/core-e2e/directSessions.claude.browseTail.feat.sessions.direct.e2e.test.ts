@@ -115,7 +115,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       let candidatesResult: any = null;
       await waitFor(
         async () => {
-          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST}`, {
+          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST}`, {
             machineId: seeded.machineId,
             providerId: 'claude',
             source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-core' },
@@ -140,7 +140,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         ]),
       }));
 
-      const status = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET}`, {
+      const status = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET}`, {
         machineId: seeded.machineId,
         sessionId: 'sess_placeholder',
         providerId: 'claude',
@@ -156,7 +156,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         canTakeOverPersist: false,
       }));
 
-      const firstLink = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      const firstLink = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: seeded.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-direct-core',
@@ -168,7 +168,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         created: true,
       }));
 
-      const secondLink = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      const secondLink = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: seeded.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-direct-core',
@@ -181,7 +181,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         created: false,
       }));
 
-      const page = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_PAGE}`, {
+      const page = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE}`, {
         machineId: seeded.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-direct-core',
@@ -202,7 +202,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       }));
       expect(((pageResult as any).items as any[]).some((item) => item?.raw?.content?.text === 'latest direct core message')).toBe(true);
 
-      const tailStart = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER}`, {
+      const tailStart = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER}`, {
         machineId: seeded.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-direct-core',
@@ -224,7 +224,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       let tailResult: any = null;
       await waitFor(
         async () => {
-          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER}`, {
+          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER}`, {
             machineId: seeded.machineId,
             providerId: 'claude',
             remoteSessionId: 'sess-direct-core',
@@ -313,7 +313,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
 
       const machineRpc = createDataKeyRpcClient(ui, machineKey);
 
-      const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: seeded.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-direct-background',
@@ -328,7 +328,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       }));
       const sessionId = (linkResult as { sessionId: string }).sessionId;
 
-      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET}`, {
+      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET}`, {
         machineId: seeded.machineId,
         sessionId,
         providerId: 'claude',
@@ -478,7 +478,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
 
       const machineRpc = createDataKeyRpcClient(ui, machineKey);
 
-      const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: seeded.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-direct-background-expiry',
@@ -493,7 +493,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       }));
       const sessionId = (linkResult as { sessionId: string }).sessionId;
 
-      const attach = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH}`, {
+      const attach = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH}`, {
         machineId: seeded.machineId,
         sessionId,
         providerId: 'claude',
@@ -507,7 +507,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         renewed: false,
       }));
 
-      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET}`, {
+      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET}`, {
         machineId: seeded.machineId,
         sessionId,
         providerId: 'claude',
@@ -651,7 +651,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       let candidatesResult: any = null;
       await waitFor(
         async () => {
-          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST}`, {
+          const res = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST}`, {
             machineId: seeded.machineId,
             providerId: 'claude',
             source: { kind: 'claudeConfig', configDir: claudeConfigDir, projectId: 'proj-direct-persist' },
@@ -665,7 +665,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         { timeoutMs: 30_000, context: 'direct Claude persist candidate available' },
       );
 
-      const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_LINK_ENSURE}`, {
+      const link = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`, {
         machineId: seeded.machineId,
         providerId: 'claude',
         remoteSessionId: 'sess-direct-persist',
@@ -680,12 +680,14 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       }));
       const sessionId = (linkResult as { sessionId: string }).sessionId;
 
-      const takeoverPersist = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST}`, {
+      const takeoverPersist = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER}`, {
         machineId: seeded.machineId,
-        sessionId,
+        linkedSessionId: sessionId,
+        targetRuntimeMode: 'terminal',
+        storageMode: 'persisted',
       }, 60_000);
       const takeoverPersistResult = unwrapDataKeyRpcResult(takeoverPersist, 'direct Claude takeover persist');
-      expect(takeoverPersistResult).toEqual({ ok: true, converted: true });
+      expect(takeoverPersistResult).toEqual(expect.objectContaining({ ok: true, converted: true }));
 
       await waitFor(
         async () => {
@@ -698,7 +700,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
 
 	      await waitFor(
 	        async () => {
-	          const status = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_DIRECT_SESSION_STATUS_GET}`, {
+	          const status = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_STATUS_GET}`, {
 	            machineId: seeded.machineId,
 	            sessionId,
 	            providerId: 'claude',

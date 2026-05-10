@@ -120,15 +120,10 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(protocol).toHaveProperty('resolveMachineRpcRoutePolicy');
     if ('importError' in protocol) throw protocol.importError;
 
-    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH)).toMatchObject({
+    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH)).toMatchObject({
       routeClass: 'server_required',
       rpcClassification: 'action_spec_bound',
       actionSpecId: 'sessions.external.attach',
-    });
-    expect(protocol.resolveMachineRpcRoutePolicy(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST)).toMatchObject({
-      routeClass: 'server_required',
-      rpcClassification: 'action_spec_bound',
-      actionSpecId: 'sessions.external.takeover',
     });
   });
 

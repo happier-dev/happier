@@ -1,4 +1,24 @@
 export {
+  applyObservedProgressToExternalSessionAttentionV1,
+  buildExternalSessionAttentionV1,
+  buildExternalSessionFollowPolicyV1,
+  deriveExternalSessionAttentionHasUnread,
+  deriveExternalSessionObservedProgress,
+  markExternalSessionAttentionUnreadV1,
+  markExternalSessionAttentionViewedV1,
+  normalizeLinkedExternalSessionMetadataV1,
+  readExternalSessionAttentionV1,
+  readExternalSessionFollowPolicyV1,
+  readLinkedExternalSessionV1FromMetadata,
+  removeLinkedExternalSessionMetadataV1,
+  type ExternalSessionAttentionV1,
+  type ExternalSessionFollowPolicy,
+  type ExternalSessionFollowPolicyV1,
+  type ExternalSessionObservedProgress,
+  type LinkedExternalSessionV1,
+} from './linkedSessionMetadata.js';
+
+export {
   ExternalSessionTakeoverErrorCodeV1Schema,
   ExternalSessionTakeoverInputV1Schema,
   ExternalSessionTakeoverResultV1Schema,
@@ -10,7 +30,7 @@ export {
 } from './takeoverV1.js';
 
 export {
-  mapDirectSessionsTakeoverPersistToExternalSessionTakeoverInputV1,
-  mapDirectSessionsTakeoverToExternalSessionTakeoverInputV1,
-  type DirectSessionsTakeoverLegacyInputV1,
+  mapExternalSessionsTakeoverPersistToExternalSessionTakeoverInputV1,
+  mapExternalSessionsTakeoverToExternalSessionTakeoverInputV1,
+  type ExternalSessionsTakeoverLegacyInputV1,
 } from './takeoverCompatV1.js';

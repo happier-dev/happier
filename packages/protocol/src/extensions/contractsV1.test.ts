@@ -138,7 +138,7 @@ describe('extension and hook contract exports', () => {
       providerAgentId: ' claude ',
       iconAgentId: ' codex ',
       capabilities: {
-        directSessions: true,
+        externalSessions: true,
         terminalRuntime: true,
       },
       runtimeAdapters: [

@@ -1,8 +1,10 @@
 // IMPORTANT: this must stay JSON-serializable (data-only).
+const CODEX_AGENT_ID = 'codex';
+
 export const AGENT_DEFINITION = Object.freeze({
-  id: 'codex',
+  id: CODEX_AGENT_ID,
   core: {
-    id: 'codex',
+    id: CODEX_AGENT_ID,
     cliSubcommand: 'codex',
     detectKey: 'codex',
     resume: { vendorResume: 'unsupported', vendorResumeIdField: null },
@@ -38,7 +40,7 @@ export const AGENT_DEFINITION = Object.freeze({
     loginLaunch: null,
   },
   providerCliRuntime: {
-    id: 'codex',
+    id: CODEX_AGENT_ID,
     title: 'codex CLI',
     binaryName: 'codex',
     sourcePreferenceDefault: 'system-first',

@@ -1,95 +1,95 @@
 import { z } from 'zod';
 
 import {
-  CLAUDE_DIRECT_SESSIONS_PROVIDER_ID,
-  ClaudeDirectSessionsSourceSchema,
-  resolveClaudeDirectSessionsSourceKey,
+  CLAUDE_EXTERNAL_SESSIONS_PROVIDER_ID,
+  ClaudeExternalSessionsSourceSchema,
+  resolveClaudeExternalSessionsSourceKey,
 } from './claude/externalSessions.js';
 import {
-  CODEX_DIRECT_SESSIONS_PROVIDER_ID,
-  CodexDirectSessionsSourceSchema,
-  resolveCodexDirectSessionsSourceKey,
+  CODEX_EXTERNAL_SESSIONS_PROVIDER_ID,
+  CodexExternalSessionsSourceSchema,
+  resolveCodexExternalSessionsSourceKey,
 } from './codex/externalSessions.js';
 import {
-  OPENCODE_DIRECT_SESSIONS_PROVIDER_ID,
-  OpenCodeDirectSessionsSourceSchema,
-  resolveOpenCodeDirectSessionsSourceKey,
+  OPENCODE_EXTERNAL_SESSIONS_PROVIDER_ID,
+  OpenCodeExternalSessionsSourceSchema,
+  resolveOpenCodeExternalSessionsSourceKey,
 } from './opencode/externalSessions.js';
 import {
-  OH_MY_PI_DIRECT_SESSIONS_PROVIDER_ID,
-  OhMyPiDirectSessionsSourceSchema,
-  resolveOhMyPiDirectSessionsSourceKey,
+  OH_MY_PI_EXTERNAL_SESSIONS_PROVIDER_ID,
+  OhMyPiExternalSessionsSourceSchema,
+  resolveOhMyPiExternalSessionsSourceKey,
 } from './ohMyPi/externalSessions.js';
 
-const DIRECT_SESSIONS_PROVIDER_DEFINITIONS = [
+const EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS = [
   {
-    providerId: CLAUDE_DIRECT_SESSIONS_PROVIDER_ID,
+    providerId: CLAUDE_EXTERNAL_SESSIONS_PROVIDER_ID,
     sourceKind: 'claudeConfig',
-    sourceSchema: ClaudeDirectSessionsSourceSchema,
-    resolveSourceKey: resolveClaudeDirectSessionsSourceKey,
+    sourceSchema: ClaudeExternalSessionsSourceSchema,
+    resolveSourceKey: resolveClaudeExternalSessionsSourceKey,
   },
   {
-    providerId: CODEX_DIRECT_SESSIONS_PROVIDER_ID,
+    providerId: CODEX_EXTERNAL_SESSIONS_PROVIDER_ID,
     sourceKind: 'codexHome',
-    sourceSchema: CodexDirectSessionsSourceSchema,
-    resolveSourceKey: resolveCodexDirectSessionsSourceKey,
+    sourceSchema: CodexExternalSessionsSourceSchema,
+    resolveSourceKey: resolveCodexExternalSessionsSourceKey,
   },
   {
-    providerId: OPENCODE_DIRECT_SESSIONS_PROVIDER_ID,
+    providerId: OPENCODE_EXTERNAL_SESSIONS_PROVIDER_ID,
     sourceKind: 'opencodeServer',
-    sourceSchema: OpenCodeDirectSessionsSourceSchema,
-    resolveSourceKey: resolveOpenCodeDirectSessionsSourceKey,
+    sourceSchema: OpenCodeExternalSessionsSourceSchema,
+    resolveSourceKey: resolveOpenCodeExternalSessionsSourceKey,
   },
   {
-    providerId: OH_MY_PI_DIRECT_SESSIONS_PROVIDER_ID,
+    providerId: OH_MY_PI_EXTERNAL_SESSIONS_PROVIDER_ID,
     sourceKind: 'ohMyPiAgentDir',
-    sourceSchema: OhMyPiDirectSessionsSourceSchema,
-    resolveSourceKey: resolveOhMyPiDirectSessionsSourceKey,
+    sourceSchema: OhMyPiExternalSessionsSourceSchema,
+    resolveSourceKey: resolveOhMyPiExternalSessionsSourceKey,
   },
 ] as const;
 
-type DirectSessionsProviderDefinition = typeof DIRECT_SESSIONS_PROVIDER_DEFINITIONS[number];
+type ExternalSessionsProviderDefinition = typeof EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS[number];
 
-const DIRECT_SESSIONS_SOURCE_SCHEMAS = [
-  ClaudeDirectSessionsSourceSchema,
-  CodexDirectSessionsSourceSchema,
-  OpenCodeDirectSessionsSourceSchema,
-  OhMyPiDirectSessionsSourceSchema,
+const EXTERNAL_SESSIONS_SOURCE_SCHEMAS = [
+  ClaudeExternalSessionsSourceSchema,
+  CodexExternalSessionsSourceSchema,
+  OpenCodeExternalSessionsSourceSchema,
+  OhMyPiExternalSessionsSourceSchema,
 ] as [
-  DirectSessionsProviderDefinition['sourceSchema'],
-  ...DirectSessionsProviderDefinition['sourceSchema'][],
+  ExternalSessionsProviderDefinition['sourceSchema'],
+  ...ExternalSessionsProviderDefinition['sourceSchema'][],
 ];
 
-const DIRECT_SESSIONS_PROVIDER_DEFINITION_BY_SOURCE_KIND = Object.freeze(
+const EXTERNAL_SESSIONS_PROVIDER_DEFINITION_BY_SOURCE_KIND = Object.freeze(
   Object.fromEntries(
-    DIRECT_SESSIONS_PROVIDER_DEFINITIONS.map((definition) => [definition.sourceKind, definition] as const),
-  ) as Record<DirectSessionsProviderDefinition['sourceKind'], DirectSessionsProviderDefinition>,
+    EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS.map((definition) => [definition.sourceKind, definition] as const),
+  ) as Record<ExternalSessionsProviderDefinition['sourceKind'], ExternalSessionsProviderDefinition>,
 );
 
-export const DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1 = Object.freeze(
+export const EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1 = Object.freeze(
   Object.fromEntries(
-    DIRECT_SESSIONS_PROVIDER_DEFINITIONS.map((definition) => [definition.sourceKind, [definition.providerId]] as const),
-  ) as Record<DirectSessionsProviderDefinition['sourceKind'], readonly [DirectSessionsProviderDefinition['providerId']]>,
+    EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS.map((definition) => [definition.sourceKind, [definition.providerId]] as const),
+  ) as Record<ExternalSessionsProviderDefinition['sourceKind'], readonly [ExternalSessionsProviderDefinition['providerId']]>,
 );
 
-export const DIRECT_SESSIONS_PROVIDER_IDS = Object.freeze(
-  Object.values(DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1).flat(),
+export const EXTERNAL_SESSIONS_PROVIDER_IDS = Object.freeze(
+  Object.values(EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1).flat(),
 ) as [
-  typeof DIRECT_SESSIONS_PROVIDER_DEFINITIONS[number]['providerId'],
-  ...(typeof DIRECT_SESSIONS_PROVIDER_DEFINITIONS[number]['providerId'])[],
+  typeof EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS[number]['providerId'],
+  ...(typeof EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS[number]['providerId'])[],
 ];
 
 // B8 closure note:
 // Direct-session provider ids/sources stay first-party constrained for this wave.
 // Plugin/runtime parity should not assume plugin-defined direct-session sources yet.
-export const DirectSessionsProviderIdSchema = z.enum(DIRECT_SESSIONS_PROVIDER_IDS);
-export type DirectSessionsProviderId = z.infer<typeof DirectSessionsProviderIdSchema>;
-export type DirectSessionsSourceKindV1 = keyof typeof DIRECT_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1;
+export const ExternalSessionsProviderIdSchema = z.enum(EXTERNAL_SESSIONS_PROVIDER_IDS);
+export type ExternalSessionsProviderId = z.infer<typeof ExternalSessionsProviderIdSchema>;
+export type ExternalSessionsSourceKindV1 = keyof typeof EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1;
 
-export const DirectSessionsSourceSchema = z.discriminatedUnion('kind', DIRECT_SESSIONS_SOURCE_SCHEMAS);
-export type DirectSessionsSource = z.infer<typeof DirectSessionsSourceSchema>;
+export const ExternalSessionsSourceSchema = z.discriminatedUnion('kind', EXTERNAL_SESSIONS_SOURCE_SCHEMAS);
+export type ExternalSessionsSource = z.infer<typeof ExternalSessionsSourceSchema>;
 
-export function resolveDirectSessionsSourceKey(source: DirectSessionsSource): string {
-  const definition = DIRECT_SESSIONS_PROVIDER_DEFINITION_BY_SOURCE_KIND[source.kind];
+export function resolveExternalSessionsSourceKey(source: ExternalSessionsSource): string {
+  const definition = EXTERNAL_SESSIONS_PROVIDER_DEFINITION_BY_SOURCE_KIND[source.kind];
   return definition.resolveSourceKey(source as never);
 }

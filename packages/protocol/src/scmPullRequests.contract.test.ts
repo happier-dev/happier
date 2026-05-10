@@ -44,6 +44,8 @@ describe('SCM pull-request protocol contracts', () => {
       url: 'https://dev.azure.com/acme/project/_git/happier/pullrequest/42',
       baseBranch: 'main',
       headBranch: 'feature/scm-pr',
+      headRepositoryNameWithOwner: 'acme/happier-fork',
+      isCrossRepository: true,
       headSha: 'abc123',
       baseSha: 'def456',
       state: 'draft',
@@ -59,6 +61,8 @@ describe('SCM pull-request protocol contracts', () => {
 
     expect(summary.state).toBe('draft');
     expect(summary.provider.kind).toBe('azure-devops');
+    expect(summary.headRepositoryNameWithOwner).toBe('acme/happier-fork');
+    expect(summary.isCrossRepository).toBe(true);
   });
 
   it('accepts numeric URL and head-branch PR references', () => {
@@ -201,6 +205,18 @@ describe('SCM pull-request protocol contracts', () => {
     expect(reuseRequest).toMatchObject({
       base: 'main',
       head: 'feature/scm-pr',
+    });
+
+    const forkReuseRequest = readProtocolSchema<protocol.ScmPullRequestOpenOrReuseRequest>(
+      'ScmPullRequestOpenOrReuseRequestSchema',
+    ).parse({
+      cwd: '/repo',
+      base: 'main',
+      head: 'feature/scm-pr',
+      headRepositoryNameWithOwner: ' acme/fork ',
+    });
+    expect(forkReuseRequest).toMatchObject({
+      headRepositoryNameWithOwner: 'acme/fork',
     });
 
     const stackedRequest = readProtocolSchema<protocol.ScmPullRequestRunStackedRequest>(
