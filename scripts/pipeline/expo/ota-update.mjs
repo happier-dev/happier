@@ -250,6 +250,10 @@ function main() {
     cwd: uiDir,
     env: { ...process.env, APP_ENV: process.env.APP_ENV ?? appEnvironment, NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment },
   });
+  run(opts, 'yarn', ['tsx', 'sources/scripts/parseReleaseNotes.ts'], {
+    cwd: uiDir,
+    env: { ...process.env, APP_ENV: process.env.APP_ENV ?? appEnvironment, NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment },
+  });
   run(opts, 'yarn', ['typecheck'], { cwd: uiDir });
 
   const message = resolvePreviewMessage(normalizedEnvironment, values.message, opts);

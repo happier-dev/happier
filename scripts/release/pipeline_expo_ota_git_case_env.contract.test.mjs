@@ -164,5 +164,7 @@ test('expo ota update publishes production directly through EAS update instead o
   const yarnLog = fs.readFileSync(stub.yarnLogPath, 'utf8');
 
   assert.match(npxLog, /update --channel production/);
+  assert.match(yarnLog, /tsx sources\/scripts\/parseChangelog\.ts/);
+  assert.match(yarnLog, /tsx sources\/scripts\/parseReleaseNotes\.ts/);
   assert.doesNotMatch(yarnLog, /ota:production/);
 });
