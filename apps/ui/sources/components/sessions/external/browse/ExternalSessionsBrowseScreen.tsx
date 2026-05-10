@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -12,33 +12,33 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Modal } from '@/modal';
 import { useAllMachines } from '@/sync/domains/state/storage';
-import { machineDirectSessionLinkEnsure } from '@/sync/ops/machineDirectSessions';
+import { machineExternalSessionLinkEnsure } from '@/sync/ops/machineExternalSessions';
 import { useProfile, useSettings } from '@/sync/store/hooks';
 import { lightTheme } from '@/theme';
 import { t } from '@/text';
 
-import { readDirectBrowseCandidatePath } from './buildDirectBrowseCandidatePresentation';
-import { getPreferredDirectBrowseProviderId } from './getPreferredDirectBrowseProviderId';
+import { readExternalSessionBrowseCandidatePath } from './buildExternalSessionBrowseCandidatePresentation';
+import { getPreferredExternalSessionBrowseProviderId } from './getPreferredExternalSessionBrowseProviderId';
 import {
-    listDirectBrowseProviderIds,
-    resolveDirectBrowseLinkEnsureRequestExtras,
-    resolveDirectBrowseSourceOptions,
-} from './resolveDirectBrowseSourceOptions';
-import { resolveCompatibleDirectBrowseLinkSource } from './resolveCompatibleDirectBrowseLinkSource';
-import { DirectBrowseCandidatesList } from './DirectBrowseCandidatesList';
-import { useDirectBrowseCandidates, type DirectBrowseCandidate } from './useDirectBrowseCandidates';
+    listExternalSessionBrowseProviderIds,
+    resolveExternalSessionBrowseLinkEnsureRequestExtras,
+    resolveExternalSessionBrowseSourceOptions,
+} from './resolveExternalSessionBrowseSourceOptions';
+import { resolveCompatibleExternalSessionBrowseLinkSource } from './resolveCompatibleExternalSessionBrowseLinkSource';
+import { ExternalSessionBrowseCandidatesList } from './ExternalSessionBrowseCandidatesList';
+import { useExternalSessionBrowseCandidates, type ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
 
-type DirectBrowseProviderId = DirectSessionsProviderId;
+type ExternalSessionBrowseProviderId = ExternalSessionsProviderId;
 type AppTheme = typeof lightTheme;
 
-export type DirectSessionsBrowseScopeLock = Readonly<{
+export type ExternalSessionsBrowseScopeLock = Readonly<{
     machineId: string;
     serverId?: string | null;
-    providerId: DirectSessionsProviderId;
-    source: DirectSessionsSource;
+    providerId: ExternalSessionsProviderId;
+    source: ExternalSessionsSource;
 }>;
 
-export type DirectSessionsBrowseInteraction = 'openSession' | 'pickRemoteSessionId';
+export type ExternalSessionsBrowseInteraction = 'openSession' | 'pickRemoteSessionId';
 
 function getPreferredMachineId(
     machines: readonly Readonly<{ id: string; active?: boolean }>[],
@@ -69,12 +69,12 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
     },
 }));
 
-export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
-    interaction?: DirectSessionsBrowseInteraction;
-    lockScope?: DirectSessionsBrowseScopeLock | null;
+export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
+    interaction?: ExternalSessionsBrowseInteraction;
+    lockScope?: ExternalSessionsBrowseScopeLock | null;
     onPickRemoteSessionId?: (remoteSessionId: string) => void;
 }>) => {
-    const interaction: DirectSessionsBrowseInteraction = props.interaction ?? 'openSession';
+    const interaction: ExternalSessionsBrowseInteraction = props.interaction ?? 'openSession';
     const lockScope = props.lockScope ?? null;
     const locked = Boolean(lockScope);
     const router = useRouter();
@@ -83,30 +83,30 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
     const machines = useAllMachines();
     const profile = useProfile();
     const settings = useSettings();
-    const providers = React.useMemo<ReadonlyArray<Readonly<{ id: DirectBrowseProviderId; label: string }>>>(
-        () => listDirectBrowseProviderIds().map((providerId) => ({
+    const providers = React.useMemo<ReadonlyArray<Readonly<{ id: ExternalSessionBrowseProviderId; label: string }>>>(
+        () => listExternalSessionBrowseProviderIds().map((providerId) => ({
             id: providerId,
             label: t(getAgentCore(providerId).displayNameKey),
         })),
         [],
     );
-    const providerIds = React.useMemo<readonly DirectBrowseProviderId[]>(() => providers.map((provider) => provider.id), [providers]);
+    const providerIds = React.useMemo<readonly ExternalSessionBrowseProviderId[]>(() => providers.map((provider) => provider.id), [providers]);
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => (
         lockScope?.machineId ?? getPreferredMachineId(machines, null)
     ));
-    const [selectedProviderId, setSelectedProviderId] = React.useState<DirectBrowseProviderId | null>(() => (
-        lockScope?.providerId ?? getPreferredDirectBrowseProviderId(providerIds, null)
+    const [selectedProviderId, setSelectedProviderId] = React.useState<ExternalSessionBrowseProviderId | null>(() => (
+        lockScope?.providerId ?? getPreferredExternalSessionBrowseProviderId(providerIds, null)
     ));
     const sourceOptions = React.useMemo(() => {
         if (lockScope) {
             return [{
                 key: 'locked',
-                label: t('directSessions.browseSources'),
+                label: t('externalSessions.browseSources'),
                 source: lockScope.source,
             }];
         }
         if (!selectedProviderId) return [];
-        return resolveDirectBrowseSourceOptions({
+        return resolveExternalSessionBrowseSourceOptions({
             providerId: selectedProviderId,
             profile,
             settings,
@@ -133,7 +133,7 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
 
     React.useEffect(() => {
         if (lockScope) return;
-        const preferredProviderId = getPreferredDirectBrowseProviderId(providerIds, selectedProviderId);
+        const preferredProviderId = getPreferredExternalSessionBrowseProviderId(providerIds, selectedProviderId);
         if (preferredProviderId !== selectedProviderId) {
             setSelectedProviderId(preferredProviderId);
         }
@@ -194,14 +194,14 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
         loadingMore,
         error,
         loadMore,
-    } = useDirectBrowseCandidates({
+    } = useExternalSessionBrowseCandidates({
         machineId: effectiveSelectedMachineId,
         serverId: lockScope?.serverId ?? null,
         providerId: selectedProviderId,
         source: selectedSource,
     });
 
-    const handleOpenCandidate = React.useCallback(async (candidate: DirectBrowseCandidate) => {
+    const handleOpenCandidate = React.useCallback(async (candidate: ExternalSessionBrowseCandidate) => {
         if (!effectiveSelectedMachineId || !selectedProviderId || !selectedSource) return;
         if (interaction === 'pickRemoteSessionId') {
             props.onPickRemoteSessionId?.(candidate.remoteSessionId);
@@ -209,15 +209,15 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
         }
         setLinkingSessionId(candidate.remoteSessionId);
         try {
-            const linkEnsureExtras = resolveDirectBrowseLinkEnsureRequestExtras({
+            const linkEnsureExtras = resolveExternalSessionBrowseLinkEnsureRequestExtras({
                 providerId: selectedProviderId,
                 source: selectedSource,
                 candidate,
             });
             const candidateSource = linkEnsureExtras.source && typeof linkEnsureExtras.source === 'object'
-                ? (linkEnsureExtras.source as DirectSessionsSource)
+                ? (linkEnsureExtras.source as ExternalSessionsSource)
                 : undefined;
-            const effectiveSource = resolveCompatibleDirectBrowseLinkSource({
+            const effectiveSource = resolveCompatibleExternalSessionBrowseLinkSource({
                 selectedSource,
                 candidateSource,
             });
@@ -226,20 +226,20 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                 providerId: selectedProviderId,
                 remoteSessionId: candidate.remoteSessionId,
                 ...(candidate.title ? { titleHint: candidate.title } : {}),
-                ...(readDirectBrowseCandidatePath(candidate.details) ? { directoryHint: readDirectBrowseCandidatePath(candidate.details)! } : {}),
+                ...(readExternalSessionBrowseCandidatePath(candidate.details) ? { directoryHint: readExternalSessionBrowseCandidatePath(candidate.details)! } : {}),
                 ...linkEnsureExtras,
                 source: effectiveSource,
             };
             const result = lockScope?.serverId
-                ? await machineDirectSessionLinkEnsure(request, { serverId: lockScope.serverId })
-                : await machineDirectSessionLinkEnsure(request);
+                ? await machineExternalSessionLinkEnsure(request, { serverId: lockScope.serverId })
+                : await machineExternalSessionLinkEnsure(request);
             if (!result.ok) {
                 Modal.alert(t('common.error'), result.error);
                 return;
             }
             router.push(`/session/${result.sessionId}` as any);
         } catch (linkError) {
-            Modal.alert(t('common.error'), linkError instanceof Error ? linkError.message : t('directSessions.browseLinkFailed'));
+            Modal.alert(t('common.error'), linkError instanceof Error ? linkError.message : t('externalSessions.browseLinkFailed'));
         } finally {
             setLinkingSessionId(null);
         }
@@ -250,12 +250,12 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
             {!locked ? (
                 <ItemGroup
                     style={styles.filtersGroup}
-                    title={t('directSessions.browseFiltersTitle')}
+                    title={t('externalSessions.browseFiltersTitle')}
                     containerStyle={styles.filtersGroupContainer}
                 >
                     {machines.length === 0 ? (
                         <Item
-                            title={t('directSessions.browseNoMachines')}
+                            title={t('externalSessions.browseNoMachines')}
                             mode="info"
                         />
                     ) : (
@@ -275,7 +275,7 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                             matchTriggerWidth={true}
                             connectToTrigger={true}
                             itemTrigger={{
-                                title: t('directSessions.browseMachines'),
+                                title: t('externalSessions.browseMachines'),
                                 icon: <Ionicons name="desktop-outline" size={18} color={theme.colors.textSecondary} />,
                                 subtitleFormatter: formatMachineTriggerSubtitle,
                                 showSelectedDetail: false,
@@ -290,7 +290,7 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                             items={providerMenuItems}
                             selectedId={selectedProviderId}
                             onSelect={(itemId) => {
-                                setSelectedProviderId(itemId as DirectBrowseProviderId);
+                                setSelectedProviderId(itemId as ExternalSessionBrowseProviderId);
                                 setProviderMenuOpen(false);
                             }}
                             showCategoryTitles={false}
@@ -299,7 +299,7 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                             matchTriggerWidth={true}
                             connectToTrigger={true}
                             itemTrigger={{
-                                title: t('directSessions.browseProviders'),
+                                title: t('externalSessions.browseProviders'),
                                 icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.textSecondary} />,
                                 subtitleFormatter: formatSelectedTitleSubtitle,
                                 showSelectedDetail: false,
@@ -323,7 +323,7 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                             matchTriggerWidth={true}
                             connectToTrigger={true}
                             itemTrigger={{
-                                title: t('directSessions.browseSources'),
+                                title: t('externalSessions.browseSources'),
                                 icon: <Ionicons name="folder-open-outline" size={18} color={theme.colors.textSecondary} />,
                                 subtitleFormatter: formatSelectedTitleSubtitle,
                                 showSelectedDetail: false,
@@ -337,7 +337,7 @@ export const DirectSessionsBrowseScreen = React.memo((props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            <DirectBrowseCandidatesList
+            <ExternalSessionBrowseCandidatesList
                 candidates={candidates}
                 loading={loading}
                 error={error}

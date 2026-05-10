@@ -4,10 +4,10 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import type { CustomModalInjectedProps } from '@/modal';
 
-import { DirectSessionsBrowseScreen, type DirectSessionsBrowseScopeLock } from './DirectSessionsBrowseScreen';
+import { ExternalSessionsBrowseScreen, type ExternalSessionsBrowseScopeLock } from './ExternalSessionsBrowseScreen';
 
-export type DirectSessionsResumeIdPickerModalProps = CustomModalInjectedProps & Readonly<{
-    lockScope: DirectSessionsBrowseScopeLock;
+export type ExternalSessionsResumeIdPickerModalProps = CustomModalInjectedProps & Readonly<{
+    lockScope: ExternalSessionsBrowseScopeLock;
     onResolve: (value: string | null) => void;
 }>;
 
@@ -18,13 +18,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const DirectSessionsResumeIdPickerModal = React.memo(function DirectSessionsResumeIdPickerModal(
-    props: DirectSessionsResumeIdPickerModalProps,
+export const ExternalSessionsResumeIdPickerModal = React.memo(function ExternalSessionsResumeIdPickerModal(
+    props: ExternalSessionsResumeIdPickerModalProps,
 ) {
     const styles = stylesheet;
     return (
         <View style={styles.body}>
-            <DirectSessionsBrowseScreen
+            <ExternalSessionsBrowseScreen
                 interaction="pickRemoteSessionId"
                 lockScope={props.lockScope}
                 onPickRemoteSessionId={(remoteSessionId) => {

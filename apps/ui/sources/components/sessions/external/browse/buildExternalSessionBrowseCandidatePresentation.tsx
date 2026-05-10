@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { DirectSessionActivityV1 } from '@happier-dev/protocol';
+import type { ExternalSessionActivityV1 } from '@happier-dev/protocol';
 
 import type { ResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
@@ -13,46 +13,46 @@ import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
 type AppTheme = typeof lightTheme;
 
-type DirectBrowseCandidate = Readonly<{
+type ExternalSessionBrowseCandidate = Readonly<{
     remoteSessionId: string;
     title?: string;
     updatedAtMs: number;
-    activity?: DirectSessionActivityV1;
+    activity?: ExternalSessionActivityV1;
     details?: Record<string, unknown>;
 }>;
 
-export function readDirectBrowseCandidatePath(details: Record<string, unknown> | undefined): string | null {
+export function readExternalSessionBrowseCandidatePath(details: Record<string, unknown> | undefined): string | null {
     const cwd = typeof details?.cwd === 'string' ? details.cwd.trim() : '';
     if (cwd) return cwd;
     const path = typeof details?.path === 'string' ? details.path.trim() : '';
     return path || null;
 }
 
-function normalizeCandidateTitle(candidate: DirectBrowseCandidate): string | null {
+function normalizeCandidateTitle(candidate: ExternalSessionBrowseCandidate): string | null {
     const title = typeof candidate.title === 'string' ? candidate.title.trim() : '';
     if (!title || title === candidate.remoteSessionId) return null;
     return title;
 }
 
-export function formatDirectBrowseCandidatePathLabel(path: string | null): string | null {
+export function formatExternalSessionBrowseCandidatePathLabel(path: string | null): string | null {
     const normalizedPath = typeof path === 'string' ? path.replace(/\\/g, '/').trim() : '';
     if (!normalizedPath) return null;
     return normalizedPath;
 }
 
-export function buildDirectBrowseCandidateDisplayTitle(candidate: DirectBrowseCandidate): string {
+export function buildExternalSessionBrowseCandidateDisplayTitle(candidate: ExternalSessionBrowseCandidate): string {
     const candidateTitle = normalizeCandidateTitle(candidate);
     if (candidateTitle) return candidateTitle;
 
-    const pathLabel = formatDirectBrowseCandidatePathLabel(readDirectBrowseCandidatePath(candidate.details));
+    const pathLabel = formatExternalSessionBrowseCandidatePathLabel(readExternalSessionBrowseCandidatePath(candidate.details));
     if (pathLabel) return pathLabel.split('/').filter(Boolean).at(-1) ?? pathLabel;
 
     return candidate.remoteSessionId;
 }
 
-function buildDirectBrowseCandidatePrimaryMeta(candidate: DirectBrowseCandidate): string | null {
+function buildExternalSessionBrowseCandidatePrimaryMeta(candidate: ExternalSessionBrowseCandidate): string | null {
     if (candidate.activity === 'running') {
-        return t('directSessions.browseActivityRunningNow');
+        return t('externalSessions.browseActivityRunningNow');
     }
 
     if (candidate.updatedAtMs > 0) {
@@ -65,19 +65,19 @@ function buildDirectBrowseCandidatePrimaryMeta(candidate: DirectBrowseCandidate)
     return null;
 }
 
-export function buildDirectBrowseCandidateSubtitle(
-    candidate: DirectBrowseCandidate,
+export function buildExternalSessionBrowseCandidateSubtitle(
+    candidate: ExternalSessionBrowseCandidate,
     theme: AppTheme,
     density: ResolvedItemDensity,
 ): React.ReactNode {
-    const pathLabel = formatDirectBrowseCandidatePathLabel(readDirectBrowseCandidatePath(candidate.details));
+    const pathLabel = formatExternalSessionBrowseCandidatePathLabel(readExternalSessionBrowseCandidatePath(candidate.details));
     const meaningfulTitle = normalizeCandidateTitle(candidate);
     const subtitleMetrics = ITEM_SUBTITLE_TEXT_METRICS[density];
     const subtitleTextStyle = {
         ...Typography.default('regular'),
         ...subtitleMetrics,
     } as const;
-    const primaryMeta = buildDirectBrowseCandidatePrimaryMeta(candidate);
+    const primaryMeta = buildExternalSessionBrowseCandidatePrimaryMeta(candidate);
     const secondaryLine = pathLabel ?? (!meaningfulTitle ? candidate.remoteSessionId : null);
 
     return (
@@ -122,11 +122,11 @@ export function buildDirectBrowseCandidateSubtitle(
     );
 }
 
-export function buildDirectBrowseCandidateSearchValue(candidate: DirectBrowseCandidate): string {
-    const path = readDirectBrowseCandidatePath(candidate.details);
+export function buildExternalSessionBrowseCandidateSearchValue(candidate: ExternalSessionBrowseCandidate): string {
+    const path = readExternalSessionBrowseCandidatePath(candidate.details);
 
     return [
-        buildDirectBrowseCandidateDisplayTitle(candidate),
+        buildExternalSessionBrowseCandidateDisplayTitle(candidate),
         typeof candidate.title === 'string' ? candidate.title : '',
         candidate.remoteSessionId,
         path ?? '',
@@ -135,8 +135,8 @@ export function buildDirectBrowseCandidateSearchValue(candidate: DirectBrowseCan
         .toLowerCase();
 }
 
-export function buildDirectBrowseCandidateRightElement(
-    candidate: DirectBrowseCandidate,
+export function buildExternalSessionBrowseCandidateRightElement(
+    candidate: ExternalSessionBrowseCandidate,
     theme: AppTheme,
     density: ResolvedItemDensity,
 ): React.ReactNode {
@@ -145,25 +145,25 @@ export function buildDirectBrowseCandidateRightElement(
             case 'running':
                 return {
                     color: theme.colors.success,
-                    label: t('directSessions.browseActivityRunning'),
+                    label: t('externalSessions.browseActivityRunning'),
                     pulsing: true,
                 };
             case 'active_recently':
                 return {
                     color: theme.colors.accent.orange,
-                    label: t('directSessions.browseActivityRecent'),
+                    label: t('externalSessions.browseActivityRecent'),
                     pulsing: false,
                 };
             case 'idle':
                 return {
                     color: theme.colors.textSecondary,
-                    label: t('directSessions.browseActivityIdle'),
+                    label: t('externalSessions.browseActivityIdle'),
                     pulsing: false,
                 };
             case 'unknown':
                 return {
                     color: theme.colors.textSecondary,
-                    label: t('directSessions.browseActivityUnknown'),
+                    label: t('externalSessions.browseActivityUnknown'),
                     pulsing: false,
                 };
             default:

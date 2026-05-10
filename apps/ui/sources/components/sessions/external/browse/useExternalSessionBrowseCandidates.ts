@@ -1,24 +1,24 @@
 import * as React from 'react';
-import type { DirectSessionActivityV1, DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionActivityV1, ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
 
-import { machineDirectSessionsCandidatesList } from '@/sync/ops/machineDirectSessions';
+import { machineExternalSessionsCandidatesList } from '@/sync/ops/machineExternalSessions';
 import { t } from '@/text';
 
-export type DirectBrowseCandidate = Readonly<{
+export type ExternalSessionBrowseCandidate = Readonly<{
     remoteSessionId: string;
     title?: string;
     updatedAtMs: number;
-    activity?: DirectSessionActivityV1;
+    activity?: ExternalSessionActivityV1;
     details?: Record<string, unknown>;
 }>;
 
 const CANDIDATES_PAGE_LIMIT = 50;
 
-export function useDirectBrowseCandidates(params: Readonly<{
+export function useExternalSessionBrowseCandidates(params: Readonly<{
     machineId: string | null;
     serverId?: string | null;
-    providerId: DirectSessionsProviderId | null;
-    source: DirectSessionsSource | null;
+    providerId: ExternalSessionsProviderId | null;
+    source: ExternalSessionsSource | null;
 }>) {
     const { machineId, providerId, source, serverId } = params;
     const currentScopeKey = React.useMemo(() => JSON.stringify({
@@ -28,7 +28,7 @@ export function useDirectBrowseCandidates(params: Readonly<{
         source,
     }), [machineId, providerId, serverId, source]);
 
-    const [candidates, setCandidates] = React.useState<readonly DirectBrowseCandidate[]>([]);
+    const [candidates, setCandidates] = React.useState<readonly ExternalSessionBrowseCandidate[]>([]);
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [loading, setLoading] = React.useState(false);
     const [loadingMore, setLoadingMore] = React.useState(false);
@@ -62,8 +62,8 @@ export function useDirectBrowseCandidates(params: Readonly<{
                 ...(opts?.cursor ? { cursor: opts.cursor } : {}),
             };
             const result = serverId
-                ? await machineDirectSessionsCandidatesList(request, { serverId })
-                : await machineDirectSessionsCandidatesList(request);
+                ? await machineExternalSessionsCandidatesList(request, { serverId })
+                : await machineExternalSessionsCandidatesList(request);
 
             if (loadGenerationRef.current !== currentGeneration) {
                 return;
@@ -84,7 +84,7 @@ export function useDirectBrowseCandidates(params: Readonly<{
                 updatedAtMs: candidate.updatedAtMs,
                 activity: candidate.activity,
                 details: candidate.details,
-            })) satisfies readonly DirectBrowseCandidate[];
+            })) satisfies readonly ExternalSessionBrowseCandidate[];
 
             setLoadedScopeKey(currentScopeKey);
             setCandidates((current) => append ? [...current, ...nextItems] : nextItems);
@@ -94,7 +94,7 @@ export function useDirectBrowseCandidates(params: Readonly<{
             if (loadGenerationRef.current !== currentGeneration) {
                 return;
             }
-            const message = loadError instanceof Error ? loadError.message : t('directSessions.browseFailedToLoad');
+            const message = loadError instanceof Error ? loadError.message : t('externalSessions.browseFailedToLoad');
             setLoadedScopeKey(currentScopeKey);
             setError(message);
             if (!append) {

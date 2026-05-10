@@ -1,19 +1,19 @@
-import type { DirectSessionsBrowseScopeLock } from './DirectSessionsBrowseScreen';
-import { DirectSessionsResumeIdPickerModal } from './DirectSessionsResumeIdPickerModal';
+import type { ExternalSessionsBrowseScopeLock } from './ExternalSessionsBrowseScreen';
+import { ExternalSessionsResumeIdPickerModal } from './ExternalSessionsResumeIdPickerModal';
 
 import { Modal } from '@/modal';
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
-export async function openDirectSessionsResumeIdPickerModal(params: Readonly<{
-    lockScope: DirectSessionsBrowseScopeLock;
+export async function openExternalSessionsResumeIdPickerModal(params: Readonly<{
+    lockScope: ExternalSessionsBrowseScopeLock;
     title?: string;
     webPortalTarget?: ModalPortalTarget;
 }>): Promise<string | null> {
     const deferred = createDeferredOnce<string | null>();
     Modal.show({
         webPortalTarget: params.webPortalTarget ?? null,
-        component: DirectSessionsResumeIdPickerModal,
+        component: ExternalSessionsResumeIdPickerModal,
         props: {
             lockScope: params.lockScope,
             onResolve: deferred.resolve,

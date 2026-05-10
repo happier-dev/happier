@@ -46,11 +46,11 @@ vi.mock('@/modal', async () => {
     }).module;
 });
 
-vi.mock('./DirectSessionsResumeIdPickerModal', () => ({
-    DirectSessionsResumeIdPickerModal: () => null,
+vi.mock('./ExternalSessionsResumeIdPickerModal', () => ({
+    ExternalSessionsResumeIdPickerModal: () => null,
 }));
 
-describe('openDirectSessionsResumeIdPickerModal', () => {
+describe('openExternalSessionsResumeIdPickerModal', () => {
     beforeEach(() => {
         showMock.mockReset();
     });
@@ -67,9 +67,9 @@ describe('openDirectSessionsResumeIdPickerModal', () => {
             return 'modal_1';
         });
 
-        const { openDirectSessionsResumeIdPickerModal } = await import('./openDirectSessionsResumeIdPickerModal');
+        const { openExternalSessionsResumeIdPickerModal } = await import('./openExternalSessionsResumeIdPickerModal');
 
-        const promise = openDirectSessionsResumeIdPickerModal({
+        const promise = openExternalSessionsResumeIdPickerModal({
             lockScope: {
                 machineId: 'machine_1',
                 serverId: 'server_1',

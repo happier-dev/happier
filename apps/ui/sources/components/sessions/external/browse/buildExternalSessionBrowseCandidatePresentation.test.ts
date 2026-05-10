@@ -33,9 +33,9 @@ vi.mock('@/text', async () => {
     } });
 });
 
-describe('buildDirectBrowseCandidatePresentation', () => {
+describe('buildExternalSessionBrowseCandidatePresentation', () => {
     it('renders full-path metadata with item-aligned text hierarchy and hides remote ids when a meaningful title exists', async () => {
-        const { buildDirectBrowseCandidateSubtitle } = await import('./buildDirectBrowseCandidatePresentation');
+        const { buildExternalSessionBrowseCandidateSubtitle } = await import('./buildExternalSessionBrowseCandidatePresentation');
         const mockTheme = {
             colors: {
                 success: '#0f0',
@@ -47,7 +47,7 @@ describe('buildDirectBrowseCandidatePresentation', () => {
             },
         } as any;
 
-        const subtitle = buildDirectBrowseCandidateSubtitle({
+        const subtitle = buildExternalSessionBrowseCandidateSubtitle({
             remoteSessionId: 'codex-session-1',
             title: 'Improve browse session UX',
             updatedAtMs: 1_700_000_000_000,
@@ -70,7 +70,7 @@ describe('buildDirectBrowseCandidatePresentation', () => {
     });
 
     it('falls back to the remote session id when there is no meaningful title or path', async () => {
-        const { buildDirectBrowseCandidateDisplayTitle, buildDirectBrowseCandidateSubtitle } = await import('./buildDirectBrowseCandidatePresentation');
+        const { buildExternalSessionBrowseCandidateDisplayTitle, buildExternalSessionBrowseCandidateSubtitle } = await import('./buildExternalSessionBrowseCandidatePresentation');
         const mockTheme = {
             colors: {
                 success: '#0f0',
@@ -82,11 +82,11 @@ describe('buildDirectBrowseCandidatePresentation', () => {
             },
         } as any;
 
-        expect(buildDirectBrowseCandidateDisplayTitle({
+        expect(buildExternalSessionBrowseCandidateDisplayTitle({
             remoteSessionId: 'sess_raw_1',
             updatedAtMs: 1_700_000_000_000,
         })).toBe('sess_raw_1');
-        const subtitle = buildDirectBrowseCandidateSubtitle({
+        const subtitle = buildExternalSessionBrowseCandidateSubtitle({
             remoteSessionId: 'sess_raw_1',
             updatedAtMs: 1_700_000_000_000,
             activity: 'idle',
@@ -97,7 +97,7 @@ describe('buildDirectBrowseCandidatePresentation', () => {
     });
 
     it('shows running now instead of a stale relative timestamp for running sessions', async () => {
-        const { buildDirectBrowseCandidateSubtitle } = await import('./buildDirectBrowseCandidatePresentation');
+        const { buildExternalSessionBrowseCandidateSubtitle } = await import('./buildExternalSessionBrowseCandidatePresentation');
         const mockTheme = {
             colors: {
                 success: '#0f0',
@@ -109,7 +109,7 @@ describe('buildDirectBrowseCandidatePresentation', () => {
             },
         } as any;
 
-        const subtitle = buildDirectBrowseCandidateSubtitle({
+        const subtitle = buildExternalSessionBrowseCandidateSubtitle({
             remoteSessionId: 'sess_live_1',
             title: 'Live codex session',
             updatedAtMs: 1_700_000_000_000,
@@ -120,7 +120,7 @@ describe('buildDirectBrowseCandidatePresentation', () => {
         }, mockTheme, 'compact');
 
         const screen = await renderScreen(React.createElement('View', null, subtitle));
-        expect(JSON.stringify(screen.tree.toJSON())).toContain('directSessions.browseActivityRunningNow');
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('externalSessions.browseActivityRunningNow');
         expect(JSON.stringify(screen.tree.toJSON())).toContain('/tmp/happier/dev');
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('3y ago');
     });

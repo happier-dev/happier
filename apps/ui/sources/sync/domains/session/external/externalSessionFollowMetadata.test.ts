@@ -3,15 +3,15 @@ import { describe, expect, it } from 'vitest';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import {
-    readDirectSessionFollowPolicy,
-    updateMetadataWithDirectSessionFollowPolicy,
-} from './directSessionFollowMetadata';
+    readExternalSessionFollowPolicy,
+    updateMetadataWithExternalSessionFollowPolicy,
+} from './externalSessionFollowMetadata';
 
-function createDirectSessionMetadata(policy?: 'attached_only' | 'background_follow'): Metadata {
+function createExternalSessionMetadata(policy?: 'attached_only' | 'background_follow'): Metadata {
     return {
         path: '/tmp',
         host: 'localhost',
-        directSessionV1: {
+        externalSessionV1: {
             v: 1,
             providerId: 'codex',
             machineId: 'machine-1',
@@ -22,22 +22,22 @@ function createDirectSessionMetadata(policy?: 'attached_only' | 'background_foll
     } as Metadata;
 }
 
-describe('directSessionFollowMetadata', () => {
+describe('externalSessionFollowMetadata', () => {
     it('defaults to attached_only when no follow policy is present', () => {
-        expect(readDirectSessionFollowPolicy(createDirectSessionMetadata())).toBe('attached_only');
+        expect(readExternalSessionFollowPolicy(createExternalSessionMetadata())).toBe('attached_only');
     });
 
     it('reads background_follow from canonical direct-session metadata', () => {
-        expect(readDirectSessionFollowPolicy(createDirectSessionMetadata('background_follow'))).toBe('background_follow');
+        expect(readExternalSessionFollowPolicy(createExternalSessionMetadata('background_follow'))).toBe('background_follow');
     });
 
     it('updates the nested direct-session policy without disturbing attention metadata', () => {
-        const next = updateMetadataWithDirectSessionFollowPolicy(createDirectSessionMetadata(), {
+        const next = updateMetadataWithExternalSessionFollowPolicy(createExternalSessionMetadata(), {
             policy: 'background_follow',
             updatedAtMs: 42,
         });
 
-        expect((next as any).directSessionV1).toEqual(expect.objectContaining({
+        expect((next as any).externalSessionV1).toEqual(expect.objectContaining({
             followPolicyV1: {
                 v: 1,
                 policy: 'background_follow',
@@ -47,7 +47,7 @@ describe('directSessionFollowMetadata', () => {
     });
 
     it('is a no-op when the requested policy already matches', () => {
-        const metadata = createDirectSessionMetadata('background_follow');
-        expect(updateMetadataWithDirectSessionFollowPolicy(metadata, { policy: 'background_follow' })).toBe(metadata);
+        const metadata = createExternalSessionMetadata('background_follow');
+        expect(updateMetadataWithExternalSessionFollowPolicy(metadata, { policy: 'background_follow' })).toBe(metadata);
     });
 });

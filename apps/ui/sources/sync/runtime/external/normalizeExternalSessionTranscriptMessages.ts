@@ -1,8 +1,8 @@
-import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { normalizeRawMessage, type NormalizedMessage } from '@/sync/typesRaw';
 
-export function normalizeDirectTranscriptMessages(items: ReadonlyArray<DirectTranscriptRawMessageV1>): NormalizedMessage[] {
+export function normalizeExternalSessionTranscriptMessages(items: ReadonlyArray<ExternalSessionTranscriptRawMessageV1>): NormalizedMessage[] {
     const out: NormalizedMessage[] = [];
     for (const item of items) {
         const normalized = normalizeRawMessage(

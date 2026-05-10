@@ -5,19 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
-const machineDirectSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, converted: true })));
+const machineExternalSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
+const machineExternalSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, converted: true })));
 const refreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async () => {}));
 const refreshSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
-const showDirectSessionTakeoverDialogSpy = vi.hoisted(() =>
+const showExternalSessionTakeoverDialogSpy = vi.hoisted(() =>
   vi.fn<() => Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>>(async () => ({ action: null, forceStop: false })),
 );
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 
 let activeServerId = 'server-1';
 
-vi.mock('@/components/sessions/external/takeover/showDirectSessionTakeoverDialog', () => ({
-  showDirectSessionTakeoverDialog: showDirectSessionTakeoverDialogSpy,
+vi.mock('@/components/sessions/external/takeover/showExternalSessionTakeoverDialog', () => ({
+  showExternalSessionTakeoverDialog: showExternalSessionTakeoverDialogSpy,
 }));
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -37,9 +37,9 @@ vi.mock('@/text', async () => {
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: activeServerId }),
 }));
-vi.mock('@/sync/ops/machineDirectSessions', () => ({
-  machineDirectSessionTakeover: machineDirectSessionTakeoverSpy,
-  machineDirectSessionTakeoverPersist: machineDirectSessionTakeoverPersistSpy,
+vi.mock('@/sync/ops/machineExternalSessions', () => ({
+  machineExternalSessionTakeover: machineExternalSessionTakeoverSpy,
+  machineExternalSessionTakeoverPersist: machineExternalSessionTakeoverPersistSpy,
 }));
 vi.mock('@/sync/sync', () => ({
   sync: {
@@ -48,32 +48,32 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-type HookValue = ReturnType<typeof import('./useDirectSessionTakeover')['useDirectSessionTakeover']>;
-type DirectSessionRuntimeLike = Parameters<typeof import('./useDirectSessionTakeover')['useDirectSessionTakeover']>[0]['directSessionRuntime'];
+type HookValue = ReturnType<typeof import('./useExternalSessionTakeover')['useExternalSessionTakeover']>;
+type ExternalSessionRuntimeLike = Parameters<typeof import('./useExternalSessionTakeover')['useExternalSessionTakeover']>[0]['externalSessionRuntime'];
 
 async function renderHarness(
-  directSessionRuntime: DirectSessionRuntimeLike,
+  externalSessionRuntime: ExternalSessionRuntimeLike,
 ): Promise<{ getCurrent: () => HookValue; unmount: () => void }> {
-  const { useDirectSessionTakeover } = await import('./useDirectSessionTakeover');
+  const { useExternalSessionTakeover } = await import('./useExternalSessionTakeover');
 
   return renderHook(
-    (runtime: DirectSessionRuntimeLike) =>
-      useDirectSessionTakeover({ sessionId: 's1', hasWriteAccess: true, directSessionRuntime: runtime }),
+    (runtime: ExternalSessionRuntimeLike) =>
+      useExternalSessionTakeover({ sessionId: 's1', hasWriteAccess: true, externalSessionRuntime: runtime }),
     {
-      initialProps: directSessionRuntime,
+      initialProps: externalSessionRuntime,
     },
   );
 }
 
-describe('useDirectSessionTakeover', () => {
-  const directSessionLink: NonNullable<DirectSessionRuntimeLike['directSessionLink']> = {
+describe('useExternalSessionTakeover', () => {
+  const externalSessionLink: NonNullable<ExternalSessionRuntimeLike['externalSessionLink']> = {
     v: 1,
     providerId: 'codex',
     machineId: 'machine-1',
     remoteSessionId: 'vendor-session-1',
     source: { kind: 'codexHome', home: 'user' },
   };
-  const status: NonNullable<DirectSessionRuntimeLike['status']> = {
+  const status: NonNullable<ExternalSessionRuntimeLike['status']> = {
     ok: true,
     machineOnline: true,
     runnerActive: false,
@@ -85,16 +85,16 @@ describe('useDirectSessionTakeover', () => {
 
   beforeEach(() => {
     activeServerId = 'server-1';
-    machineDirectSessionTakeoverSpy.mockReset();
-    machineDirectSessionTakeoverPersistSpy.mockReset();
-    machineDirectSessionTakeoverSpy.mockResolvedValue({ ok: true });
-    machineDirectSessionTakeoverPersistSpy.mockResolvedValue({ ok: true, converted: true });
+    machineExternalSessionTakeoverSpy.mockReset();
+    machineExternalSessionTakeoverPersistSpy.mockReset();
+    machineExternalSessionTakeoverSpy.mockResolvedValue({ ok: true });
+    machineExternalSessionTakeoverPersistSpy.mockResolvedValue({ ok: true, converted: true });
     refreshSessionMessagesSpy.mockReset();
     refreshSessionMessagesSpy.mockResolvedValue(undefined);
     refreshSessionsSpy.mockReset();
     refreshSessionsSpy.mockResolvedValue(undefined);
-    showDirectSessionTakeoverDialogSpy.mockReset();
-    showDirectSessionTakeoverDialogSpy.mockResolvedValue({ action: null, forceStop: false });
+    showExternalSessionTakeoverDialogSpy.mockReset();
+    showExternalSessionTakeoverDialogSpy.mockResolvedValue({ action: null, forceStop: false });
     modalAlertSpy.mockReset();
   });
 
@@ -104,14 +104,14 @@ describe('useDirectSessionTakeover', () => {
 
   it('uses the owning session server when footer takeover is requested after an active-server switch', async () => {
     const refreshNow = vi.fn(async () => status);
-    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
+    const harness = await renderHarness({ externalSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
 
     activeServerId = 'server-2';
     await act(async () => {
       await harness.getCurrent().requestTakeover('direct');
     });
 
-    expect(machineDirectSessionTakeoverSpy).toHaveBeenCalledWith(
+    expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith(
       { machineId: 'machine-1', sessionId: 's1' },
       { serverId: 'server-owned' },
     );
@@ -120,13 +120,13 @@ describe('useDirectSessionTakeover', () => {
 
   it('uses the runtime-provided session server id for takeover requests', async () => {
     const refreshNow = vi.fn(async () => status);
-    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-runtime' });
+    const harness = await renderHarness({ externalSessionLink, status, refreshNow, sessionServerId: 'server-runtime' });
 
     await act(async () => {
       await harness.getCurrent().requestTakeover('direct');
     });
 
-    expect(machineDirectSessionTakeoverSpy).toHaveBeenCalledWith(
+    expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith(
       { machineId: 'machine-1', sessionId: 's1' },
       { serverId: 'server-runtime' },
     );
@@ -138,7 +138,7 @@ describe('useDirectSessionTakeover', () => {
       ...status,
       machineOnline: false,
     }));
-    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
+    const harness = await renderHarness({ externalSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
 
     activeServerId = 'server-2';
     let ready = true;
@@ -148,27 +148,27 @@ describe('useDirectSessionTakeover', () => {
 
     expect(ready).toBe(false);
     expect(refreshNow).toHaveBeenCalledTimes(1);
-    expect(machineDirectSessionTakeoverSpy).not.toHaveBeenCalled();
-    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'chatFooter.directSessionMachineOffline');
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'chatFooter.externalSessionMachineOffline');
     await harness.unmount();
   });
 
   it('uses the owning session server when send takeover is confirmed after an active-server switch', async () => {
     const refreshNow = vi.fn(async () => status);
-    showDirectSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
-    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
+    const harness = await renderHarness({ externalSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
 
     activeServerId = 'server-2';
     await act(async () => {
       await harness.getCurrent().ensureReadyForSend();
     });
 
-    expect(showDirectSessionTakeoverDialogSpy).toHaveBeenCalledWith({
+    expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith({
       canTakeOverDirect: true,
       canTakeOverPersist: true,
       canForceStop: false,
     });
-    expect(machineDirectSessionTakeoverSpy).toHaveBeenCalledWith(
+    expect(machineExternalSessionTakeoverSpy).toHaveBeenCalledWith(
       { machineId: 'machine-1', sessionId: 's1' },
       { serverId: 'server-owned' },
     );
@@ -180,7 +180,7 @@ describe('useDirectSessionTakeover', () => {
       ...status,
       runnerActive: true,
     }));
-    const harness = await renderHarness({ directSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
+    const harness = await renderHarness({ externalSessionLink, status, refreshNow, sessionServerId: 'server-owned' });
 
     activeServerId = 'server-2';
     let ready = false;
@@ -190,8 +190,8 @@ describe('useDirectSessionTakeover', () => {
 
     expect(ready).toBe(true);
     expect(refreshNow).toHaveBeenCalledTimes(1);
-    expect(showDirectSessionTakeoverDialogSpy).not.toHaveBeenCalled();
-    expect(machineDirectSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(showExternalSessionTakeoverDialogSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
     await harness.unmount();
   });
 });

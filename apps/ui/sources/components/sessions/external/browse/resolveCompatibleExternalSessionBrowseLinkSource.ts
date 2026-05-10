@@ -1,11 +1,11 @@
-import type { DirectSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
 function normalizeOptionalString(value: string | null | undefined): string | null {
     const normalized = value?.trim() ?? '';
     return normalized.length > 0 ? normalized : null;
 }
 
-function isCompatibleDirectBrowseLinkSource(selectedSource: DirectSessionsSource, candidateSource: DirectSessionsSource): boolean {
+function isCompatibleExternalSessionBrowseLinkSource(selectedSource: ExternalSessionsSource, candidateSource: ExternalSessionsSource): boolean {
     if (selectedSource.kind !== candidateSource.kind) {
         return false;
     }
@@ -43,14 +43,14 @@ function isCompatibleDirectBrowseLinkSource(selectedSource: DirectSessionsSource
     return false;
 }
 
-export function resolveCompatibleDirectBrowseLinkSource(params: Readonly<{
-    selectedSource: DirectSessionsSource;
-    candidateSource?: DirectSessionsSource | null;
-}>): DirectSessionsSource {
+export function resolveCompatibleExternalSessionBrowseLinkSource(params: Readonly<{
+    selectedSource: ExternalSessionsSource;
+    candidateSource?: ExternalSessionsSource | null;
+}>): ExternalSessionsSource {
     if (!params.candidateSource) {
         return params.selectedSource;
     }
-    return isCompatibleDirectBrowseLinkSource(params.selectedSource, params.candidateSource)
+    return isCompatibleExternalSessionBrowseLinkSource(params.selectedSource, params.candidateSource)
         ? params.candidateSource
         : params.selectedSource;
 }

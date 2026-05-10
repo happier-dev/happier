@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DirectSessionCandidateV1 } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateV1 } from '@happier-dev/protocol';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -29,7 +29,7 @@ const candidatesListSpy = vi.hoisted(() => vi.fn(async () => ({
                 source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
             },
         },
-    ] as DirectSessionCandidateV1[],
+    ] as ExternalSessionCandidateV1[],
     nextCursor: null,
 })));
 const linkEnsureSpy = vi.hoisted(() => vi.fn(async () => ({
@@ -115,12 +115,12 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
 
-vi.mock('@/sync/ops/machineDirectSessions', () => ({
-    machineDirectSessionsCandidatesList: candidatesListSpy,
-    machineDirectSessionLinkEnsure: linkEnsureSpy,
+vi.mock('@/sync/ops/machineExternalSessions', () => ({
+    machineExternalSessionsCandidatesList: candidatesListSpy,
+    machineExternalSessionLinkEnsure: linkEnsureSpy,
 }));
 
-const directSessionsBrowseScreenModulePromise = import('./DirectSessionsBrowseScreen');
+const externalSessionsBrowseScreenModulePromise = import('./ExternalSessionsBrowseScreen');
 
 type DropdownTriggerPresentation = Readonly<{
     title: string;
@@ -152,7 +152,7 @@ function findDropdownMenuByTriggerTestId(
     return screen.findAllByType('DropdownMenu').find((node) => node.props?.itemTrigger?.itemProps?.testID === testID);
 }
 
-describe('DirectSessionsBrowseScreen', () => {
+describe('ExternalSessionsBrowseScreen', () => {
     beforeEach(() => {
         machinesState = [
             { id: 'machine-1', active: true, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
@@ -165,8 +165,8 @@ describe('DirectSessionsBrowseScreen', () => {
     });
 
     it('loads candidates for the default machine and provider', async () => {
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
-        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
 
         await flushHookEffects();
 
@@ -185,7 +185,7 @@ describe('DirectSessionsBrowseScreen', () => {
         expect(providerDropdown).toBeTruthy();
         expect(sourceDropdown).toBeTruthy();
         const itemGroups = screen.findAllByType('ItemGroup' as any);
-        expect(itemGroups[0]?.props.title).toBe('directSessions.browseFiltersTitle');
+        expect(itemGroups[0]?.props.title).toBe('externalSessions.browseFiltersTitle');
         expect(machineDropdown?.props?.itemTrigger?.itemProps?.density).toBeUndefined();
         expect(providerDropdown?.props?.itemTrigger?.itemProps?.density).toBeUndefined();
         expect(sourceDropdown?.props?.itemTrigger?.itemProps?.density).toBeUndefined();
@@ -217,7 +217,7 @@ describe('DirectSessionsBrowseScreen', () => {
         const candidateSubtitle = candidateItem?.props.subtitle;
         expect(React.isValidElement(candidateSubtitle)).toBe(true);
         const candidateSubtitleLines = React.Children.toArray((candidateSubtitle as any).props.children) as any[];
-        expect(String(candidateSubtitleLines[0]?.props?.children)).toContain('directSessions.browseActivityRunningNow');
+        expect(String(candidateSubtitleLines[0]?.props?.children)).toContain('externalSessions.browseActivityRunningNow');
         expect(String(candidateSubtitleLines[2]?.props?.children)).toContain('/tmp/worktree');
         expect(candidateSubtitleLines.map((line) => String(line?.props?.children ?? '')).join('\n')).not.toContain('codex-session-1');
         expect(candidateItem?.props.density).toBeUndefined();
@@ -225,7 +225,7 @@ describe('DirectSessionsBrowseScreen', () => {
         const badgeChildren = React.Children.toArray(candidateItem!.props.rightElement.props.children);
         const statusDot = badgeChildren.find((child: any) => child?.type === 'StatusDot');
         const badgeText = badgeChildren.find((child: any) => typeof child?.props?.children === 'string');
-        expect(String((badgeText as any)?.props?.children)).toBe('directSessions.browseActivityRunning');
+        expect(String((badgeText as any)?.props?.children)).toBe('externalSessions.browseActivityRunning');
         expect((statusDot as any)?.props?.isPulsing).toBe(true);
     });
 
@@ -247,9 +247,9 @@ describe('DirectSessionsBrowseScreen', () => {
             ],
             nextCursor: null,
         } as any);
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
 
-        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
 
         await flushHookEffects();
 
@@ -263,7 +263,7 @@ describe('DirectSessionsBrowseScreen', () => {
         const badgeChildren = React.Children.toArray(candidateItem!.props.rightElement.props.children);
         const statusDot = badgeChildren.find((child: any) => child?.type === 'StatusDot');
         const badgeText = badgeChildren.find((child: any) => typeof child?.props?.children === 'string');
-        expect(String((badgeText as any)?.props?.children)).toBe('directSessions.browseActivityRecent');
+        expect(String((badgeText as any)?.props?.children)).toBe('externalSessions.browseActivityRecent');
         expect((statusDot as any)?.props?.isPulsing).toBe(false);
     });
 
@@ -272,9 +272,9 @@ describe('DirectSessionsBrowseScreen', () => {
             { id: 'machine-offline', active: false, metadata: { displayName: 'Offline Mac', host: 'offline.local' } },
             { id: 'machine-active', active: true, metadata: { displayName: 'Active Mac', host: 'active.local' } },
         ];
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
 
-        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
 
         await flushHookEffects();
 
@@ -310,15 +310,15 @@ describe('DirectSessionsBrowseScreen', () => {
             ],
             nextCursor: null,
         });
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
 
-        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
 
         await flushHookEffects();
 
         const searchInput = screen.findByTestId('direct-session-candidates-search-input');
         expect(searchInput).toBeTruthy();
-        expect(searchInput!.props.placeholder).toBe('directSessions.browseSearchPlaceholder');
+        expect(searchInput!.props.placeholder).toBe('externalSessions.browseSearchPlaceholder');
 
         await act(async () => {
             searchInput!.props.onChangeText('opencode');
@@ -330,8 +330,8 @@ describe('DirectSessionsBrowseScreen', () => {
     });
 
     it('links the selected provider session and navigates to the Happier session', async () => {
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
-        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
 
         await flushHookEffects();
 
@@ -353,8 +353,8 @@ describe('DirectSessionsBrowseScreen', () => {
     });
 
     it('switches to the codex connected-service source before linking', async () => {
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
-        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
         const tree = screen.tree;
 
         await flushHookEffects();
@@ -391,7 +391,7 @@ describe('DirectSessionsBrowseScreen', () => {
             nextCursor: null,
         });
         await act(async () => {
-            tree.update(<DirectSessionsBrowseScreen />);
+            tree.update(<ExternalSessionsBrowseScreen />);
         });
         await flushHookEffects();
 
@@ -438,8 +438,8 @@ describe('DirectSessionsBrowseScreen', () => {
             ],
             nextCursor: null,
         });
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
-        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
         const tree = screen.tree;
 
         await flushHookEffects();
@@ -473,7 +473,7 @@ describe('DirectSessionsBrowseScreen', () => {
         });
 
         await act(async () => {
-            tree.update(<DirectSessionsBrowseScreen />);
+            tree.update(<ExternalSessionsBrowseScreen />);
         });
         await flushHookEffects();
 
@@ -500,8 +500,8 @@ describe('DirectSessionsBrowseScreen', () => {
     });
 
     it('recovers when the selected machine disappears from the machine list', async () => {
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
-        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
         const tree = screen.tree;
 
         await flushHookEffects();
@@ -523,7 +523,7 @@ describe('DirectSessionsBrowseScreen', () => {
         machinesState = [{ id: 'machine-1', active: true, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } }];
 
         await act(async () => {
-            tree.update(<DirectSessionsBrowseScreen key="rerendered" />);
+            tree.update(<ExternalSessionsBrowseScreen key="rerendered" />);
         });
         await flushHookEffects();
 
@@ -575,9 +575,9 @@ describe('DirectSessionsBrowseScreen', () => {
                 nextCursor: null,
             };
         });
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
 
-        const screen = await renderScreen(<DirectSessionsBrowseScreen />);
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
         const tree = screen.tree;
 
         await flushHookEffects();
@@ -634,12 +634,12 @@ describe('DirectSessionsBrowseScreen', () => {
     });
 
     it('can be used as a locked picker that returns a remote session id without linking', async () => {
-        const { DirectSessionsBrowseScreen } = await directSessionsBrowseScreenModulePromise;
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
 
         const onPickRemoteSessionId = vi.fn();
 
         const screen = await renderScreen(
-            <DirectSessionsBrowseScreen
+            <ExternalSessionsBrowseScreen
                 interaction="pickRemoteSessionId"
                 lockScope={{
                     machineId: 'machine-2',

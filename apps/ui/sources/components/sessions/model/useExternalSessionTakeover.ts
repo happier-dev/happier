@@ -1,34 +1,34 @@
 import * as React from 'react';
 
-import { showDirectSessionTakeoverDialog } from '@/components/sessions/external/takeover/showDirectSessionTakeoverDialog';
+import { showExternalSessionTakeoverDialog } from '@/components/sessions/external/takeover/showExternalSessionTakeoverDialog';
 import { Modal } from '@/modal';
-import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
-import { machineDirectSessionTakeover, machineDirectSessionTakeoverPersist } from '@/sync/ops/machineDirectSessions';
+import type { UseExternalSessionRuntimeResult } from '@/components/sessions/model/useExternalSessionRuntime';
+import { machineExternalSessionTakeover, machineExternalSessionTakeoverPersist } from '@/sync/ops/machineExternalSessions';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 
 type DirectTakeoverMode = 'direct' | 'persisted';
 
-type UseDirectSessionTakeoverParams = Readonly<{
+type UseExternalSessionTakeoverParams = Readonly<{
     sessionId: string;
     hasWriteAccess: boolean;
-    directSessionRuntime: Pick<UseDirectSessionRuntimeResult, 'directSessionLink' | 'sessionServerId' | 'status' | 'refreshNow'>;
+    externalSessionRuntime: Pick<UseExternalSessionRuntimeResult, 'externalSessionLink' | 'sessionServerId' | 'status' | 'refreshNow'>;
 }>;
 
-type UseDirectSessionTakeoverResult = Readonly<{
+type UseExternalSessionTakeoverResult = Readonly<{
     takeoverInFlight: DirectTakeoverMode | null;
     requestTakeover: (mode: DirectTakeoverMode, options?: Readonly<{ forceStop?: boolean; promptForForceStop?: boolean }>) => Promise<boolean>;
     ensureReadyForSend: () => Promise<boolean>;
 }>;
 
-export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams): UseDirectSessionTakeoverResult {
+export function useExternalSessionTakeover(params: UseExternalSessionTakeoverParams): UseExternalSessionTakeoverResult {
     const [takeoverInFlight, setTakeoverInFlight] = React.useState<DirectTakeoverMode | null>(null);
     const normalizedSessionId = React.useMemo(() => normalizeSessionId(params.sessionId), [params.sessionId]);
 
     const readLatestStatus = React.useCallback(async () => {
-        return await params.directSessionRuntime.refreshNow();
-    }, [params.directSessionRuntime]);
+        return await params.externalSessionRuntime.refreshNow();
+    }, [params.externalSessionRuntime]);
 
     const requestTakeover = React.useCallback(async (
         mode: DirectTakeoverMode,
@@ -39,8 +39,8 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
             return false;
         }
 
-        const directSessionLink = params.directSessionRuntime.directSessionLink;
-        if (!directSessionLink) {
+        const externalSessionLink = params.externalSessionRuntime.externalSessionLink;
+        if (!externalSessionLink) {
             return false;
         }
 
@@ -49,7 +49,7 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
             return false;
         }
         if (!latestStatus.machineOnline) {
-            Modal.alert(t('common.error'), t('chatFooter.directSessionMachineOffline'));
+            Modal.alert(t('common.error'), t('chatFooter.externalSessionMachineOffline'));
             return false;
         }
 
@@ -72,14 +72,14 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
         setTakeoverInFlight(mode);
         try {
             const request = {
-                machineId: directSessionLink.machineId,
+                machineId: externalSessionLink.machineId,
                 sessionId: normalizedSessionId,
                 ...(forceStop ? { forceStop: true } : {}),
             };
-            const serverId = params.directSessionRuntime.sessionServerId;
+            const serverId = params.externalSessionRuntime.sessionServerId;
             const result = mode === 'persisted'
-                ? await machineDirectSessionTakeoverPersist(request, { serverId })
-                : await machineDirectSessionTakeover(request, { serverId });
+                ? await machineExternalSessionTakeoverPersist(request, { serverId })
+                : await machineExternalSessionTakeover(request, { serverId });
 
             if (!result.ok) {
                 Modal.alert(t('common.error'), result.error);
@@ -87,7 +87,7 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
             }
 
             await Promise.all([
-                params.directSessionRuntime.refreshNow(),
+                params.externalSessionRuntime.refreshNow(),
                 sync.refreshSessionMessages(normalizedSessionId),
                 mode === 'persisted' ? sync.refreshSessions() : Promise.resolve(),
             ]);
@@ -99,11 +99,11 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
         } finally {
             setTakeoverInFlight(null);
         }
-    }, [normalizedSessionId, params.directSessionRuntime, params.hasWriteAccess, readLatestStatus]);
+    }, [normalizedSessionId, params.externalSessionRuntime, params.hasWriteAccess, readLatestStatus]);
 
     const ensureReadyForSend = React.useCallback(async (): Promise<boolean> => {
-        const directSessionLink = params.directSessionRuntime.directSessionLink;
-        if (!directSessionLink) {
+        const externalSessionLink = params.externalSessionRuntime.externalSessionLink;
+        if (!externalSessionLink) {
             return true;
         }
 
@@ -115,11 +115,11 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
             return true;
         }
         if (!latestStatus.machineOnline) {
-            Modal.alert(t('common.error'), t('chatFooter.directSessionMachineOffline'));
+            Modal.alert(t('common.error'), t('chatFooter.externalSessionMachineOffline'));
             return false;
         }
 
-        const resolution = await showDirectSessionTakeoverDialog({
+        const resolution = await showExternalSessionTakeoverDialog({
             canTakeOverDirect: latestStatus.canTakeOverDirect,
             canTakeOverPersist: latestStatus.canTakeOverPersist,
             canForceStop: latestStatus.canForceStop,
@@ -132,7 +132,7 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
             forceStop: resolution.forceStop,
             promptForForceStop: false,
         });
-    }, [params.directSessionRuntime, readLatestStatus, requestTakeover]);
+    }, [params.externalSessionRuntime, readLatestStatus, requestTakeover]);
 
     return React.useMemo(() => ({
         takeoverInFlight,

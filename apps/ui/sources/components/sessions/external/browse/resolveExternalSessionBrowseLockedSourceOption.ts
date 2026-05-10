@@ -1,29 +1,29 @@
-import type { AccountProfile, DirectSessionsProviderId, DirectSessionsSource } from '@happier-dev/protocol';
+import type { AccountProfile, ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { getAgentBehavior, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
 
-import { resolveDirectBrowseSourceOptions } from './resolveDirectBrowseSourceOptions';
+import { resolveExternalSessionBrowseSourceOptions } from './resolveExternalSessionBrowseSourceOptions';
 
-export function canBrowseDirectSessions(agentId: AgentId): boolean {
+export function canBrowseExternalSessions(agentId: AgentId): boolean {
     return getAgentCore(agentId).sessionStorage.direct === true
-        && typeof getAgentBehavior(agentId).directSessions?.browse?.getSourceOptions === 'function';
+        && typeof getAgentBehavior(agentId).externalSessions?.browse?.getSourceOptions === 'function';
 }
 
-export function resolveDirectBrowseLockedSource(params: Readonly<{
-    providerId: DirectSessionsProviderId;
+export function resolveExternalSessionBrowseLockedSource(params: Readonly<{
+    providerId: ExternalSessionsProviderId;
     agentOptionState?: Record<string, unknown> | null;
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
-}>): DirectSessionsSource | null {
-    const sourceOptions = resolveDirectBrowseSourceOptions({
+}>): ExternalSessionsSource | null {
+    const sourceOptions = resolveExternalSessionBrowseSourceOptions({
         providerId: params.providerId,
         profile: params.profile,
         settings: params.settings,
     });
     if (sourceOptions.length === 0) return null;
 
-    const resolver = getAgentBehavior(params.providerId as unknown as AgentId).directSessions?.browse?.resolveLockedSourceOption;
+    const resolver = getAgentBehavior(params.providerId as unknown as AgentId).externalSessions?.browse?.resolveLockedSourceOption;
     const resolvedOption = resolver
         ? resolver({
             agentId: params.providerId as unknown as AgentId,

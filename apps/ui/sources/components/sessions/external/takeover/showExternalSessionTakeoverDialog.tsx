@@ -10,18 +10,18 @@ import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import type { CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 
-export type DirectSessionTakeoverDialogAction = 'direct' | 'persisted';
+export type ExternalSessionTakeoverDialogAction = 'direct' | 'persisted';
 
-export type DirectSessionTakeoverDialogResult = Readonly<{
-    action: DirectSessionTakeoverDialogAction | null;
+export type ExternalSessionTakeoverDialogResult = Readonly<{
+    action: ExternalSessionTakeoverDialogAction | null;
     forceStop: boolean;
 }>;
 
-type DirectSessionTakeoverDialogProps = CustomModalInjectedProps & Readonly<{
+type ExternalSessionTakeoverDialogProps = CustomModalInjectedProps & Readonly<{
     canTakeOverDirect: boolean;
     canTakeOverPersist: boolean;
     canForceStop: boolean;
-    onResolve: (result: DirectSessionTakeoverDialogResult) => void;
+    onResolve: (result: ExternalSessionTakeoverDialogResult) => void;
     onRequestClose?: () => void;
 }>;
 
@@ -90,12 +90,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export function DirectSessionTakeoverDialog(props: DirectSessionTakeoverDialogProps) {
+export function ExternalSessionTakeoverDialog(props: ExternalSessionTakeoverDialogProps) {
     useUnistyles();
     const styles = stylesheet;
     const [forceStop, setForceStop] = React.useState(false);
 
-    const resolve = React.useCallback((result: DirectSessionTakeoverDialogResult) => {
+    const resolve = React.useCallback((result: ExternalSessionTakeoverDialogResult) => {
         props.onResolve(result);
         props.onClose();
     }, [props.onClose, props.onResolve]);
@@ -149,14 +149,14 @@ export function DirectSessionTakeoverDialog(props: DirectSessionTakeoverDialogPr
     );
 }
 
-export async function showDirectSessionTakeoverDialog(params: Readonly<{
+export async function showExternalSessionTakeoverDialog(params: Readonly<{
     canTakeOverDirect: boolean;
     canTakeOverPersist: boolean;
     canForceStop: boolean;
-}>): Promise<DirectSessionTakeoverDialogResult> {
-    const deferred = createDeferredOnce<DirectSessionTakeoverDialogResult>();
+}>): Promise<ExternalSessionTakeoverDialogResult> {
+    const deferred = createDeferredOnce<ExternalSessionTakeoverDialogResult>();
     Modal.show({
-        component: DirectSessionTakeoverDialog,
+        component: ExternalSessionTakeoverDialog,
         props: {
             canTakeOverDirect: params.canTakeOverDirect,
             canTakeOverPersist: params.canTakeOverPersist,
@@ -169,6 +169,7 @@ export async function showDirectSessionTakeoverDialog(params: Readonly<{
             title: t('chatFooter.directTakeoverDialogTitle'),
             subtitle: t('chatFooter.directTakeoverDialogBody'),
             testID: 'direct-session-takeover-dialog',
+            bodyScroll: 'auto',
             dimensions: { width: 560, maxHeightRatio: 0.85, size: 'md' },
         },
         closeOnBackdrop: true,

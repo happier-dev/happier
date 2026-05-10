@@ -6,7 +6,7 @@ describe('resolveSessionMachineId', () => {
   it('prefers the top-level session machine id when present', () => {
     expect(resolveSessionMachineId({
       machineId: ' machine-top ',
-      directSessionV1: {
+      externalSessionV1: {
         v: 1,
         providerId: 'claude',
         machineId: 'machine-direct',
@@ -18,7 +18,7 @@ describe('resolveSessionMachineId', () => {
 
   it('falls back to the linked direct-session machine id when the top-level machine id is absent', () => {
     expect(resolveSessionMachineId({
-      directSessionV1: {
+      externalSessionV1: {
         v: 1,
         providerId: 'claude',
         machineId: ' machine-direct ',
@@ -26,6 +26,18 @@ describe('resolveSessionMachineId', () => {
         source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
       },
     } as any)).toBe('machine-direct');
+  });
+
+  it('falls back to the legacy direct-session machine id when canonical metadata is absent', () => {
+    expect(resolveSessionMachineId({
+      directSessionV1: {
+        v: 1,
+        providerId: 'claude',
+        machineId: ' machine-legacy ',
+        remoteSessionId: 'remote-1',
+        source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+      },
+    } as any)).toBe('machine-legacy');
   });
 
   it('returns null when neither machine id source is available', () => {

@@ -1,4 +1,4 @@
-import { readDirectSessionLink } from './readDirectSessionLink';
+import { readExternalSessionLink } from './readExternalSessionLink';
 
 function normalizeMachineId(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -14,5 +14,5 @@ function readTopLevelMachineId(metadata: unknown): string | null {
 export function resolveSessionMachineId(metadata: unknown): string | null {
   const topLevelMachineId = readTopLevelMachineId(metadata);
   if (topLevelMachineId) return topLevelMachineId;
-  return normalizeMachineId(readDirectSessionLink(metadata)?.machineId);
+  return normalizeMachineId(readExternalSessionLink(metadata)?.machineId);
 }

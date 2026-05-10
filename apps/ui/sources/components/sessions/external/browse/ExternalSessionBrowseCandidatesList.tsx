@@ -10,12 +10,12 @@ import { lightTheme } from '@/theme';
 import { t } from '@/text';
 
 import {
-    buildDirectBrowseCandidateDisplayTitle,
-    buildDirectBrowseCandidateRightElement,
-    buildDirectBrowseCandidateSearchValue,
-    buildDirectBrowseCandidateSubtitle,
-} from './buildDirectBrowseCandidatePresentation';
-import type { DirectBrowseCandidate } from './useDirectBrowseCandidates';
+    buildExternalSessionBrowseCandidateDisplayTitle,
+    buildExternalSessionBrowseCandidateRightElement,
+    buildExternalSessionBrowseCandidateSearchValue,
+    buildExternalSessionBrowseCandidateSubtitle,
+} from './buildExternalSessionBrowseCandidatePresentation';
+import type { ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
 
 type AppTheme = typeof lightTheme;
 
@@ -46,14 +46,14 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
     },
 }));
 
-export const DirectBrowseCandidatesList = React.memo(function DirectBrowseCandidatesList(props: Readonly<{
-    candidates: readonly DirectBrowseCandidate[];
+export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalSessionBrowseCandidatesList(props: Readonly<{
+    candidates: readonly ExternalSessionBrowseCandidate[];
     loading: boolean;
     error: string | null;
     nextCursor: string | null;
     loadingMore: boolean;
     linkingSessionId: string | null;
-    onSelectCandidate: (candidate: DirectBrowseCandidate) => void;
+    onSelectCandidate: (candidate: ExternalSessionBrowseCandidate) => void;
     onLoadMore: () => void;
 }>) {
     const { theme } = useUnistyles() as { theme: AppTheme };
@@ -65,17 +65,17 @@ export const DirectBrowseCandidatesList = React.memo(function DirectBrowseCandid
     const filteredCandidates = React.useMemo(() => {
         const normalizedSearchQuery = searchQuery.trim().toLowerCase();
         if (!normalizedSearchQuery) return props.candidates;
-        return props.candidates.filter((candidate) => buildDirectBrowseCandidateSearchValue(candidate).includes(normalizedSearchQuery));
+        return props.candidates.filter((candidate) => buildExternalSessionBrowseCandidateSearchValue(candidate).includes(normalizedSearchQuery));
     }, [props.candidates, searchQuery]);
 
     return (
-        <ItemGroup title={t('directSessions.browseCandidates')}>
+        <ItemGroup title={t('externalSessions.browseCandidates')}>
             <View style={styles.searchContainer}>
                 <TextInput
                     testID="direct-session-candidates-search-input"
                     value={searchQuery}
                     onChangeText={setSearchQuery}
-                    placeholder={t('directSessions.browseSearchPlaceholder')}
+                    placeholder={t('externalSessions.browseSearchPlaceholder')}
                     placeholderTextColor={theme.colors.textSecondary}
                     style={styles.searchInput}
                 />
@@ -91,11 +91,11 @@ export const DirectBrowseCandidatesList = React.memo(function DirectBrowseCandid
                 </View>
             ) : props.candidates.length === 0 ? (
                 <View>
-                    <Text style={styles.helperText}>{t('directSessions.browseNoCandidates')}</Text>
+                    <Text style={styles.helperText}>{t('externalSessions.browseNoCandidates')}</Text>
                 </View>
             ) : filteredCandidates.length === 0 ? (
                 <View>
-                    <Text style={styles.helperText}>{t('directSessions.browseNoSearchResults')}</Text>
+                    <Text style={styles.helperText}>{t('externalSessions.browseNoSearchResults')}</Text>
                 </View>
             ) : (
                 <>
@@ -103,9 +103,9 @@ export const DirectBrowseCandidatesList = React.memo(function DirectBrowseCandid
                         <Item
                             key={candidate.remoteSessionId}
                             testID={`direct-session-candidate:${candidate.remoteSessionId}`}
-                            title={buildDirectBrowseCandidateDisplayTitle(candidate)}
-                            subtitle={buildDirectBrowseCandidateSubtitle(candidate, theme, itemDensity)}
-                            rightElement={buildDirectBrowseCandidateRightElement(candidate, theme, itemDensity)}
+                            title={buildExternalSessionBrowseCandidateDisplayTitle(candidate)}
+                            subtitle={buildExternalSessionBrowseCandidateSubtitle(candidate, theme, itemDensity)}
+                            rightElement={buildExternalSessionBrowseCandidateRightElement(candidate, theme, itemDensity)}
                             onPress={() => props.onSelectCandidate(candidate)}
                             loading={props.linkingSessionId === candidate.remoteSessionId}
                         />
@@ -113,7 +113,7 @@ export const DirectBrowseCandidatesList = React.memo(function DirectBrowseCandid
                     {props.nextCursor ? (
                         <Item
                             testID="direct-session-candidates-load-more"
-                            title={t('directSessions.browseLoadMore')}
+                            title={t('externalSessions.browseLoadMore')}
                             onPress={props.onLoadMore}
                             loading={props.loadingMore}
                         />

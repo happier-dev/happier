@@ -6,17 +6,17 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-const directBrowseModulePromise = import('./resolveDirectBrowseSourceOptions');
+const externalSessionBrowseModulePromise = import('./resolveExternalSessionBrowseSourceOptions');
 
-describe('resolveDirectBrowseSourceOptions', () => {
+describe('resolveExternalSessionBrowseSourceOptions', () => {
     it('lists browse providers from registered provider behavior order', async () => {
-        const { listDirectBrowseProviderIds } = await directBrowseModulePromise;
-        expect(listDirectBrowseProviderIds()).toEqual(['codex', 'claude', 'ohMyPi', 'opencode']);
+        const { listExternalSessionBrowseProviderIds } = await externalSessionBrowseModulePromise;
+        expect(listExternalSessionBrowseProviderIds()).toEqual(['codex', 'claude', 'ohMyPi', 'opencode']);
     });
 
     it('returns the codex user home and per-profile connected-service sources when codex profiles exist', async () => {
-        const { resolveDirectBrowseSourceOptions } = await directBrowseModulePromise;
-        const options = resolveDirectBrowseSourceOptions({
+        const { resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
+        const options = resolveExternalSessionBrowseSourceOptions({
             providerId: 'codex',
             profile: {
                 connectedServicesV2: [
@@ -71,8 +71,8 @@ describe('resolveDirectBrowseSourceOptions', () => {
     });
 
     it('returns only the default source when no codex connected-service profiles exist', async () => {
-        const { resolveDirectBrowseSourceOptions } = await directBrowseModulePromise;
-        const options = resolveDirectBrowseSourceOptions({
+        const { resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
+        const options = resolveExternalSessionBrowseSourceOptions({
             providerId: 'codex',
             profile: { connectedServicesV2: [] },
             settings: { connectedServicesProfileLabelByKey: {} },
@@ -87,9 +87,9 @@ describe('resolveDirectBrowseSourceOptions', () => {
     });
 
     it('resolves provider-owned link ensure extras through registered browse behavior', async () => {
-        const { resolveDirectBrowseLinkEnsureRequestExtras } = await directBrowseModulePromise;
+        const { resolveExternalSessionBrowseLinkEnsureRequestExtras } = await externalSessionBrowseModulePromise;
 
-        const extras = resolveDirectBrowseLinkEnsureRequestExtras({
+        const extras = resolveExternalSessionBrowseLinkEnsureRequestExtras({
             providerId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
             candidate: {
@@ -121,7 +121,7 @@ describe('resolveDirectBrowseSourceOptions', () => {
             homePath: '/tmp/custom-home',
         });
 
-        expect(resolveDirectBrowseLinkEnsureRequestExtras({
+        expect(resolveExternalSessionBrowseLinkEnsureRequestExtras({
             providerId: 'opencode',
             source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096' },
             candidate: { details: { codexBackendMode: 'appServer' } },
