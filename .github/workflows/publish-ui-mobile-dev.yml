@@ -134,6 +134,28 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
+      - name: Generate release notes manifest
+        run: |
+          set -euo pipefail
+          yarn --cwd apps/ui tsx sources/scripts/parseReleaseNotes.ts
+
+      - name: Build release notes assets
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/release-notes/build-release-notes-assets.mjs \
+            --out-dir "dist/release-notes-assets"
+
+      - name: Publish release notes assets
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: happier-dev/happier-assets
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
+            --in-dir "dist/release-notes-assets" \
+            --repo "happier-dev/happier-assets" \
+            --tag "release-notes"
+
       - name: Expo OTA update (dev lane)
         if: inputs.publish_ota
         env:

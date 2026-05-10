@@ -97,6 +97,11 @@ jobs:
     environment: release-shared
     env:
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
+      # Ensure desktop release bundles always bootstrap against Happier Cloud unless explicitly overridden
+      # by runtime server profile switching inside the app.
+      EXPO_PUBLIC_HAPPIER_SERVER_URL: https://api.happier.dev
+      EXPO_PUBLIC_HAPPY_SERVER_URL: https://api.happier.dev
+      EXPO_PUBLIC_SERVER_URL: https://api.happier.dev
       # Secrets are set at the job-level so `if:` expressions can gate on `env.*` without referencing
       # `secrets.*` (the `secrets` context is not available in workflow expression contexts).
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}

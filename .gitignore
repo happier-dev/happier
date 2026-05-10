@@ -115,3 +115,6 @@ _.env.pipeline.production.local
 /.codex-tmp
 /apps/stack/output
 /apps/ui/src-tauri/vendor
+
+/cli/.dist*
+/packages/cli-common/.dist*
