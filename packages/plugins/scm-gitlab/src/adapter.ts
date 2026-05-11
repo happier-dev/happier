@@ -58,9 +58,12 @@ function isSafeNameWithOwner(value: string): boolean {
 function readTrustedBaseUrl(provider: ScmHostingProviderRef, matchesHost: GitlabHostMatcher): string | null {
   try {
     const parsed = new URL(provider.baseUrl);
-    if (parsed.protocol !== 'https:' || parsed.pathname.replace(/\/+$/, '') !== '') return null;
+    if (parsed.protocol !== 'https:') return null;
     if (parsed.port || parsed.search || parsed.hash || !matchesHost(parsed.hostname)) return null;
-    return parsed.origin;
+    const pathSegments = parsed.pathname.split('/').filter(Boolean);
+    if (pathSegments.some((segment) => segment === '.' || segment === '..')) return null;
+    const pathPrefix = parsed.pathname.replace(/\/+$/, '');
+    return `${parsed.origin}${pathPrefix}`;
   } catch {
     return null;
   }
@@ -91,6 +94,7 @@ export function createGitlabScmHostingProviderAdapter(
         displayName: 'GitLab',
         baseUrl,
         nameWithOwner,
+        repositoryWebUrl: `${baseUrl}/${nameWithOwner}`,
         remoteName: input.remoteName ?? undefined,
         urlSafety,
       };

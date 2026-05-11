@@ -16,6 +16,25 @@ import { detectSaplingRepo, getSaplingSnapshot } from './repository.js';
 
 export const SAPLING_SCM_BACKEND_ID = 'sapling';
 
+function normalizeRelativePath(relativePath: string): string {
+    return relativePath.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+function classifySaplingPortableWorkspacePath(input: Readonly<{
+    relativePath: string;
+}>): 'non_portable' | 'unknown' {
+    const normalized = normalizeRelativePath(input.relativePath);
+    return normalized === '.sl' || normalized.startsWith('.sl/')
+        ? 'non_portable'
+        : 'unknown';
+}
+
+function isSaplingAdministrativeWorkspacePath(input: Readonly<{
+    relativePath: string;
+}>): boolean {
+    return classifySaplingPortableWorkspacePath(input) === 'non_portable';
+}
+
 export function createSaplingScmBackendRegistration(): ScmBackendRuntimeRegistration {
     return {
         id: SAPLING_SCM_BACKEND_ID,
@@ -68,6 +87,11 @@ export function createSaplingScmBackendRegistration(): ScmBackendRuntimeRegistra
                 fetch: saplingRemoteFetch,
                 pull: saplingRemotePull,
                 push: saplingRemotePush,
+            },
+            workspaceIntegration: {
+                isAdministrativeWorkspacePath: isSaplingAdministrativeWorkspacePath,
+                classifyPortableWorkspacePath: classifySaplingPortableWorkspacePath,
+                classifyPortableWorkspaceTransferEntry: classifySaplingPortableWorkspacePath,
             },
         },
     };

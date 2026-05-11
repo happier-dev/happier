@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -17,6 +19,7 @@ const provider: ScmHostingProviderRef = {
     displayName: 'GitHub',
     baseUrl: 'https://github.com',
     nameWithOwner: 'happier-dev/happier',
+    repositoryWebUrl: 'https://github.com/happier-dev/happier',
     remoteName: 'origin',
     urlSafety: { allowedSchemes: ['https:'] },
 };
@@ -95,7 +98,9 @@ function createSnapshot(): ScmWorkingSnapshot {
     };
 }
 
-function createRegistry(adapter: Readonly<Record<string, unknown>>) {
+function createRegistry(adapter: Readonly<Record<string, unknown>>, input?: Readonly<{
+    compareUrl?: string;
+}>) {
     return {
         getAdapter(id: string) {
             return id === provider.id ? adapter : undefined;
@@ -103,13 +108,20 @@ function createRegistry(adapter: Readonly<Record<string, unknown>>) {
         buildCompareUrl() {
             return {
                 kind: 'resolved' as const,
-                url: 'https://github.com/happier-dev/happier/compare/main...feature/pr-cache',
+                url: input?.compareUrl ?? 'https://github.com/happier-dev/happier/compare/main...feature/pr-cache',
             };
         },
     };
 }
 
 describe('git pull request read operations', () => {
+    it('resolves default hosting provider runtime services from the host only', () => {
+        const source = readFileSync(new URL('./pullRequestReadOperations.ts', import.meta.url), 'utf8');
+
+        expect(source).not.toContain('../hostingProviders/runtimeServices');
+        expect(source).not.toContain('createScmHostingProviderRuntimeServices');
+    });
+
     it('lists PRs through adapter-owned hooks and reuses the bounded cache for the same branch context', async () => {
         const cache = createPrStatusCache({ now: () => 1000 });
         const listPullRequests = vi.fn(async () => [pullRequest]);
@@ -149,6 +161,12 @@ describe('git pull request read operations', () => {
 
     it('passes provider-neutral runtime services to adapter-owned PR hooks', async () => {
         let observedRuntimeServices: unknown = null;
+        const runtimeServices = {
+            resolveScmHostingBasicAuthMaterialization: async () => ({ kind: 'unavailable' as const }),
+            resolveScmHostingTokenMaterialization: async () => ({ kind: 'unavailable' as const }),
+            resolveInstallableCommand: async () => ({ kind: 'missing' as const }),
+            runCommand: async () => ({ ok: false, stdout: '', stderr: '', exitCode: null }),
+        };
         const operations = createGitPullRequestReadOperations({
             cache: createPrStatusCache({ now: () => 1000 }),
             registry: createRegistry({
@@ -157,6 +175,7 @@ describe('git pull request read operations', () => {
                     return [pullRequest];
                 },
             }),
+            runtimeServices,
             readSnapshot: async () => createSnapshot(),
             now: () => 1000,
         });
@@ -172,12 +191,47 @@ describe('git pull request read operations', () => {
         });
 
         expect(response.success).toBe(true);
-        expect(observedRuntimeServices).toEqual({
-            resolveScmHostingBasicAuthMaterialization: expect.any(Function),
-            resolveScmHostingTokenMaterialization: expect.any(Function),
-            resolveInstallableCommand: expect.any(Function),
-            runCommand: expect.any(Function),
+        expect(observedRuntimeServices).toBe(runtimeServices);
+    });
+
+    it('uses the detected repository default branch before current upstream when list base is omitted', async () => {
+        let observedBase: string | undefined;
+        const operations = createGitPullRequestReadOperations({
+            cache: createPrStatusCache({ now: () => 1000 }),
+            registry: createRegistry({
+                listPullRequests: async (input: Readonly<{ base?: string }>) => {
+                    observedBase = input.base;
+                    return [pullRequest];
+                },
+            }),
+            readSnapshot: async () => {
+                const snapshot = createSnapshot();
+                return {
+                    ...snapshot,
+                    repo: {
+                        ...snapshot.repo,
+                        defaultBranch: 'trunk',
+                    },
+                    branch: {
+                        ...snapshot.branch,
+                        upstream: 'origin/feature/pr-cache',
+                    },
+                };
+            },
+            now: () => 1000,
         });
+
+        const response = await operations.list({
+            context,
+            request: {
+                cwd: '/repo',
+                head: 'feature/pr-cache',
+                state: 'open',
+            },
+        });
+
+        expect(response.success).toBe(true);
+        expect(observedBase).toBe('trunk');
     });
 
     it('stores freshly resolved PR list results under the current auth profile key', async () => {
@@ -253,11 +307,35 @@ describe('git pull request read operations', () => {
                 kind: 'openUrl',
                 purpose: 'compose',
                 url: 'https://github.com/happier-dev/happier/compare/main...feature/pr-cache',
-                allowedBaseUrl: 'https://github.com',
+                allowedBaseUrl: 'https://github.com/happier-dev/happier',
                 urlSafety: { allowedSchemes: ['https:'] },
             },
         });
         expect(listPullRequests).not.toHaveBeenCalled();
+    });
+
+    it('does not return open-url follow-up actions for unsafe compose URLs', async () => {
+        const operations = createGitPullRequestReadOperations({
+            cache: createPrStatusCache({ now: () => 1000 }),
+            registry: createRegistry({}, { compareUrl: 'http://github.com/happier-dev/happier/compare/main...feature/pr-cache' }),
+            readSnapshot: async () => createSnapshot(),
+            now: () => 1000,
+        });
+
+        const response = await operations.openCompose({
+            context,
+            request: {
+                cwd: '/repo',
+                base: 'main',
+                head: 'feature/pr-cache',
+            },
+        });
+
+        expect(response).toMatchObject({
+            success: true,
+            composeUrl: 'http://github.com/happier-dev/happier/compare/main...feature/pr-cache',
+            nextAction: { kind: 'none' },
+        });
     });
 
     it('returns deterministic unsupported errors when no adapter read hook exists', async () => {

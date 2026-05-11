@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 import { createSentFromSchema } from '../sentFrom.js';
 import { createSessionPermissionModeSchema } from '../sessionMetadata/sessionPermissionModes.js';
+import {
+  SESSION_MEDIA_MESSAGE_META_KIND_V1,
+  createSessionMediaMessageMetaV1Schema,
+} from './sessionMediaV1.js';
 
 /**
  * Message-level metadata (stored in encrypted message bodies).
@@ -10,6 +14,7 @@ import { createSessionPermissionModeSchema } from '../sessionMetadata/sessionPer
  * messages when new fields or new enum values are introduced.
  */
 export function createSessionMessageMetaSchema(zod: typeof z) {
+  const sessionMediaMessageMetaV1Schema = createSessionMediaMessageMetaV1Schema(zod);
   return zod
     .object({
       sentFrom: createSentFromSchema(zod).optional(),
@@ -33,7 +38,21 @@ export function createSessionMessageMetaSchema(zod: typeof z) {
           kind: zod.string(),
           payload: zod.unknown(),
         })
+        .passthrough()
+        .superRefine((value, ctx) => {
+          if (value.kind !== SESSION_MEDIA_MESSAGE_META_KIND_V1) return;
+          const parsed = sessionMediaMessageMetaV1Schema.safeParse(value);
+          if (parsed.success) return;
+          for (const issue of parsed.error.issues) {
+            ctx.addIssue({
+              code: 'custom',
+              path: issue.path,
+              message: issue.message,
+            });
+          }
+        })
         .optional(),
+      happierMedia: sessionMediaMessageMetaV1Schema.optional(),
     })
     .passthrough();
 }

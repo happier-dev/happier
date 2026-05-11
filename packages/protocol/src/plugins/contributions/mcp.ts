@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { PluginOptionalStringSchema } from '../_shared.js';
 import { PluginDescriptorBaseV1Schema } from './_descriptors.js';
 
-const MCP_SEGMENT_PATTERN = /^[a-z0-9_-]+$/;
 const MCP_SERVER_NAME_PATTERN = /^[a-z0-9_-]+$/;
 const MCP_SENSITIVE_HEADER_KEYS = new Set([
   'authorization',
@@ -23,34 +22,6 @@ const MCP_SENSITIVE_DESCRIPTOR_KEYS = new Set([
   'secret',
 ]);
 const MCP_BEARER_VALUE_PATTERN = /\bbearer\s+\S+/i;
-
-function isCanonicalMcpToolName(value: string): boolean {
-  const parts = value.split('.');
-  if (parts.length < 2 || parts.some((part) => !MCP_SEGMENT_PATTERN.test(part))) {
-    return false;
-  }
-  if (parts[0] === 'happier') {
-    return parts.length >= 3;
-  }
-  if (parts[0] === 'ext') {
-    return parts.length >= 3;
-  }
-  return parts.length >= 3;
-}
-
-function isCanonicalMcpToolNamespace(value: string): boolean {
-  const parts = value.split('.');
-  if (parts.length < 2 || parts.some((part) => !MCP_SEGMENT_PATTERN.test(part))) {
-    return false;
-  }
-  if (parts[0] === 'happier') {
-    return parts.length === 2;
-  }
-  if (parts[0] === 'ext') {
-    return parts.length >= 2;
-  }
-  return parts.length === 2;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -110,20 +81,6 @@ function rejectRawMcpSecretMaterial(value: unknown, ctx: z.RefinementCtx, path: 
   }
 }
 
-export const PluginMcpToolNameV1Schema = z
-  .string()
-  .trim()
-  .min(1)
-  .refine(isCanonicalMcpToolName, 'MCP tool names must use happier.*, ext.<pluginId>.*, or <providerId>.<server>.* prefixes');
-export type PluginMcpToolNameV1 = z.infer<typeof PluginMcpToolNameV1Schema>;
-
-export const PluginMcpToolNamespaceV1Schema = z
-  .string()
-  .trim()
-  .min(1)
-  .refine(isCanonicalMcpToolNamespace, 'MCP tool namespaces must use happier.*, ext.<pluginId>, or <providerId>.<server> prefixes');
-export type PluginMcpToolNamespaceV1 = z.infer<typeof PluginMcpToolNamespaceV1Schema>;
-
 export const PluginMcpServerTransportV1Schema = z.enum(['hosted', 'stdio', 'http', 'sse']);
 export type PluginMcpServerTransportV1 = z.infer<typeof PluginMcpServerTransportV1Schema>;
 
@@ -155,27 +112,6 @@ export const PluginMcpServerContributionV1Schema = PluginDescriptorBaseV1Schema.
 });
 export type PluginMcpServerContributionV1 = z.infer<typeof PluginMcpServerContributionV1Schema>;
 
-export const PluginMcpBackendClientContributionV1Schema = PluginDescriptorBaseV1Schema.safeExtend({
-  kind: z.literal('mcp.backendClient'),
-  serverName: z.string().trim().min(1).regex(MCP_SERVER_NAME_PATTERN, 'Invalid MCP server name'),
-  toolNamespace: PluginMcpToolNamespaceV1Schema,
-}).passthrough().superRefine((value, ctx) => {
-  rejectRawMcpSecretMaterial(value, ctx);
-});
-export type PluginMcpBackendClientContributionV1 = z.infer<typeof PluginMcpBackendClientContributionV1Schema>;
-
-export const PluginMcpToolContributionV1Schema = PluginDescriptorBaseV1Schema.safeExtend({
-  kind: z.literal('mcp.tool'),
-  name: PluginMcpToolNameV1Schema,
-  title: PluginOptionalStringSchema,
-  description: PluginOptionalStringSchema,
-  inputSchema: z.unknown().optional(),
-  outputSchema: z.unknown().optional(),
-}).passthrough().superRefine((value, ctx) => {
-  rejectRawMcpSecretMaterial(value, ctx);
-});
-export type PluginMcpToolContributionV1 = z.infer<typeof PluginMcpToolContributionV1Schema>;
-
 export const PluginMcpDiscoveryProviderContributionV1Schema = PluginDescriptorBaseV1Schema.safeExtend({
   kind: z.literal('mcp.discoveryProvider'),
   providerId: PluginOptionalStringSchema,
@@ -186,13 +122,9 @@ export type PluginMcpDiscoveryProviderContributionV1 = z.infer<typeof PluginMcpD
 
 export const PluginMcpContributesV1Schema = z.object({
   servers: z.array(PluginMcpServerContributionV1Schema).default([]),
-  backendClients: z.array(PluginMcpBackendClientContributionV1Schema).default([]),
-  tools: z.array(PluginMcpToolContributionV1Schema).default([]),
   discoveryProviders: z.array(PluginMcpDiscoveryProviderContributionV1Schema).default([]),
 }).strict().default({
   servers: [],
-  backendClients: [],
-  tools: [],
   discoveryProviders: [],
 });
 export type PluginMcpContributesV1 = z.infer<typeof PluginMcpContributesV1Schema>;

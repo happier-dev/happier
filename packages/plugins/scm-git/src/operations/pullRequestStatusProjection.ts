@@ -6,56 +6,10 @@ import {
 } from '@happier-dev/protocol';
 import { readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
 
-import { createScmHostingProviderRegistry } from '../hostingProviders/registry.js';
 import { defaultPrStatusCache, type PrStatusCache } from '../hostingProviders/prStatusCache.js';
-import type {
-    ResolvedScmHostingProviderRegistry,
-    ScmHostingProviderDescriptor,
-} from '../hostingProviders/types.js';
+import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
 
 export type PullRequestStatusProjectionRegistry = Pick<ResolvedScmHostingProviderRegistry, 'detectRemote' | 'buildCompareUrl'>;
-
-let defaultRegistryPromise: Promise<ResolvedScmHostingProviderRegistry> | null = null;
-
-function normalizeUrlSafety(
-    provider: ScmHostingProviderDescriptor,
-): ScmHostingProviderDescriptor['urlSafety'] {
-    return {
-        allowedSchemes: provider.urlSafety?.allowedSchemes ?? ['https:'],
-        allowedBaseUrls: provider.urlSafety?.allowedBaseUrls ?? [],
-        allowedOrigins: provider.urlSafety?.allowedOrigins ?? [],
-    };
-}
-
-export function createPullRequestStatusProjectionRegistry(
-    runtimeRegistry: Readonly<{
-        contributes: Readonly<{
-            scmHostingProviders?: readonly Readonly<{
-                pluginId: string;
-                definition: ScmHostingProviderDescriptor;
-            }>[];
-        }>;
-        scmHostingProvidersById: ReadonlyMap<string, Readonly<{
-            pluginId: string;
-            registration: Readonly<{
-                id: string;
-                adapter: Readonly<Record<string, unknown>>;
-            }>;
-        }>>;
-    }>,
-): ResolvedScmHostingProviderRegistry {
-    const providers: ScmHostingProviderDescriptor[] = (runtimeRegistry.contributes.scmHostingProviders ?? [])
-        .map((provider) => Object.freeze({
-            ...provider.definition,
-            pluginId: provider.pluginId,
-            urlSafety: normalizeUrlSafety(provider.definition),
-        }));
-
-    return createScmHostingProviderRegistry({
-        providers,
-        runtimeRegistrations: [...runtimeRegistry.scmHostingProvidersById.values()],
-    });
-}
 
 export async function resolveDefaultPullRequestStatusProjectionRegistry(): Promise<ResolvedScmHostingProviderRegistry> {
     const currentServices = readCurrentScmHostingProviderRuntimeServices();
@@ -63,11 +17,7 @@ export async function resolveDefaultPullRequestStatusProjectionRegistry(): Promi
     if (currentRegistry) {
         return currentRegistry as ResolvedScmHostingProviderRegistry;
     }
-    defaultRegistryPromise ??= Promise.resolve(createScmHostingProviderRegistry({
-        providers: [],
-        runtimeRegistrations: [],
-    }));
-    return await defaultRegistryPromise;
+    throw new Error('Git SCM operations require a host-injected SCM hosting provider registry resolver.');
 }
 
 function readRemoteUrl(remote: ScmWorkingSnapshot['repo']['remotes'][number]): string | null {
@@ -104,7 +54,7 @@ function normalizeUpstreamBranch(upstream: string | null): string | null {
     return upstream.slice(slashIndex + 1) || null;
 }
 
-function resolvePullRequestBaseBranch(snapshot: ScmWorkingSnapshot): string | null {
+export function resolvePullRequestBaseBranch(snapshot: ScmWorkingSnapshot): string | null {
     return snapshot.repo.defaultBranch?.trim()
         ?? normalizeUpstreamBranch(snapshot.branch.upstream)
         ?? null;

@@ -196,22 +196,6 @@ export type PluginApiExecutionRunProfileRegistrationV1 = PluginExecutionRunProfi
 
 export type PluginApiMcpServerRegistrationV1 = McpServerSpecV1;
 
-export type PluginApiMcpBackendClientRegistrationV1 = Readonly<{
-    id: string;
-    serverName: string;
-    toolNamespace: string;
-}>;
-
-export type PluginApiMcpToolRegistrationV1 = Readonly<{
-    id: string;
-    name: string;
-    title?: string | null;
-    description?: string | null;
-    inputSchema?: unknown;
-    outputSchema?: unknown;
-    handler: PluginActionHandler;
-}>;
-
 export type PluginApiMcpDiscoveryProviderRegistrationV1 = Readonly<{
     id: string;
     discover(input?: McpResolveForSessionInputV1): Promise<readonly McpServerSpecV1[]> | readonly McpServerSpecV1[];
@@ -236,8 +220,6 @@ export type PluginApiCoreV1 = Readonly<{
     registerScmHostingProvider: (registration: ScmHostingProviderRuntimeRegistration) => PluginDisposable;
     registerScmBackend: (registration: ScmBackendRuntimeRegistration) => PluginDisposable;
     registerMcpServer: (registration: PluginApiMcpServerRegistrationV1) => PluginDisposable;
-    registerMcpBackendClient: (registration: PluginApiMcpBackendClientRegistrationV1) => PluginDisposable;
-    registerMcpTool: (registration: PluginApiMcpToolRegistrationV1) => PluginDisposable;
     registerMcpDiscoveryProvider: (registration: PluginApiMcpDiscoveryProviderRegistrationV1) => PluginDisposable;
     registerRequestInterceptor: (registration: PluginApiRequestInterceptorRegistrationV1) => PluginDisposable;
     registerHook: (registration: PluginApiHookRegistrationV1) => PluginDisposable;

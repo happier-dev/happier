@@ -139,6 +139,16 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
     expect(adapter.buildCompareUrl({
       provider: {
         ...provider,
+        baseUrl: 'https://code.internal.test/gitlab',
+        nameWithOwner: 'platform/happier/app',
+        repositoryWebUrl: 'https://code.internal.test/gitlab/platform/happier/app',
+      },
+      base: 'release/2026',
+      head: 'feature/pr-support',
+    })).toBe('https://code.internal.test/gitlab/platform/happier/app/-/compare/release%2F2026...feature%2Fpr-support');
+    expect(adapter.buildCompareUrl({
+      provider: {
+        ...provider,
         baseUrl: 'https://example.com',
       },
       base: 'main',

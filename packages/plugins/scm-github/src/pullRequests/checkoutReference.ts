@@ -9,6 +9,7 @@ export function resolveGithubCheckoutReferenceFromPullRequest(
   return {
     pullRequest,
     branch: pullRequest.headBranch,
+    ...(pullRequest.number ? { remoteRef: `refs/pull/${pullRequest.number}/head` } : {}),
     ...(pullRequest.headSha !== undefined ? { headSha: pullRequest.headSha } : {}),
     ...(pullRequest.baseSha !== undefined ? { baseSha: pullRequest.baseSha } : {}),
   };

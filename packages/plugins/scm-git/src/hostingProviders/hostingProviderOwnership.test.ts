@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, relative } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -56,9 +56,8 @@ describe('SCM Git hosting-provider ownership', () => {
     });
   });
 
-  it('does not hardcode first-party auth materializer maps in generic runtime services', () => {
+  it('does not own hosting provider aggregation or default runtime services', () => {
     const hostingRoot = new URL('./', import.meta.url).pathname;
-    const runtimeServicesSource = readFileSync(join(hostingRoot, 'runtimeServices.ts'), 'utf8');
     const productionSources = collectProductionSourceFiles(hostingRoot)
       .map((sourcePath) => [relative(hostingRoot, sourcePath), readFileSync(sourcePath, 'utf8')] as const);
     const hardcodedMaterializerOffenders = productionSources
@@ -80,8 +79,11 @@ describe('SCM Git hosting-provider ownership', () => {
         ),
       ]);
 
-    expect(runtimeServicesSource).not.toMatch(/bundledFirstPartyHosting/);
-    expect(runtimeServicesSource).not.toMatch(/createBundledFirstPartyScmHostingAuthMaterializationRegistry/);
+    expect(existsSync(join(hostingRoot, 'registry.ts'))).toBe(false);
+    expect(existsSync(join(hostingRoot, 'runtimeServices.ts'))).toBe(false);
+    expect(existsSync(join(hostingRoot, 'auth', 'materializationRegistry.ts'))).toBe(false);
+    expect(existsSync(join(hostingRoot, 'auth', 'resolveScmHostingBasicAuthMaterialization.ts'))).toBe(false);
+    expect(existsSync(join(hostingRoot, 'auth', 'resolveScmHostingTokenMaterialization.ts'))).toBe(false);
     expect(hardcodedMaterializerOffenders).toEqual([]);
   });
 });

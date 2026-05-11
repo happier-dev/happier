@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
+import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import { resolveGitWorkspaceTransferEntries } from './resolveGitWorkspaceTransferEntries.js';
 
 const execFile = promisify(execFileCallback);
@@ -29,6 +30,10 @@ async function resolveGitBinaryPath(): Promise<string> {
     return stdout.trim();
 }
 
+async function withHostScmRuntime<T>(callback: () => Promise<T>): Promise<T> {
+    return await runWithRealGitScmRuntime(callback);
+}
+
 describe('resolveGitWorkspaceTransferEntries', () => {
     it('includes portable .git metadata for a primary checkout', async () => {
         const repoRoot = await makeTempDir('git-transfer-primary-');
@@ -40,7 +45,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
             await runGit(repoRoot, ['add', 'README.md']);
             await runGit(repoRoot, ['commit', '-m', 'initial']);
 
-            const entries = await resolveGitWorkspaceTransferEntries({
+            const entries = await withHostScmRuntime(async () => await resolveGitWorkspaceTransferEntries({
                 context: {
                     cwd: repoRoot,
                     projectKey: `test:${repoRoot}`,
@@ -55,7 +60,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
                     includeIgnoredMode: 'exclude',
                     ignoredIncludeGlobs: [],
                 },
-            });
+            }));
 
             expect(entries).toEqual(expect.arrayContaining([
                 expect.objectContaining({ relativePath: 'README.md' }),
@@ -79,7 +84,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
             await runGit(repoRoot, ['branch', 'feature']);
             await runGit(repoRoot, ['worktree', 'add', worktreeRoot, 'feature']);
 
-            const entries = await resolveGitWorkspaceTransferEntries({
+            const entries = await withHostScmRuntime(async () => await resolveGitWorkspaceTransferEntries({
                 context: {
                     cwd: repoRoot,
                     projectKey: `test:${repoRoot}`,
@@ -94,7 +99,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
                     includeIgnoredMode: 'exclude',
                     ignoredIncludeGlobs: [],
                 },
-            });
+            }));
 
             expect(entries).toEqual(expect.arrayContaining([
                 expect.objectContaining({ relativePath: '.git/HEAD' }),
@@ -104,7 +109,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
             await rm(repoRoot, { recursive: true, force: true });
             await rm(worktreeRoot, { recursive: true, force: true });
         }
-    });
+    }, 15_000);
 
     it('scopes nested workspace exports to the requested subdirectory and omits checkout metadata', async () => {
         const repoRoot = await makeTempDir('git-transfer-nested-workspace-');
@@ -119,7 +124,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
             await runGit(repoRoot, ['add', 'README.md', 'apps/demo/workspace.txt']);
             await runGit(repoRoot, ['commit', '-m', 'initial']);
 
-            const entries = await resolveGitWorkspaceTransferEntries({
+            const entries = await withHostScmRuntime(async () => await resolveGitWorkspaceTransferEntries({
                 context: {
                     cwd: nestedWorkspaceDir,
                     projectKey: `test:${nestedWorkspaceDir}`,
@@ -134,7 +139,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
                     includeIgnoredMode: 'exclude',
                     ignoredIncludeGlobs: [],
                 },
-            });
+            }));
 
             expect(entries).toEqual([
                 expect.objectContaining({ relativePath: 'workspace.txt' }),
@@ -159,7 +164,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
             await runGit(repoRoot, ['branch', 'feature']);
             await runGit(repoRoot, ['worktree', 'add', worktreeRoot, 'feature']);
 
-            const entries = await resolveGitWorkspaceTransferEntries({
+            const entries = await withHostScmRuntime(async () => await resolveGitWorkspaceTransferEntries({
                 context: {
                     cwd: worktreeRoot,
                     projectKey: `test:${worktreeRoot}`,
@@ -174,7 +179,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
                     includeIgnoredMode: 'exclude',
                     ignoredIncludeGlobs: [],
                 },
-            });
+            }));
 
             expect(entries).toEqual(expect.arrayContaining([
                 expect.objectContaining({ relativePath: 'README.md' }),
@@ -184,7 +189,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
             await rm(repoRoot, { recursive: true, force: true });
             await rm(worktreeRoot, { recursive: true, force: true });
         }
-    });
+    }, 15_000);
 
     it('falls back when git metadata discovery cannot use path-format absolute', async () => {
         const repoRoot = await makeTempDir('git-transfer-path-fallback-');
@@ -214,7 +219,7 @@ exec "${gitBinaryPath}" "$@"
             await chmod(wrapperPath, 0o755);
             process.env.PATH = `${wrapperRoot}:${originalPath ?? ''}`;
 
-            const entries = await resolveGitWorkspaceTransferEntries({
+            const entries = await withHostScmRuntime(async () => await resolveGitWorkspaceTransferEntries({
                 context: {
                     cwd: repoRoot,
                     projectKey: `test:${repoRoot}`,
@@ -229,7 +234,7 @@ exec "${gitBinaryPath}" "$@"
                     includeIgnoredMode: 'exclude',
                     ignoredIncludeGlobs: [],
                 },
-            });
+            }));
 
             expect(entries).toEqual(expect.arrayContaining([
                 expect.objectContaining({ relativePath: 'README.md' }),
@@ -274,7 +279,7 @@ exec "${gitBinaryPath}" "$@"
                 await writeFile(join(bucketDir, fileName), 'x', 'utf8');
             }
 
-            const entries = await resolveGitWorkspaceTransferEntries({
+            const entries = await withHostScmRuntime(async () => await resolveGitWorkspaceTransferEntries({
                 context: {
                     cwd: repoRoot,
                     projectKey: `test:${repoRoot}`,
@@ -289,11 +294,11 @@ exec "${gitBinaryPath}" "$@"
                     includeIgnoredMode: 'exclude',
                     ignoredIncludeGlobs: [],
                 },
-            });
+            }));
 
             expect(entries.some((entry) => entry.relativePath === expectedRelativePath)).toBe(true);
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
         }
-    });
+    }, 15_000);
 });

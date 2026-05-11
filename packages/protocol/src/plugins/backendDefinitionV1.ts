@@ -60,13 +60,69 @@ export const PluginBackendExecutionRunCapabilitiesV1Schema = z.object({
 }).passthrough();
 export type PluginBackendExecutionRunCapabilitiesV1 = z.infer<typeof PluginBackendExecutionRunCapabilitiesV1Schema>;
 
+export const PluginBackendSessionMediaCapabilitySupportV1Schema = z.object({
+  supported: z.boolean().default(false),
+}).passthrough();
+export type PluginBackendSessionMediaCapabilitySupportV1 = z.infer<typeof PluginBackendSessionMediaCapabilitySupportV1Schema>;
+
+export const PluginBackendSessionMediaOutputCapabilitiesV1Schema = z.object({
+  supported: z.boolean().default(false),
+  mediaKinds: z.array(z.literal('image')).optional(),
+  sources: z.array(z.enum(['provider-generated', 'tool-output', 'acp-content', 'mcp-content'])).optional(),
+  storage: z.literal('session-media-file').optional(),
+}).passthrough();
+export type PluginBackendSessionMediaOutputCapabilitiesV1 = z.infer<typeof PluginBackendSessionMediaOutputCapabilitiesV1Schema>;
+
+export const PluginBackendNativeImageGenerationCapabilitiesV1Schema = z.object({
+  supported: z.boolean().default(false),
+  mediaKinds: z.array(z.literal('image')).optional(),
+  streamingPartials: z.boolean().optional(),
+}).passthrough();
+export type PluginBackendNativeImageGenerationCapabilitiesV1 = z.infer<typeof PluginBackendNativeImageGenerationCapabilitiesV1Schema>;
+
+export const PluginBackendSessionMediaCapabilitiesV1Schema = z.object({
+  acceptsImageInput: PluginBackendSessionMediaCapabilitySupportV1Schema.default({ supported: false }),
+  emitsSessionMedia: PluginBackendSessionMediaOutputCapabilitiesV1Schema.default({ supported: false }),
+  nativeImageGeneration: PluginBackendNativeImageGenerationCapabilitiesV1Schema.default({ supported: false }),
+}).passthrough().default({
+  acceptsImageInput: { supported: false },
+  emitsSessionMedia: { supported: false },
+  nativeImageGeneration: { supported: false },
+});
+export type PluginBackendSessionMediaCapabilitiesV1 = z.infer<typeof PluginBackendSessionMediaCapabilitiesV1Schema>;
+
+export const PluginBackendSessionCapabilitiesV1Schema = z.object({
+  media: PluginBackendSessionMediaCapabilitiesV1Schema,
+}).passthrough().default({
+  media: {
+    acceptsImageInput: { supported: false },
+    emitsSessionMedia: { supported: false },
+    nativeImageGeneration: { supported: false },
+  },
+});
+export type PluginBackendSessionCapabilitiesV1 = z.infer<typeof PluginBackendSessionCapabilitiesV1Schema>;
+
 export const PluginBackendCapabilitiesV1Schema = z.preprocess(
   normalizePluginBackendCapabilitiesInput,
   z.object({
     executionRun: PluginBackendExecutionRunCapabilitiesV1Schema.default({ supported: true }),
-  }).passthrough().default({ executionRun: { supported: true } }),
+    session: PluginBackendSessionCapabilitiesV1Schema,
+  }).passthrough().default({
+    executionRun: { supported: true },
+    session: {
+      media: {
+        acceptsImageInput: { supported: false },
+        emitsSessionMedia: { supported: false },
+        nativeImageGeneration: { supported: false },
+      },
+    },
+  }),
 );
 export type PluginBackendCapabilitiesV1 = z.infer<typeof PluginBackendCapabilitiesV1Schema>;
+
+export function normalizePluginBackendCapabilitiesV1(input: unknown): PluginBackendCapabilitiesV1 {
+  return PluginBackendCapabilitiesV1Schema.parse(input);
+}
 
 export const PluginBackendDefinitionV1Schema = z.object({
   kindVersion: z.literal(1).default(1),

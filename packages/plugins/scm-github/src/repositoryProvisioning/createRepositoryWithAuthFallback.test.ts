@@ -2,6 +2,7 @@ import type {
   ScmHostingProviderRef,
   ScmHostingRepositorySummary,
 } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 const githubProvider: ScmHostingProviderRef = {
@@ -61,6 +62,113 @@ describe('GitHub repository provisioning auth chain', () => {
       visibility: 'private',
     })).resolves.toBe(repository);
     expect(calls).toEqual(['rest', 'cli']);
+  });
+
+  it('falls through to gh when github.com REST has a recoverable server failure', async () => {
+    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
+    expect(mod).not.toBeNull();
+    if (!mod) return;
+
+    const error = Object.assign(new Error('GitHub REST request failed with status 502'), {
+      errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+    });
+    const calls: string[] = [];
+    const adapter = mod.createGithubRepositoryProvisioningAdapter({
+      restAdapter: {
+        createRepository: async () => {
+          calls.push('rest');
+          throw error;
+        },
+      },
+      cliAdapter: {
+        createRepository: async () => {
+          calls.push('cli');
+          return repository;
+        },
+      },
+    });
+
+    await expect(adapter.createRepository({
+      provider: githubProvider,
+      owner: 'happier-dev',
+      repositoryName: 'happier',
+      visibility: 'private',
+    })).resolves.toBe(repository);
+    expect(calls).toEqual(['rest', 'cli']);
+  });
+
+  it('falls through to gh when github.com REST has a network failure', async () => {
+    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
+    expect(mod).not.toBeNull();
+    if (!mod) return;
+
+    const calls: string[] = [];
+    const adapter = mod.createGithubRepositoryProvisioningAdapter({
+      restAdapter: {
+        createRepository: async () => {
+          calls.push('rest');
+          throw new TypeError('fetch failed');
+        },
+      },
+      cliAdapter: {
+        createRepository: async () => {
+          calls.push('cli');
+          return repository;
+        },
+      },
+    });
+
+    await expect(adapter.createRepository({
+      provider: githubProvider,
+      owner: 'happier-dev',
+      repositoryName: 'happier',
+      visibility: 'private',
+    })).resolves.toBe(repository);
+    expect(calls).toEqual(['rest', 'cli']);
+  });
+
+  it('does not fall through to gh for permanent REST errors', async () => {
+    const mod = await import('./createRepositoryWithAuthFallback.js').catch(() => null);
+    expect(mod).not.toBeNull();
+    if (!mod) return;
+
+    const permanentErrors = [
+      Object.assign(new Error('GitHub REST request was forbidden'), {
+        errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_REJECTED,
+      }),
+      Object.assign(new Error('GitHub repository was not found'), {
+        errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND,
+      }),
+      Object.assign(new Error('GitHub REST request failed with status 422'), {
+        errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+      }),
+    ] as const;
+
+    for (const error of permanentErrors) {
+      const calls: string[] = [];
+      const adapter = mod.createGithubRepositoryProvisioningAdapter({
+        restAdapter: {
+          createRepository: async () => {
+            calls.push('rest');
+            throw error;
+          },
+        },
+        cliAdapter: {
+          createRepository: async () => {
+            calls.push('cli');
+            return repository;
+          },
+        },
+      });
+
+      await expect(adapter.createRepository({
+        provider: githubProvider,
+        owner: 'happier-dev',
+        repositoryName: 'happier',
+        visibility: 'private',
+      })).rejects.toBe(error);
+      expect(calls).toEqual(['rest']);
+    }
   });
 
   it('skips REST for Enterprise hosts', async () => {

@@ -25,6 +25,13 @@ const STORY_DECK_PRIMARY_TEST_IDS = [
   'release-notes-primary',
 ] as const;
 
+const STORY_DECK_PRIMARY_ROLE_BUTTON_NAMES = [
+  'Next',
+  'Continue',
+  'Get Started',
+  'Get started',
+] as const;
+
 async function countReadySignals(page: EnsureAccountReadyForConnectPage): Promise<number> {
   let total = 0;
   for (const testId of READY_TEST_IDS) {
@@ -82,6 +89,9 @@ async function clickCreateAccountIfPresent(page: EnsureAccountReadyForConnectPag
 async function advanceStoryDeckIfPresent(page: EnsureAccountReadyForConnectPage): Promise<boolean> {
   for (const testId of STORY_DECK_PRIMARY_TEST_IDS) {
     if (await clickLocatorWithFallback({ page, testId })) return true;
+  }
+  for (const name of STORY_DECK_PRIMARY_ROLE_BUTTON_NAMES) {
+    if (await clickRoleButtonWithFallback({ page, name })) return true;
   }
   return false;
 }

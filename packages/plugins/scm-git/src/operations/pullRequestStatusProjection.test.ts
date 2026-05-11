@@ -4,7 +4,15 @@ import { readFileSync } from 'node:fs';
 import type { ScmHostingProviderRef, ScmPullRequestSummary, ScmWorkingSnapshot } from '@happier-dev/protocol';
 
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';
-import { projectPullRequestStatus } from './pullRequestStatusProjection.js';
+import {
+    projectPullRequestStatus,
+    resolveDefaultPullRequestStatusProjectionRegistry,
+} from './pullRequestStatusProjection.js';
+import {
+    createEmptyScmHostingProviderRegistry,
+    createScmHostingProviderRuntimeServicesForTest,
+    runWithRealGitScmRuntime,
+} from '../testkit/scmRuntime.test-support.js';
 
 const provider: ScmHostingProviderRef = {
     id: 'scm.github',
@@ -97,6 +105,25 @@ describe('pull request status projection', () => {
         expect(source).not.toMatch(/@happier-dev\/plugins-scm-/);
         expect(source).not.toMatch(/\bactivate[A-Za-z0-9_]*Plugin\b/);
         expect(source).not.toMatch(/\bPLUGIN_MANIFEST\b/);
+        expect(source).not.toContain('../hostingProviders/registry');
+        expect(source).not.toContain('createScmHostingProviderRegistry');
+    });
+
+    it('requires the host-injected hosting provider registry resolver for default projection registry resolution', async () => {
+        await expect(resolveDefaultPullRequestStatusProjectionRegistry()).rejects.toThrow(/host-injected SCM hosting provider registry/i);
+    });
+
+    it('resolves the default projection registry from package testkit-installed host runtime services', async () => {
+        const registry = createEmptyScmHostingProviderRegistry();
+
+        const resolved = await runWithRealGitScmRuntime(
+            () => resolveDefaultPullRequestStatusProjectionRegistry(),
+            {
+                hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(registry),
+            },
+        );
+
+        expect(resolved).toBe(registry);
     });
 
     it('projects hosting provider and fresh cached PR status without mutating snapshot entries', () => {

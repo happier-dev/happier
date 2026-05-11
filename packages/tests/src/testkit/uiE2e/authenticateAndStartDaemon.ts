@@ -1,13 +1,11 @@
 import { type Page } from '@playwright/test';
 
 import { startTestDaemon, type StartedDaemon } from '../daemon/daemon';
+import { approveTerminalConnect } from './approveTerminalConnect';
 import { startCliAuthLoginForTerminalConnect } from './cliTerminalConnect';
 import { acknowledgeTerminalConnectSuccessIfPresent } from './acknowledgeTerminalConnectSuccessIfPresent';
-import { approveTerminalConnect } from './approveTerminalConnect';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries } from './pageNavigation';
+import { gotoDomContentLoadedWithPathFallback, gotoDomContentLoadedWithRetries } from './pageNavigation';
 import { ensureAccountReadyForConnect } from './ensureAccountReadyForConnect';
-import { resolveTerminalConnectUrlForBrowser } from './resolveTerminalConnectUrlForBrowser';
-import { ensurePendingTerminalConnectReadyForApproval } from './terminalConnectApprovalFlow';
 
 export async function authenticateAndStartDaemon(params: Readonly<{
   page: Page;
@@ -16,10 +14,11 @@ export async function authenticateAndStartDaemon(params: Readonly<{
   serverUrl: string;
   uiBaseUrl: string;
   createAccount?: boolean;
+  terminalConnectUrlTimeoutMs?: number;
+  daemonStartupTimeoutMs?: number;
   extraEnv?: NodeJS.ProcessEnv;
 }>): Promise<StartedDaemon> {
   await gotoDomContentLoadedWithRetries(params.page, params.uiBaseUrl);
-
   await ensureAccountReadyForConnect({
     page: params.page,
     timeoutMs: 120_000,
@@ -31,6 +30,7 @@ export async function authenticateAndStartDaemon(params: Readonly<{
     cliHomeDir: params.cliHomeDir,
     serverUrl: params.serverUrl,
     webappUrl: params.uiBaseUrl,
+    connectUrlTimeoutMs: params.terminalConnectUrlTimeoutMs,
     env: {
       ...process.env,
       ...(params.extraEnv ?? {}),
@@ -42,23 +42,7 @@ export async function authenticateAndStartDaemon(params: Readonly<{
   });
 
   try {
-    const connectUrlForBrowser = resolveTerminalConnectUrlForBrowser({
-      connectUrl: cliLogin.connectUrl,
-      uiBaseUrl: params.uiBaseUrl,
-      serverUrl: params.serverUrl,
-    });
-    await gotoDomContentLoadedWithRetries(params.page, connectUrlForBrowser, 180_000);
-    await ensurePendingTerminalConnectReadyForApproval({
-      page: params.page,
-      connectUrlForBrowser,
-      gotoConnectUrl: async (url) => {
-        await gotoDomContentLoadedWithRetries(params.page, url, 180_000);
-      },
-      restoreAccount: async () => {
-        await createAccountAndReachConnectMachineState({ page: params.page });
-      },
-      timeoutMs: 180_000,
-    });
+    await gotoDomContentLoadedWithPathFallback(params.page, cliLogin.connectUrl, '/terminal/connect', 90_000);
     await approveTerminalConnect({ page: params.page });
     await cliLogin.waitForSuccess();
     await acknowledgeTerminalConnectSuccessIfPresent(params.page);
@@ -69,6 +53,7 @@ export async function authenticateAndStartDaemon(params: Readonly<{
   return await startTestDaemon({
     testDir: params.testDir,
     happyHomeDir: params.cliHomeDir,
+    startupTimeoutMs: params.daemonStartupTimeoutMs,
     env: {
       ...process.env,
       ...(params.extraEnv ?? {}),

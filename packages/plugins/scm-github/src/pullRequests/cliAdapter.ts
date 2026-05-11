@@ -105,6 +105,29 @@ function buildRepoSelector(provider: ScmHostingProviderRef): string {
   return host === 'github.com' ? nameWithOwner : `${host}/${nameWithOwner}`;
 }
 
+function readNameWithOwnerSegments(provider: ScmHostingProviderRef): readonly [string, string] | null {
+  const segments = provider.nameWithOwner?.split('/').map((segment) => segment.trim()).filter(Boolean);
+  return segments?.length === 2 ? [segments[0]!, segments[1]!] : null;
+}
+
+function readPullRequestNumberFromProviderUrl(provider: ScmHostingProviderRef, url: string): number | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== resolveGithubCliHost(provider.baseUrl)) return null;
+    const nameWithOwner = readNameWithOwnerSegments(provider);
+    if (!nameWithOwner) return null;
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length < 4) return null;
+    if (segments[0]?.toLowerCase() !== nameWithOwner[0].toLowerCase()) return null;
+    if (segments[1]?.toLowerCase() !== nameWithOwner[1].toLowerCase()) return null;
+    if (segments[2] !== 'pull') return null;
+    const number = Number(segments[3]);
+    return Number.isInteger(number) && number > 0 ? number : null;
+  } catch {
+    return null;
+  }
+}
+
 function readJsonOutput(stdout: string): unknown {
   try {
     return JSON.parse(stdout);
@@ -131,7 +154,11 @@ function readPullRequestReference(input: ScmHostingProviderPullRequestGetInput):
     headBranch?: unknown;
   }>;
   if (typeof reference.number === 'number') return String(reference.number);
-  if (typeof reference.url === 'string') return reference.url;
+  if (typeof reference.url === 'string') {
+    const number = readPullRequestNumberFromProviderUrl(input.provider, reference.url);
+    if (number !== null) return String(number);
+    throw createGithubCommandFailedError('GitHub pull request URL is outside the detected repository');
+  }
   if (typeof reference.headBranch === 'string') return reference.headBranch;
   throw createGithubCommandFailedError('GitHub pull request reference is invalid');
 }

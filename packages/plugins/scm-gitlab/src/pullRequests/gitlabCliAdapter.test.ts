@@ -136,6 +136,51 @@ describe('GitLab CLI merge request adapter', () => {
     ]);
   });
 
+  it('gets a merge request detail from a self-managed GitLab URL under the configured base path', async () => {
+    const calls: CommandCall[] = [];
+    const pathScopedProvider: ScmHostingProviderRef = {
+      ...provider,
+      baseUrl: 'https://code.internal.test/gitlab',
+    };
+    const adapter = createGitlabCliAdapter({
+      detectAuth: async () => authenticated(),
+      runCommand: async (request) => {
+        calls.push(request);
+        return {
+          ok: true,
+          stdout: JSON.stringify({
+            iid: 10,
+            title: 'Viewed MR',
+            web_url: 'https://code.internal.test/gitlab/platform/happier/app/-/merge_requests/10',
+            state: 'opened',
+            source_branch: 'feature/view',
+            target_branch: 'main',
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      },
+    });
+
+    await expect(adapter.getPullRequest({
+      provider: pathScopedProvider,
+      reference: { url: 'https://code.internal.test/gitlab/platform/happier/app/-/merge_requests/10' },
+    })).resolves.toMatchObject({
+      number: 10,
+      title: 'Viewed MR',
+    });
+
+    expect(calls[0]?.args).toEqual([
+      'mr',
+      'view',
+      '10',
+      '--repo',
+      'https://code.internal.test/gitlab/platform/happier/app',
+      '--output',
+      'json',
+    ]);
+  });
+
   it('creates merge requests through glab api with a tempfile description field', async () => {
     const calls: CommandCall[] = [];
     const tempBodies: string[] = [];
@@ -283,5 +328,29 @@ describe('GitLab CLI merge request adapter', () => {
 
   it('uses glab-cli as the daemon-local PR cache auth profile key', async () => {
     expect(createGitlabCliAdapter().getPullRequestAuthProfileKey({ provider })).toBe('glab-cli');
+  });
+
+  it('rejects merge request URL references outside the detected provider repository before running glab', async () => {
+    const calls: CommandCall[] = [];
+    const adapter = createGitlabCliAdapter({
+      detectAuth: async () => authenticated(),
+      runCommand: async (request) => {
+        calls.push(request);
+        return {
+          ok: true,
+          stdout: '{}',
+          stderr: '',
+          exitCode: 0,
+        };
+      },
+    });
+
+    await expect(adapter.getPullRequest({
+      provider,
+      reference: { url: 'https://evil.example.com/platform/happier/app/-/merge_requests/9' },
+    })).rejects.toMatchObject({
+      errorCode: 'COMMAND_FAILED',
+    });
+    expect(calls).toEqual([]);
   });
 });

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type {
+    ScmHostingProviderContribution,
     ScmHostingRepositoryPublishTarget,
     ScmHostingRepositorySummary,
     ScmHostingRepositoryVisibility,
@@ -20,12 +21,24 @@ export type ScmHostingProviderRemoteDetectionInput = Readonly<{
 
 export type ScmHostingProviderResolvedRemote = Readonly<{
     id: string;
-    kind: ScmHostingProviderRef['kind'];
+    kind: string;
     displayName: string;
     baseUrl: string;
     nameWithOwner?: string;
-    remoteName?: string;
-    urlSafety?: ScmHostingProviderRef['urlSafety'];
+    remoteName?: string | null;
+    urlSafety?: Readonly<{
+        allowedSchemes: readonly string[];
+        allowedBaseUrls?: readonly string[];
+        allowedOrigins?: readonly string[];
+    }>;
+}>;
+
+export type ScmHostingProviderUnresolvedRemote = Readonly<{
+    id: 'unknown';
+    kind: 'unknown';
+    displayName: string;
+    remoteName?: string | null;
+    unsupportedReason: string;
 }>;
 
 export type ScmHostingProviderCompareUrlInput = Readonly<{
@@ -74,21 +87,69 @@ export type ScmHostingProviderRuntimeCommandResult = Readonly<{
     exitCode: number | null;
 }>;
 
+export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContribution, 'urlSafety'> & {
+    pluginId?: string;
+    urlSafety?: Readonly<{
+        allowedSchemes: readonly string[];
+        allowedBaseUrls: readonly string[];
+        allowedOrigins: readonly string[];
+    }>;
+}>;
+
+export type ScmHostingProviderRuntimeBinding = Readonly<{
+    pluginId: string;
+    registration: ScmHostingProviderRuntimeRegistration;
+}>;
+
+export type ScmHostingProviderRegistryDiagnostic = Readonly<{
+    code: string;
+    message: string;
+    pluginId?: string;
+    providerId?: string;
+}>;
+
+export type ScmHostingProviderResolvedProvider = ScmHostingProviderDescriptor & Readonly<{
+    runtime?: ScmHostingProviderRuntimeBinding;
+}>;
+
+export type ScmHostingProviderRemoteDetectionResult =
+    | Readonly<{
+        kind: 'resolved';
+        providerId: string;
+        provider: ScmHostingProviderResolvedRemote;
+    }>
+    | Readonly<{
+        kind: 'unknown';
+        provider: ScmHostingProviderUnresolvedRemote;
+    }>;
+
+export type ScmHostingProviderCompareUrlResult =
+    | Readonly<{
+        kind: 'resolved';
+        url: string;
+    }>
+    | Readonly<{
+        kind: 'unsupported';
+        reason: 'unknown_provider' | 'adapter_unavailable' | 'unsupported_by_provider' | string;
+        provider: ScmHostingProviderResolvedRemote | ScmHostingProviderUnresolvedRemote;
+    }>;
+
+export type ScmHostingProviderResolvedRegistry = Readonly<{
+    providers: readonly ScmHostingProviderResolvedProvider[];
+    providersById: ReadonlyMap<string, ScmHostingProviderResolvedProvider>;
+    diagnostics: readonly ScmHostingProviderRegistryDiagnostic[];
+    getProvider: (id: string) => ScmHostingProviderResolvedProvider | undefined;
+    getAdapter: (id: string) => ScmHostingProviderRuntimeAdapter | undefined;
+    detectRemote: (input: ScmHostingProviderRemoteDetectionInput) => ScmHostingProviderRemoteDetectionResult;
+    buildCompareUrl: (input: Readonly<{
+        provider: ScmHostingProviderResolvedRemote | ScmHostingProviderUnresolvedRemote;
+        base: string;
+        head: string;
+    }>) => ScmHostingProviderCompareUrlResult;
+}>;
+
 export type ScmHostingProviderRuntimeServices = Readonly<{
-    resolveScmHostingProviderRegistry?: () => Promise<Readonly<{
-        detectRemote(input: ScmHostingProviderRemoteDetectionInput): Readonly<
-            | {
-                kind: 'resolved';
-                providerId: string;
-                provider: ScmHostingProviderResolvedRemote;
-            }
-            | { kind: 'unsupported' }
-        >;
-        buildCompareUrl(input: ScmHostingProviderCompareUrlInput): Readonly<
-            | { kind: 'resolved'; url: string }
-            | { kind: 'unsupported' }
-        >;
-    }>>;
+    resolveScmHostingProviderRegistry?: () => Promise<ScmHostingProviderResolvedRegistry>;
     resolveScmHostingTokenMaterialization?: (input: Readonly<{
         kind: 'scm_hosting_token';
         providerId: string;
@@ -114,7 +175,23 @@ export type ScmHostingProviderRuntimeServices = Readonly<{
     }>) => Promise<ScmHostingProviderRuntimeCommandResult>;
 }>;
 
-const scmHostingProviderRuntimeServicesStorage = new AsyncLocalStorage<ScmHostingProviderRuntimeServices>();
+const SCM_HOSTING_PROVIDER_RUNTIME_SERVICES_STORAGE_KEY = Symbol.for(
+    'happier.pluginSdk.scm.hostingProviderRuntimeServicesStorage',
+);
+
+function resolveScmHostingProviderRuntimeServicesStorage(): AsyncLocalStorage<ScmHostingProviderRuntimeServices> {
+    const globalScope = globalThis as typeof globalThis & Record<symbol, unknown>;
+    const existing = globalScope[SCM_HOSTING_PROVIDER_RUNTIME_SERVICES_STORAGE_KEY];
+    if (existing instanceof AsyncLocalStorage) {
+        return existing as AsyncLocalStorage<ScmHostingProviderRuntimeServices>;
+    }
+
+    const storage = new AsyncLocalStorage<ScmHostingProviderRuntimeServices>();
+    globalScope[SCM_HOSTING_PROVIDER_RUNTIME_SERVICES_STORAGE_KEY] = storage;
+    return storage;
+}
+
+const scmHostingProviderRuntimeServicesStorage = resolveScmHostingProviderRuntimeServicesStorage();
 
 export function runWithScmHostingProviderRuntimeServices<T>(
     services: ScmHostingProviderRuntimeServices,
@@ -169,6 +246,7 @@ export type ScmHostingProviderPullRequestCheckoutReferenceInput = ScmHostingProv
 export type ScmHostingProviderPullRequestCheckoutReferenceMetadata = Readonly<{
     pullRequest: ScmPullRequestSummary | null;
     branch?: string;
+    remoteRef?: string;
     headSha?: string | null;
     baseSha?: string | null;
 }>;

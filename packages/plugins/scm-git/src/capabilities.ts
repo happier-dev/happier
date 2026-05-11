@@ -76,9 +76,9 @@ export const GIT_SCM_BACKEND_CAPABILITIES = {
         pullRequestStatus: supportedCapability(),
         pullRequestCreate: supportedCapability(),
         pullRequestReuse: supportedCapability(),
-        pullRequestCheckout: unsupportedCapability(),
-        pullRequestPrepareWorktree: unsupportedCapability(),
-        pullRequestRunStacked: unsupportedCapability(),
+        pullRequestCheckout: supportedCapability(),
+        pullRequestPrepareWorktree: supportedCapability(),
+        pullRequestRunStacked: supportedCapability(),
     },
     checkpoints: {
         capture: supportedCapability(),

@@ -9,15 +9,18 @@ import {
     type ScmPullRequestSummary,
     type ScmWorkingSnapshot,
 } from '@happier-dev/protocol';
-import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
+import {
+    readCurrentScmHostingProviderRuntimeServices,
+    type ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk';
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
 import { defaultPrStatusCache, type PrStatusCache, type PrStatusCacheErrorKind, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
 import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
-import { createScmHostingProviderRuntimeServices } from '../hostingProviders/runtimeServices.js';
 import { gitRemotePublish } from './publishOperations.js';
+import { createValidatedPullRequestFollowupAction } from './pullRequestFollowupAction.js';
 import { resolveDefaultPullRequestStatusProjectionRegistry } from './pullRequestStatusProjection.js';
 import {
     evaluateDefaultBranchPullRequestPolicy,
@@ -162,19 +165,19 @@ function classifyError(error: unknown): Readonly<{
 
 function createSuccessfulResponse(input: Readonly<{
     pullRequest: ScmPullRequestSummary;
+    provider: ScmHostingProviderRef;
     reused: boolean;
 }>): ScmPullRequestOpenOrReuseResponse {
     return {
         success: true,
         pullRequest: input.pullRequest,
         reused: input.reused,
-        nextAction: {
-            kind: 'openUrl',
+        nextAction: createValidatedPullRequestFollowupAction({
+            provider: input.provider,
             purpose: 'pullRequest',
             url: input.pullRequest.url,
-            allowedBaseUrl: input.pullRequest.provider.baseUrl,
-            urlSafety: input.pullRequest.provider.urlSafety,
-        },
+            allowedBaseUrl: input.provider.baseUrl,
+        }),
         authState: 'authenticated',
     };
 }
@@ -199,12 +202,13 @@ export function createGitPullRequestOpenOrReuseOperation(
     deps?: GitPullRequestOpenOrReuseOperationDeps,
 ): GitPullRequestOpenOrReuseOperation {
     const cache = deps?.cache ?? defaultPrStatusCache;
-    let defaultRuntimeServices: ScmHostingProviderRuntimeServices | null = null;
 
     function readRuntimeServices(): ScmHostingProviderRuntimeServices {
         if (deps?.runtimeServices) return deps.runtimeServices;
-        defaultRuntimeServices ??= createScmHostingProviderRuntimeServices();
-        return defaultRuntimeServices;
+        const currentServices = readCurrentScmHostingProviderRuntimeServices();
+        if (currentServices) return currentServices;
+        if (deps?.registry) return {};
+        throw new Error('Git SCM pull request operations require host-injected SCM hosting provider runtime services.');
     }
 
     const readSnapshot = deps?.readSnapshot ?? (async ({ context }) => {
@@ -288,9 +292,15 @@ export function createGitPullRequestOpenOrReuseOperation(
                 return errorResponse('Cannot open a pull request without a base branch', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
             }
             const resolvedBaseBranch = baseBranch;
+            if (request.head?.trim() === resolvedBaseBranch) {
+                return errorResponse(
+                    'Create a feature branch before opening a pull request from the default branch',
+                    SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+                );
+            }
             const requestedHeadRepositoryNameWithOwner = request.headRepositoryNameWithOwner?.trim() || undefined;
             const policy = evaluateDefaultBranchPullRequestPolicy({
-                policy: snapshot.capabilities.defaultBranchPushPolicy ?? 'deny',
+                policy: request.defaultBranchPushPolicy ?? snapshot.capabilities.defaultBranchPushPolicy ?? 'deny',
                 currentBranch: snapshot.branch.head,
                 baseBranch: resolvedBaseBranch,
                 branchAhead: snapshot.branch.ahead,
@@ -332,7 +342,7 @@ export function createGitPullRequestOpenOrReuseOperation(
                     ...(requestedHeadRepositoryNameWithOwner ? { headRepositoryNameWithOwner: requestedHeadRepositoryNameWithOwner } : {}),
                 });
                 if (cachedMatch) {
-                    return createSuccessfulResponse({ pullRequest: cachedMatch, reused: true });
+                    return createSuccessfulResponse({ pullRequest: cachedMatch, provider: resolvedProvider, reused: true });
                 }
             }
 
@@ -351,13 +361,12 @@ export function createGitPullRequestOpenOrReuseOperation(
                     pullRequest: null,
                     reused: false,
                     composeUrl: compareUrl.url,
-                    nextAction: {
-                        kind: 'openUrl',
+                    nextAction: createValidatedPullRequestFollowupAction({
+                        provider: resolvedProvider,
                         purpose: 'compose',
                         url: compareUrl.url,
                         allowedBaseUrl: resolvedProvider.baseUrl,
-                        urlSafety: resolvedProvider.urlSafety,
-                    },
+                    }),
                     authState: 'authentication_required',
                 };
             }
@@ -387,7 +396,7 @@ export function createGitPullRequestOpenOrReuseOperation(
                 });
                 if (existing) {
                     cache.setSuccess({ key: readCurrentCacheKey(), pullRequests: [existing] });
-                    return createSuccessfulResponse({ pullRequest: existing, reused: true });
+                    return createSuccessfulResponse({ pullRequest: existing, provider: resolvedProvider, reused: true });
                 }
             } catch (error) {
                 const classified = classifyError(error);
@@ -436,6 +445,18 @@ export function createGitPullRequestOpenOrReuseOperation(
                     ...(request.body !== undefined ? { body: request.body } : {}),
                     runtimeServices: readRuntimeServices(),
                 });
+                if (!matchesBranchHeadContext({
+                    pullRequest: created,
+                    provider: resolvedProvider,
+                    baseBranch: resolvedBaseBranch,
+                    headBranch: resolvedHeadBranch,
+                    ...(requestedHeadRepositoryNameWithOwner ? { headRepositoryNameWithOwner: requestedHeadRepositoryNameWithOwner } : {}),
+                })) {
+                    return errorResponse(
+                        'Pull request provider returned a pull request outside the requested branch context.',
+                        SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                    );
+                }
                 invalidatePrStatusCacheAfterSuccessfulScmMutation({
                     cache,
                     response: { success: true },
@@ -443,7 +464,7 @@ export function createGitPullRequestOpenOrReuseOperation(
                     headBranch: resolvedHeadBranch,
                 });
                 cache.setSuccess({ key: readCurrentCacheKey(), pullRequests: [created] });
-                return createSuccessfulResponse({ pullRequest: created, reused: false });
+                return createSuccessfulResponse({ pullRequest: created, provider: resolvedProvider, reused: false });
             } catch (error) {
                 const duplicateHint = await readValidatedDuplicateHint({
                     adapter: writeAdapter,
@@ -455,7 +476,7 @@ export function createGitPullRequestOpenOrReuseOperation(
                 });
                 if (duplicateHint) {
                     cache.setSuccess({ key: readCurrentCacheKey(), pullRequests: [duplicateHint] });
-                    return createSuccessfulResponse({ pullRequest: duplicateHint, reused: true });
+                    return createSuccessfulResponse({ pullRequest: duplicateHint, provider: resolvedProvider, reused: true });
                 }
                 let listedAfterDuplicate: ScmPullRequestSummary | null = null;
                 try {
@@ -471,7 +492,7 @@ export function createGitPullRequestOpenOrReuseOperation(
                 }
                 if (listedAfterDuplicate) {
                     cache.setSuccess({ key: readCurrentCacheKey(), pullRequests: [listedAfterDuplicate] });
-                    return createSuccessfulResponse({ pullRequest: listedAfterDuplicate, reused: true });
+                    return createSuccessfulResponse({ pullRequest: listedAfterDuplicate, provider: resolvedProvider, reused: true });
                 }
                 const classified = classifyError(error);
                 if (classified.code === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED || classified.code === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {

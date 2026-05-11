@@ -229,4 +229,37 @@ describe('GitHub CLI pull request adapter', () => {
       errorCode: 'COMMAND_FAILED',
     });
   });
+
+  it('rejects pull request URL references outside the detected provider repository before running gh', async () => {
+    const mod = await import('./cliAdapter.js').catch(() => null);
+    expect(mod).not.toBeNull();
+    if (!mod) return;
+
+    const calls: unknown[] = [];
+    const adapter = mod.createGithubCliAdapter({
+      detectAuth: async () => ({
+        kind: 'authenticated',
+        source: 'system',
+        binPath: '/usr/local/bin/gh',
+        host: 'ghe.internal.test',
+      }),
+      runCommand: async (request: unknown) => {
+        calls.push(request);
+        return {
+          ok: true,
+          stdout: '{}',
+          stderr: '',
+          exitCode: 0,
+        };
+      },
+    });
+
+    await expect(adapter.getPullRequest({
+      provider,
+      reference: { url: 'https://evil.example.com/happier-dev/happier/pull/9' },
+    })).rejects.toMatchObject({
+      errorCode: 'COMMAND_FAILED',
+    });
+    expect(calls).toEqual([]);
+  });
 });

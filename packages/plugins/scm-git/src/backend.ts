@@ -139,6 +139,18 @@ export function createGitBackend(): ScmBackend {
             const { gitPullRequestOpenOrReuse } = await import('./operations/pullRequestOpenOrReuseOperation.js');
             return await gitPullRequestOpenOrReuse(input);
         },
+        pullRequestCheckout: async (input) => {
+            const { gitPullRequestCheckout } = await import('./operations/pullRequestCheckoutOperations.js');
+            return await gitPullRequestCheckout(input);
+        },
+        pullRequestPrepareWorktree: async (input) => {
+            const { gitPullRequestPrepareWorktree } = await import('./operations/pullRequestCheckoutOperations.js');
+            return await gitPullRequestPrepareWorktree(input);
+        },
+        pullRequestRunStacked: async (input) => {
+            const { gitPullRequestRunStacked } = await import('./operations/runStackedPullRequestAction.js');
+            return await gitPullRequestRunStacked(input);
+        },
         repositoryInit: gitRepositoryInit,
         removeIndexLock: gitRemoveIndexLock,
         stashList: gitStashList,
@@ -209,6 +221,9 @@ export function createGitScmBackendRuntimeRegistration(): ScmBackendRuntimeRegis
                 pullRequestGet: backend.pullRequestGet,
                 pullRequestOpenCompose: backend.pullRequestOpenCompose,
                 pullRequestOpenOrReuse: backend.pullRequestOpenOrReuse,
+                pullRequestCheckout: backend.pullRequestCheckout,
+                pullRequestPrepareWorktree: backend.pullRequestPrepareWorktree,
+                pullRequestRunStacked: backend.pullRequestRunStacked,
             },
             stash: {
                 drop: backend.stashDrop,

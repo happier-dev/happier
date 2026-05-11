@@ -23,6 +23,17 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
         engine: { kind: 'custom' },
         capabilities: {
           executionRun: { supported: false },
+          session: {
+            media: {
+              emitsSessionMedia: {
+                supported: true,
+                mediaKinds: ['image'],
+                sources: ['acp-content', 'mcp-content'],
+                storage: 'session-media-file',
+              },
+              nativeImageGeneration: { supported: false },
+            },
+          },
         },
       },
     ],

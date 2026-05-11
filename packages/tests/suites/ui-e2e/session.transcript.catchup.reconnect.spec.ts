@@ -10,9 +10,9 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
-import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
+import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -269,7 +269,7 @@ test.describe('ui e2e: transcript reconnect catch-up', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
 
-    await createAccountAndReachConnectMachineState({ page });
+    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 
     const testDir = resolve(join(suiteDir, 't1-reconnect-catchup'));
     await mkdir(testDir, { recursive: true });
@@ -290,7 +290,7 @@ test.describe('ui e2e: transcript reconnect catch-up', () => {
 
     await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-    await approveTerminalConnect({ page });
+    await page.getByTestId('terminal-connect-approve').click();
     await cliLogin.waitForSuccess();
     await cliLogin.stop().catch(() => {});
 
@@ -321,7 +321,7 @@ test.describe('ui e2e: transcript reconnect catch-up', () => {
     // --- Scenario A: pinned + large gap => tail reset (snapshot `/messages`, no `afterSeq`) ---
     const sessionPinnedId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: 'hello pinned' });
     await page.goto(`${uiBaseUrl}/session/${sessionPinnedId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('[data-testid="transcript-chat-list"]:visible')).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
     const requests: Array<{ url: string; ts: number }> = [];
     page.on('request', (req) => {
@@ -369,7 +369,7 @@ test.describe('ui e2e: transcript reconnect catch-up', () => {
     // --- Scenario B: mid-history + large gap => defer, then forward-load on scroll near bottom ---
     const sessionMidId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: 'hello mid-history' });
     await page.goto(`${uiBaseUrl}/session/${sessionMidId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('[data-testid="transcript-chat-list"]:visible')).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
     // Create enough content to allow scroll-unpin.
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
@@ -379,7 +379,7 @@ test.describe('ui e2e: transcript reconnect catch-up', () => {
       await page.waitForTimeout(100);
     }
 
-    const transcript = page.locator('[data-testid="transcript-chat-list"]:visible').first();
+    const transcript = page.getByTestId('transcript-chat-list');
     await expect(transcript).toHaveCount(1, { timeout: 60_000 });
     // Avoid relying on RNW DOM `id` forwarding for the underlying ChatList root; `testID` is our stable UI-e2e API.
     const transcriptRoot = transcript;

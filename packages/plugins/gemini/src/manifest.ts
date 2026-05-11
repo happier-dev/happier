@@ -1,7 +1,7 @@
 import type { PluginManifestV2 } from '@happier-dev/protocol';
 
-// Skeleton manifest reserved for Stage E.8 extraction.
-// Substantive capabilities + contributions land during E.8.
+// Thin composition file that declares this plugin’s canonical manifest.
+// Keep unsupported media defaults explicit until a source-real media event is mapped.
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
   id: 'happier.agent.gemini',
@@ -9,8 +9,26 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
   displayName: 'gemini',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: [] },
+  runtime: { apiVersion: 1, capabilities: ['backends'] },
   targets: {},
   capabilities: { permissions: [] },
-  contributes: {},
+  contributes: {
+    backends: [
+      {
+        kindVersion: 1,
+        id: 'gemini',
+        agentId: 'gemini',
+        engine: { kind: 'custom' },
+        capabilities: {
+          session: {
+            media: {
+              acceptsImageInput: { supported: false },
+              emitsSessionMedia: { supported: false },
+              nativeImageGeneration: { supported: false },
+            },
+          },
+        },
+      },
+    ],
+  },
 };

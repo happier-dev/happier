@@ -38,6 +38,12 @@ import type {
     ScmPullRequestOpenComposeResponse,
     ScmPullRequestOpenOrReuseRequest,
     ScmPullRequestOpenOrReuseResponse,
+    ScmPullRequestCheckoutRequest,
+    ScmPullRequestCheckoutResponse,
+    ScmPullRequestPrepareWorktreeRequest,
+    ScmPullRequestPrepareWorktreeResponse,
+    ScmPullRequestRunStackedRequest,
+    ScmPullRequestRunStackedResponse,
     ScmRemoteAddRequest,
     ScmRemoteManagementResponse,
     ScmRemotePublishRequest,
@@ -313,6 +319,15 @@ export type ScmBackendRuntimeHandlers = Readonly<{
         pullRequestOpenOrReuse?: (
             input: ScmBackendRuntimeHandlerInput<ScmPullRequestOpenOrReuseRequest>
         ) => Promise<ScmPullRequestOpenOrReuseResponse> | ScmPullRequestOpenOrReuseResponse;
+        pullRequestCheckout?: (
+            input: ScmBackendRuntimeHandlerInput<ScmPullRequestCheckoutRequest>
+        ) => Promise<ScmPullRequestCheckoutResponse> | ScmPullRequestCheckoutResponse;
+        pullRequestPrepareWorktree?: (
+            input: ScmBackendRuntimeHandlerInput<ScmPullRequestPrepareWorktreeRequest>
+        ) => Promise<ScmPullRequestPrepareWorktreeResponse> | ScmPullRequestPrepareWorktreeResponse;
+        pullRequestRunStacked?: (
+            input: ScmBackendRuntimeHandlerInput<ScmPullRequestRunStackedRequest>
+        ) => Promise<ScmPullRequestRunStackedResponse> | ScmPullRequestRunStackedResponse;
     }>;
     stash?: Readonly<{
         drop?: (input: ScmBackendRuntimeHandlerInput<ScmStashDropRequest>) => Promise<ScmStashDropResponse> | ScmStashDropResponse;
@@ -352,7 +367,23 @@ export type ScmBackendRuntimeServices = Readonly<{
     runCommand(input: ScmBackendCommandRunInput): Promise<ScmBackendCommandRunResult>;
 }>;
 
-const scmBackendRuntimeServicesStorage = new AsyncLocalStorage<ScmBackendRuntimeServices>();
+const SCM_BACKEND_RUNTIME_SERVICES_STORAGE_KEY = Symbol.for(
+    'happier.pluginSdk.scm.backendRuntimeServicesStorage',
+);
+
+function resolveScmBackendRuntimeServicesStorage(): AsyncLocalStorage<ScmBackendRuntimeServices> {
+    const globalScope = globalThis as typeof globalThis & Record<symbol, unknown>;
+    const existing = globalScope[SCM_BACKEND_RUNTIME_SERVICES_STORAGE_KEY];
+    if (existing instanceof AsyncLocalStorage) {
+        return existing as AsyncLocalStorage<ScmBackendRuntimeServices>;
+    }
+
+    const storage = new AsyncLocalStorage<ScmBackendRuntimeServices>();
+    globalScope[SCM_BACKEND_RUNTIME_SERVICES_STORAGE_KEY] = storage;
+    return storage;
+}
+
+const scmBackendRuntimeServicesStorage = resolveScmBackendRuntimeServicesStorage();
 
 export function runWithScmBackendRuntimeServices<T>(
     services: ScmBackendRuntimeServices,

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -18,6 +20,7 @@ const provider: ScmHostingProviderRef = {
     displayName: 'GitHub',
     baseUrl: 'https://github.com',
     nameWithOwner: 'happier-dev/happier',
+    repositoryWebUrl: 'https://github.com/happier-dev/happier',
     remoteName: 'origin',
     urlSafety: { allowedSchemes: ['https:'] },
 };
@@ -119,6 +122,13 @@ function createRegistry(adapter: Readonly<Record<string, unknown>>) {
 }
 
 describe('git pull request open-or-reuse operation', () => {
+    it('resolves default hosting provider runtime services from the host only', () => {
+        const source = readFileSync(new URL('./pullRequestOpenOrReuseOperation.ts', import.meta.url), 'utf8');
+
+        expect(source).not.toContain('../hostingProviders/runtimeServices');
+        expect(source).not.toContain('createScmHostingProviderRuntimeServices');
+    });
+
     it('creates through the resolved adapter once, then reuses the open PR from cache/list context', async () => {
         const cache = createPrStatusCache({ now: () => 1000 });
         const pullRequest = createPullRequest();
@@ -192,10 +202,79 @@ describe('git pull request open-or-reuse operation', () => {
                 kind: 'openUrl',
                 purpose: 'compose',
                 url: 'https://github.com/happier-dev/happier/compare/main...feature/scm-pr-6',
-                allowedBaseUrl: 'https://github.com',
+                allowedBaseUrl: 'https://github.com/happier-dev/happier',
             },
             authState: 'authentication_required',
         });
+    });
+
+    it('does not return an openUrl follow-up when the provider PR URL escapes the allowed base URL', async () => {
+        const unsafePullRequest = createPullRequest({
+            url: 'https://evil.example.com/happier-dev/happier/pull/42',
+        });
+        const operation = createGitPullRequestOpenOrReuseOperation({
+            cache: createPrStatusCache({ now: () => 1000 }),
+            registry: createRegistry({
+                listPullRequests: async () => [unsafePullRequest],
+                createPullRequest: async () => unsafePullRequest,
+            }),
+            readSnapshot: async () => createSnapshot(),
+            now: () => 1000,
+        });
+
+        await expect(operation.openOrReuse({
+            context,
+            request: {
+                cwd: '/repo',
+                base: 'main',
+                title: 'Open PR',
+            },
+        })).resolves.toMatchObject({
+            success: true,
+            reused: true,
+            pullRequest: unsafePullRequest,
+            nextAction: { kind: 'none' },
+        });
+    });
+
+    it('rejects created pull requests outside the resolved provider repository context', async () => {
+        const wrongRepositoryPullRequest = createPullRequest({
+            provider: {
+                ...provider,
+                nameWithOwner: 'other/repo',
+            },
+            url: 'https://github.com/other/repo/pull/42',
+        });
+        const cache = createPrStatusCache({ now: () => 1000 });
+        const operation = createGitPullRequestOpenOrReuseOperation({
+            cache,
+            registry: createRegistry({
+                listPullRequests: async () => [],
+                createPullRequest: vi.fn(async () => wrongRepositoryPullRequest),
+            }),
+            readSnapshot: async () => createSnapshot(),
+            now: () => 1000,
+        });
+
+        await expect(operation.openOrReuse({
+            context,
+            request: {
+                cwd: '/repo',
+                base: 'main',
+                title: 'Open PR',
+            },
+        })).resolves.toMatchObject({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+        });
+        expect(cache.getFresh({
+            workspaceKey: context.projectKey,
+            repoRootPath: '/repo',
+            provider,
+            baseBranch: 'main',
+            headBranch: 'feature/scm-pr-6',
+            state: 'open',
+        })).toBeNull();
     });
 
     it('validates duplicate-create URL hints against branch-head context before reusing', async () => {
@@ -435,6 +514,93 @@ describe('git pull request open-or-reuse operation', () => {
         });
         expect(publishActiveBranch).not.toHaveBeenCalled();
         expect(createPullRequest).not.toHaveBeenCalled();
+    });
+
+    it('honors request-scoped default-branch policy before publishing or creating a PR', async () => {
+        const publishActiveBranch = vi.fn();
+        const createPullRequest = vi.fn();
+        const operation = createGitPullRequestOpenOrReuseOperation({
+            cache: createPrStatusCache({ now: () => 1000 }),
+            registry: createRegistry({
+                createPullRequest,
+            }),
+            readSnapshot: async () => createSnapshot({
+                branch: {
+                    head: 'main',
+                    upstream: 'origin/main',
+                    ahead: 2,
+                    behind: 0,
+                    detached: false,
+                },
+                capabilities: {
+                    capabilityScope: 'local-backend',
+                    defaultBranchPushPolicy: 'deny',
+                },
+            }),
+            publishActiveBranch,
+            now: () => 1000,
+        });
+
+        const response = await operation.openOrReuse({
+            context,
+            request: {
+                cwd: '/repo',
+                base: 'main',
+                title: 'Open PR',
+                defaultBranchPushPolicy: 'requires-feature-branch',
+            },
+        });
+
+        expect(response).toMatchObject({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+            defaultBranchAction: {
+                kind: 'create_feature_branch_and_open_pr',
+                baseBranch: 'main',
+                currentBranch: 'main',
+                ahead: 2,
+            },
+        });
+        expect(publishActiveBranch).not.toHaveBeenCalled();
+        expect(createPullRequest).not.toHaveBeenCalled();
+    });
+
+    it('blocks explicit base-to-base heads even when another branch is active', async () => {
+        const createdPullRequest = createPullRequest();
+        const createPullRequestHook = vi.fn(async () => createdPullRequest);
+        const operation = createGitPullRequestOpenOrReuseOperation({
+            cache: createPrStatusCache({ now: () => 1000 }),
+            registry: createRegistry({
+                listPullRequests: async () => [],
+                createPullRequest: createPullRequestHook,
+            }),
+            readSnapshot: async () => createSnapshot({
+                branch: {
+                    head: 'feature/scm-pr-6',
+                    upstream: 'origin/feature/scm-pr-6',
+                    ahead: 1,
+                    behind: 0,
+                    detached: false,
+                },
+            }),
+            now: () => 1000,
+        });
+
+        const response = await operation.openOrReuse({
+            context,
+            request: {
+                cwd: '/repo',
+                base: 'main',
+                head: 'main',
+                title: 'Do not open main against itself',
+            },
+        });
+
+        expect(response).toMatchObject({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+        });
+        expect(createPullRequestHook).not.toHaveBeenCalled();
     });
 
     it('publishes the active feature branch instead of pushing to an upstream base branch', async () => {

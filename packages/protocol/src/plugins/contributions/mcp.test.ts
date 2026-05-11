@@ -1,22 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  PluginMcpBackendClientContributionV1Schema,
   PluginMcpContributesV1Schema,
-  PluginMcpToolContributionV1Schema,
 } from './mcp.js';
 
 describe('MCP plugin contribution schemas', () => {
   it('defaults absent MCP contributions to empty arrays', () => {
     expect(PluginMcpContributesV1Schema.parse(undefined)).toEqual({
       servers: [],
-      backendClients: [],
-      tools: [],
       discoveryProviders: [],
     });
   });
 
-  it('accepts static MCP descriptors with canonical tool prefixes', () => {
+  it('accepts static MCP server and discovery-provider descriptors', () => {
     const parsed = PluginMcpContributesV1Schema.parse({
       servers: [
         {
@@ -26,24 +22,6 @@ describe('MCP plugin contribution schemas', () => {
           name: 'acme-hosted',
           transport: 'hosted',
           displayKey: 'plugins.acme.mcp.hosted.title',
-        },
-      ],
-      backendClients: [
-        {
-          id: 'acme.backendClient',
-          kind: 'mcp.backendClient',
-          version: '1.0.0',
-          serverName: 'acme-hosted',
-          toolNamespace: 'ext.acme',
-        },
-      ],
-      tools: [
-        {
-          id: 'acme.tool',
-          kind: 'mcp.tool',
-          version: '1.0.0',
-          name: 'ext.acme.search',
-          displayKey: 'plugins.acme.mcp.search.title',
         },
       ],
       discoveryProviders: [
@@ -57,9 +35,32 @@ describe('MCP plugin contribution schemas', () => {
     });
 
     expect(parsed.servers.map((server) => server.name)).toEqual(['acme-hosted']);
-    expect(parsed.backendClients.map((client) => client.toolNamespace)).toEqual(['ext.acme']);
-    expect(parsed.tools.map((tool) => tool.name)).toEqual(['ext.acme.search']);
     expect(parsed.discoveryProviders.map((provider) => provider.providerId)).toEqual(['acme']);
+  });
+
+  it('rejects retired static MCP backend-client and direct-tool descriptors', () => {
+    expect(PluginMcpContributesV1Schema.safeParse({
+      backendClients: [
+        {
+          id: 'acme.backendClient',
+          kind: 'mcp.backendClient',
+          version: '1.0.0',
+          serverName: 'acme-hosted',
+          toolNamespace: 'ext.acme',
+        },
+      ],
+    }).success).toBe(false);
+
+    expect(PluginMcpContributesV1Schema.safeParse({
+      tools: [
+        {
+          id: 'acme.tool',
+          kind: 'mcp.tool',
+          version: '1.0.0',
+          name: 'ext.acme.search',
+        },
+      ],
+    }).success).toBe(false);
   });
 
   it('rejects raw credential-shaped fields in plugin MCP descriptors', () => {
@@ -163,38 +164,7 @@ describe('MCP plugin contribution schemas', () => {
     }).success).toBe(true);
   });
 
-  it('rejects nested raw authorization material in every MCP contribution family', () => {
-    expect(PluginMcpContributesV1Schema.safeParse({
-      backendClients: [
-        {
-          id: 'acme.backendClient',
-          kind: 'mcp.backendClient',
-          version: '1.0.0',
-          serverName: 'acme-hosted',
-          toolNamespace: 'ext.acme',
-          headers: {
-            Authorization: 'Bearer raw-value',
-          },
-        },
-      ],
-    }).success).toBe(false);
-
-    expect(PluginMcpContributesV1Schema.safeParse({
-      tools: [
-        {
-          id: 'acme.tool',
-          kind: 'mcp.tool',
-          version: '1.0.0',
-          name: 'ext.acme.search',
-          inputSchema: {
-            headers: {
-              Authorization: 'Bearer raw-value',
-            },
-          },
-        },
-      ],
-    }).success).toBe(false);
-
+  it('rejects nested raw authorization material in discovery-provider descriptors', () => {
     expect(PluginMcpContributesV1Schema.safeParse({
       discoveryProviders: [
         {
@@ -208,47 +178,5 @@ describe('MCP plugin contribution schemas', () => {
         },
       ],
     }).success).toBe(false);
-  });
-
-  it('rejects unprefixed MCP tool names', () => {
-    expect(PluginMcpToolContributionV1Schema.safeParse({
-      id: 'acme.badTool',
-      kind: 'mcp.tool',
-      version: '1.0.0',
-      name: 'search',
-    }).success).toBe(false);
-
-    expect(PluginMcpToolContributionV1Schema.safeParse({
-      id: 'acme.badHappierNamespaceOnlyTool',
-      kind: 'mcp.tool',
-      version: '1.0.0',
-      name: 'happier.session',
-    }).success).toBe(false);
-  });
-
-  it('rejects backend-client tool namespaces that are not canonical namespace prefixes', () => {
-    expect(PluginMcpBackendClientContributionV1Schema.safeParse({
-      id: 'acme.badClient',
-      kind: 'mcp.backendClient',
-      version: '1.0.0',
-      serverName: 'acme-hosted',
-      toolNamespace: 'search',
-    }).success).toBe(false);
-
-    expect(PluginMcpBackendClientContributionV1Schema.safeParse({
-      id: 'acme.goodClient',
-      kind: 'mcp.backendClient',
-      version: '1.0.0',
-      serverName: 'acme-hosted',
-      toolNamespace: 'codex.github',
-    }).success).toBe(true);
-
-    expect(PluginMcpBackendClientContributionV1Schema.safeParse({
-      id: 'acme.goodDottedExtensionClient',
-      kind: 'mcp.backendClient',
-      version: '1.0.0',
-      serverName: 'acme-hosted',
-      toolNamespace: 'ext.acme.search',
-    }).success).toBe(true);
   });
 });

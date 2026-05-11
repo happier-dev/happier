@@ -12,5 +12,31 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
   runtime: { apiVersion: 1, capabilities: ['agents', 'backends'] },
   targets: {},
   capabilities: { permissions: [] },
-  contributes: {},
+  contributes: {
+    backends: [
+      {
+        kindVersion: 1,
+        id: 'codex',
+        agentId: 'codex',
+        engine: { kind: 'custom' },
+        capabilities: {
+          session: {
+            media: {
+              emitsSessionMedia: {
+                supported: true,
+                mediaKinds: ['image'],
+                sources: ['provider-generated'],
+                storage: 'session-media-file',
+              },
+              nativeImageGeneration: {
+                supported: true,
+                mediaKinds: ['image'],
+                streamingPartials: false,
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
 };

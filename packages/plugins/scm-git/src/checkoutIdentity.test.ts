@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
+import { runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -46,7 +47,7 @@ describe('inspectGitCheckoutIdentity', () => {
             const commonDirPath = await runGit(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
             const worktreePath = await runGit(repoRoot, ['rev-parse', '--path-format=absolute', '--show-toplevel']);
 
-            await expect(inspectGitCheckoutIdentity({ cwd: repoRoot })).resolves.toEqual({
+            await expect(runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: repoRoot }))).resolves.toEqual({
                 branchName: 'main',
                 headRevision,
                 gitDirPath,
@@ -74,7 +75,7 @@ describe('inspectGitCheckoutIdentity', () => {
             await runGit(repoRoot, ['checkout', headRevision]);
             const worktreePath = await runGit(repoRoot, ['rev-parse', '--path-format=absolute', '--show-toplevel']);
 
-            await expect(inspectGitCheckoutIdentity({ cwd: repoRoot })).resolves.toEqual(
+            await expect(runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: repoRoot }))).resolves.toEqual(
                 expect.objectContaining({
                     branchName: null,
                     headRevision,
@@ -91,7 +92,7 @@ describe('inspectGitCheckoutIdentity', () => {
         const repoRoot = await makeTempDir('git-checkout-identity-missing-');
 
         try {
-            await expect(inspectGitCheckoutIdentity({ cwd: repoRoot })).resolves.toBeNull();
+            await expect(runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: repoRoot }))).resolves.toBeNull();
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
         }
@@ -109,7 +110,7 @@ describe('inspectGitCheckoutIdentity', () => {
             const commonDirPath = await runGit(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
             const worktreePath = await runGit(repoRoot, ['rev-parse', '--path-format=absolute', '--show-toplevel']);
 
-            await expect(inspectGitCheckoutIdentity({ cwd: repoRoot })).resolves.toEqual({
+            await expect(runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: repoRoot }))).resolves.toEqual({
                 branchName: 'feature',
                 headRevision: null,
                 gitDirPath,
@@ -141,7 +142,7 @@ describe('inspectGitCheckoutIdentity', () => {
             const commonDirPath = await runGit(worktreeRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
             const worktreePath = await runGit(worktreeRoot, ['rev-parse', '--path-format=absolute', '--show-toplevel']);
 
-            await expect(inspectGitCheckoutIdentity({ cwd: worktreeRoot })).resolves.toEqual({
+            await expect(runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: worktreeRoot }))).resolves.toEqual({
                 branchName: 'feature',
                 headRevision,
                 gitDirPath,
@@ -186,7 +187,7 @@ exec "${gitBinaryPath}" "$@"
             await chmod(wrapperPath, 0o755);
             process.env.PATH = `${wrapperRoot}:${originalPath ?? ''}`;
 
-            await expect(inspectGitCheckoutIdentity({ cwd: repoRoot })).resolves.toEqual({
+            await expect(runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: repoRoot }))).resolves.toEqual({
                 branchName: 'main',
                 headRevision,
                 gitDirPath: join(repoRoot, '.git'),

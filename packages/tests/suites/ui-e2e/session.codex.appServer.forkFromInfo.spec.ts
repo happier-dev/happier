@@ -8,8 +8,15 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import {
+    createAccountAndReachConnectMachineState,
+    gotoCommittedWithRetries,
+    gotoDomContentLoadedWithPathFallback,
+    gotoDomContentLoadedWithRetries,
+    normalizeLoopbackBaseUrl,
+} from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -32,6 +39,23 @@ function readLatestMachineIdFromServerLightDb(params: { suiteDir: string }): str
     throw new Error(`Failed to read machine id from server light sqlite db: ${dbPath}`);
 }
 
+function readLatestChildSessionIdFromServerLightDb(params: { suiteDir: string; parentSessionId: string }): string {
+    const dbPath = resolveServerLightSqliteDbPath({ suiteDir: params.suiteDir });
+    try {
+        const raw = execFileSync('sqlite3', ['-json', dbPath, 'select id from Session order by createdAt desc limit 25;'], {
+            encoding: 'utf8',
+        });
+        const parsed = JSON.parse(raw) as Array<{ id?: unknown }>;
+        const id = parsed
+            .map((entry) => (typeof entry?.id === 'string' ? entry.id.trim() : ''))
+            .find((candidate) => candidate.length > 0 && candidate !== params.parentSessionId);
+        if (typeof id === 'string' && id.trim()) return id.trim();
+    } catch {
+        // ignore - pollers can retry
+    }
+    throw new Error(`Failed to read child session id from server light sqlite db: ${dbPath}`);
+}
+
 async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: number }): Promise<string> {
     const timeoutMs = params.timeoutMs ?? 60_000;
     const startedAt = Date.now();
@@ -43,6 +67,31 @@ async function waitForLatestMachineId(params: { suiteDir: string; timeoutMs?: nu
         }
     }
     return readLatestMachineIdFromServerLightDb({ suiteDir: params.suiteDir });
+}
+
+async function waitForForkedChildSessionId(params: {
+    suiteDir: string;
+    parentSessionId: string;
+    timeoutMs?: number;
+}): Promise<string> {
+    const timeoutMs = params.timeoutMs ?? 120_000;
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+        try {
+            const id = readLatestChildSessionIdFromServerLightDb({
+                suiteDir: params.suiteDir,
+                parentSessionId: params.parentSessionId,
+            });
+            if (id && id !== params.parentSessionId) return id;
+        } catch {
+            // retry
+        }
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    }
+    return readLatestChildSessionIdFromServerLightDb({
+        suiteDir: params.suiteDir,
+        parentSessionId: params.parentSessionId,
+    });
 }
 
 function parseSessionIdFromUrl(url: string): string {
@@ -108,7 +157,7 @@ async function writeFakeCodexAppServerScript(params: { scriptPath: string }): Pr
 }
 
 async function setCodexBackendModeToAppServer(page: Page, uiBaseUrl: string): Promise<void> {
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers/codex`);
+    await gotoDomContentLoadedWithPathFallback(page, `${uiBaseUrl}/settings/providers/codex`, '/settings/providers/codex');
     const backendModeRow = page.getByTestId('settings-provider-field-codexBackendMode');
     await expect(backendModeRow).toHaveCount(1, { timeout: 60_000 });
     if ((await backendModeRow.getByText('App Server').count()) > 0) return;
@@ -118,7 +167,7 @@ async function setCodexBackendModeToAppServer(page: Page, uiBaseUrl: string): Pr
 }
 
 async function setSessionReplayEnabled(page: Page, uiBaseUrl: string, enabled: boolean): Promise<void> {
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/session`);
+    await gotoDomContentLoadedWithPathFallback(page, `${uiBaseUrl}/settings/session`, '/settings/session');
     const replayItem = page.getByTestId('settings-session-replay-enabled-item');
     await expect(replayItem).toHaveCount(1, { timeout: 60_000 });
     const replaySwitch = replayItem.locator('input[type="checkbox"]').first();
@@ -150,14 +199,26 @@ async function createCodexSessionFromComposer(params: {
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
     await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('agent-input-agent-chip').click();
+    const agentChip = page.getByTestId('agent-input-agent-chip').first();
+    try {
+        await agentChip.click({ timeout: 15_000 });
+    } catch {
+        await agentChip.click({ timeout: 15_000, force: true });
+    }
     const inlineCodexOption = page.getByTestId('new-session-agent:codex');
     if ((await inlineCodexOption.count()) > 0) {
         await inlineCodexOption.click();
     } else {
         const pickerDialog = page.getByRole('dialog').last();
-        await expect(pickerDialog).toBeVisible({ timeout: 60_000 });
-        await pickerDialog.getByText('Codex', { exact: true }).click();
+        const codexOption = pickerDialog.getByTestId('new-session-agent:codex').first();
+        if ((await codexOption.count()) > 0) {
+            await expect(codexOption).toBeVisible({ timeout: 60_000 });
+            await codexOption.click();
+        } else {
+            const codexTextOption = pickerDialog.getByText('Codex', { exact: true }).first();
+            await expect(codexTextOption).toBeVisible({ timeout: 60_000 });
+            await codexTextOption.click();
+        }
     }
 
     await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });
@@ -168,9 +229,21 @@ async function createCodexSessionFromComposer(params: {
     await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('new-session-composer-input').fill(prompt);
-    await page.getByTestId('new-session-composer-input').press('Enter');
-    await expect(page.locator('textarea[data-testid="session-composer-input"]:visible')).toHaveCount(1, { timeout: 180_000 });
-    return parseSessionIdFromUrl(page.url());
+    await expect(page.getByTestId('new-session-composer-send')).toHaveCount(1, { timeout: 60_000 });
+    await page.getByTestId('new-session-composer-send').click();
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 120_000) {
+        try {
+            const currentUrl = page.url();
+            if (currentUrl.includes('/session/') && !currentUrl.endsWith('/info')) {
+                return parseSessionIdFromUrl(currentUrl);
+            }
+        } catch {
+            // retry until URL settles on a concrete session route
+        }
+        await page.waitForTimeout(250);
+    }
+    throw new Error(`Timed out waiting for session route after submit (url=${page.url()})`);
 }
 
 test.describe('ui e2e: Codex app-server fork from session info', () => {
@@ -223,7 +296,7 @@ test.describe('ui e2e: Codex app-server fork from session info', () => {
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
         await page.setViewportSize({ width: 1440, height: 900 });
-        await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+        await gotoCommittedWithRetries(page, uiBaseUrl, 180_000);
 
         await createAccountAndReachConnectMachineState({ page });
 
@@ -247,9 +320,8 @@ test.describe('ui e2e: Codex app-server fork from session info', () => {
             },
         });
 
-        await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-        await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-        await page.getByTestId('terminal-connect-approve').click();
+        await gotoDomContentLoadedWithPathFallback(page, cliLogin.connectUrl, '/terminal/connect', 180_000);
+        await approveTerminalConnect({ page });
         await cliLogin.waitForSuccess();
         await cliLogin.stop().catch(() => {});
 
@@ -281,7 +353,7 @@ test.describe('ui e2e: Codex app-server fork from session info', () => {
             prompt: `codex-app-server-info-parent ${run.runId}`,
         });
 
-        await page.goto(`${uiBaseUrl}/session/${parentSessionId}`, { waitUntil: 'domcontentloaded' });
+        await gotoDomContentLoadedWithPathFallback(page, `${uiBaseUrl}/session/${parentSessionId}`, `/session/${parentSessionId}`, 180_000);
         await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByText('FAKE_CODEX_INFO_FORK_OK_1')).toHaveCount(1, { timeout: 180_000 });
 
@@ -292,21 +364,13 @@ test.describe('ui e2e: Codex app-server fork from session info', () => {
 
         await page.getByTestId('session-info-fork-session').click();
 
-        await page.waitForURL(
-            (url) => {
-                try {
-                    return url.pathname.startsWith('/session/')
-                        && !url.pathname.endsWith('/info')
-                        && parseSessionIdFromUrl(url.toString()) !== parentSessionId;
-                } catch {
-                    return false;
-                }
-            },
-            { timeout: 120_000 },
-        );
-
-        const childSessionId = parseSessionIdFromUrl(page.url());
-        expect(childSessionId).not.toBe(parentSessionId);
+        const childSessionId = await waitForForkedChildSessionId({
+            suiteDir,
+            parentSessionId,
+            timeoutMs: 120_000,
+        });
+        await gotoDomContentLoadedWithPathFallback(page, `${uiBaseUrl}/session/${childSessionId}`, `/session/${childSessionId}`, 180_000);
+        await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
         const transcript = page.locator('[data-testid="transcript-chat-list"]:visible').first();
         await expect(transcript.locator(`[data-testid="transcript-fork-divider:${parentSessionId}:${childSessionId}"]`)).toHaveCount(1, {

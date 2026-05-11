@@ -2,7 +2,6 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import {
     SCM_OPERATION_ERROR_CODES,
@@ -16,6 +15,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ScmBackendContext } from '../types.js';
+import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import { defaultPrStatusCache } from '../hostingProviders/prStatusCache.js';
 import { createGitHostingRepositoryPublishOperation } from './hostingRepositoryPublishOperations.js';
 
@@ -64,39 +64,11 @@ function gitExitStatus(cwd: string, args: readonly string[]): number {
     return result.status ?? 1;
 }
 
-function runWithRealGitRuntime<T>(callback: () => T): T {
-    return runWithScmBackendRuntimeServices({
-        async runCommand(input) {
-            if (input.command !== 'git') {
-                return {
-                    success: false,
-                    stdout: '',
-                    stderr: `Unsupported command: ${input.command}`,
-                    exitCode: -1,
-                };
-            }
-            const result = spawnSync('git', [...input.args], {
-                cwd: input.cwd,
-                input: input.stdin,
-                encoding: 'utf8',
-                env: input.env ? { ...process.env, ...input.env } : process.env,
-                stdio: ['pipe', 'pipe', 'pipe'],
-            });
-            return {
-                success: result.status === 0,
-                stdout: result.stdout ?? '',
-                stderr: result.stderr ?? '',
-                exitCode: result.status ?? -1,
-            };
-        },
-    }, callback);
-}
-
 function publishWithRealGitRuntime(
     operation: ReturnType<typeof createGitHostingRepositoryPublishOperation>,
     input: Parameters<ReturnType<typeof createGitHostingRepositoryPublishOperation>['publish']>[0],
 ) {
-    return runWithRealGitRuntime(() => operation.publish(input));
+    return runWithRealGitScmRuntime(() => operation.publish(input));
 }
 
 function snapshot(overrides: Partial<ScmWorkingSnapshot> = {}): ScmWorkingSnapshot {
@@ -210,6 +182,13 @@ function publishRequest(overrides: Partial<ScmHostingRepositoryPublishRequest> =
 }
 
 describe('git hosting repository publish operation', () => {
+    it('resolves default hosting provider registries from host-injected runtime services only', () => {
+        const source = readFileSync(new URL('./hostingRepositoryPublishOperations.ts', import.meta.url), 'utf8');
+
+        expect(source).not.toContain('../hostingProviders/runtimeServices');
+        expect(source).not.toContain('createScmHostingProviderRuntimeServices');
+    });
+
     it('creates a hosting repository, adds the selected remote, and pushes the current branch through real Git primitives', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-git-hosting-publish-op-'));
         const bareRemote = mkdtempSync(join(tmpdir(), 'happier-git-hosting-publish-remote-'));
@@ -349,6 +328,44 @@ describe('git hosting repository publish operation', () => {
         expect(enterpriseCreate).toHaveBeenCalledTimes(1);
     });
 
+    it('passes host-injected URL safety fences to repository publish adapters', async () => {
+        const urlSafety = {
+            allowedSchemes: ['https:', 'ssh:'],
+            allowedBaseUrls: ['https://ghe.example.com/happier-dev/'],
+            allowedOrigins: ['https://ghe.example.com'],
+        } as const;
+        const getRepository = vi.fn(async () => null);
+        const createRepository = vi.fn(async () => repository);
+        const operation = createGitHostingRepositoryPublishOperation({
+            registry: {
+                providers: [{
+                    ...provider,
+                    urlSafety,
+                    capabilities: {},
+                }],
+                getAdapter(id: string) {
+                    return id === provider.id ? { getRepository, createRepository } : undefined;
+                },
+            },
+            readSnapshot: async () => snapshot(),
+            hasCurrentCommit: async () => true,
+            remoteAdd: vi.fn(async () => remoteSuccess(repository.cloneUrl!)),
+        });
+
+        const result = await publishWithRealGitRuntime(operation, {
+            context,
+            request: publishRequest(),
+        });
+
+        expect(result).toMatchObject({ success: true });
+        expect(getRepository).toHaveBeenCalledWith(expect.objectContaining({
+            provider: expect.objectContaining({ urlSafety }),
+        }));
+        expect(createRepository).toHaveBeenCalledWith(expect.objectContaining({
+            provider: expect.objectContaining({ urlSafety }),
+        }));
+    });
+
     it('describes publish targets through the concrete selected provider id', async () => {
         const githubDescribe = vi.fn(async () => ({
             auth: { state: 'authenticated' as const, profileKind: 'connected_account' as const },
@@ -377,14 +394,14 @@ describe('git hosting repository publish operation', () => {
             }),
         });
 
-        const result = await operation.describePublishTargets({
+        const result = await runWithRealGitScmRuntime(() => operation.describePublishTargets({
             context,
             request: {
                 cwd: '/workspace',
                 providerId: 'scm.github.enterprise',
                 providerKind: 'github',
             },
-        });
+        }));
 
         expect(result).toMatchObject({
             success: true,

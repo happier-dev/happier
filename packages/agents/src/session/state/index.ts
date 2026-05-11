@@ -46,11 +46,9 @@ export {
 } from './policies/fingerprintPublication.js';
 export {
   readRuntimeDescriptorSessionState,
-  runtimeDescriptorBinding,
   writeRuntimeDescriptorSessionState,
 } from './bindings/runtimeDescriptor.js';
 export {
-  createVendorSessionIdBinding,
   readVendorSessionIdSessionState,
   writeVendorSessionIdSessionState,
   type VendorSessionIdMetadataKey,
@@ -76,33 +74,12 @@ export {
   getIntentMetadataKeysForAlias,
 } from './bindings/metadataKeys.js';
 export {
-  acpConfigOptionIntentBinding,
-  acpSessionModeIntentBinding,
-  modelIntentBinding,
-  permissionModeIntentBinding,
   readAcpConfigOptionIntentFromMetadata,
   readAcpSessionModeIntentFromMetadata,
   readModelIntentFromMetadata,
   readPermissionModeIntentFromMetadata,
   readStringOverrideIntentFromMetadata,
-  writeAcpConfigOptionIntentToMetadata,
-  writeAcpSessionModeIntentToMetadata,
-  writeModelIntentToMetadata,
-  writePermissionModeIntentToMetadata,
-  writeStringOverrideIntentToMetadata,
 } from './bindings/intent.js';
-export {
-  clearSessionStateFieldFromMetadata,
-} from './bindings/publishField.js';
-export {
-  createSummaryTextMetadataUpdater,
-  summaryTextBinding,
-} from './bindings/summaryText.js';
-export {
-  computeNextMetadataConfigOptionOverrideV1,
-  computeNextMetadataStringOverrideV1,
-  computeNextPermissionIntentMetadata,
-} from './intentMetadataWriters.js';
 export {
   inferLatestUserPermissionModeIntent,
   type InferredPermissionModeIntent,

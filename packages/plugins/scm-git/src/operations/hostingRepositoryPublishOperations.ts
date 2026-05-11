@@ -22,12 +22,15 @@ import {
     type ScmRemotePublishResponse,
     type ScmWorkingSnapshot,
 } from '@happier-dev/protocol';
+import {
+    readCurrentScmHostingProviderRuntimeServices,
+    type ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk';
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
-import { createScmHostingProviderRuntimeServices } from '../hostingProviders/runtimeServices.js';
 import {
     evaluateRemoteMutationPreconditions,
     type RemoteMutationGuardResult,
@@ -49,8 +52,6 @@ type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getAd
         }>;
     }>[];
 }>;
-
-type ScmHostingProviderRuntimeServices = Readonly<Record<string, unknown>>;
 
 type ScmHostingProviderRepositoryGetInput = Readonly<{
     provider: ScmHostingProviderRef;
@@ -268,6 +269,8 @@ function providerRefFromDescriptor(input: Readonly<{
         displayName: provider.displayName,
         baseUrl: provider.baseUrl,
         urlSafety: {
+            ...(provider.urlSafety?.allowedBaseUrls ? { allowedBaseUrls: [...provider.urlSafety.allowedBaseUrls] } : {}),
+            ...(provider.urlSafety?.allowedOrigins ? { allowedOrigins: [...provider.urlSafety.allowedOrigins] } : {}),
             allowedSchemes: [...(provider.urlSafety?.allowedSchemes ?? ['https:'])],
         },
     };
@@ -319,8 +322,6 @@ async function createOrReuseRepository(input: Readonly<{
 export function createGitHostingRepositoryPublishOperation(
     deps?: GitHostingRepositoryPublishOperationDeps,
 ): GitHostingRepositoryPublishOperation {
-    let defaultRuntimeServices: ScmHostingProviderRuntimeServices | null = null;
-
     async function readRegistry(): Promise<HostingRepositoryRegistry> {
         if (deps?.registry) return deps.registry;
         const { resolveDefaultPullRequestStatusProjectionRegistry } = await import('./pullRequestStatusProjection.js');
@@ -329,8 +330,9 @@ export function createGitHostingRepositoryPublishOperation(
 
     function readRuntimeServices(): ScmHostingProviderRuntimeServices {
         if (deps?.runtimeServices) return deps.runtimeServices;
-        defaultRuntimeServices ??= createScmHostingProviderRuntimeServices();
-        return defaultRuntimeServices;
+        const currentServices = readCurrentScmHostingProviderRuntimeServices();
+        if (currentServices) return currentServices;
+        throw new Error('Git hosting repository publish operations require host-injected SCM hosting provider runtime services.');
     }
 
     const readSnapshot = deps?.readSnapshot ?? (async ({ context }) => {

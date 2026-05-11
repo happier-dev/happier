@@ -93,7 +93,7 @@ export const SAPLING_SCM_BACKEND_CAPABILITIES = {
         checkoutMaterialization: unsupportedCapability(),
         workspaceTransfer: unsupportedCapability(),
         exportPortability: unsupportedCapability(),
-        portablePathClassification: unsupportedCapability(),
+        portablePathClassification: supportedCapability(),
     },
     tooling: {
         systemCliResolution: supportedCapability(),

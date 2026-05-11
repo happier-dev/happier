@@ -10,8 +10,9 @@ import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/da
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { createSessionFromNewSessionComposer } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
+import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -121,7 +122,7 @@ test.describe('ui e2e: transcript small reconnect catch-up', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
 
-    await createAccountAndReachConnectMachineState({ page });
+    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 
     const testDir = resolve(join(suiteDir, 't1-reconnect-small'));
     await mkdir(testDir, { recursive: true });
@@ -172,7 +173,7 @@ test.describe('ui e2e: transcript small reconnect catch-up', () => {
     const sessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: 'hello small gap' });
 
     await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('[data-testid="transcript-chat-list"]:visible')).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
 
     const requests: Array<{ url: string; ts: number }> = [];
     page.on('request', (req) => requests.push({ url: req.url(), ts: Date.now() }));

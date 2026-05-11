@@ -7,9 +7,11 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import { inspectGitCheckoutIdentity } from '../checkoutIdentity.js';
+import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import { reconcileGitWorkspaceCheckout } from './reconcileWorkspaceCheckout.js';
 
 const execFile = promisify(execFileCallback);
+const REAL_GIT_RECONCILE_TEST_TIMEOUT_MS = 10_000;
 
 async function makeTempDir(prefix: string): Promise<string> {
     return await mkdtemp(join(tmpdir(), prefix));
@@ -40,6 +42,14 @@ async function pathExists(path: string): Promise<boolean> {
     }
 }
 
+function inspectCheckoutIdentity(input: Parameters<typeof inspectGitCheckoutIdentity>[0]) {
+    return runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity(input));
+}
+
+function reconcileCheckout(input: Parameters<typeof reconcileGitWorkspaceCheckout>[0]) {
+    return runWithRealGitScmRuntime(() => reconcileGitWorkspaceCheckout(input));
+}
+
 describe('reconcileGitWorkspaceCheckout', () => {
     it('realigns the target branch ref to the source HEAD when both checkouts are already on the same branch', async () => {
         const sourceRoot = await makeTempDir('git-reconcile-align-source-');
@@ -65,7 +75,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             const targetHeadBefore = await runGit(targetRoot, ['rev-parse', 'HEAD']);
             expect(targetHeadBefore).not.toBe(sourceHead);
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -85,7 +95,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await rm(sourceRoot, { recursive: true, force: true });
             await rm(targetRoot, { recursive: true, force: true });
         }
-    });
+    }, REAL_GIT_RECONCILE_TEST_TIMEOUT_MS);
 
     it('switches the target checkout to the source branch when the branch already exists locally', async () => {
         const sourceRoot = await makeTempDir('git-reconcile-source-');
@@ -106,7 +116,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await runGit(targetRoot, ['checkout', 'main']);
             await writeFile(join(targetRoot, 'README.md'), 'feature\n', 'utf8');
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -143,7 +153,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await runGit(tmpdir(), ['clone', sourceRoot, targetRoot]);
             await configureGitRepo(targetRoot);
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -176,7 +186,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await runGit(targetRoot, ['branch', '-M', 'main']);
             await expect(runGit(targetRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).resolves.toBe('main');
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -207,7 +217,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await runGit(targetRoot, ['commit', '-m', 'initial']);
             await writeFile(join(targetRoot, 'README.md'), 'imported\n', 'utf8');
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -243,7 +253,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await runGit(targetRoot, ['branch', 'feature']);
             await writeFile(join(targetRoot, 'README.md'), 'imported\n', 'utf8');
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -293,7 +303,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await runGit(targetRoot, ['reset', '--hard', featureV1Revision]);
             await writeFile(join(targetRoot, 'README.md'), 'feature v2\n', 'utf8');
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -332,7 +342,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             const headRevision = await runGit(targetRoot, ['rev-parse', 'HEAD']);
             await writeFile(join(targetRoot, 'README.md'), 'imported\n', 'utf8');
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -382,7 +392,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
 
             await expect(pathExists(join(targetRoot, '.git'))).resolves.toBe(false);
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -438,14 +448,14 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await cp(sourceRoot, targetRoot, { recursive: true });
             await rm(join(targetRoot, '.git'), { recursive: true, force: true });
 
-            const sourceIdentity = await inspectGitCheckoutIdentity({ cwd: sourceRoot });
-            const previousTargetIdentity = await inspectGitCheckoutIdentity({ cwd: backupRoot });
+            const sourceIdentity = await inspectCheckoutIdentity({ cwd: sourceRoot });
+            const previousTargetIdentity = await inspectCheckoutIdentity({ cwd: backupRoot });
             expect(sourceIdentity).not.toBeNull();
             expect(previousTargetIdentity).not.toBeNull();
             expect(sourceIdentity?.gitDirPath).not.toBe(previousTargetIdentity?.gitDirPath);
             await expect(pathExists(join(targetRoot, '.git'))).resolves.toBe(false);
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -468,7 +478,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await rm(targetRoot, { recursive: true, force: true });
             await rm(backupRoot, { recursive: true, force: true });
         }
-    });
+    }, REAL_GIT_RECONCILE_TEST_TIMEOUT_MS);
 
     it('restores linked-worktree admin state from the previous target during metadata-only import after copied git admin files overwrite the target', async () => {
         const repoRoot = await makeTempDir('git-reconcile-metadata-worktree-repo-');
@@ -490,8 +500,8 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await runGit(sourceRoot, ['commit', '-m', 'feature source']);
             const sourceHead = await runGit(sourceRoot, ['rev-parse', 'HEAD']);
 
-            const sourceIdentity = await inspectGitCheckoutIdentity({ cwd: sourceRoot });
-            const originalTargetIdentity = await inspectGitCheckoutIdentity({ cwd: targetRoot });
+            const sourceIdentity = await inspectCheckoutIdentity({ cwd: sourceRoot });
+            const originalTargetIdentity = await inspectCheckoutIdentity({ cwd: targetRoot });
             expect(sourceIdentity).not.toBeNull();
             expect(originalTargetIdentity).not.toBeNull();
             expect(sourceIdentity?.gitDirPath).not.toBe(originalTargetIdentity?.gitDirPath);
@@ -499,12 +509,12 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await rename(targetRoot, backupRoot);
             await cp(sourceRoot, targetRoot, { recursive: true });
 
-            await expect(inspectGitCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
+            await expect(inspectCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
                 gitDirPath: sourceIdentity?.gitDirPath,
                 branchName: 'feature-source',
             }));
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -523,7 +533,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
                 },
             });
 
-            await expect(inspectGitCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
+            await expect(inspectCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
                 gitDirPath: originalTargetIdentity?.gitDirPath,
                 commonDirPath: originalTargetIdentity?.commonDirPath,
                 registeredWorktreePath: targetRoot,
@@ -538,7 +548,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await rm(targetRoot, { recursive: true, force: true });
             await rm(backupRoot, { recursive: true, force: true });
         }
-    });
+    }, REAL_GIT_RECONCILE_TEST_TIMEOUT_MS);
 
     it('does nothing when the materialized target is not a git checkout and there is no admin state to restore', async () => {
         const sourceRoot = await makeTempDir('git-reconcile-missing-target-source-');
@@ -551,7 +561,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await writeTrackedFile(sourceRoot, 'README.md', 'source\n');
             await runGit(sourceRoot, ['commit', '-m', 'source']);
 
-            await expect(reconcileGitWorkspaceCheckout({
+            await expect(reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -589,7 +599,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await writeTrackedFile(previousTargetRoot, 'README.md', 'backup\n');
             await runGit(previousTargetRoot, ['commit', '-m', 'backup']);
 
-            await expect(reconcileGitWorkspaceCheckout({
+            await expect(reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -631,8 +641,8 @@ describe('reconcileGitWorkspaceCheckout', () => {
             const sourceHead = await runGit(sourceRoot, ['rev-parse', 'HEAD']);
             await runGit(sourceRoot, ['checkout', sourceHead]);
 
-            const sourceIdentity = await inspectGitCheckoutIdentity({ cwd: sourceRoot });
-            const originalTargetIdentity = await inspectGitCheckoutIdentity({ cwd: targetRoot });
+            const sourceIdentity = await inspectCheckoutIdentity({ cwd: sourceRoot });
+            const originalTargetIdentity = await inspectCheckoutIdentity({ cwd: targetRoot });
             expect(sourceIdentity).not.toBeNull();
             expect(originalTargetIdentity).not.toBeNull();
             expect(sourceIdentity?.branchName).toBeNull();
@@ -641,11 +651,11 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await rename(targetRoot, backupRoot);
             await cp(sourceRoot, targetRoot, { recursive: true });
 
-            await expect(inspectGitCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
+            await expect(inspectCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
                 gitDirPath: sourceIdentity?.gitDirPath,
             }));
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -659,7 +669,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
                 previousTargetPath: backupRoot,
             });
 
-            const repairedTargetIdentity = await inspectGitCheckoutIdentity({ cwd: targetRoot });
+            const repairedTargetIdentity = await inspectCheckoutIdentity({ cwd: targetRoot });
             expect(repairedTargetIdentity).not.toBeNull();
             await expect(Promise.resolve(repairedTargetIdentity)).resolves.toEqual(expect.objectContaining({
                 gitDirPath: originalTargetIdentity?.gitDirPath,
@@ -674,7 +684,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await rm(targetRoot, { recursive: true, force: true });
             await rm(backupRoot, { recursive: true, force: true });
         }
-    });
+    }, REAL_GIT_RECONCILE_TEST_TIMEOUT_MS);
 
     it('restores the original target worktree admin state even after the copied source checkout becomes unreadable', async () => {
         const repoRoot = await makeTempDir('git-reconcile-worktree-unreadable-repo-');
@@ -693,8 +703,8 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await runGit(repoRoot, ['worktree', 'add', sourceRoot, 'feature-source']);
             await runGit(repoRoot, ['worktree', 'add', targetRoot, 'feature-target']);
 
-            const sourceIdentity = await inspectGitCheckoutIdentity({ cwd: sourceRoot });
-            const originalTargetIdentity = await inspectGitCheckoutIdentity({ cwd: targetRoot });
+            const sourceIdentity = await inspectCheckoutIdentity({ cwd: sourceRoot });
+            const originalTargetIdentity = await inspectCheckoutIdentity({ cwd: targetRoot });
             expect(sourceIdentity).not.toBeNull();
             expect(originalTargetIdentity).not.toBeNull();
 
@@ -702,9 +712,9 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await cp(sourceRoot, targetRoot, { recursive: true });
             await rm(sourceIdentity!.gitDirPath, { recursive: true, force: true });
 
-            await expect(inspectGitCheckoutIdentity({ cwd: targetRoot })).resolves.toBeNull();
+            await expect(inspectCheckoutIdentity({ cwd: targetRoot })).resolves.toBeNull();
 
-            await reconcileGitWorkspaceCheckout({
+            await reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -718,7 +728,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
                 previousTargetPath: backupRoot,
             });
 
-            await expect(inspectGitCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
+            await expect(inspectCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
                 gitDirPath: originalTargetIdentity?.gitDirPath,
                 commonDirPath: originalTargetIdentity?.commonDirPath,
                 branchName: 'feature-target',
@@ -729,7 +739,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await rm(targetRoot, { recursive: true, force: true });
             await rm(backupRoot, { recursive: true, force: true });
         }
-    });
+    }, REAL_GIT_RECONCILE_TEST_TIMEOUT_MS);
 
     it('rebinds a restored linked worktree even when the preserved .git file still points at the old location', async () => {
         const repoRoot = await makeTempDir('git-reconcile-worktree-relative-repo-');
@@ -750,7 +760,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             const sourceHead = await runGit(sourceRoot, ['rev-parse', 'HEAD']);
             await runGit(sourceRoot, ['checkout', sourceHead]);
 
-            const originalTargetIdentity = await inspectGitCheckoutIdentity({ cwd: originalTargetRoot });
+            const originalTargetIdentity = await inspectCheckoutIdentity({ cwd: originalTargetRoot });
             expect(originalTargetIdentity).not.toBeNull();
 
             await writeFile(
@@ -762,7 +772,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             await mkdir(join(targetRoot, '..'), { recursive: true });
             await cp(sourceRoot, targetRoot, { recursive: true });
 
-            await expect(reconcileGitWorkspaceCheckout({
+            await expect(reconcileCheckout({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -777,7 +787,7 @@ describe('reconcileGitWorkspaceCheckout', () => {
             })).resolves.toBeUndefined();
 
             await expect(readFile(join(targetRoot, '.git'), 'utf8')).resolves.toBe(`gitdir: ${originalTargetIdentity?.gitDirPath}\n`);
-            await expect(inspectGitCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
+            await expect(inspectCheckoutIdentity({ cwd: targetRoot })).resolves.toEqual(expect.objectContaining({
                 gitDirPath: originalTargetIdentity?.gitDirPath,
                 commonDirPath: originalTargetIdentity?.commonDirPath,
                 branchName: 'feature-target',

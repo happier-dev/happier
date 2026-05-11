@@ -1,203 +1,87 @@
-import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import {
-    SCM_OPERATION_ERROR_CODES,
-    createScmCapabilities,
-    type ScmRepositoryCloneInput,
-    type ScmRepositoryCloneOutput,
-    type ScmWorkingSnapshot,
-    type ScmRepositoryCloneTargetDescription,
-} from '@happier-dev/protocol';
-import { runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import { SCM_OPERATION_ERROR_CODES, type ScmRepositoryCloneInput } from '@happier-dev/protocol';
+import { type ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 
-import type { ScmBackendContext } from '../types.js';
-import { createGitRepositoryCloneOperation } from './repositoryCloneOperations.js';
-
-type RepositoryCloneOperation = (input: {
-    context: ScmBackendContext;
-    request: ScmRepositoryCloneInput;
-}) => Promise<ScmRepositoryCloneOutput>;
-
-function runGit(cwd: string, args: string[]): string {
-    return execFileSync('git', args, {
-        cwd,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-}
-
-function runWithRealGitRuntime<T>(callback: () => T): T {
-    return runWithScmBackendRuntimeServices({
-        async runCommand(input) {
-            if (input.command !== 'git') {
-                return {
-                    success: false,
-                    stdout: '',
-                    stderr: `Unsupported command: ${input.command}`,
-                    exitCode: -1,
-                };
-            }
-            const result = spawnSync('git', [...input.args], {
-                cwd: input.cwd,
-                input: input.stdin,
-                encoding: 'utf8',
-                env: input.env ? { ...process.env, ...input.env } : process.env,
-                stdio: ['pipe', 'pipe', 'pipe'],
-            });
-            return {
-                success: result.status === 0,
-                stdout: result.stdout ?? '',
-                stderr: result.stderr ?? '',
-                exitCode: result.status ?? -1,
-            };
-        },
-    }, callback);
-}
-
-function cloneWithRealGitRuntime(
-    repositoryClone: RepositoryCloneOperation,
-    input: Parameters<RepositoryCloneOperation>[0],
-) {
-    return runWithRealGitRuntime(() => repositoryClone(input));
-}
-
-function createWorkspace(): string {
-    return mkdtempSync(join(tmpdir(), 'happier-git-clone-operation-'));
-}
-
-function readSnapshotFromGit(context: ScmBackendContext): ScmWorkingSnapshot {
-    return {
-        projectKey: context.projectKey,
-        fetchedAt: Date.now(),
-        repo: {
-            isRepo: true,
-            backendId: 'git',
-            mode: '.git',
-            rootPath: runGit(context.cwd, ['rev-parse', '--show-toplevel']),
-            remotes: [],
-            worktrees: [],
-        },
-        capabilities: createScmCapabilities(),
-        branch: {
-            head: runGit(context.cwd, ['branch', '--show-current']) || null,
-            upstream: null,
-            ahead: 0,
-            behind: 0,
-            detached: false,
-        },
-        hasConflicts: false,
-        entries: [],
-        totals: {
-            includedFiles: 0,
-            pendingFiles: 0,
-            untrackedFiles: 0,
-            includedAdded: 0,
-            includedRemoved: 0,
-            pendingAdded: 0,
-            pendingRemoved: 0,
-        },
-    };
-}
-
-function getRepositoryCloneOperation(
-    deps?: Parameters<typeof createGitRepositoryCloneOperation>[0],
-): RepositoryCloneOperation {
-    const operation = createGitRepositoryCloneOperation({
-        ...deps,
-        readSnapshot: deps?.readSnapshot ?? (async ({ context }) => readSnapshotFromGit(context)),
-    });
-    expect(operation.clone).toBeTypeOf('function');
-    return operation.clone;
-}
-
-function makeContext(cwd: string): ScmBackendContext {
-    return {
-        cwd,
-        projectKey: `test:${cwd}`,
-        detection: { isRepo: false, rootPath: null, mode: null },
-    };
-}
-
-function createBareRemoteRepository(): string {
-    const root = createWorkspace();
-    const source = join(root, 'source');
-    const bare = join(root, 'remote.git');
-    mkdirSync(source, { recursive: true });
-    runGit(source, ['init', '-b', 'main']);
-    runGit(source, ['config', 'user.email', 'test@example.com']);
-    runGit(source, ['config', 'user.name', 'Test User']);
-    writeFileSync(join(source, 'README.md'), 'hello\n');
-    runGit(source, ['add', 'README.md']);
-    runGit(source, ['commit', '-m', 'initial']);
-    runGit(root, ['clone', '--bare', source, bare]);
-    return bare;
-}
-
-function makeRequest(parent: string, remotePath: string, destinationDirectoryName = 'happier'): ScmRepositoryCloneInput {
-    return {
-        provider: {
-            id: 'github:github.com',
-            kind: 'github',
-            displayName: 'GitHub',
-            baseUrl: 'https://github.com',
-            urlSafety: { allowedSchemes: ['https:'] },
-        },
-        repository: {
-            nameWithOwner: 'happier-dev/happier',
-            webUrl: 'https://github.com/happier-dev/happier',
-            cloneUrl: `file://${remotePath}`,
-            visibility: 'public',
-            defaultBranch: 'main',
-        },
-        destinationParentPath: parent,
-        destinationDirectoryName,
-        protocol: 'https',
-        confirmed: true,
-        authorizationToken: 'clone-repository',
-    };
-}
-
-function makeProviderRegistry(description: ScmRepositoryCloneTargetDescription) {
-    return {
-        getProvider: () => description.repository.provider,
-        getAdapter: () => ({
-            describeCloneTargets: async () => description,
-        }),
-    };
-}
-
-function makeCloneTargetDescription(remotePath: string): ScmRepositoryCloneTargetDescription {
-    return {
-        auth: { state: 'authenticated', profileKind: 'provider_cli' },
-        repository: {
-            provider: {
-                id: 'github:github.com',
-                kind: 'github',
-                displayName: 'GitHub',
-                baseUrl: 'https://github.com',
-                urlSafety: { allowedSchemes: ['https:'] },
-            },
-            nameWithOwner: 'happier-dev/happier',
-            webUrl: 'https://github.com/happier-dev/happier',
-            cloneUrl: `file://${remotePath}`,
-            visibility: 'public',
-            defaultBranch: 'main',
-        },
-        targets: [
-            {
-                protocol: 'https',
-                url: `file://${remotePath}`,
-                isDefault: true,
-            },
-        ],
-    };
-}
+import {
+    cloneWithRealGitRuntime,
+    createBareRemoteRepository,
+    createInMemorySnapshot,
+    createWorkspace,
+    getRepositoryCloneOperation,
+    makeCloneTargetDescription,
+    makeContext,
+    makeProviderRegistry,
+    makeRequest,
+} from './repositoryCloneOperations.test-support.js';
 
 describe('git repository clone operation', () => {
+    it('uses the current host runtime services for clone target discovery', async () => {
+        const parent = createWorkspace();
+        const remotePath = createBareRemoteRepository();
+        const serviceLabels = new Map<ScmHostingProviderRuntimeServices, string>();
+        const observedServiceLabels: string[] = [];
+        const description = makeCloneTargetDescription(remotePath);
+
+        function createRuntimeServices(label: string): ScmHostingProviderRuntimeServices {
+            const services: ScmHostingProviderRuntimeServices = {};
+            serviceLabels.set(services, label);
+            return services;
+        }
+
+        const repositoryClone = getRepositoryCloneOperation({
+            registry: {
+                getProvider: () => description.repository.provider,
+                getAdapter: () => ({
+                    describeCloneTargets: async ({ runtimeServices }: {
+                        runtimeServices?: ScmHostingProviderRuntimeServices;
+                    }) => {
+                        observedServiceLabels.push(runtimeServices ? serviceLabels.get(runtimeServices) ?? 'unknown' : 'missing');
+                        return description;
+                    },
+                }),
+            },
+            runCommand: async (request) => {
+                const destinationArg = request.args[3];
+                if (typeof destinationArg !== 'string') {
+                    throw new Error('expected clone destination argument');
+                }
+                mkdirSync(resolve(destinationArg, '.git'), { recursive: true });
+                return { success: true, stdout: '', stderr: '', exitCode: 0 };
+            },
+            detectRepo: async ({ cwd }) => ({ isRepo: true, rootPath: cwd, mode: '.git' }),
+            readSnapshot: async ({ context }) => createInMemorySnapshot(context),
+        });
+
+        const firstServices = createRuntimeServices('first');
+        const secondServices = createRuntimeServices('second');
+
+        {
+            const response = await cloneWithRealGitRuntime(repositoryClone, {
+                context: makeContext(parent),
+                request: makeRequest(parent, remotePath, 'first-clone'),
+            }, {
+                hostingProviderRuntimeServices: firstServices,
+            });
+            if (!response.success) throw new Error(response.error);
+            expect(response.success).toBe(true);
+        }
+        {
+            const response = await cloneWithRealGitRuntime(repositoryClone, {
+                context: makeContext(parent),
+                request: makeRequest(parent, remotePath, 'second-clone'),
+            }, {
+                hostingProviderRuntimeServices: secondServices,
+            });
+            if (!response.success) throw new Error(response.error);
+            expect(response.success).toBe(true);
+        }
+
+        expect(observedServiceLabels).toEqual(['first', 'second']);
+    });
+
     it('requires provider-owned clone target discovery instead of trusting request clone URLs', async () => {
         const parent = createWorkspace();
         const remotePath = createBareRemoteRepository();
@@ -217,6 +101,33 @@ describe('git repository clone operation', () => {
             errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
         });
         expect(existsSync(join(parent, 'happier'))).toBe(false);
+    });
+
+    it('rejects pre-existing empty destination directories before running clone', async () => {
+        const parent = createWorkspace();
+        const remotePath = createBareRemoteRepository();
+        const destination = join(parent, 'happier');
+        mkdirSync(destination);
+        let cloneAttempts = 0;
+        const repositoryClone = getRepositoryCloneOperation({
+            registry: makeProviderRegistry(makeCloneTargetDescription(remotePath)),
+            runCommand: async () => {
+                cloneAttempts += 1;
+                return { success: true, stdout: '', stderr: '', exitCode: 0 };
+            },
+        });
+
+        const response = await cloneWithRealGitRuntime(repositoryClone, {
+            context: makeContext(parent),
+            request: makeRequest(parent, remotePath),
+        });
+
+        expect(response).toMatchObject({
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
+        });
+        expect(cloneAttempts).toBe(0);
+        expect(existsSync(join(destination, '.git'))).toBe(false);
     });
 
     it('uses the registered provider descriptor and sanitized repository selector for clone target discovery', async () => {
@@ -267,42 +178,16 @@ describe('git repository clone operation', () => {
                 }),
             },
             runCommand: async (request) => {
-                clonedUrls.push(request.args[1] ?? '');
-                mkdirSync(resolve(parent, 'happier', '.git'), { recursive: true });
+                clonedUrls.push(request.args[2] ?? '');
+                const destinationArg = request.args[3];
+                if (typeof destinationArg !== 'string') {
+                    throw new Error('expected clone destination argument');
+                }
+                mkdirSync(resolve(destinationArg, '.git'), { recursive: true });
                 return { success: true, stdout: '', stderr: '', exitCode: 0 };
             },
             detectRepo: async () => ({ isRepo: true, rootPath: resolve(parent, 'happier'), mode: '.git' }),
-            readSnapshot: async ({ context }) => ({
-                projectKey: context.projectKey,
-                fetchedAt: Date.now(),
-                repo: {
-                    isRepo: true,
-                    backendId: 'git',
-                    mode: '.git',
-                    rootPath: context.cwd,
-                    remotes: [],
-                    worktrees: [],
-                },
-                capabilities: createScmCapabilities(),
-                branch: {
-                    head: 'main',
-                    upstream: null,
-                    ahead: 0,
-                    behind: 0,
-                    detached: false,
-                },
-                hasConflicts: false,
-                entries: [],
-                totals: {
-                    includedFiles: 0,
-                    pendingFiles: 0,
-                    untrackedFiles: 0,
-                    includedAdded: 0,
-                    includedRemoved: 0,
-                    pendingAdded: 0,
-                    pendingRemoved: 0,
-                },
-            }),
+            readSnapshot: async ({ context }) => createInMemorySnapshot(context),
         });
 
         const response = await cloneWithRealGitRuntime(repositoryClone, {
@@ -336,55 +221,43 @@ describe('git repository clone operation', () => {
         expect(clonedUrls).not.toContain('https://attacker.example/happier-dev/happier.git');
     });
 
-    it('clones into a conflict-free destination and returns a rediscovered repository snapshot', async () => {
+    it('passes clone targets after an option terminator', async () => {
         const parent = createWorkspace();
-        const remotePath = createBareRemoteRepository();
+        const destination = resolve(parent, 'happier');
+        const cloneArgs: string[][] = [];
         const repositoryClone = getRepositoryCloneOperation({
-            registry: makeProviderRegistry(makeCloneTargetDescription(remotePath)),
+            registry: makeProviderRegistry({
+                ...makeCloneTargetDescription('/tmp/unused.git'),
+                targets: [
+                    {
+                        protocol: 'https',
+                        url: '--upload-pack=malicious-helper',
+                        isDefault: true,
+                    },
+                ],
+            }),
+            runCommand: async (request) => {
+                cloneArgs.push([...request.args]);
+                const destinationArg = request.args[3];
+                if (typeof destinationArg !== 'string') {
+                    throw new Error('expected clone destination argument');
+                }
+                mkdirSync(resolve(destinationArg, '.git'), { recursive: true });
+                return { success: true, stdout: '', stderr: '', exitCode: 0 };
+            },
+            detectRepo: async () => ({ isRepo: true, rootPath: destination, mode: '.git' }),
+            readSnapshot: async ({ context }) => createInMemorySnapshot(context),
         });
 
         const response = await cloneWithRealGitRuntime(repositoryClone, {
             context: makeContext(parent),
-            request: makeRequest(parent, remotePath),
+            request: makeRequest(parent, '/tmp/unused.git'),
         });
 
         expect(response.success).toBe(true);
-        if (!response.success) {
-            throw new Error(response.error);
-        }
-        const destination = resolve(parent, 'happier');
-        expect(response.destinationPath).toBe(destination);
-        expect(response.cloneProtocol).toBe('https');
-        expect(existsSync(join(destination, 'README.md'))).toBe(true);
-        expect(response.snapshot?.repo).toMatchObject({
-            isRepo: true,
-            backendId: 'git',
-            mode: '.git',
-            rootPath: runGit(destination, ['rev-parse', '--show-toplevel']),
-        });
-        expect(response.snapshot?.branch.head).toBe('main');
+        expect(cloneArgs).toHaveLength(1);
+        expect(cloneArgs[0]?.slice(0, 3)).toEqual(['clone', '--', '--upload-pack=malicious-helper']);
+        expect(cloneArgs[0]?.[3]).not.toBe(destination);
     });
 
-    it('rejects non-empty destination directories before running clone', async () => {
-        const parent = createWorkspace();
-        const remotePath = createBareRemoteRepository();
-        const destination = join(parent, 'happier');
-        mkdirSync(destination);
-        writeFileSync(join(destination, 'existing.txt'), 'keep\n');
-        const repositoryClone = getRepositoryCloneOperation({
-            registry: makeProviderRegistry(makeCloneTargetDescription(remotePath)),
-        });
-
-        const response = await cloneWithRealGitRuntime(repositoryClone, {
-            context: makeContext(parent),
-            request: makeRequest(parent, remotePath),
-        });
-
-        expect(response).toMatchObject({
-            success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-        });
-        expect(existsSync(join(destination, 'existing.txt'))).toBe(true);
-        expect(existsSync(join(destination, '.git'))).toBe(false);
-    });
 });

@@ -5,13 +5,54 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { normalizeLoopbackBaseUrl, waitForAuthenticatedRouteUi } from '../../src/testkit/uiE2e/pageNavigation';
+import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl, waitForAuthenticatedRouteUi } from '../../src/testkit/uiE2e/pageNavigation';
 import { buildAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/buildAuthBootstrapStorageSnapshot';
 import { installAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/readLegacyAuthSecretFromLocalStorage';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
-test.describe('ui e2e: actions settings approvals-required toggle', () => {
+async function readWebSwitchChecked(locator: Locator): Promise<boolean | null> {
+    return await locator.evaluate((node) => {
+        if (node instanceof HTMLInputElement) return node.checked;
+        const aria = node.getAttribute('aria-checked');
+        if (aria === 'true') return true;
+        if (aria === 'false') return false;
+        return null;
+    });
+}
+
+async function clickSwitchAndWaitForChange(locator: Locator): Promise<boolean | null> {
+    const before = await readWebSwitchChecked(locator);
+    await locator.click({ timeout: 60_000, force: true });
+    await expect.poll(async () => readWebSwitchChecked(locator)).not.toBe(before);
+    return await readWebSwitchChecked(locator);
+}
+
+async function openActionDetailFromList(params: Readonly<{
+    page: Page;
+    baseUrl: string;
+    actionId: string;
+    requiredTestId?: string;
+}>): Promise<void> {
+    const actionRowId = `settings-actions:action:${params.actionId}`;
+    await gotoDomContentLoadedWithRetries(params.page, `${params.baseUrl}/settings/actions?happier_hmr=0`, 180_000);
+    await waitForAuthenticatedRouteUi({
+        page: params.page,
+        expectedPathname: '/settings/actions',
+        requiredTestIds: [actionRowId],
+        timeoutMs: 120_000,
+    });
+    await params.page.getByTestId(actionRowId).scrollIntoViewIfNeeded();
+    await params.page.getByTestId(actionRowId).click({ timeout: 60_000 });
+    await expect(params.page).toHaveURL(new RegExp(`/settings/actions/${encodeURIComponent(params.actionId)}(?:[?#].*)?$`), {
+        timeout: 60_000,
+    });
+    if (params.requiredTestId) {
+        await expect(params.page.getByTestId(params.requiredTestId)).toHaveCount(1, { timeout: 120_000 });
+    }
+}
+
+test.describe('ui e2e: actions settings detail approval modes', () => {
     test.describe.configure({ mode: 'serial' });
 
     const suiteDir = run.testDir('settings-actions-approvals-toggle-suite');
@@ -51,13 +92,19 @@ test.describe('ui e2e: actions settings approvals-required toggle', () => {
         await server?.stop().catch(() => {});
     });
 
-    test('shows the Require approval toggle only when a surface tile is selected, and persists its value', async ({ page }) => {
+    test('persists action detail approval modes and keeps non-approval targets simple', async ({ page }) => {
         test.setTimeout(540_000);
         if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
-        const actionId = 'session.message.send';
-        const tileId = `settings-actions:action:${actionId}:target:cli`;
-        const requireApprovalId = `settings-actions:action:${actionId}:target:cli:require-approval`;
+        const actionId = 'session.spawn_new';
+        const actionRowId = `settings-actions:action:${actionId}`;
+        const actionEnabledId = `settings-actions:action:${actionId}:enabled`;
+        const cliModeId = `settings-actions:action:${actionId}:target:cli:mode`;
+        const cliAskFirstId = `settings-actions:action:${actionId}:target:cli:mode:ask_first`;
+        const cliAllowedId = `settings-actions:action:${actionId}:target:cli:mode:allowed`;
+        const cliOffId = `settings-actions:action:${actionId}:target:cli:mode:off`;
+        const commandPaletteEnabledId = `settings-actions:action:${actionId}:target:command_palette:enabled`;
+        const commandPaletteAskFirstId = `settings-actions:action:${actionId}:target:command_palette:mode:ask_first`;
 
         await page.setViewportSize({ width: 1440, height: 900 });
         const auth = await createTestAuth(server.baseUrl);
@@ -67,47 +114,60 @@ test.describe('ui e2e: actions settings approvals-required toggle', () => {
             storageScope: `e2e-settings-actions-${run.runId}`,
         }));
 
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/actions?happier_hmr=0`, 180_000);
+        await waitForAuthenticatedRouteUi({
+            page,
+            expectedPathname: '/settings/actions',
+            requiredTestIds: [actionRowId],
+            timeoutMs: 120_000,
+        });
+
+        const actionRow = page.getByTestId(actionRowId);
+        await expect(actionRow).toHaveCount(1, { timeout: 120_000 });
+        await actionRow.scrollIntoViewIfNeeded();
+
+        const actionEnabled = page.getByTestId(actionEnabledId);
+        const disabledState = await clickSwitchAndWaitForChange(actionEnabled);
+        await page.reload({ waitUntil: 'domcontentloaded' });
         await page.goto(`${uiBaseUrl}/settings/actions?happier_hmr=0`, { waitUntil: 'domcontentloaded' });
         await waitForAuthenticatedRouteUi({
             page,
             expectedPathname: '/settings/actions',
-            requiredTestIds: [tileId],
+            requiredTestIds: [actionEnabledId],
             timeoutMs: 120_000,
         });
+        await expect.poll(async () => readWebSwitchChecked(page.getByTestId(actionEnabledId))).toBe(disabledState);
 
-        const tile = page.getByTestId(tileId);
-        await expect(tile).toHaveCount(1, { timeout: 120_000 });
-        await tile.scrollIntoViewIfNeeded();
-        const requireApproval = page.getByTestId(requireApprovalId);
+        await clickSwitchAndWaitForChange(page.getByTestId(actionEnabledId));
 
-        if ((await requireApproval.count()) === 0) {
-            await tile.click({ timeout: 60_000 });
-            await expect(requireApproval).toHaveCount(1, { timeout: 60_000 });
-        } else {
-            await expect(requireApproval).toHaveCount(1, { timeout: 60_000 });
-        }
+        await page.getByTestId(actionRowId).click({ timeout: 60_000 });
+        await expect(page).toHaveURL(new RegExp(`/settings/actions/${encodeURIComponent(actionId)}(?:[?#].*)?$`), {
+            timeout: 60_000,
+        });
 
-        await requireApproval.click({ timeout: 60_000 });
-        await expect(requireApproval).toHaveAttribute('aria-checked', 'true', { timeout: 60_000 });
-
-        await page.reload({ waitUntil: 'domcontentloaded' });
-        await waitForAuthenticatedRouteUi({
+        await expect(page.getByTestId(cliModeId)).toHaveCount(1, { timeout: 120_000 });
+        await page.getByTestId(cliAskFirstId).click({ timeout: 60_000 });
+        await openActionDetailFromList({
             page,
-            expectedPathname: '/settings/actions',
-            requiredTestIds: [tileId],
-            timeoutMs: 120_000,
+            baseUrl: uiBaseUrl,
+            actionId,
+            requiredTestId: cliAskFirstId,
         });
+        await expect(page.getByTestId(cliAskFirstId)).toHaveAttribute('aria-selected', 'true', { timeout: 60_000 });
 
-        const tileAfterReload = page.getByTestId(tileId);
-        await expect(tileAfterReload).toHaveCount(1, { timeout: 120_000 });
-        const requireAfterReload = page.getByTestId(requireApprovalId);
-        if ((await requireAfterReload.count()) === 0) {
-            await tileAfterReload.scrollIntoViewIfNeeded();
-            await tileAfterReload.click({ timeout: 60_000 });
-            await expect(requireAfterReload).toHaveCount(1, { timeout: 60_000 });
-        } else {
-            await expect(requireAfterReload).toHaveCount(1, { timeout: 60_000 });
-        }
-        await expect(requireAfterReload).toHaveAttribute('aria-checked', 'true', { timeout: 60_000 });
+        await page.getByTestId(cliAllowedId).click({ timeout: 60_000 });
+        await expect(page.getByTestId(cliAllowedId)).toHaveAttribute('aria-selected', 'true', { timeout: 60_000 });
+
+        await page.getByTestId(cliOffId).click({ timeout: 60_000 });
+        await openActionDetailFromList({
+            page,
+            baseUrl: uiBaseUrl,
+            actionId,
+            requiredTestId: cliOffId,
+        });
+        await expect(page.getByTestId(cliOffId)).toHaveAttribute('aria-selected', 'true', { timeout: 60_000 });
+
+        await expect(page.getByTestId(commandPaletteEnabledId)).toHaveCount(1, { timeout: 60_000 });
+        await expect(page.getByTestId(commandPaletteAskFirstId)).toHaveCount(0);
     });
 });

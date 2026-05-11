@@ -12,7 +12,10 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { createGitBackend } from '../backend.js';
+import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import type { ScmBackend, ScmBackendContext } from '../types.js';
+
+const REAL_GIT_INDEX_LOCK_TEST_TIMEOUT_MS = 10_000;
 
 type RemoveIndexLockOperation = (input: {
     context: ScmBackendContext;
@@ -54,6 +57,13 @@ function getRemoveIndexLockOperation(): RemoveIndexLockOperation {
         throw new Error('Git backend removeIndexLock operation is not registered');
     }
     return backend.removeIndexLock;
+}
+
+function removeIndexLockWithRuntime(
+    removeIndexLock: RemoveIndexLockOperation,
+    input: Parameters<RemoveIndexLockOperation>[0],
+) {
+    return runWithRealGitScmRuntime(() => removeIndexLock(input));
 }
 
 function confirmedRequest(cwd: string): ScmRepositoryRemoveIndexLockRequest {
@@ -111,7 +121,7 @@ describe('git remove index-lock operation', () => {
         const configBefore = readFileSync(join(workspace, '.git', 'config'), 'utf8');
         const removeIndexLock = getRemoveIndexLockOperation();
 
-        const response = await removeIndexLock({
+        const response = await removeIndexLockWithRuntime(removeIndexLock, {
             context: makeContext(workspace),
             request: confirmedRequest(workspace),
         });
@@ -131,7 +141,7 @@ describe('git remove index-lock operation', () => {
         const workspace = createRepository();
         const removeIndexLock = getRemoveIndexLockOperation();
 
-        const response = await removeIndexLock({
+        const response = await removeIndexLockWithRuntime(removeIndexLock, {
             context: makeContext(workspace),
             request: confirmedRequest(workspace),
         });
@@ -150,7 +160,7 @@ describe('git remove index-lock operation', () => {
         writeFileSync(outside, 'do not remove');
         const removeIndexLock = getRemoveIndexLockOperation();
 
-        const response = await removeIndexLock({
+        const response = await removeIndexLockWithRuntime(removeIndexLock, {
             context: makeContext(workspace),
             request: {
                 ...confirmedRequest(workspace),
@@ -175,7 +185,7 @@ describe('git remove index-lock operation', () => {
         const removeIndexLock = getRemoveIndexLockOperation();
 
         const response = await withFakeGitPath('../index.lock', gitDir, '.git', () =>
-            removeIndexLock({
+            removeIndexLockWithRuntime(removeIndexLock, {
                 context,
                 request: confirmedRequest(workspace),
             }),
@@ -197,7 +207,7 @@ describe('git remove index-lock operation', () => {
         const removeIndexLock = getRemoveIndexLockOperation();
 
         const response = await withFakeGitPath(wrongLock, gitDir, '.git', () =>
-            removeIndexLock({
+            removeIndexLockWithRuntime(removeIndexLock, {
                 context,
                 request: confirmedRequest(workspace),
             }),
@@ -219,7 +229,7 @@ describe('git remove index-lock operation', () => {
         const removeIndexLock = getRemoveIndexLockOperation();
 
         const response = await withFakeGitPath(outsideLock, join(workspace, '.git'), '.git', () =>
-            removeIndexLock({
+            removeIndexLockWithRuntime(removeIndexLock, {
                 context,
                 request: confirmedRequest(workspace),
             }),
@@ -240,7 +250,7 @@ describe('git remove index-lock operation', () => {
         const removeIndexLock = getRemoveIndexLockOperation();
 
         const response = await withFakeGitPath(rootLock, join(workspace, '.git'), '', () =>
-            removeIndexLock({
+            removeIndexLockWithRuntime(removeIndexLock, {
                 context,
                 request: confirmedRequest(workspace),
             }),
@@ -262,7 +272,7 @@ describe('git remove index-lock operation', () => {
         symlinkSync(outsideTarget, lockPath);
         const removeIndexLock = getRemoveIndexLockOperation();
 
-        const response = await removeIndexLock({
+        const response = await removeIndexLockWithRuntime(removeIndexLock, {
             context: makeContext(workspace),
             request: confirmedRequest(workspace),
         });
@@ -309,10 +319,12 @@ describe('git remove index-lock operation', () => {
             }
 
             const response = await withFakeGitPath(lockPath, join(workspace, '.git'), '.git', () =>
-                backend.removeIndexLock?.({
-                context,
-                request: confirmedRequest(workspace),
-                }) ?? Promise.reject(new Error('Git backend removeIndexLock operation is not registered')),
+                backend.removeIndexLock
+                    ? removeIndexLockWithRuntime(backend.removeIndexLock, {
+                        context,
+                        request: confirmedRequest(workspace),
+                    })
+                    : Promise.reject(new Error('Git backend removeIndexLock operation is not registered')),
             );
 
             expect(response).toMatchObject({
@@ -326,7 +338,7 @@ describe('git remove index-lock operation', () => {
             vi.doUnmock('node:fs/promises');
             vi.resetModules();
         }
-    });
+    }, REAL_GIT_INDEX_LOCK_TEST_TIMEOUT_MS);
 
     it('does not contain destructive Git repair commands or broad filesystem cleanup', () => {
         const source = readFileSync(join(dirname(new URL(import.meta.url).pathname), 'removeIndexLockOperation.ts'), 'utf8');

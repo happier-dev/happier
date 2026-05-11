@@ -10,9 +10,9 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./session/state/metadataPatch": {
-      "types": "./dist/session/state/metadataPatch.d.ts",
-      "default": "./dist/session/state/metadataPatch.js"
+    "./session/state/metadataWriters": {
+      "types": "./dist/session/state/metadataWriters.d.ts",
+      "default": "./dist/session/state/metadataWriters.js"
     }
   },
   "files": [

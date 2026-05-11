@@ -31,6 +31,7 @@ describe('GitHub checkout reference metadata', () => {
     expect(mod.resolveGithubCheckoutReferenceFromPullRequest(pullRequest)).toEqual({
       pullRequest,
       branch: 'feature/checkout-reference',
+      remoteRef: 'refs/pull/4/head',
       headSha: 'head-sha',
       baseSha: 'base-sha',
     });

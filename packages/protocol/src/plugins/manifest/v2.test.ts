@@ -161,6 +161,13 @@ describe('plugin manifest v2 contracts', () => {
 
     expect(defaultSupported.contributes.backends[0]?.capabilities).toEqual({
       executionRun: { supported: true },
+      session: {
+        media: {
+          acceptsImageInput: { supported: false },
+          emitsSessionMedia: { supported: false },
+          nativeImageGeneration: { supported: false },
+        },
+      },
     });
 
     const explicitOptOut = manifestSchema!.parse({
@@ -196,6 +203,13 @@ describe('plugin manifest v2 contracts', () => {
 
     expect(explicitOptOut.contributes.backends[0]?.capabilities).toEqual({
       executionRun: { supported: false },
+      session: {
+        media: {
+          acceptsImageInput: { supported: false },
+          emitsSessionMedia: { supported: false },
+          nativeImageGeneration: { supported: false },
+        },
+      },
     });
   });
 
@@ -422,7 +436,7 @@ describe('plugin manifest v2 contracts', () => {
     }).success).toBe(false);
   });
 
-  it('accepts nested MCP contribution families and rejects raw credential fields', () => {
+  it('accepts nested MCP server/discovery-provider contribution families and rejects raw credential fields', () => {
     const manifestSchema = readSchemaExport('PluginManifestV2Schema');
     expect(manifestSchema).toBeDefined();
 
@@ -444,6 +458,32 @@ describe('plugin manifest v2 contracts', () => {
               transport: 'hosted',
             },
           ],
+          discoveryProviders: [
+            {
+              id: 'acme.discovery',
+              kind: 'mcp.discoveryProvider',
+              version: '1.0.0',
+              providerId: 'acme',
+            },
+          ],
+        },
+      },
+      capabilities: { permissions: [] },
+    });
+
+    expect(parsed.contributes.mcp.servers.map((server: { name: string }) => server.name)).toEqual(['acme-hosted']);
+    expect(parsed.contributes.mcp.discoveryProviders.map((provider: { providerId: string }) => provider.providerId)).toEqual(['acme']);
+    expect(parsed.runtime.capabilities).toContain('mcp');
+
+    expect(manifestSchema!.safeParse({
+      schemaVersion: 2,
+      id: 'acme.retired-mcp',
+      version: '1.0.0',
+      displayName: 'Acme Retired MCP',
+      engines: { happier: '^1.0.0' },
+      runtime: { apiVersion: 1, capabilities: ['mcp'] },
+      contributes: {
+        mcp: {
           tools: [
             {
               id: 'acme.tool',
@@ -455,11 +495,7 @@ describe('plugin manifest v2 contracts', () => {
         },
       },
       capabilities: { permissions: [] },
-    });
-
-    expect(parsed.contributes.mcp.servers.map((server: { name: string }) => server.name)).toEqual(['acme-hosted']);
-    expect(parsed.contributes.mcp.tools.map((tool: { name: string }) => tool.name)).toEqual(['ext.acme.search']);
-    expect(parsed.runtime.capabilities).toContain('mcp');
+    }).success).toBe(false);
 
     const withRawCredential = {
       schemaVersion: 2,

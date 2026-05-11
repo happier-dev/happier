@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
+import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import { applyValidatedGitPatch } from './applyValidatedGitPatch.js';
 
 type ApplyValidatedGitPatchFn = (input: {
@@ -59,11 +60,11 @@ describe('applyValidatedGitPatch', () => {
             const applyValidatedGitPatch = await loadApplyValidatedGitPatch();
             const patch = ['diff --git a/a.txt b/a.txt', '--- a/a.txt', '+++ b/a.txt', '@@ -1 +1 @@', '-a', '+A', ''].join('\n');
 
-            const result = await applyValidatedGitPatch({
+            const result = await runWithRealGitScmRuntime(() => applyValidatedGitPatch({
                 cwd: repoRoot,
                 patch,
                 target: 'index',
-            });
+            }));
 
             expect(result.success).toBe(true);
             await expect(runGit(repoRoot, ['diff', '--cached', '--', 'a.txt'])).resolves.toContain('+A');
@@ -80,11 +81,11 @@ describe('applyValidatedGitPatch', () => {
             const applyValidatedGitPatch = await loadApplyValidatedGitPatch();
             const patch = ['diff --git a/a.txt b/a.txt', '--- a/a.txt', '+++ b/a.txt', '@@ -1 +1 @@', '-a', '+A', ''].join('\n');
 
-            const result = await applyValidatedGitPatch({
+            const result = await runWithRealGitScmRuntime(() => applyValidatedGitPatch({
                 cwd: repoRoot,
                 patch,
                 target: 'worktree',
-            });
+            }));
 
             expect(result.success).toBe(true);
             await expect(runGit(repoRoot, ['diff', '--cached', '--', 'a.txt'])).resolves.toBe('');
@@ -102,11 +103,11 @@ describe('applyValidatedGitPatch', () => {
             const applyValidatedGitPatch = await loadApplyValidatedGitPatch();
             const patch = ['diff --git a/a.txt b/a.txt', '--- a/a.txt', '+++ b/a.txt', '@@ -1 +1 @@', '-a', '+A', ''].join('\n');
 
-            const result = await applyValidatedGitPatch({
+            const result = await runWithRealGitScmRuntime(() => applyValidatedGitPatch({
                 cwd: repoRoot,
                 patch,
                 target: 'worktree',
-            });
+            }));
 
             expect(result.success).toBe(false);
             expect(result.errorCode).toBe(SCM_OPERATION_ERROR_CODES.CHANGE_APPLY_FAILED);

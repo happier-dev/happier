@@ -1,7 +1,7 @@
 import type { PluginManifestV2 } from '@happier-dev/protocol';
 
-// Skeleton manifest reserved for Stage E.10 extraction.
-// Substantive capabilities + contributions land during E.10 (Pi — Tier 3 native, single-role RPC leaf through ACP factory).
+// Thin composition file that declares this plugin’s canonical manifest.
+// Keep this mostly declarative; executable behavior lives in provider-owned CLI modules.
 export const PLUGIN_MANIFEST: PluginManifestV2 = {
   schemaVersion: 2,
   id: 'happier.agent.pi',
@@ -9,8 +9,30 @@ export const PLUGIN_MANIFEST: PluginManifestV2 = {
   displayName: 'pi',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: [] },
+  runtime: { apiVersion: 1, capabilities: ['backends'] },
   targets: {},
   capabilities: { permissions: [] },
-  contributes: {},
+  contributes: {
+    backends: [
+      {
+        kindVersion: 1,
+        id: 'pi',
+        agentId: 'pi',
+        engine: { kind: 'custom' },
+        capabilities: {
+          session: {
+            media: {
+              emitsSessionMedia: {
+                supported: true,
+                mediaKinds: ['image'],
+                sources: ['provider-generated'],
+                storage: 'session-media-file',
+              },
+              nativeImageGeneration: { supported: false },
+            },
+          },
+        },
+      },
+    ],
+  },
 };

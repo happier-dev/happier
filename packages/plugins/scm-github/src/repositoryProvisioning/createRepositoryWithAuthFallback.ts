@@ -6,12 +6,14 @@ import type {
   ScmHostingProviderRepositoryGetInput,
 } from '@happier-dev/plugin-sdk';
 import type {
+  ScmOperationErrorCode,
   ScmHostingProviderRef,
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositorySummary,
   ScmRepositoryCloneTarget,
   ScmRepositoryCloneTargetDescription,
 } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import { githubHostingProviderAdapter } from '../adapter.js';
 import { parseScmRemoteUrl } from '../remoteUrl.js';
@@ -52,6 +54,32 @@ type GithubRepositoryOperationName =
 
 function shouldTryRest(provider: ScmHostingProviderRef): boolean {
   return isGithubDotComRepositoryProvider(provider);
+}
+
+function readErrorCode(error: unknown): ScmOperationErrorCode | null {
+  if (!error || typeof error !== 'object') return null;
+  const code = (error as { errorCode?: unknown }).errorCode;
+  return typeof code === 'string' && Object.values(SCM_OPERATION_ERROR_CODES).includes(code as ScmOperationErrorCode)
+    ? code as ScmOperationErrorCode
+    : null;
+}
+
+function hasRecoverableHttpStatus(message: string): boolean {
+  const match = /\bstatus\s+(\d{3})\b/i.exec(message);
+  if (!match) return false;
+  const status = Number(match[1]);
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function isRecoverableGithubRepositoryRestFailure(error: unknown): boolean {
+  if (isGithubRepositoryAuthRequiredError(error)) return true;
+  if (error instanceof TypeError) return true;
+  if (!error || typeof error !== 'object') return false;
+  const code = readErrorCode(error);
+  if (code !== SCM_OPERATION_ERROR_CODES.COMMAND_FAILED) return false;
+  const message = error instanceof Error ? error.message : '';
+  return hasRecoverableHttpStatus(message)
+    || /\b(fetch failed|network|econnreset|etimedout|socket hang up)\b/i.test(message);
 }
 
 function createNoAuthTargetDiscoveryResult(): ScmHostingProviderRepositoryDescribePublishTargetsResult {
@@ -198,7 +226,7 @@ async function runWithAuthChain<TResult>(
   try {
     return await input.runRest();
   } catch (error) {
-    if (!isGithubRepositoryAuthRequiredError(error)) throw error;
+    if (!isRecoverableGithubRepositoryRestFailure(error)) throw error;
   }
 
   try {

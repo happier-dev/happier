@@ -157,9 +157,9 @@ function readPullRequestReference(input: ScmHostingProviderPullRequestGetInput):
     return String(reference.number);
   }
   if (typeof reference.url === 'string') {
-    const parsed = parseGitlabMergeRequestNumberFromUrl(reference.url);
+    const parsed = parseGitlabMergeRequestNumberFromProviderUrl(input.provider, reference.url);
     if (parsed) return String(parsed);
-    return reference.url;
+    throw createCommandFailedError('GitLab merge request URL is outside the detected repository');
   }
   if (typeof reference.headBranch === 'string' && reference.headBranch.trim()) {
     return reference.headBranch.trim();
@@ -167,9 +167,14 @@ function readPullRequestReference(input: ScmHostingProviderPullRequestGetInput):
   throw createCommandFailedError('GitLab merge request reference is invalid');
 }
 
-function parseGitlabMergeRequestNumberFromUrl(url: string): number | null {
+function parseGitlabMergeRequestNumberFromProviderUrl(provider: ScmHostingProviderRef, url: string): number | null {
   try {
     const parsed = new URL(url);
+    const providerBase = new URL(provider.baseUrl);
+    if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== providerBase.hostname.toLowerCase()) return null;
+    const providerBasePath = providerBase.pathname.replace(/\/+$/u, '');
+    const projectPath = `/${readProjectPath(provider).split('/').map(encodeURIComponent).join('/')}`;
+    if (!parsed.pathname.startsWith(`${providerBasePath}${projectPath}/-/merge_requests/`)) return null;
     const match = /\/-\/merge_requests\/(\d+)(?:\/)?$/u.exec(parsed.pathname);
     if (!match) return null;
     const number = Number(match[1]);

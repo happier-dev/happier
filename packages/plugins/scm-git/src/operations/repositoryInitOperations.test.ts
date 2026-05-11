@@ -12,6 +12,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { createGitBackend } from '../backend.js';
+import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import type { ScmBackend, ScmBackendContext } from '../types.js';
 
 type RepositoryInitOperation = (input: {
@@ -25,6 +26,13 @@ function runGit(cwd: string, args: string[]): string {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
+}
+
+function initWithRealGitRuntime(
+    repositoryInit: RepositoryInitOperation,
+    input: Parameters<RepositoryInitOperation>[0],
+) {
+    return runWithRealGitScmRuntime(() => repositoryInit(input));
 }
 
 function createWorkspace(): string {
@@ -57,7 +65,7 @@ describe('git repository init operation', () => {
         const workspace = createWorkspace();
         const repositoryInit = getRepositoryInitOperation();
 
-        const response = await repositoryInit({
+        const response = await initWithRealGitRuntime(repositoryInit, {
             context: makeContext(workspace, false),
             request: { cwd: workspace, initialBranch: 'main' },
         });
@@ -84,7 +92,7 @@ describe('git repository init operation', () => {
         const headBefore = readFileSync(join(workspace, '.git', 'HEAD'), 'utf8');
         const repositoryInit = getRepositoryInitOperation();
 
-        const response = await repositoryInit({
+        const response = await initWithRealGitRuntime(repositoryInit, {
             context: makeContext(workspace, true),
             request: { cwd: workspace, initialBranch: 'feature-after-existing' },
         });
@@ -102,7 +110,7 @@ describe('git repository init operation', () => {
         const workspace = createWorkspace();
         const repositoryInit = getRepositoryInitOperation();
 
-        const response = await repositoryInit({
+        const response = await initWithRealGitRuntime(repositoryInit, {
             context: makeContext(workspace, false),
             request: { cwd: workspace, initialBranch: 'bad..branch' },
         });

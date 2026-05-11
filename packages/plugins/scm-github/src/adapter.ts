@@ -89,6 +89,7 @@ export function createGithubScmHostingProviderAdapter(
         displayName: 'GitHub',
         baseUrl,
         nameWithOwner,
+        repositoryWebUrl: `${baseUrl}/${nameWithOwner}`,
         remoteName: input.remoteName ?? undefined,
         urlSafety,
       };

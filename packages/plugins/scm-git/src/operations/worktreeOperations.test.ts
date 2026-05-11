@@ -1,11 +1,13 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
-const runScmCommandMock = vi.hoisted(() => vi.fn());
-const mkdirMock = vi.hoisted(() => vi.fn());
+import {
+    runWithGitScmCommandRunner,
+    type GitScmCommandRunner,
+} from '../testkit/scmRuntime.test-support.js';
+import { gitWorktreeCreate } from './worktreeOperations.js';
 
-vi.mock('../runtime.js', () => ({
-    runScmCommand: (...args: unknown[]) => runScmCommandMock(...args),
-}));
+const runScmCommandMock = vi.hoisted(() => vi.fn<GitScmCommandRunner>());
+const mkdirMock = vi.hoisted(() => vi.fn());
 
 vi.mock('node:fs/promises', async () => {
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
@@ -22,9 +24,7 @@ describe('git worktree operations', () => {
     });
 
     it('fails closed before invoking git when the base ref starts with a dash', async () => {
-        const { gitWorktreeCreate } = await import('./worktreeOperations.js');
-
-        const response = await gitWorktreeCreate({
+        const response = await runWithGitScmCommandRunner(runScmCommandMock, () => gitWorktreeCreate({
             context: {
                 cwd: '/repo',
                 projectKey: 'project',
@@ -35,7 +35,7 @@ describe('git worktree operations', () => {
                 displayName: 'feature-auth',
                 baseRef: '--bad-ref',
             },
-        });
+        }));
 
         expect(response.success).toBe(false);
         expect(response.error).toContain('Invalid Git base ref');
@@ -53,9 +53,7 @@ describe('git worktree operations', () => {
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' });
         mkdirMock.mockResolvedValue(undefined);
 
-        const { gitWorktreeCreate } = await import('./worktreeOperations.js');
-
-        const response = await gitWorktreeCreate({
+        const response = await runWithGitScmCommandRunner(runScmCommandMock, () => gitWorktreeCreate({
             context: {
                 cwd: '/repo-linked/packages/app',
                 projectKey: 'project',
@@ -65,7 +63,7 @@ describe('git worktree operations', () => {
                 cwd: '/repo-linked/packages/app',
                 displayName: 'feature-auth',
             },
-        });
+        }));
 
         expect(response).toEqual({
             success: true,
@@ -78,7 +76,7 @@ describe('git worktree operations', () => {
         expect(runScmCommandMock).toHaveBeenNthCalledWith(
             5,
             expect.objectContaining({
-                bin: 'git',
+                command: 'git',
                 cwd: '/repo',
                 args: ['worktree', 'add', '-b', 'feature-auth', '--', '.dev/worktree/feature-auth', 'abc123'],
             }),
@@ -86,7 +84,7 @@ describe('git worktree operations', () => {
         expect(runScmCommandMock).toHaveBeenNthCalledWith(
             6,
             expect.objectContaining({
-                bin: 'git',
+                command: 'git',
                 cwd: '/repo',
                 args: ['worktree', 'add', '-b', 'feature-auth-2', '--', '.dev/worktree/feature-auth-2', 'abc123'],
             }),
@@ -101,9 +99,7 @@ describe('git worktree operations', () => {
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' });
         mkdirMock.mockResolvedValue(undefined);
 
-        const { gitWorktreeCreate } = await import('./worktreeOperations.js');
-
-        const response = await gitWorktreeCreate({
+        const response = await runWithGitScmCommandRunner(runScmCommandMock, () => gitWorktreeCreate({
             context: {
                 cwd: '/repo/packages/app',
                 projectKey: 'project',
@@ -114,7 +110,7 @@ describe('git worktree operations', () => {
                 displayName: 'feature/auth',
                 branchMode: 'existing',
             },
-        });
+        }));
 
         expect(response).toEqual({
             success: true,
@@ -128,7 +124,7 @@ describe('git worktree operations', () => {
         expect(runScmCommandMock).toHaveBeenNthCalledWith(
             4,
             expect.objectContaining({
-                bin: 'git',
+                command: 'git',
                 cwd: '/repo',
                 args: ['worktree', 'add', '--', '.dev/worktree/feature/auth', 'feature/auth'],
             }),

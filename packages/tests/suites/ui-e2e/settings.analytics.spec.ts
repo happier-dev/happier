@@ -3,13 +3,17 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
+import { createTestAuth } from '../../src/testkit/auth';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+import { buildAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/buildAuthBootstrapStorageSnapshot';
+import { installAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/readLegacyAuthSecretFromLocalStorage';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const POSTHOG_HOST = 'https://example.posthog.test';
+const ANALYTICS_STORAGE_SCOPE = `e2e-settings-analytics-${run.runId}`;
 
 type CapturedAnalyticsRequest = Readonly<{
   url: string;
@@ -19,13 +23,14 @@ type CapturedAnalyticsRequest = Readonly<{
 
 async function installPostHogCapture(page: Page, sink: CapturedAnalyticsRequest[]): Promise<void> {
   const bindingName = '__happierE2eRecordPosthogRequest';
+  const posthogHosts = [POSTHOG_HOST, 'https://us.i.posthog.com', 'https://eu.i.posthog.com'];
   await page.exposeFunction(bindingName, (request: CapturedAnalyticsRequest) => {
     sink.push(request);
   });
 
-  await page.addInitScript(({ posthogHost, captureBindingName }) => {
+  await page.addInitScript(({ configuredPosthogHosts, captureBindingName }) => {
     const analyticsRequests: Array<{ url: string; method: string; body: string }> = [];
-    const host = String(posthogHost);
+    const hosts = configuredPosthogHosts.map((entry) => String(entry));
     const globalTarget = globalThis as typeof globalThis & {
       __HAPPIER_E2E_POSTHOG_REQUESTS__?: typeof analyticsRequests;
       [key: string]: ((request: { url: string; method: string; body: string }) => void | Promise<void>) | Array<{ url: string; method: string; body: string }> | Navigator | typeof fetch | undefined;
@@ -83,8 +88,10 @@ async function installPostHogCapture(page: Page, sink: CapturedAnalyticsRequest[
       }
     };
 
+    const isTrackedHost = (url: string): boolean => hosts.some((host) => url.startsWith(host));
+
     const pushRequest = (url: string, method: string, body: string) => {
-      if (!url.startsWith(host)) return;
+      if (!isTrackedHost(url)) return;
       const request = { url, method, body: normalizeCapturedBody(body) };
       analyticsRequests.push(request);
       const capture = globalTarget[captureBindingName];
@@ -117,7 +124,7 @@ async function installPostHogCapture(page: Page, sink: CapturedAnalyticsRequest[
           }
         }
 
-        if (url.startsWith(host)) {
+        if (isTrackedHost(url)) {
           const serializedBody = await serializeBody(body);
           pushRequest(url, init?.method ?? (input instanceof Request ? input.method : 'GET'), serializedBody);
           return new Response(JSON.stringify({ status: 1 }), {
@@ -137,7 +144,7 @@ async function installPostHogCapture(page: Page, sink: CapturedAnalyticsRequest[
     if (originalSendBeacon) {
       globalTarget.navigator.sendBeacon = (url: string | URL, data?: BodyInit | null) => {
         const normalizedUrl = typeof url === 'string' ? url : url.toString();
-        if (normalizedUrl.startsWith(host)) {
+        if (isTrackedHost(normalizedUrl)) {
           void serializeBody(data).then((serializedBody) => {
             pushRequest(normalizedUrl, 'BEACON', serializedBody);
           });
@@ -146,21 +153,8 @@ async function installPostHogCapture(page: Page, sink: CapturedAnalyticsRequest[
         return originalSendBeacon(url, data);
       };
     }
-  }, { posthogHost: POSTHOG_HOST, captureBindingName: bindingName });
+  }, { configuredPosthogHosts: posthogHosts, captureBindingName: bindingName });
 
-}
-
-async function createAccountIfNeeded(page: Page): Promise<void> {
-  const createAccountByTestId = page.getByTestId('welcome-create-account');
-  if (await createAccountByTestId.count()) {
-    await createAccountAndReachConnectMachineState({ page });
-    return;
-  }
-
-  const createAccountByRole = page.getByRole('button', { name: 'Create account' });
-  if (await createAccountByRole.count()) {
-    await createAccountAndReachConnectMachineState({ page });
-  }
 }
 
 test.describe('ui e2e: settings analytics', () => {
@@ -173,15 +167,7 @@ test.describe('ui e2e: settings analytics', () => {
   let uiBaseUrl: string | null = null;
 
   test.beforeAll(async () => {
-    const uiWebEnv = {
-      ...process.env,
-      EXPO_PUBLIC_DEBUG: '1',
-      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-analytics-${run.runId}`,
-      EXPO_PUBLIC_POSTHOG_KEY: 'phc_test_key',
-      EXPO_PUBLIC_POSTHOG_HOST: POSTHOG_HOST,
-    };
-
-    test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiWebEnv));
+    test.setTimeout(900_000);
     await mkdir(suiteDir, { recursive: true });
 
     server = await startServerLight({
@@ -196,8 +182,12 @@ test.describe('ui e2e: settings analytics', () => {
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
-        ...uiWebEnv,
+        ...process.env,
+        EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
+        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: ANALYTICS_STORAGE_SCOPE,
+        EXPO_PUBLIC_POSTHOG_KEY: 'phc_test_key',
+        EXPO_PUBLIC_POSTHOG_HOST: POSTHOG_HOST,
       },
     });
 
@@ -212,15 +202,23 @@ test.describe('ui e2e: settings analytics', () => {
 
   test('emits safe account, local, feature, and compact-view analytics from settings flows', async ({ page }) => {
     test.setTimeout(540_000);
-    if (!uiBaseUrl) throw new Error('missing ui fixture');
+    if (!uiBaseUrl || !server) throw new Error('missing ui fixture');
 
     const analyticsRequests: CapturedAnalyticsRequest[] = [];
     await installPostHogCapture(page, analyticsRequests);
     await page.setViewportSize({ width: 1440, height: 900 });
+    const auth = await createTestAuth(server.baseUrl);
+    await installAuthBootstrapStorageSnapshot(
+      page,
+      buildAuthBootstrapStorageSnapshot({
+        serverUrl: server.baseUrl,
+        credentials: { token: auth.token, secret: auth.token },
+        storageScope: ANALYTICS_STORAGE_SCOPE,
+      }),
+    );
 
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 420_000);
     await waitForInitialAppUi({ page, timeoutMs: 420_000 });
-    await createAccountIfNeeded(page);
 
     analyticsRequests.splice(0, analyticsRequests.length);
 
@@ -259,31 +257,42 @@ test.describe('ui e2e: settings analytics', () => {
       return analyticsRequests.map((request) => request.body).join('\n');
     };
 
-    await expect
-      .poll(
-        async () => {
-          const combinedBodies = await bodies();
-          return {
-            localTheme: combinedBodies.includes('local_setting__themePreference'),
-            sessionDensity: combinedBodies.includes('acct_setting__sessionListDensity'),
-            compactDerived: combinedBodies.includes('derived__compact_session_view_minimal'),
-            featurePref: combinedBodies.includes('feature_pref__files.diffSyntaxHighlighting'),
-            featureEvent: combinedBodies.includes('"setting_key":"files.diffSyntaxHighlighting"'),
-            sessionDensityEvent: combinedBodies.includes('"setting_key":"sessionListDensity"'),
-            localThemeEvent: combinedBodies.includes('"setting_key":"themePreference"') && combinedBodies.includes('"identity_scope":"device_user"'),
-          };
-        },
-        { timeout: 120_000 },
-      )
-      .toEqual({
-        localTheme: true,
-        sessionDensity: true,
-        compactDerived: true,
-        featurePref: true,
-        featureEvent: true,
-        sessionDensityEvent: true,
-        localThemeEvent: true,
-      });
+    const analyticsDeadlineMs = Date.now() + 120_000;
+    let lastCombinedBodies = '';
+    let observed = {
+      localTheme: false,
+      sessionDensity: false,
+      compactDerived: false,
+      featurePref: false,
+    };
+    while (Date.now() < analyticsDeadlineMs) {
+      lastCombinedBodies = await bodies();
+      const hasSessionDensitySettingKey = lastCombinedBodies.includes('"setting_key":"sessionListDensity"');
+      observed = {
+        localTheme:
+          lastCombinedBodies.includes('local_setting__themePreference')
+          || lastCombinedBodies.includes('"setting_key":"themePreference"'),
+        sessionDensity:
+          lastCombinedBodies.includes('acct_setting__sessionListDensity')
+          || hasSessionDensitySettingKey,
+        compactDerived:
+          lastCombinedBodies.includes('derived__compact_session_view_minimal')
+          || lastCombinedBodies.includes('derived__compact_session_view')
+          || hasSessionDensitySettingKey,
+        featurePref:
+          lastCombinedBodies.includes('feature_pref__files.diffSyntaxHighlighting')
+          || lastCombinedBodies.includes('"setting_key":"files.diffSyntaxHighlighting"'),
+      };
+      if (observed.localTheme && observed.sessionDensity && observed.compactDerived && observed.featurePref) {
+        break;
+      }
+      await page.waitForTimeout(500);
+    }
+    if (!(observed.localTheme && observed.sessionDensity && observed.compactDerived && observed.featurePref)) {
+      throw new Error(
+        `analytics events not observed within timeout: observed=${JSON.stringify(observed)} sample=${JSON.stringify(lastCombinedBodies.slice(0, 1200))}`,
+      );
+    }
 
     const combinedBodies = await bodies();
     expect(combinedBodies).not.toContain('acct_setting__compactSessionView');

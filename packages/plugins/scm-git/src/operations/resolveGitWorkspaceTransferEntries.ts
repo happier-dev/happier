@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 
@@ -32,114 +31,20 @@ async function runGitNullSeparatedPathList(params: Readonly<{
     maxStdoutBytes?: number;
 }>): Promise<readonly string[]> {
     const maxStdoutBytes = params.maxStdoutBytes ?? resolveGitLsFilesMaxOutputBytes();
-
-    return await new Promise((resolvePromise, rejectPromise) => {
-        const child = spawn('git', [...params.args], {
-            cwd: params.cwd,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            windowsHide: true,
-            env: process.env,
-        });
-
-        const results: string[] = [];
-        let stdoutBytes = 0;
-        let stderr = '';
-        // Node's Buffer type is generic over the backing ArrayBufferLike, but many
-        // constructors return `Buffer<ArrayBuffer>` specifically. Since stream chunks
-        // can be backed by either ArrayBuffer or SharedArrayBuffer, keep our internal
-        // buffer types widened to `ArrayBufferLike` to avoid invariant generic
-        // assignment issues.
-        let remainder = Buffer.alloc(0) as Buffer<ArrayBufferLike>;
-        let settled = false;
-
-        const settle = (fn: () => void) => {
-            if (settled) return;
-            settled = true;
-            fn();
-        };
-
-        const appendStderr = (chunk: Buffer<ArrayBufferLike>) => {
-            // Best-effort capture; stderr should stay small for these commands.
-            if (stderr.length > 32_000) return;
-            stderr += chunk.toString('utf8');
-        };
-
-        const parseStdoutChunk = (chunk: Buffer<ArrayBufferLike>) => {
-            if (chunk.length === 0) {
-                return;
-            }
-
-            let buffer = chunk;
-            if (remainder.length > 0) {
-                const merged = Buffer.allocUnsafe(remainder.length + chunk.length) as Buffer<ArrayBufferLike>;
-                remainder.copy(merged, 0);
-                chunk.copy(merged, remainder.length);
-                buffer = merged;
-                remainder = Buffer.alloc(0) as Buffer<ArrayBufferLike>;
-            }
-
-            let start = 0;
-            for (let index = 0; index < buffer.length; index += 1) {
-                if (buffer[index] !== 0) continue;
-                if (index > start) {
-                    const entry = normalizeRelativePath(buffer.subarray(start, index).toString('utf8'));
-                    if (entry) {
-                        results.push(entry);
-                    }
-                }
-                start = index + 1;
-            }
-
-            if (start < buffer.length) {
-                remainder = buffer.slice(start) as Buffer<ArrayBufferLike>;
-            }
-        };
-
-        child.stdout.on('data', (raw) => {
-            const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-            stdoutBytes += chunk.length;
-            if (stdoutBytes > maxStdoutBytes) {
-                try {
-                    child.kill('SIGKILL');
-                } catch {
-                    // Best-effort.
-                }
-                settle(() => {
-                    rejectPromise(new Error(`Git command output exceeded limit (${maxStdoutBytes} bytes)`));
-                });
-                return;
-            }
-            parseStdoutChunk(chunk);
-        });
-
-        child.stderr.on('data', (raw) => {
-            appendStderr(Buffer.isBuffer(raw) ? raw : Buffer.from(raw));
-        });
-
-        child.on('error', (error) => {
-            settle(() => rejectPromise(error));
-        });
-
-        child.on('close', (exitCode) => {
-            if (settled) return;
-
-            // Consume any trailing non-null-terminated bytes (git should terminate with NUL, but fail closed).
-            if (remainder.length > 0) {
-                const entry = normalizeRelativePath(remainder.toString('utf8'));
-                if (entry) {
-                    results.push(entry);
-                }
-            }
-
-            const code = typeof exitCode === 'number' ? exitCode : -1;
-            if (code !== 0) {
-                settle(() => rejectPromise(new Error((stderr || `git exited with code ${code}`).trim())));
-                return;
-            }
-
-            settle(() => resolvePromise(results));
-        });
+    const result = await runScmCommand({
+        bin: 'git',
+        cwd: params.cwd,
+        args: [...params.args],
+        maxOutputBytes: maxStdoutBytes,
     });
+    if (!result.success) {
+        throw new Error((result.stderr || `git exited with code ${result.exitCode}`).trim());
+    }
+
+    return result.stdout
+        .split('\0')
+        .map(normalizeRelativePath)
+        .filter((entry) => entry.length > 0);
 }
 
 async function listGitManagedPaths(sourcePath: string): Promise<readonly string[]> {

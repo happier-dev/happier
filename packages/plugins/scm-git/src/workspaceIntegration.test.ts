@@ -15,6 +15,7 @@ import {
     realizeGitWorkspaceCheckout,
 } from './workspaceIntegration.js';
 import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
+import { runWithRealGitScmRuntime } from './testkit/scmRuntime.test-support.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -70,7 +71,7 @@ describe('git workspace integration', () => {
 
             const sourceHead = await runGit(sourceRoot, ['rev-parse', 'HEAD']);
 
-            await reconcileGitWorkspacePostMaterialization({
+            await runWithRealGitScmRuntime(() => reconcileGitWorkspacePostMaterialization({
                 context: {
                     cwd: targetRoot,
                     projectKey: `test:${targetRoot}`,
@@ -85,7 +86,7 @@ describe('git workspace integration', () => {
                     sourcePath: sourceRoot,
                 },
                 sourcePath: '/stale/source-path',
-            });
+            }));
 
             await expect(runGit(targetRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])).resolves.toBe('feature');
             await expect(runGit(targetRoot, ['rev-parse', 'HEAD'])).resolves.toBe(sourceHead);
@@ -109,7 +110,7 @@ describe('git workspace integration', () => {
             await runGit(sourceRoot, ['commit', '-m', 'initial']);
             await mkdir(join(sourceRoot, '.worktrees'), { recursive: true });
 
-            const materialized = await materializeGitWorkspaceSourceCheckout({
+            const materialized = await runWithRealGitScmRuntime(() => materializeGitWorkspaceSourceCheckout({
                 context: {
                     cwd: sourceRoot,
                     projectKey: `test:${sourceRoot}`,
@@ -126,7 +127,7 @@ describe('git workspace integration', () => {
                     displayName: 'feature/auth',
                     baseRef: 'main',
                 },
-            });
+            }));
 
             expect(materialized).toEqual({ targetPath: await realpath(targetRoot) });
 
@@ -157,7 +158,7 @@ describe('git workspace integration', () => {
             await mkdir(join(repoRoot, '.worktrees'), { recursive: true });
             await cp(originalWorktreeRoot, restoredRoot, { recursive: true });
 
-            const realizedCheckout = await realizeGitWorkspaceCheckout({
+            const realizedCheckout = await runWithRealGitScmRuntime(() => realizeGitWorkspaceCheckout({
                 context: {
                     cwd: repoRoot,
                     projectKey: `test:${repoRoot}`,
@@ -174,8 +175,8 @@ describe('git workspace integration', () => {
                     displayName: 'feature-auth',
                     baseRef: 'main',
                 },
-            });
-            const restoredIdentity = await inspectGitCheckoutIdentity({ cwd: restoredRoot });
+            }));
+            const restoredIdentity = await runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: restoredRoot }));
 
             expect(realizedCheckout).toEqual({
                 kind: 'git_worktree',
@@ -205,7 +206,7 @@ describe('git workspace integration', () => {
 
             const createdRoot = join(sourceRoot, '.dev', 'worktree', 'feature', 'auth');
 
-            const createdCheckout = await createGitWorkspaceCheckout({
+            const createdCheckout = await runWithRealGitScmRuntime(() => createGitWorkspaceCheckout({
                 context: {
                     cwd: sourceRoot,
                     projectKey: `test:${sourceRoot}`,
@@ -221,7 +222,7 @@ describe('git workspace integration', () => {
                     displayName: 'feature/auth',
                     baseRef: 'main',
                 },
-            });
+            }));
 
             expect(createdCheckout).toEqual({
                 kind: 'git_worktree',

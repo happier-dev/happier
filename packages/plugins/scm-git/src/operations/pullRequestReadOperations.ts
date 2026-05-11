@@ -13,14 +13,21 @@ import {
     type ScmPullRequestSummary,
     type ScmWorkingSnapshot,
 } from '@happier-dev/protocol';
-import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
+import {
+    readCurrentScmHostingProviderRuntimeServices,
+    type ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk';
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';
 import { defaultPrStatusCache, type PrStatusCache, type PrStatusCacheErrorKind, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
-import { createScmHostingProviderRuntimeServices } from '../hostingProviders/runtimeServices.js';
-import { resolveDefaultPullRequestStatusProjectionRegistry } from './pullRequestStatusProjection.js';
+import { createValidatedPullRequestFollowupAction } from './pullRequestFollowupAction.js';
+import { parsePullRequestReference } from './pullRequestReference.js';
+import {
+    resolveDefaultPullRequestStatusProjectionRegistry,
+    resolvePullRequestBaseBranch,
+} from './pullRequestStatusProjection.js';
 
 type PullRequestReadRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getAdapter' | 'buildCompareUrl'>;
 
@@ -85,13 +92,6 @@ function isPullRequestReadAdapter(adapter: unknown): adapter is PullRequestReadA
     return typeof candidate.listPullRequests === 'function'
         || typeof candidate.getPullRequest === 'function'
         || typeof candidate.getPullRequestAuthProfileKey === 'function';
-}
-
-function normalizeUpstreamBranch(upstream: string | null): string | null {
-    if (!upstream) return null;
-    const slashIndex = upstream.indexOf('/');
-    if (slashIndex < 0) return upstream;
-    return upstream.slice(slashIndex + 1) || null;
 }
 
 function resolveProvider(snapshot: ScmWorkingSnapshot, providerId?: string): ScmHostingProviderRef | null {
@@ -164,28 +164,13 @@ function classifyError(error: unknown): Readonly<{
     return { message, code: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, cacheKind: 'network' };
 }
 
-function parsePullRequestNumberFromUrl(url: string): number | null {
-    try {
-        const parsed = new URL(url);
-        const segments = parsed.pathname.split('/').filter(Boolean);
-        const markerIndex = segments.findIndex((segment) => segment === 'pull' || segment === 'pullrequest' || segment === 'merge_requests');
-        if (markerIndex < 0) return null;
-        const rawNumber = segments[markerIndex + 1];
-        if (!rawNumber) return null;
-        const number = Number(rawNumber);
-        return Number.isInteger(number) && number > 0 ? number : null;
-    } catch {
-        return null;
-    }
-}
-
 function matchesReference(pr: ScmPullRequestSummary, reference: ScmPullRequestReference): boolean {
     if ('number' in reference) return pr.number === reference.number;
     if ('headBranch' in reference) return pr.headBranch === reference.headBranch;
     if ('url' in reference) {
         if (pr.url === reference.url) return true;
-        const number = parsePullRequestNumberFromUrl(reference.url);
-        return number !== null && pr.number === number;
+        const parsed = parsePullRequestReference(reference.url);
+        return parsed.ok && 'number' in parsed.reference && pr.number === parsed.reference.number;
     }
     return false;
 }
@@ -194,11 +179,12 @@ export function createGitPullRequestReadOperations(
     deps?: GitPullRequestReadOperationDeps,
 ): GitPullRequestReadOperations {
     const cache = deps?.cache ?? defaultPrStatusCache;
-    let defaultRuntimeServices: ScmHostingProviderRuntimeServices | null = null;
     function readRuntimeServices(): ScmHostingProviderRuntimeServices {
         if (deps?.runtimeServices) return deps.runtimeServices;
-        defaultRuntimeServices ??= createScmHostingProviderRuntimeServices();
-        return defaultRuntimeServices;
+        const currentServices = readCurrentScmHostingProviderRuntimeServices();
+        if (currentServices) return currentServices;
+        if (deps?.registry) return {};
+        throw new Error('Git SCM pull request operations require host-injected SCM hosting provider runtime services.');
     }
     const readSnapshot = deps?.readSnapshot ?? (async ({ context }) => {
         const response = await getGitSnapshot({ context });
@@ -251,7 +237,7 @@ export function createGitPullRequestReadOperations(
         if (!headBranch) {
             return errorResponse('Cannot list pull requests without a head branch', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
         }
-        const baseBranch = request.base ?? normalizeUpstreamBranch(resolved.snapshot.branch.upstream);
+        const baseBranch = request.base ?? resolvePullRequestBaseBranch(resolved.snapshot);
         const authProfileKey = resolved.adapter ? readAuthProfileKey(resolved.adapter, resolved.provider) : undefined;
         const key = buildCacheKey({
             context,
@@ -346,7 +332,7 @@ export function createGitPullRequestReadOperations(
                 ? request.prReference.headBranch
                 : null;
             if (headBranch) {
-                const base = normalizeUpstreamBranch(resolved.snapshot.branch.upstream);
+                const base = resolvePullRequestBaseBranch(resolved.snapshot);
                 const listResult = await list({
                     context,
                     request: {
@@ -385,13 +371,12 @@ export function createGitPullRequestReadOperations(
             return {
                 success: true,
                 composeUrl: compareUrl.url,
-                nextAction: {
-                    kind: 'openUrl',
+                nextAction: createValidatedPullRequestFollowupAction({
+                    provider: resolved.provider,
                     purpose: 'compose',
                     url: compareUrl.url,
                     allowedBaseUrl: resolved.provider.baseUrl,
-                    urlSafety: resolved.provider.urlSafety,
-                },
+                }),
             };
         },
     });

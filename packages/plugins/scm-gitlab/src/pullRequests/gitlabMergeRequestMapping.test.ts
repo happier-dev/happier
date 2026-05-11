@@ -49,6 +49,23 @@ describe('GitLab merge request mapping', () => {
     expect(mapGitlabMergeRequest(provider, { ...basePayload, state: 'locked' })).toMatchObject({ state: 'unknown' });
   });
 
+  it('maps same-project source repository identity for branch-context validation', async () => {
+    expect(mapGitlabMergeRequest(provider, {
+      iid: 20,
+      id: 9920,
+      title: 'Created GitLab MR',
+      web_url: 'https://gitlab.com/happier-dev/mobile/app/-/merge_requests/20',
+      source_branch: 'feature/gitlab-create',
+      target_branch: 'main',
+      source_project_id: 991,
+      target_project_id: 991,
+      state: 'opened',
+    })).toMatchObject({
+      headRepositoryNameWithOwner: 'happier-dev/mobile/app',
+      isCrossRepository: false,
+    });
+  });
+
   it('returns null for invalid payloads and includes description only for detail mapping', async () => {
     expect(mapGitlabMergeRequest(provider, {
       iid: '17',

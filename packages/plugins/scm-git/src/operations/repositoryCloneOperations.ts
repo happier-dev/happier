@@ -1,6 +1,3 @@
-import { readdir, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, resolve } from 'node:path';
-
 import {
     SCM_OPERATION_ERROR_CODES,
     type ScmHostingRepositoryAuthSummary,
@@ -13,17 +10,27 @@ import {
     type ScmWorkingSnapshot,
     type SourceControlCloneProtocol,
 } from '@happier-dev/protocol';
+import {
+    readCurrentScmHostingProviderRuntimeServices,
+    type ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk';
 
-import type { ScmBackendContext, ScmRepoDetection } from '../types.js';
+import type { ScmBackendContext } from '../types.js';
 import { runScmCommand, type ScmExecResult } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { mapGitErrorCode } from '../remote.js';
 import { detectGitRepo, getGitSnapshot } from '../repository.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
+import {
+    cleanupPrivateCloneDestination,
+    preflightDestination,
+    publishPrivateCloneDestination,
+    reserveCloneDestination,
+} from './repositoryCloneDestination.js';
+import { readClonedSnapshot } from './repositoryCloneSnapshotReadback.js';
 
 const GIT_REPOSITORY_CLONE_TIMEOUT_MS = 120_000;
 
-type ScmHostingProviderRuntimeServices = Readonly<Record<string, unknown>>;
 type CloneProviderRef = ScmRepositoryCloneInput['provider'];
 type CloneProviderUrlSafety = CloneProviderRef['urlSafety'];
 
@@ -65,10 +72,6 @@ export type GitRepositoryCloneOperation = Readonly<{
     }>): Promise<ScmRepositoryCloneOutput>;
 }>;
 
-type DestinationPreflightResult =
-    | Readonly<{ ok: true; parentPath: string; destinationPath: string }>
-    | Readonly<{ ok: false; response: ScmRepositoryCloneOutput }>;
-
 type CloneTargetSelectionResult =
     | Readonly<{
         ok: true;
@@ -88,116 +91,6 @@ function errorResponse(
         errorCode,
         ...extra,
     };
-}
-
-function pathContainsTraversal(value: string): boolean {
-    return value.split(/[\\/]+/).includes('..');
-}
-
-function hasUnsafePathInput(value: string): boolean {
-    return value.includes('\0') || value.startsWith('~') || pathContainsTraversal(value);
-}
-
-async function preflightDestination(request: ScmRepositoryCloneInput): Promise<DestinationPreflightResult> {
-    if (!request.confirmed || request.authorizationToken !== 'clone-repository') {
-        return {
-            ok: false,
-            response: errorResponse(
-                'Repository clone requires explicit user authorization.',
-                SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
-                { remediation: { kind: 'confirmation_required' } },
-            ),
-        };
-    }
-
-    const parentPath = resolve(request.destinationParentPath);
-    if (
-        !isAbsolute(request.destinationParentPath)
-        || hasUnsafePathInput(request.destinationParentPath)
-        || hasUnsafePathInput(request.destinationDirectoryName)
-        || /[\\/]/.test(request.destinationDirectoryName)
-        || request.destinationDirectoryName === '.'
-        || request.destinationDirectoryName === '..'
-    ) {
-        return {
-            ok: false,
-            response: errorResponse(
-                'Repository clone destination must be an absolute parent path plus a safe child directory name.',
-                SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-            ),
-        };
-    }
-
-    const destinationPath = resolve(parentPath, request.destinationDirectoryName);
-    if (dirname(destinationPath) !== parentPath) {
-        return {
-            ok: false,
-            response: errorResponse(
-                'Repository clone destination must stay inside the selected parent directory.',
-                SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-            ),
-        };
-    }
-
-    let parentStats;
-    try {
-        parentStats = await stat(parentPath);
-    } catch {
-        return {
-            ok: false,
-            response: errorResponse(
-                'Repository clone destination parent does not exist.',
-                SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-            ),
-        };
-    }
-    if (!parentStats.isDirectory()) {
-        return {
-            ok: false,
-            response: errorResponse(
-                'Repository clone destination parent is not a directory.',
-                SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-            ),
-        };
-    }
-
-    try {
-        const destinationStats = await stat(destinationPath);
-        if (!destinationStats.isDirectory()) {
-            return {
-                ok: false,
-                response: errorResponse(
-                    'Repository clone destination already exists and is not a directory.',
-                    SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-                ),
-            };
-        }
-        const entries = await readdir(destinationPath);
-        if (entries.length > 0) {
-            return {
-                ok: false,
-                response: errorResponse(
-                    'Repository clone destination already contains files.',
-                    SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-                ),
-            };
-        }
-    } catch (error) {
-        const code = typeof error === 'object' && error !== null
-            ? (error as { code?: unknown }).code
-            : undefined;
-        if (code !== 'ENOENT') {
-            return {
-                ok: false,
-                response: errorResponse(
-                    'Repository clone destination could not be inspected.',
-                    SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-                ),
-            };
-        }
-    }
-
-    return { ok: true, parentPath, destinationPath };
 }
 
 function isCloneTargetAdapter(adapter: unknown): adapter is CloneTargetAdapter {
@@ -296,18 +189,18 @@ async function readRegistry(deps?: GitRepositoryCloneOperationDeps): Promise<Hos
 
 async function readRuntimeServices(
     deps: GitRepositoryCloneOperationDeps | undefined,
-    defaultRuntimeServices: { current: ScmHostingProviderRuntimeServices | null },
 ): Promise<ScmHostingProviderRuntimeServices> {
     if (deps?.runtimeServices) return deps.runtimeServices;
-    const { createScmHostingProviderRuntimeServices } = await import('../hostingProviders/runtimeServices.js');
-    defaultRuntimeServices.current ??= createScmHostingProviderRuntimeServices();
-    return defaultRuntimeServices.current;
+    const runtimeServices = readCurrentScmHostingProviderRuntimeServices();
+    if (!runtimeServices) {
+        throw new Error('Git repository clone operations require host-injected SCM hosting provider runtime services.');
+    }
+    return runtimeServices;
 }
 
 async function describeCloneTargets(input: Readonly<{
     request: ScmRepositoryCloneInput;
     deps?: GitRepositoryCloneOperationDeps;
-    runtimeServicesRef: { current: ScmHostingProviderRuntimeServices | null };
 }>): Promise<CloneTargetSelectionResult> {
     const registry = await readRegistry(input.deps);
     const adapter = registry?.getAdapter(input.request.provider.id);
@@ -340,7 +233,7 @@ async function describeCloneTargets(input: Readonly<{
         const description = await adapter.describeCloneTargets({
             provider: registeredProvider,
             repository: sanitizeRepositorySelector(input.request.repository),
-            runtimeServices: await readRuntimeServices(input.deps, input.runtimeServicesRef),
+            runtimeServices: await readRuntimeServices(input.deps),
         });
         return selectCloneTarget(description, input.request.protocol);
     } catch (error) {
@@ -358,42 +251,6 @@ async function describeCloneTargets(input: Readonly<{
             ),
         };
     }
-}
-
-function contextWithDetection(
-    context: ScmBackendContext,
-    cwd: string,
-    detection: ScmRepoDetection,
-): ScmBackendContext {
-    return {
-        ...context,
-        cwd,
-        projectKey: `${context.projectKey}:clone:${cwd}`,
-        detection,
-    };
-}
-
-async function readClonedSnapshot(input: Readonly<{
-    context: ScmBackendContext;
-    destinationPath: string;
-    detectRepo: typeof detectGitRepo;
-    readSnapshot: (snapshotInput: Readonly<{ context: ScmBackendContext }>) => Promise<ScmWorkingSnapshot | null>;
-}>): Promise<ScmWorkingSnapshot | ScmRepositoryCloneOutput> {
-    const detection = await input.detectRepo({ cwd: input.destinationPath });
-    if (!detection.isRepo) {
-        return errorResponse(
-            'Repository clone completed but the cloned directory could not be detected as a Git repository.',
-            SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-        );
-    }
-
-    const snapshot = await input.readSnapshot({
-        context: contextWithDetection(input.context, input.destinationPath, detection),
-    });
-    return snapshot ?? errorResponse(
-        'Repository clone completed but the cloned repository snapshot could not be read.',
-        SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-    );
 }
 
 function isFailureResponse(value: ScmWorkingSnapshot | ScmRepositoryCloneOutput): value is ScmRepositoryCloneOutput {
@@ -414,7 +271,6 @@ function mapCloneCommandFailure(result: ScmExecResult): ScmRepositoryCloneOutput
 export function createGitRepositoryCloneOperation(
     deps?: GitRepositoryCloneOperationDeps,
 ): GitRepositoryCloneOperation {
-    const runtimeServicesRef: { current: ScmHostingProviderRuntimeServices | null } = { current: null };
     const runCommand = deps?.runCommand ?? runScmCommand;
     const detectRepo = deps?.detectRepo ?? detectGitRepo;
     const readSnapshot = deps?.readSnapshot ?? (async ({ context }) => {
@@ -430,24 +286,36 @@ export function createGitRepositoryCloneOperation(
             const cloneTarget = await describeCloneTargets({
                 request,
                 deps,
-                runtimeServicesRef,
             });
             if (!cloneTarget.ok) return cloneTarget.response;
 
+            const finalDestination = await preflightDestination(request);
+            if (!finalDestination.ok) return finalDestination.response;
+            const reservedDestination = await reserveCloneDestination(finalDestination);
+            if (!reservedDestination.ok) return reservedDestination.response;
+
             const clone = await runCommand({
                 bin: 'git',
-                cwd: destination.parentPath,
-                args: ['clone', cloneTarget.target.url, destination.destinationPath],
+                cwd: reservedDestination.parentPath,
+                args: ['clone', '--', cloneTarget.target.url, reservedDestination.cloneDestinationPath],
                 timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS,
                 env: buildScmNonInteractiveEnv(),
             });
             if (!clone.success) {
+                await cleanupPrivateCloneDestination({
+                    path: reservedDestination.privateTempPath,
+                    identity: reservedDestination.privateTempIdentity,
+                });
                 return mapCloneCommandFailure(clone);
             }
 
+            const publishResult = await publishPrivateCloneDestination(reservedDestination);
+            if (!publishResult.ok) return publishResult.response;
+
             const snapshot = await readClonedSnapshot({
                 context,
-                destinationPath: destination.destinationPath,
+                destinationPath: reservedDestination.finalDestinationPath,
+                destinationIdentity: publishResult.destinationIdentity,
                 detectRepo,
                 readSnapshot,
             });
@@ -455,7 +323,7 @@ export function createGitRepositoryCloneOperation(
 
             return {
                 success: true,
-                destinationPath: destination.destinationPath,
+                destinationPath: reservedDestination.finalDestinationPath,
                 cloneProtocol: cloneTarget.target.protocol,
                 cloneUrl: cloneTarget.target.url,
                 repository: cloneTarget.repository,

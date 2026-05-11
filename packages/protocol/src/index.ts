@@ -348,6 +348,7 @@ export {
   PluginBackendInstallV1Schema,
   PluginBackendLaunchV1Schema,
   PluginBackendProbeV1Schema,
+  normalizePluginBackendCapabilitiesV1,
   type PluginBackendCapabilitiesV1,
   type PluginBackendDefinitionV1,
   type PluginBackendExecutionRunCapabilitiesV1,
@@ -429,20 +430,14 @@ export {
   type PluginSettingsValueSchemaV1,
 } from './plugins/contributions/settings.js';
 export {
-  PluginMcpBackendClientContributionV1Schema,
   PluginMcpContributesV1Schema,
   PluginMcpDiscoveryProviderContributionV1Schema,
   PluginMcpServerContributionV1Schema,
   PluginMcpServerTransportV1Schema,
-  PluginMcpToolContributionV1Schema,
-  PluginMcpToolNameV1Schema,
-  type PluginMcpBackendClientContributionV1,
   type PluginMcpContributesV1,
   type PluginMcpDiscoveryProviderContributionV1,
   type PluginMcpServerContributionV1,
   type PluginMcpServerTransportV1,
-  type PluginMcpToolContributionV1,
-  type PluginMcpToolNameV1,
 } from './plugins/contributions/mcp.js';
 export {
   PluginExecutionRunProfileContributionV2Schema,
@@ -949,6 +944,24 @@ export {
   SessionStoredMessageContentSchema,
   type SessionStoredMessageContent,
 } from './sessionMessages/sessionStoredMessageContent.js';
+export {
+  SESSION_MEDIA_MESSAGE_META_KIND_V1,
+  SessionMediaItemV1Schema,
+  SessionMediaFailureV1Schema,
+  SessionMediaMessageMetaV1Schema,
+  SessionMediaMessagePayloadV1Schema,
+  SessionMediaOriginV1Schema,
+  createSessionMediaItemV1Schema,
+  createSessionMediaFailureV1Schema,
+  createSessionMediaMessageMetaV1Schema,
+  createSessionMediaMessagePayloadV1Schema,
+  createSessionMediaOriginV1Schema,
+  type SessionMediaFailureV1,
+  type SessionMediaItemV1,
+  type SessionMediaMessageMetaV1,
+  type SessionMediaMessagePayloadV1,
+  type SessionMediaOriginV1,
+} from './sessionMessages/sessionMediaV1.js';
 export {
   TranscriptRawRecordV1Schema,
   TranscriptRawAgentContentV1Schema,
@@ -1861,6 +1874,7 @@ export {
   ScmPullRequestStateSchema,
   ScmPullRequestStatusProjectionSchema,
   ScmPullRequestSummarySchema,
+  resolveScmHostingProviderFollowupAllowedBaseUrl,
   type ScmFollowupAction,
   type ScmHostingProviderCapabilities,
   type ScmHostingProviderKind,

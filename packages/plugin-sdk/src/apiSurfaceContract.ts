@@ -1,15 +1,17 @@
 import type {
   PluginApiExecutionRunProfileRegistrationV1,
-  PluginApiMcpBackendClientRegistrationV1,
   PluginApiMcpDiscoveryProviderRegistrationV1,
   PluginApiMcpServerRegistrationV1,
-  PluginApiMcpToolRegistrationV1,
   PluginApiNotificationCategoryRegistrationV1,
   PluginApiNotificationChannelRegistrationV1,
   PluginApiRegisterMethodV1,
   PluginApiV1,
   ScmBackendRuntimeRegistration,
 } from './api';
+import type {
+  ScmHostingProviderRuntimeAdapter,
+  ScmHostingProviderRuntimeServices,
+} from './scm/hostingProvider';
 
 type AssertNever<T extends never> = T;
 type AssertTrue<T extends true> = T;
@@ -50,11 +52,21 @@ type _PluginApiMustExposeScmBackendRegistration = AssertTrue<
   }> ? true : false
 >;
 
+type _ScmHostingProviderRuntimeRegistryMustExposeAdapters = AssertTrue<
+  Awaited<ReturnType<NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingProviderRegistry']>>> extends Readonly<{
+    getAdapter: (id: string) => ScmHostingProviderRuntimeAdapter | undefined;
+  }> ? true : false
+>;
+
 type _PluginApiMustExposeMcpRegistration = AssertTrue<
   PluginApiV1 extends Readonly<{
     registerMcpServer: PluginApiRegisterMethodV1<PluginApiMcpServerRegistrationV1>;
-    registerMcpBackendClient: PluginApiRegisterMethodV1<PluginApiMcpBackendClientRegistrationV1>;
-    registerMcpTool: PluginApiRegisterMethodV1<PluginApiMcpToolRegistrationV1>;
     registerMcpDiscoveryProvider: PluginApiRegisterMethodV1<PluginApiMcpDiscoveryProviderRegistrationV1>;
   }> ? true : false
+>;
+
+type RetiredMcpRegistrationKeys = 'registerMcpBackendClient' | 'registerMcpTool';
+
+type _PluginApiMustNotExposeRetiredMcpRegistration = AssertTrue<
+  Extract<keyof PluginApiV1, RetiredMcpRegistrationKeys> extends never ? true : false
 >;

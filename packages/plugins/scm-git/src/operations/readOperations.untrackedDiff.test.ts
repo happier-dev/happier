@@ -1,16 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import {
+    runWithGitScmCommandRunner,
+    type GitScmCommandRunner,
+} from '../testkit/scmRuntime.test-support.js';
 import type { ScmBackendContext } from '../types.js';
+import { gitDiffFile } from './readOperations.js';
 
-const runScmCommandSpy = vi.fn();
-
-vi.mock('../runtime.js', async () => {
-    const actual = await vi.importActual<any>('../runtime.js');
-    return {
-        ...actual,
-        runScmCommand: (input: any) => runScmCommandSpy(input),
-    };
-});
+const runScmCommandSpy = vi.fn<GitScmCommandRunner>();
 
 describe('gitDiffFile (untracked)', () => {
     it('falls back to a no-index diff for untracked files when normal diff is empty', async () => {
@@ -23,18 +20,16 @@ describe('gitDiffFile (untracked)', () => {
             // no-index diff returns synthetic add diff (git diff exits 1 when differences exist).
             .mockResolvedValueOnce({ success: false, stdout: 'diff --git a/Dockerfile b/Dockerfile\n', stderr: '', exitCode: 1 });
 
-        const { gitDiffFile } = await import('./readOperations.js');
-
         const context: ScmBackendContext = {
             cwd: '/repo/subdir',
             projectKey: 'machine:/repo',
             detection: { isRepo: true, rootPath: '/repo', mode: '.git' },
         };
 
-        const res = await gitDiffFile({
+        const res = await runWithGitScmCommandRunner(runScmCommandSpy, () => gitDiffFile({
             context,
             request: { path: 'Dockerfile', area: 'pending' },
-        });
+        }));
 
         expect(res.success).toBe(true);
         if (!res.success) return;
@@ -42,12 +37,12 @@ describe('gitDiffFile (untracked)', () => {
 
         expect(runScmCommandSpy).toHaveBeenCalledTimes(3);
         expect(runScmCommandSpy.mock.calls[1]?.[0]).toMatchObject({
-            bin: 'git',
+            command: 'git',
             cwd: '/repo',
             args: ['ls-files', '--others', '--exclude-standard', '--', 'Dockerfile'],
         });
         expect(runScmCommandSpy.mock.calls[2]?.[0]).toMatchObject({
-            bin: 'git',
+            command: 'git',
             cwd: '/repo',
             args: ['diff', '--no-ext-diff', '--no-index', '--', '/dev/null', 'Dockerfile'],
         });
@@ -62,18 +57,16 @@ describe('gitDiffFile (untracked)', () => {
             exitCode: 1,
         });
 
-        const { gitDiffFile } = await import('./readOperations.js');
-
         const context: ScmBackendContext = {
             cwd: '/repo',
             projectKey: 'machine:/repo',
             detection: { isRepo: true, rootPath: '/repo', mode: '.git' },
         };
 
-        const res = await gitDiffFile({
+        const res = await runWithGitScmCommandRunner(runScmCommandSpy, () => gitDiffFile({
             context,
             request: { path: 'a.txt', area: 'pending' },
-        });
+        }));
 
         expect(res.success).toBe(true);
         if (!res.success) return;
@@ -81,7 +74,7 @@ describe('gitDiffFile (untracked)', () => {
 
         expect(runScmCommandSpy).toHaveBeenCalledTimes(1);
         const call = runScmCommandSpy.mock.calls[0]?.[0];
-        expect(call).toMatchObject({ bin: 'git', cwd: '/repo' });
+        expect(call).toMatchObject({ command: 'git', cwd: '/repo' });
         expect(call?.args?.slice?.(0, 3)).toEqual(['diff', '--no-ext-diff', '--']);
         expect(String(call?.args?.[call.args.length - 1] ?? '')).toContain('a.txt');
     });

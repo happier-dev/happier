@@ -274,13 +274,13 @@ describe('plugin SDK engine contracts', () => {
 
         const registerMethods: ReadonlyArray<keyof PluginApiV1> = [
             'registerMcpServer',
-            'registerMcpBackendClient',
-            'registerMcpTool',
             'registerMcpDiscoveryProvider',
         ];
         for (const method of registerMethods) {
             expect(method in api).toBe(false);
         }
+        expect('registerMcpBackendClient' in api).toBe(false);
+        expect('registerMcpTool' in api).toBe(false);
     });
 
     it('exposes A.11 persistence, event, and narrow auth services only on runtime context', async () => {

@@ -1,3 +1,7 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import * as agents from './index.js';
@@ -62,7 +66,98 @@ import {
   getProviderCliSetupSupportedIds as getProviderCliSetupSupportedIdsFromProviderRuntime,
 } from './providers/providerCliRuntime.js';
 
+const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = resolve(packageDir, '..', '..');
+
+const scanIgnoredDirectoryNames = new Set([
+  '.git',
+  '.next',
+  '.turbo',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+]);
+
+function listProductionSourceFiles(root: string): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      if (!scanIgnoredDirectoryNames.has(entry.name) && !entry.name.startsWith('.')) {
+        files.push(...listProductionSourceFiles(path));
+      }
+      continue;
+    }
+    if (
+      entry.isFile()
+      && /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(entry.name)
+      && !/\.(?:test|spec)\./.test(entry.name)
+      && statSync(path).size < 1_000_000
+    ) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
 describe('agents package exports', () => {
+  it('does not expose writable session-state binding internals from the package root', () => {
+    expect('runtimeDescriptorBinding' in agents).toBe(false);
+    expect('applySessionStateFieldMetadataPatch' in agents).toBe(false);
+    expect('buildSessionStateFieldMetadataPatch' in agents).toBe(false);
+    expect('createSessionStateFieldMetadataUpdater' in agents).toBe(false);
+  });
+
+  it('does not expose session-state metadata writer helpers from the package root', () => {
+    const rootOnlyMetadataWriterNames = [
+      'applyAcpConfigOptionIntentSessionMetadata',
+      'applyAcpSessionModeIntentSessionMetadata',
+      'applyDisplayTitleSessionMetadata',
+      'applyModelIntentSessionMetadata',
+      'applyPermissionModeIntentSessionMetadata',
+      'applyRuntimeDescriptorSessionMetadata',
+      'applyVendorSessionIdSessionMetadata',
+      'buildRuntimeDescriptorSessionMetadata',
+      'buildVendorSessionIdSessionMetadata',
+      'clearSessionStateFieldFromMetadata',
+    ] as const;
+
+    for (const exportName of rootOnlyMetadataWriterNames) {
+      expect(exportName in agents).toBe(false);
+    }
+  });
+
+  it('publishes session-state metadata writer helpers through an explicit narrow subpath', () => {
+    const packageJson = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as {
+      exports?: Record<string, unknown>;
+    };
+    expect(packageJson.exports).toHaveProperty('./session/state/metadataWriters', {
+      types: './dist/session/state/metadataWriters.d.ts',
+      default: './dist/session/state/metadataWriters.js',
+    });
+  });
+
+  it('does not publish the generic session-state metadata patch bypass subpath', () => {
+    const packageJson = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as {
+      exports?: Record<string, unknown>;
+    };
+    expect(packageJson.exports).not.toHaveProperty('./session/state/metadataPatch');
+  });
+
+  it('keeps production callers off the generic session-state metadata patch bypass subpath', () => {
+    const offenders = [
+      ...listProductionSourceFiles(join(repoRoot, 'apps')),
+      ...listProductionSourceFiles(join(repoRoot, 'packages')),
+    ].flatMap((path) => {
+      const source = readFileSync(path, 'utf8');
+      return source.includes('@happier-dev/agents/session/state/metadataPatch')
+        ? [relative(repoRoot, path)]
+        : [];
+    });
+    expect(offenders).toEqual([]);
+  }, 30_000);
+
   it('does not expose stale Codex runtime compatibility aliases from the package root', () => {
     expect('normalizeCodexRuntimeBackendMode' in agents).toBe(false);
     expect('CODEX_SESSION_CONTROL_ADAPTER_RUNTIME_HELPERS' in agents).toBe(false);

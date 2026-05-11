@@ -10,21 +10,9 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./checkpoints": {
-      "types": "./dist/checkpoints/index.d.ts",
-      "default": "./dist/checkpoints/index.js"
-    },
-    "./checkpoints/rollback": {
-      "types": "./dist/checkpoints/rollback/index.d.ts",
-      "default": "./dist/checkpoints/rollback/index.js"
-    },
     "./operations/stashOperations": {
       "types": "./dist/operations/stashOperations.d.ts",
       "default": "./dist/operations/stashOperations.js"
-    },
-    "./hostingProviders": {
-      "types": "./dist/hostingProviders/index.d.ts",
-      "default": "./dist/hostingProviders/index.js"
     }
   },
   "files": [

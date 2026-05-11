@@ -27,7 +27,7 @@ function resolveScmMaxOutputBytes(inputMaxOutputBytes: number | undefined): numb
 }
 
 export function runScmCommand(input: {
-  bin: 'git' | 'sl';
+  bin: 'git';
   cwd: string;
   args: string[];
   timeoutMs?: number;
@@ -46,7 +46,7 @@ export function runScmCommand(input: {
   }
 
   return runtimeServices.runCommand({
-    installableKey: input.bin === 'git' ? 'dep.git' : 'dep.sapling',
+    installableKey: 'dep.git',
     command: input.bin,
     cwd: input.cwd,
     args: input.args,

@@ -39,6 +39,12 @@ import type {
   ScmPullRequestOpenComposeResponse,
   ScmPullRequestOpenOrReuseRequest,
   ScmPullRequestOpenOrReuseResponse,
+  ScmPullRequestCheckoutRequest,
+  ScmPullRequestCheckoutResponse,
+  ScmPullRequestPrepareWorktreeRequest,
+  ScmPullRequestPrepareWorktreeResponse,
+  ScmPullRequestRunStackedRequest,
+  ScmPullRequestRunStackedResponse,
   ScmRemoteAddRequest,
   ScmRemoteManagementResponse,
   ScmRemotePublishRequest,
@@ -288,6 +294,18 @@ export interface ScmBackend {
     context: ScmBackendContext;
     request: ScmPullRequestOpenOrReuseRequest;
   }): Promise<ScmPullRequestOpenOrReuseResponse>;
+  pullRequestCheckout?(input: {
+    context: ScmBackendContext;
+    request: ScmPullRequestCheckoutRequest;
+  }): Promise<ScmPullRequestCheckoutResponse>;
+  pullRequestPrepareWorktree?(input: {
+    context: ScmBackendContext;
+    request: ScmPullRequestPrepareWorktreeRequest;
+  }): Promise<ScmPullRequestPrepareWorktreeResponse>;
+  pullRequestRunStacked?(input: {
+    context: ScmBackendContext;
+    request: ScmPullRequestRunStackedRequest;
+  }): Promise<ScmPullRequestRunStackedResponse>;
   hostingRepositoryDescribePublishTargets?(input: {
     context: ScmBackendContext;
     request: ScmHostingRepositoryDescribePublishTargetsRequest;

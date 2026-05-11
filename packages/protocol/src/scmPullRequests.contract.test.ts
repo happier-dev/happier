@@ -232,6 +232,18 @@ describe('SCM pull-request protocol contracts', () => {
       head: 'feature/scm-pr',
     });
 
+    const stackedFeatureBranchRequest = readProtocolSchema<protocol.ScmPullRequestRunStackedRequest>(
+      'ScmPullRequestRunStackedRequestSchema',
+    ).parse({
+      cwd: '/repo',
+      action: 'commitPushAndOpenOrReuse',
+      base: 'main',
+      featureBranch: ' feature/scm-pr ',
+    });
+    expect(stackedFeatureBranchRequest).toMatchObject({
+      featureBranch: 'feature/scm-pr',
+    });
+
     expect(readProtocolSchema('ScmPullRequestOpenComposeRequestSchema').safeParse({
       cwd: '/repo',
       base: 'main',
@@ -247,6 +259,24 @@ describe('SCM pull-request protocol contracts', () => {
       action: 'openOrReuse',
       base: 'main',
       head: 'feature\n--upload-pack=evil',
+    }).success).toBe(false);
+    expect(readProtocolSchema('ScmPullRequestRunStackedRequestSchema').safeParse({
+      cwd: '/repo',
+      action: 'commitPushAndOpenOrReuse',
+      base: 'main',
+      featureBranch: 'feature\n--upload-pack=evil',
+    }).success).toBe(false);
+    expect(readProtocolSchema('ScmPullRequestGetRequestSchema').safeParse({
+      cwd: '/repo',
+      prReference: { headBranch: 'feature\n--upload-pack=evil' },
+    }).success).toBe(false);
+    expect(readProtocolSchema('ScmPullRequestGetRequestSchema').safeParse({
+      cwd: '/repo',
+      prReference: { number: 7, headBranch: 'feature\n--upload-pack=evil' },
+    }).success).toBe(false);
+    expect(readProtocolSchema('ScmPullRequestCheckoutRequestSchema').safeParse({
+      cwd: '/repo',
+      prReference: { headBranch: 'feature\n--upload-pack=evil' },
     }).success).toBe(false);
   });
 });

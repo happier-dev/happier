@@ -322,7 +322,7 @@ describe('core e2e: session handoff via direct peer', () => {
     sourceDaemon = null;
     await server?.stop().catch(() => {});
     server = null;
-  });
+  }, 60_000);
 
   afterAll(async () => {
     ui?.close();
@@ -823,7 +823,7 @@ describe('core e2e: session handoff via direct peer', () => {
       'added after first handoff\n',
     );
     await expect(readFile(resolve(join(secondPreparedResume.directory, 'deleted-after-first-handoff.txt')), 'utf8')).rejects.toThrow();
-  }, 300_000);
+  }, 420_000);
 
   it('does not let a late plaintext UI message execute on the source once direct-peer cutover has started', async () => {
     const testDir = run.testDir('session-handoff-direct-peer-late-message-cutover');

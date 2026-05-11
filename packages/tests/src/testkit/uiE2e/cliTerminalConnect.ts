@@ -1,8 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
 
 import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
-import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -11,8 +10,8 @@ import {
 } from '../process/processOwnershipLease';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
-import { waitFor } from '../timing';
 import { waitForRegexInFile } from '../waitForRegexInFile';
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
 function extractHttpUrls(text: string): string[] {
   const out: string[] = [];
@@ -35,6 +34,60 @@ function looksLikeCliTerminalConnectCommand(command: string): boolean {
     && normalized.includes('--force')
     && normalized.includes('--no-open')
     && normalized.includes('--method web');
+}
+
+function deriveServerIdFromUrl(url: string): string {
+  const comparableKey = (() => {
+    try {
+      return createServerUrlComparableKey(url);
+    } catch {
+      return '';
+    }
+  })();
+  const value = comparableKey || url;
+  let h = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    h ^= value.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `env_${(h >>> 0).toString(16)}`;
+}
+
+async function ensureActiveServerSelection(params: Readonly<{
+  cliHomeDir: string;
+  serverUrl: string;
+  webappUrl: string;
+}>): Promise<void> {
+  const serverId = deriveServerIdFromUrl(params.serverUrl);
+  const settingsPath = resolvePath(params.cliHomeDir, 'settings.json');
+  const raw = await readFile(settingsPath, 'utf8').catch(() => '');
+  const parsed = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+  const currentActiveServerId = typeof parsed.activeServerId === 'string' ? parsed.activeServerId : '';
+  const serversRecord =
+    typeof parsed.servers === 'object' && parsed.servers !== null
+      ? { ...(parsed.servers as Record<string, unknown>) }
+      : {};
+  if (!serversRecord[serverId]) {
+    serversRecord[serverId] = {
+      id: serverId,
+      name: serverId,
+      serverUrl: params.serverUrl,
+      webappUrl: params.webappUrl,
+      createdAt: 0,
+      updatedAt: Date.now(),
+      lastUsedAt: Date.now(),
+    };
+  }
+  if (currentActiveServerId === serverId) return;
+
+  const nextSettings = {
+    ...parsed,
+    schemaVersion: typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : 6,
+    activeServerId: serverId,
+    servers: serversRecord,
+  };
+  await mkdir(resolvePath(params.cliHomeDir), { recursive: true });
+  await writeFile(settingsPath, `${JSON.stringify(nextSettings, null, 2)}\n`, 'utf8');
 }
 
 export function resolveCliTerminalConnectOwnershipLeasesDir(rootDir: string = repoRootDir()): string {
@@ -60,39 +113,6 @@ async function stderrTail(path: string): Promise<string> {
   return raw.slice(Math.max(0, raw.length - 8_000));
 }
 
-async function waitForTerminalConnectUrlReady(connectUrl: string, timeoutMs = 60_000): Promise<string> {
-  const connectUrlCandidates = expandLoopbackBaseUrlCandidates(connectUrl);
-  let readyUrl = connectUrl;
-  await waitFor(
-    async () => {
-      for (const candidateUrl of connectUrlCandidates) {
-        try {
-          const res = await fetch(candidateUrl, { signal: AbortSignal.timeout(2_000) });
-          if (res.ok) {
-            readyUrl = candidateUrl;
-            return true;
-          }
-        } catch {
-          // Try the next loopback-equivalent candidate.
-        }
-      }
-      return false;
-    },
-    {
-      timeoutMs,
-      intervalMs: 250,
-      context: 'terminal connect URL readiness',
-    },
-  );
-  return readyUrl;
-}
-
-function resolveTerminalConnectReadyTimeoutMs(env: NodeJS.ProcessEnv): number {
-  const raw = String(env.HAPPIER_E2E_CLI_TERMINAL_CONNECT_READY_TIMEOUT_MS ?? '').trim();
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
-}
-
 async function waitForExit(proc: SpawnedProcess, timeoutMs: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   if (proc.child.exitCode !== null || proc.child.signalCode !== null) {
     return { code: proc.child.exitCode, signal: proc.child.signalCode as NodeJS.Signals | null };
@@ -108,6 +128,12 @@ async function waitForExit(proc: SpawnedProcess, timeoutMs: number): Promise<{ c
   });
 }
 
+function resolveCliTerminalConnectSuccessTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const raw = String(env.HAPPIER_E2E_CLI_TERMINAL_CONNECT_SUCCESS_TIMEOUT_MS ?? '').trim();
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 120_000;
+}
+
 export type StartedCliTerminalConnect = {
   connectUrl: string;
   proc: SpawnedProcess;
@@ -120,7 +146,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   cliHomeDir: string;
   serverUrl: string;
   webappUrl: string;
-  waitForConnectUrlReady?: boolean;
+  connectUrlTimeoutMs?: number;
   env: NodeJS.ProcessEnv;
 }>): Promise<StartedCliTerminalConnect> {
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
@@ -139,13 +165,19 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     { snapshotDir: resolvePath(params.testDir, 'cli-dist') },
   );
 
+  await ensureActiveServerSelection({
+    cliHomeDir: params.cliHomeDir,
+    serverUrl: params.serverUrl,
+    webappUrl: params.webappUrl,
+  });
+
   const stdoutPath = resolvePath(params.testDir, 'cli.auth.login.stdout.log');
   const stderrPath = resolvePath(params.testDir, 'cli.auth.login.stderr.log');
 
   const proc = spawnLoggedProcess({
     command: cliLaunchSpec.command,
     args: [...cliLaunchSpec.args, 'auth', 'login', '--force', '--no-open', '--method', 'web'],
-    cwd: cliLaunchSpec.cwd ?? repoRootDir(),
+    cwd: repoRootDir(),
     env: {
       ...params.env,
       ...(cliLaunchSpec.env ?? {}),
@@ -177,15 +209,14 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     const match = await waitForRegexInFile({
       path: stdoutPath,
       regex: /https?:\/\/[^\s)]+\/terminal\/connect#key=[^\s]+/,
-      timeoutMs: 180_000,
+      timeoutMs: params.connectUrlTimeoutMs ?? 90_000,
       pollMs: 100,
       context: 'CLI terminal connect URL',
     });
     connectUrl = extractTerminalConnectUrl(match.input ?? '') ?? normalizeUrl(match[0] ?? '');
   } catch (e) {
-    const tail = await stdoutTail(stdoutPath);
     await proc.stop().catch(() => {});
-    throw new Error(`${String(e)} | stdoutTail=${JSON.stringify(tail)}`);
+    throw e;
   }
 
   if (!connectUrl) {
@@ -194,16 +225,19 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     throw new Error(`Failed to extract terminal connect URL from CLI stdout | stdoutTail=${JSON.stringify(tail)}`);
   }
 
-  if (params.waitForConnectUrlReady !== false) {
-    connectUrl = await waitForTerminalConnectUrlReady(connectUrl, resolveTerminalConnectReadyTimeoutMs(params.env));
-  }
-
   return {
     connectUrl,
     proc,
     waitForSuccess: async () => {
-      const { code, signal } = await waitForExit(proc, 120_000);
-      if (code === 0) return;
+      const { code, signal } = await waitForExit(proc, resolveCliTerminalConnectSuccessTimeoutMs(params.env));
+      if (code === 0) {
+        await ensureActiveServerSelection({
+          cliHomeDir: params.cliHomeDir,
+          serverUrl: params.serverUrl,
+          webappUrl: params.webappUrl,
+        });
+        return;
+      }
       const detail = signal ? `signal=${signal}` : `code=${code ?? 'null'}`;
       const outTail = await stdoutTail(stdoutPath);
       const errTail = await stderrTail(stderrPath);

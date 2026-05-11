@@ -120,6 +120,10 @@ function buildNameWithOwner(project: AzureRemoteProject): string {
   return `${project.organization}/${project.project}/${project.repository}`;
 }
 
+function buildRepositoryWebUrl(project: AzureRemoteProject): string {
+  return `${stripTrailingSlash(project.baseUrl)}/${encodeURIComponent(project.project)}/_git/${encodeURIComponent(project.repository)}`;
+}
+
 function isSafeNameWithOwnerSegment(value: string): boolean {
   return value.length > 0
     && value !== '.'
@@ -168,6 +172,7 @@ export const azureDevopsHostingProviderAdapter: AzureDevopsScmHostingProviderAda
       displayName: 'Azure DevOps',
       baseUrl: project.baseUrl,
       nameWithOwner: buildNameWithOwner(project),
+      repositoryWebUrl: buildRepositoryWebUrl(project),
       remoteName: input.remoteName ?? undefined,
       urlSafety: {
         allowedSchemes: ['https:'],

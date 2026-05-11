@@ -67,6 +67,7 @@ export const bitbucketHostingProviderAdapter: BitbucketScmHostingProviderAdapter
       displayName: 'Bitbucket',
       baseUrl: 'https://bitbucket.org',
       nameWithOwner,
+      repositoryWebUrl: `https://bitbucket.org/${nameWithOwner}`,
       remoteName: input.remoteName ?? undefined,
       urlSafety: {
         allowedSchemes: ['https:'],

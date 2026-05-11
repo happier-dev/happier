@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import { inspectGitCheckoutIdentity } from '../checkoutIdentity.js';
+import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import {
     createGitWorkspaceCheckoutAtDefaultPath,
     materializeGitWorkspaceCheckoutAtPath,
@@ -49,12 +50,12 @@ describe('materializeGitWorkspaceCheckout', () => {
             await writeFile(join(targetRoot, 'README.md'), 'imported\n', 'utf8');
             await writeFile(join(targetRoot, 'notes.txt'), 'transferred\n', 'utf8');
 
-            const materializedCheckout = await materializeGitWorkspaceCheckoutAtPath({
+            const materializedCheckout = await runWithRealGitScmRuntime(() => materializeGitWorkspaceCheckoutAtPath({
                 repoRoot,
                 targetPath: targetRoot,
                 displayName: 'feature-auth',
                 baseRef: 'main',
-            });
+            }));
 
             expect(materializedCheckout).toEqual({
                 targetPath: targetRoot,
@@ -85,12 +86,12 @@ describe('materializeGitWorkspaceCheckout', () => {
             await mkdir(join(repoRoot, '.dev', 'worktree', 'feature'), { recursive: true });
             await cp(originalWorktreeRoot, restoredRoot, { recursive: true });
 
-            const createdCheckout = await createGitWorkspaceCheckoutAtDefaultPath({
+            const createdCheckout = await runWithRealGitScmRuntime(() => createGitWorkspaceCheckoutAtDefaultPath({
                 repoRoot,
                 displayName: 'feature/auth',
                 baseRef: 'main',
-            });
-            const restoredIdentity = await inspectGitCheckoutIdentity({ cwd: restoredRoot });
+            }));
+            const restoredIdentity = await runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: restoredRoot }));
 
             expect(createdCheckout).toEqual({
                 targetPath: restoredIdentity?.registeredWorktreePath,
@@ -125,13 +126,13 @@ describe('materializeGitWorkspaceCheckout', () => {
             await mkdir(join(repoRoot, '.worktrees'), { recursive: true });
             await cp(originalWorktreeRoot, restoredRoot, { recursive: true });
 
-            const materializedCheckout = await materializeGitWorkspaceCheckoutAtPath({
+            const materializedCheckout = await runWithRealGitScmRuntime(() => materializeGitWorkspaceCheckoutAtPath({
                 repoRoot,
                 targetPath: restoredRoot,
                 displayName: 'feature-auth',
                 baseRef: 'main',
-            });
-            const restoredIdentity = await inspectGitCheckoutIdentity({ cwd: restoredRoot });
+            }));
+            const restoredIdentity = await runWithRealGitScmRuntime(() => inspectGitCheckoutIdentity({ cwd: restoredRoot }));
 
             expect(materializedCheckout).toEqual({
                 targetPath: restoredIdentity?.registeredWorktreePath,

@@ -214,11 +214,74 @@ export const ScmHostingProviderRefSchema = z
     displayName: z.string().min(1),
     baseUrl: z.string().url(),
     nameWithOwner: z.string().min(1).optional(),
+    repositoryWebUrl: z.string().url().optional(),
     remoteName: z.string().min(1).optional(),
     urlSafety: ScmHostingProviderUrlSafetySchema.default({ allowedSchemes: ['https:'] }),
   })
   .passthrough();
 export type ScmHostingProviderRef = z.infer<typeof ScmHostingProviderRefSchema>;
+
+function stripTrailingSlashes(value: string): string {
+  return value.replace(/\/+$/, '');
+}
+
+function isAllowedBaseWithinProviderBase(input: Readonly<{
+  provider: ScmHostingProviderRef;
+  allowedBase: URL;
+}>): boolean {
+  let providerBase: URL;
+  try {
+    providerBase = new URL(input.provider.baseUrl);
+  } catch {
+    return false;
+  }
+  if (input.allowedBase.origin !== providerBase.origin) return false;
+
+  const providerPath = stripTrailingSlashes(providerBase.pathname);
+  const allowedPath = stripTrailingSlashes(input.allowedBase.pathname);
+  if (!providerPath || providerPath === '/') return true;
+  return allowedPath === providerPath || allowedPath.startsWith(`${providerPath}/`);
+}
+
+function isUrlWithinBase(input: Readonly<{
+  url: URL;
+  base: URL;
+}>): boolean {
+  if (input.url.origin !== input.base.origin) return false;
+  const basePath = stripTrailingSlashes(input.base.pathname);
+  const urlPath = stripTrailingSlashes(input.url.pathname);
+  if (!basePath || basePath === '/') return true;
+  return urlPath === basePath || urlPath.startsWith(`${basePath}/`);
+}
+
+export function resolveScmHostingProviderFollowupAllowedBaseUrl(input: Readonly<{
+  provider: ScmHostingProviderRef;
+  allowedBaseUrl: string;
+}>): string | null {
+  let base: URL;
+  try {
+    base = new URL(input.allowedBaseUrl);
+  } catch {
+    return null;
+  }
+  if (!isAllowedBaseWithinProviderBase({ provider: input.provider, allowedBase: base })) {
+    return null;
+  }
+
+  const repositoryWebUrl = input.provider.repositoryWebUrl?.trim();
+  if (!repositoryWebUrl) {
+    return null;
+  }
+
+  let repositoryBase: URL;
+  try {
+    repositoryBase = new URL(repositoryWebUrl);
+  } catch {
+    return null;
+  }
+  if (repositoryBase.search || repositoryBase.hash || !isUrlWithinBase({ url: repositoryBase, base })) return null;
+  return stripTrailingSlashes(repositoryBase.toString());
+}
 
 export const ScmPullRequestStateSchema = z.enum([
   'open',
@@ -275,11 +338,23 @@ export const ScmPullRequestSummarySchema = z
   .passthrough();
 export type ScmPullRequestSummary = z.infer<typeof ScmPullRequestSummarySchema>;
 
-export const ScmPullRequestReferenceSchema = z.union([
+const ScmPullRequestReferenceBaseSchema = z.union([
   z.object({ number: z.number().int().positive() }).passthrough(),
   z.object({ url: z.string().url() }).passthrough(),
-  z.object({ headBranch: z.string().min(1) }).passthrough(),
+  z.object({ headBranch: ScmBranchSourceRefSchema }).passthrough(),
 ]);
+export const ScmPullRequestReferenceSchema = ScmPullRequestReferenceBaseSchema.superRefine((value, ctx) => {
+  const headBranch = (value as { headBranch?: unknown }).headBranch;
+  if (headBranch === undefined) return;
+  const result = normalizeScmPullRequestBranchSourceRef(typeof headBranch === 'string' ? headBranch : undefined);
+  if (!result.ok || result.sourceRef !== headBranch) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['headBranch'],
+      message: result.ok ? 'Source ref contains unsupported syntax' : result.error,
+    });
+  }
+});
 export type ScmPullRequestReference = z.infer<typeof ScmPullRequestReferenceSchema>;
 
 export const ScmPullRequestAuthStateSchema = z.enum([
@@ -394,6 +469,7 @@ export const ScmPullRequestOpenOrReuseRequestSchema = ScmRequestBaseSchema.exten
   headRepositoryNameWithOwner: z.string().trim().min(1).optional(),
   title: z.string().min(1).optional(),
   body: z.string().optional(),
+  defaultBranchPushPolicy: ScmDefaultBranchPushPolicySchema.optional(),
 }).passthrough();
 export type ScmPullRequestOpenOrReuseRequest = z.infer<typeof ScmPullRequestOpenOrReuseRequestSchema>;
 
@@ -500,7 +576,7 @@ export type ScmPullRequestRunStackedProgressEvent =
 export const ScmPullRequestRunStackedRequestSchema = ScmRequestBaseSchema.extend({
   action: ScmPullRequestStackedActionSchema,
   commitMessage: z.string().min(1).optional(),
-  featureBranch: z.string().min(1).optional(),
+  featureBranch: ScmOptionalBranchSourceRefSchema,
   filePaths: z.array(z.string().min(1)).optional(),
   base: ScmOptionalBranchSourceRefSchema,
   head: ScmOptionalBranchSourceRefSchema,

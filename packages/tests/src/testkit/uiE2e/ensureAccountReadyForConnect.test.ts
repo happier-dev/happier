@@ -148,4 +148,19 @@ describe('ensureAccountReadyForConnect', () => {
     await expect(ensureAccountReadyForConnect({ page, timeoutMs: 400 })).resolves.toBeUndefined();
     expect(page.clickCalls['onboarding-showcase-primary'] ?? 0).toBeGreaterThan(0);
   });
+
+  it('advances onboarding with role-based next buttons when story testIDs are absent', async () => {
+    const page = createFakePage({
+      roleCounts: {
+        Next: [1, 1, 0],
+        'Create account': [1],
+      },
+      testIdCounts: {
+        'session-getting-started-kind-connect_machine': [0, 0, 0, 1],
+      },
+    });
+
+    await expect(ensureAccountReadyForConnect({ page, timeoutMs: 500 })).resolves.toBeUndefined();
+    expect(page.clickCalls.Next ?? 0).toBeGreaterThan(0);
+  });
 });
