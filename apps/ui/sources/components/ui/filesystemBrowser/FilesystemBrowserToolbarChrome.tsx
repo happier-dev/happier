@@ -80,9 +80,9 @@ export function FilesystemBrowserToolbarChrome(props: FilesystemBrowserToolbarCh
             accessibilityState={props.accessibilityState}
             onPress={props.onPress}
         >
-            <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.textSecondary} />
+            <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.text.secondary} />
         </FileBrowserToolbarIconButton>
-    ), [overflowTriggerTestID, theme.colors.textSecondary]);
+    ), [overflowTriggerTestID, theme.colors.text.secondary]);
 
     return (
         <FileBrowserToolbar

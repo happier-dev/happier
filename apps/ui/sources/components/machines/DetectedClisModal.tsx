@@ -50,10 +50,10 @@ export function DetectedClisModal({ onClose, setChrome, machineId, isOnline, ser
             disabled={!isOnline || state.status === 'loading'}
         >
             {state.status === 'loading'
-                ? <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                : <Ionicons name="refresh" size={20} color={isOnline ? theme.colors.textSecondary : theme.colors.divider} />}
+                ? <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                : <Ionicons name="refresh" size={20} color={isOnline ? theme.colors.text.secondary : theme.colors.border.default} />}
         </Pressable>
-    ), [isOnline, refresh, state.status, styles.headerActionButton, theme.colors.divider, theme.colors.textSecondary]);
+    ), [isOnline, refresh, state.status, styles.headerActionButton, theme.colors.border.default, theme.colors.text.secondary]);
 
     const footer = React.useMemo(() => (
         <RoundButton testID="detected-clis:ok" title={t('common.ok')} size="normal" onPress={onClose} />

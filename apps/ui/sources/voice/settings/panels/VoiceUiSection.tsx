@@ -86,7 +86,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.scopeGlobalSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="globe-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="globe-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -96,7 +96,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.scopeSessionSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="document-text-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -130,7 +130,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.surfaceLocation.autoSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="sparkles-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="sparkles-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -140,7 +140,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.surfaceLocation.sidebarSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="albums-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="albums-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -150,7 +150,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.surfaceLocation.sessionSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="chatbubble-ellipses-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="chatbubble-ellipses-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -186,7 +186,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.noneSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="remove-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="remove-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -196,7 +196,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.activitySubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="flash-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="flash-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -206,7 +206,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.summariesSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="document-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="document-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -216,7 +216,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.snippetsSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="code-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="code-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -250,7 +250,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.noneSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="remove-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="remove-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -260,7 +260,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.activitySubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="flash-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="flash-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -270,7 +270,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.summariesSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="document-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="document-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -280,7 +280,7 @@ export function VoiceUiSection(props: {
               subtitle: t('settingsVoice.ui.updates.level.snippetsSubtitle'),
               icon: (
                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="code-outline" size={22} color={theme.colors.textSecondary} />
+                  <Ionicons name="code-outline" size={22} color={theme.colors.text.secondary} />
                 </View>
               ),
             },
@@ -317,7 +317,7 @@ export function VoiceUiSection(props: {
                   subtitle: undefined,
                   icon: (
                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
+                      <Ionicons name="list-outline" size={22} color={theme.colors.text.secondary} />
                     </View>
                   ),
                 };
@@ -368,7 +368,7 @@ export function VoiceUiSection(props: {
                   subtitle: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.neverSubtitle'),
                   icon: (
                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="remove-outline" size={22} color={theme.colors.textSecondary} />
+                      <Ionicons name="remove-outline" size={22} color={theme.colors.text.secondary} />
                     </View>
                   ),
                 },
@@ -378,7 +378,7 @@ export function VoiceUiSection(props: {
                   subtitle: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.onDemandSubtitle'),
                   icon: (
                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="hand-left-outline" size={22} color={theme.colors.textSecondary} />
+                      <Ionicons name="hand-left-outline" size={22} color={theme.colors.text.secondary} />
                     </View>
                   ),
                 },
@@ -388,7 +388,7 @@ export function VoiceUiSection(props: {
                   subtitle: t('settingsVoice.ui.updates.otherSessionsSnippetsMode.autoSubtitle'),
                   icon: (
                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name="sparkles-outline" size={22} color={theme.colors.textSecondary} />
+                      <Ionicons name="sparkles-outline" size={22} color={theme.colors.text.secondary} />
                     </View>
                   ),
                 },

@@ -12,11 +12,11 @@ export const remoteSshChecklistStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
     },
     title: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         textAlign: 'center',
     },
     subtitle: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     sectionBlock: {
@@ -28,15 +28,15 @@ export const remoteSshChecklistStyles = StyleSheet.create((theme) => ({
         gap: 10,
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         padding: 16,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     promptTitle: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     promptBody: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     toggleList: {
         width: '100%',
@@ -48,20 +48,20 @@ export const remoteSshChecklistStyles = StyleSheet.create((theme) => ({
         paddingVertical: 14,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 12,
     },
     toggleListItemTitle: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     toggleListItemSubtitle: {
         ...Typography.default(),
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));

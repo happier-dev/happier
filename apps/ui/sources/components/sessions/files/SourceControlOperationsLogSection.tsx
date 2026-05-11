@@ -40,7 +40,7 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
             <Text
                 style={{
                     fontSize: 12,
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     marginBottom: 6,
                     ...Typography.default('semiBold'),
                 }}
@@ -56,14 +56,14 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                             paddingVertical: 5,
                             borderRadius: 8,
                             borderWidth: 1,
-                            borderColor: theme.colors.divider,
+                            borderColor: theme.colors.border.default,
                             backgroundColor:
                                 operationLogScope === 'all'
-                                    ? theme.colors.surfaceHigh
-                                    : theme.colors.surface,
+                                    ? theme.colors.surface.inset
+                                    : theme.colors.surface.base,
                         }}
                     >
-                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                        <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                             {t('files.sourceControlOperationsLog.allSessions')}
                         </Text>
                     </Pressable>
@@ -74,14 +74,14 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                             paddingVertical: 5,
                             borderRadius: 8,
                             borderWidth: 1,
-                            borderColor: theme.colors.divider,
+                            borderColor: theme.colors.border.default,
                             backgroundColor:
                                 operationLogScope === 'session'
-                                    ? theme.colors.surfaceHigh
-                                    : theme.colors.surface,
+                                    ? theme.colors.surface.inset
+                                    : theme.colors.surface.base,
                         }}
                     >
-                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                        <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                             {t('files.sourceControlOperationsLog.thisSession')}
                         </Text>
                     </Pressable>
@@ -91,7 +91,7 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                 <Text
                     style={{
                         fontSize: 11,
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                         marginBottom: 4,
                         ...Typography.default(),
                     }}
@@ -104,16 +104,16 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                         key={entry.id}
                         style={{
                             borderWidth: 1,
-                            borderColor: theme.colors.divider,
+                            borderColor: theme.colors.border.default,
                             borderRadius: 10,
-                            backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
+                            backgroundColor: theme.colors.surface.inset ?? theme.colors.input.background,
                             paddingHorizontal: 10,
                             paddingVertical: 8,
                             marginBottom: 6,
                         }}
                     >
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                            <Text style={{ flex: 1, fontSize: 11, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                            <Text style={{ flex: 1, fontSize: 11, color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                                 {entry.operation} · {formatOperationActor(entry.sessionId)}
                             </Text>
                             <View
@@ -121,7 +121,7 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                                     paddingHorizontal: 6,
                                     paddingVertical: 2,
                                     borderRadius: 999,
-                                    backgroundColor: entry.status === 'success' ? theme.colors.success : theme.colors.warning,
+                                    backgroundColor: entry.status === 'success' ? theme.colors.state.success.foreground : theme.colors.state.neutral.foreground,
                                 }}
                             >
                                 <Text style={{ fontSize: 10, color: 'white', ...Typography.default('semiBold') }}>
@@ -129,7 +129,7 @@ export function SourceControlOperationsLogSection(props: SourceControlOperations
                                 </Text>
                             </View>
                         </View>
-                        <Text style={{ fontSize: 11, color: theme.colors.textSecondary, marginTop: 2, ...Typography.default() }}>
+                        <Text style={{ fontSize: 11, color: theme.colors.text.secondary, marginTop: 2, ...Typography.default() }}>
                             {new Date(entry.timestamp).toLocaleTimeString()}
                             {entry.detail ? ` · ${entry.detail}` : ''}
                         </Text>

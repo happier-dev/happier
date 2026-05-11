@@ -79,9 +79,9 @@ export function RequireFriendsIdentityForFriendsBase(props: {
     const inputColors =
         (theme.colors as any).input ??
         ({
-            background: theme.colors.surface,
-            text: theme.colors.text,
-            placeholder: theme.colors.text,
+            background: theme.colors.surface.base,
+            text: theme.colors.text.primary,
+            placeholder: theme.colors.text.primary,
         } as const);
     return (
         <FriendsGateCentered title={t('friends.username.required')}>
@@ -101,7 +101,7 @@ export function RequireFriendsIdentityForFriendsBase(props: {
                     width: '100%',
                     maxWidth: 360,
                     borderWidth: 1,
-                    borderColor: theme.colors.divider,
+                    borderColor: theme.colors.border.default,
                     borderRadius: 10,
                     backgroundColor: inputColors.background,
                     color: inputColors.text,

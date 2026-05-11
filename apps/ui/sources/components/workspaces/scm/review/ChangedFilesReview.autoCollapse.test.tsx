@@ -18,10 +18,15 @@ function toTestIdSafeValue(value: string) {
 
 const theme = {
     colors: {
-        surface: '#111',
-        surfaceHigh: '#222',
-        divider: '#333',
-        textSecondary: '#aaa',
+        surface: {
+            inset: '#222',
+        },
+        border: {
+            default: '#333',
+        },
+        text: {
+            secondary: '#aaa',
+        },
     },
     dark: false,
 } as const;

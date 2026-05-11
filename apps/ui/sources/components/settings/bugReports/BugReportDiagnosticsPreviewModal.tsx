@@ -27,7 +27,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: 10,
   },
   helper: {
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -38,23 +38,23 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: 12,
-    backgroundColor: theme.colors.surfaceHigh,
+    backgroundColor: theme.colors.surface.inset,
     borderWidth: 1,
-    borderColor: theme.colors.divider,
+    borderColor: theme.colors.border.default,
     gap: 4,
   },
   filename: {
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     fontSize: 14,
     fontWeight: '600',
   },
   meta: {
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     fontSize: 12,
     lineHeight: 16,
   },
   contentText: {
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     fontSize: 12,
     lineHeight: 16,
   },
@@ -83,10 +83,10 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
         accessibilityLabel={t('common.back')}
         hitSlop={10}
       >
-        <Ionicons name="arrow-back" size={18} color={theme.colors.textSecondary} />
+        <Ionicons name="arrow-back" size={18} color={theme.colors.text.secondary} />
       </Pressable>
     );
-  }, [selected, theme.colors.textSecondary]);
+  }, [selected, theme.colors.text.secondary]);
 
   const chromeTitle = selected ? selected.filename : t('bugReports.composer.diagnostics.preview.title');
   const chromeSubtitle = selected

@@ -78,7 +78,7 @@ const styles = StyleSheet.create((theme) => ({
         fontWeight: '700',
         letterSpacing: 0.8,
         textTransform: 'uppercase',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 4,
     },
     optionRow: {
@@ -90,12 +90,12 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 10,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.surface,
+        borderColor: theme.colors.surface.base,
     },
     optionRowSelected: {
-        backgroundColor: theme.colors.surfaceSelected,
+        backgroundColor: theme.colors.surface.selected,
     },
     optionRowPressed: {
         opacity: 0.82,
@@ -111,12 +111,12 @@ const styles = StyleSheet.create((theme) => ({
     optionLabel: {
         fontSize: 14,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     optionSubtitle: {
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     checkIcon: {
         color: theme.colors.radio.active,

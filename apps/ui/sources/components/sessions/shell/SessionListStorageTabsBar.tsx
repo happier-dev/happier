@@ -16,7 +16,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 15,
         paddingTop: 10,
         paddingBottom: 10,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
 }));
 

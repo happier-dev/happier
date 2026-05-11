@@ -79,7 +79,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     popoverTitle: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
         textTransform: 'uppercase',
     },
@@ -94,8 +94,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 10,
         paddingHorizontal: 12,
         borderWidth: 1,
-        backgroundColor: theme.colors.surfaceHigh,
-        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surface.inset,
+        borderColor: theme.colors.border.default,
     },
     statusRowLeft: {
         flexDirection: 'row',
@@ -110,9 +110,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 10,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     statusRowText: {
         flexShrink: 1,
@@ -120,13 +120,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     statusRowTitle: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
         lineHeight: 16,
     },
     statusRowSubtitle: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
         lineHeight: 16,
         marginTop: 2,
@@ -154,12 +154,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     statusMetaLabel: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     statusMetaValue: {
         fontSize: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default(),
     },
     popoverActionsRow: {
@@ -173,13 +173,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         paddingVertical: 6,
         borderRadius: 10,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     popoverActionButtonText: {
         fontSize: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     popoverSection: {
@@ -195,7 +195,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     popoverSectionTitle: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
         textTransform: 'uppercase',
     },
@@ -522,7 +522,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
             void switchTarget(target);
         },
         selectedColor: theme.colors.status.connected,
-        iconColor: theme.colors.text,
+        iconColor: theme.colors.text.primary,
     });
 
     const relayDropdownItems = React.useMemo<ReadonlyArray<DropdownMenuItem>>(() => {
@@ -800,7 +800,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                                     onPress={handleManageRelay}
                                                     style={styles.popoverSectionIconButton}
                                                 >
-                                                    <Ionicons name="settings-outline" size={18} color={theme.colors.textSecondary} />
+                                                    <Ionicons name="settings-outline" size={18} color={theme.colors.text.secondary} />
                                                 </Pressable>
                                             </View>
                                         </View>

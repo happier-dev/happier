@@ -18,7 +18,7 @@ import { t } from '@/text';
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     loadingContainer: {
         flex: 1,
@@ -56,7 +56,7 @@ export function AutomationsScreen() {
     if (loading) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }

@@ -40,12 +40,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     badge: {
         paddingHorizontal: 8,
         paddingVertical: 2,
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
         borderRadius: 999,
     },
     badgeText: {
         ...Typography.default(),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 11,
         lineHeight: 14,
     },
@@ -66,7 +66,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: WizardChoiceRowProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const iconColor = props.selected ? theme.colors.accent.blue : theme.colors.textSecondary;
+    const iconColor = props.selected ? theme.colors.accent.blue : theme.colors.text.secondary;
     const rowDisabled = Boolean(props.disabled);
     const [menuOpen, setMenuOpen] = React.useState(false);
     const suppressRowPressRef = React.useRef(false);
@@ -161,7 +161,7 @@ export const WizardChoiceRow = React.memo(function WizardChoiceRow(props: Wizard
                                     accessibilityRole="button"
                                     accessibilityLabel={t('common.more')}
                                 >
-                                    <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.textSecondary} />
+                                    <Ionicons name="ellipsis-horizontal" size={18} color={theme.colors.text.secondary} />
                                 </Pressable>
                             )}
                         />

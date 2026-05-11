@@ -30,18 +30,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 7,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated,
         maxWidth: 260,
     },
     attachmentText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 12,
         fontWeight: '600',
         flexShrink: 1,
     },
     attachmentMeta: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 11,
         flexShrink: 0,
     },
@@ -83,7 +83,7 @@ export const AttachmentsMessageRow = React.memo(function AttachmentsMessageRow(p
                         onPress={props.onOpenPath ? () => props.onOpenPath?.(a.path) : undefined}
                         style={styles.attachmentChip}
                     >
-                        <Ionicons name={resolveAttachmentIconName(a.mimeType)} size={14} color={theme.colors.textSecondary} />
+                        <Ionicons name={resolveAttachmentIconName(a.mimeType)} size={14} color={theme.colors.text.secondary} />
                         <Text numberOfLines={1} style={styles.attachmentText}>{a.name}</Text>
                         <Text style={styles.attachmentMeta}>{formatBytes(a.sizeBytes)}</Text>
                     </Pressable>

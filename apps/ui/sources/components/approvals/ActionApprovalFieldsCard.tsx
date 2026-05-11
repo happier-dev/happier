@@ -55,15 +55,15 @@ const styles = StyleSheet.create((theme) => ({
     card: {
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated,
         padding: 16,
         gap: 12,
     },
     sectionTitle: {
         fontSize: 14,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     rows: {
         gap: 10,
@@ -73,12 +73,12 @@ const styles = StyleSheet.create((theme) => ({
     },
     label: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontWeight: '600',
     },
     value: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         lineHeight: 20,
     },
 }));

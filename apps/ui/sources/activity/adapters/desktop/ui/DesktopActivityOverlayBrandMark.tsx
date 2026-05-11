@@ -15,7 +15,7 @@ export function DesktopActivityOverlayBrandMark(props: Readonly<{
     const openProgress = useDesktopActivityOverlayMotionProgress();
     const markFill = props.visualMode === 'notch_integrated'
         ? theme.colors.accent.orange
-        : theme.colors.overlay.text;
+        : theme.colors.overlay.foreground;
     const smileCutout = theme.colors.overlay.scrimStrong;
 
     const matchedGeometryStyle = resolveDesktopOverlayMatchedGeometryStyle({

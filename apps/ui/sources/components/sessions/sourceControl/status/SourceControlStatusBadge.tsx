@@ -49,7 +49,7 @@ export function SourceControlStatusBadge({ sessionId }: SourceControlStatusBadge
                         <Text
                             style={{
                                 fontSize: 12,
-                                color: theme.colors.gitAddedText,
+                                color: theme.colors.versionControl.added.foreground,
                                 fontWeight: '600',
                             }}
                             numberOfLines={1}
@@ -61,7 +61,7 @@ export function SourceControlStatusBadge({ sessionId }: SourceControlStatusBadge
                         <Text
                             style={{
                                 fontSize: 12,
-                                color: theme.colors.gitRemovedText,
+                                color: theme.colors.versionControl.removed.foreground,
                                 fontWeight: '600',
                             }}
                             numberOfLines={1}
@@ -75,7 +75,7 @@ export function SourceControlStatusBadge({ sessionId }: SourceControlStatusBadge
                 <Text
                     style={{
                         fontSize: 12,
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                         fontWeight: '600',
                     }}
                     numberOfLines={1}

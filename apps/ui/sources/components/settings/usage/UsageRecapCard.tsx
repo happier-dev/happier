@@ -17,7 +17,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
 }));
@@ -52,7 +52,7 @@ export function UsageRecapCard(props: Readonly<{
                 style={styles.actionButton}
                 onPress={onShare}
             >
-                <SafeIonicons name="share-outline" size={14} color={theme.colors.textSecondary} />
+                <SafeIonicons name="share-outline" size={14} color={theme.colors.text.secondary} />
             </Pressable>
         )
         : null;

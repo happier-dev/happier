@@ -36,11 +36,11 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
                     paddingVertical: 20,
                 }}
             >
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                 <Text
                     style={{
                         fontSize: 16,
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                         textAlign: 'center',
                         marginTop: 16,
                         ...Typography.default(),
@@ -64,8 +64,8 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
                     paddingHorizontal: 20,
                 }}
             >
-                <Ionicons name="alert-circle-outline" size={28} color={theme.colors.textSecondary} />
-                <Text style={{ fontSize: 13, color: theme.colors.textSecondary, ...Typography.default() }}>
+                <Ionicons name="alert-circle-outline" size={28} color={theme.colors.text.secondary} />
+                <Text style={{ fontSize: 13, color: theme.colors.text.secondary, ...Typography.default() }}>
                     {props.rootError}
                 </Text>
                 <RoundButton title={retryLabel} display="inverted" onPress={() => { void props.retryRoot(); }} />
@@ -85,11 +85,11 @@ export function FilesystemBrowser(props: FilesystemBrowserProps): React.ReactEle
                     paddingHorizontal: 20,
                 }}
             >
-                <Ionicons name={props.emptyIconName ?? 'folder-outline'} size={48} color={theme.colors.textSecondary} />
+                <Ionicons name={props.emptyIconName ?? 'folder-outline'} size={48} color={theme.colors.text.secondary} />
                 <Text
                     style={{
                         fontSize: 16,
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                         textAlign: 'center',
                         marginTop: 5,
                         ...Typography.default(),

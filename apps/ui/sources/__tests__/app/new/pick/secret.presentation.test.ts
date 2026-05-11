@@ -32,7 +32,7 @@ installPickerCommonModuleMocks({
         }),
     unistyles: async () =>
         (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-            theme: { colors: { header: PICKER_THEME_COLORS.header } },
+            theme: { colors: { chrome: PICKER_THEME_COLORS.chrome } },
         }),
     expoRouter: async () =>
         (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({

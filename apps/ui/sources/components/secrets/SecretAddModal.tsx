@@ -46,7 +46,7 @@ export function SecretAddModal(props: SecretAddModalProps) {
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
                 >
-                    <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
+                    <Ionicons name="close" size={20} color={theme.colors.text.secondary} />
                 </Pressable>
             </View>
 
@@ -94,14 +94,14 @@ export function SecretAddModal(props: SecretAddModalProps) {
                         <Pressable
                             onPress={props.onClose}
                             style={({ pressed }) => ({
-                                backgroundColor: theme.colors.surface,
+                                backgroundColor: theme.colors.surface.base,
                                 borderRadius: 10,
                                 paddingVertical: 12,
                                 alignItems: 'center',
                                 opacity: pressed ? 0.85 : 1,
                             })}
                         >
-                            <Text style={{ color: theme.colors.text, ...Typography.default('semiBold') }}>
+                            <Text style={{ color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                                 {t('common.cancel')}
                             </Text>
                         </Pressable>
@@ -133,11 +133,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         width: '92%',
         maxWidth: 560,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         borderRadius: 16,
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         flexShrink: 1,
     },
     header: {
@@ -147,11 +147,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
+        borderBottomColor: theme.colors.border.default,
     },
     headerTitle: {
         fontSize: 17,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     body: {
@@ -163,7 +163,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 12,
     },
     helpText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 15, default: 14 }),
         lineHeight: 20,
         letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
@@ -173,7 +173,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         marginBottom: 8,
     },
     textInput: {

@@ -79,7 +79,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     buttonSelected: {
         backgroundColor: 'transparent',
-        borderLeftColor: theme.colors.text,
+        borderLeftColor: theme.colors.text.primary,
     },
     buttonInactive: {
         opacity: 0.3,
@@ -97,7 +97,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     buttonText: {
         fontSize: 13,
         fontWeight: '400',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         flexShrink: 1,
     },
     buttonTextAllow: {
@@ -113,7 +113,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontWeight: '500',
     },
     buttonTextSelected: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontWeight: '500',
     },
     buttonForSession: {
@@ -195,20 +195,20 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         return (
             <View style={{ marginTop: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
                 <View style={{
-                    backgroundColor: theme.colors.surfaceHighest,
+                    backgroundColor: theme.colors.surface.elevated,
                     borderRadius: 10,
                     borderWidth: 1,
-                    borderColor: theme.colors.divider,
+                    borderColor: theme.colors.border.default,
                     padding: 12,
                     gap: 6,
                 }}>
-                    <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
+                    <Text style={{ color: theme.colors.text.primary, fontWeight: '600' }}>
                         {t('session.sharing.permissionApprovalsDisabledTitle')}
                     </Text>
-                    <Text style={{ color: theme.colors.textSecondary }}>
+                    <Text style={{ color: theme.colors.text.secondary }}>
                         {disabledMessage}
                     </Text>
-                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
+                    <Text style={{ color: theme.colors.text.secondary, fontSize: 12 }}>
                         {summary}
                     </Text>
                 </View>

@@ -88,7 +88,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                                 <Ionicons
                                     name={item.id === 'sync_changes' ? 'git-compare-outline' : 'archive-outline'}
                                     size={22}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             </View>
                         ),
@@ -123,7 +123,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                                 <Ionicons
                                     name={item.id === 'replace_existing' ? 'swap-horizontal-outline' : 'copy-outline'}
                                     size={22}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             </View>
                         ),
@@ -158,7 +158,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                                 <Ionicons
                                     name={item.id === 'include_selected' ? 'filter-outline' : 'eye-off-outline'}
                                     size={22}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             </View>
                         ),
@@ -170,7 +170,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                 />
                 {defaults.includeIgnoredMode === 'include_selected' ? (
                     <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 }}>
-                        <Text style={{ fontSize: 14, marginBottom: 8, color: theme.colors.textSecondary }}>
+                        <Text style={{ fontSize: 14, marginBottom: 8, color: theme.colors.text.secondary }}>
                             {t('settingsSession.handoff.includeIgnoredMode.globsTitle')}
                         </Text>
                         <TextInput
@@ -183,10 +183,10 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                                 minHeight: 44,
                                 borderRadius: 10,
                                 borderWidth: 1,
-                                borderColor: theme.colors.divider,
+                                borderColor: theme.colors.border.default,
                                 paddingHorizontal: 12,
                                 paddingVertical: 10,
-                                color: theme.colors.text,
+                                color: theme.colors.text.primary,
                             }}
                         />
                     </View>
@@ -222,7 +222,7 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                                 <Ionicons
                                     name={item.id === 'convert_to_persisted' ? 'save-outline' : 'arrow-redo-outline'}
                                     size={22}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             </View>
                         ),

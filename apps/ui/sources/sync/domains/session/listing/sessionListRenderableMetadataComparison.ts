@@ -119,6 +119,15 @@ function isSessionListRenderableMetadataComparisonSnapshotEqual(
         && previous.readStateV1 === nextReadStateV1;
 }
 
+function readRenderableSummaryText(metadata: Metadata): string | null {
+    if (typeof metadata.summary?.text === 'string') {
+        return metadata.summary.text;
+    }
+
+    const legacySummaryText = (metadata as Readonly<{ summaryText?: unknown }>).summaryText;
+    return typeof legacySummaryText === 'string' ? legacySummaryText : null;
+}
+
 export function normalizeSessionListRenderableMetadataComparison(
     snapshot: SessionListRenderableMetadataComparisonSnapshot,
     previous?: SessionListRenderableMetadata | null,
@@ -165,7 +174,7 @@ export function readSessionListRenderableMetadataComparison(
 
     return normalizeSessionListRenderableMetadataComparison({
         name: typeof metadata.name === 'string' ? metadata.name : undefined,
-        summaryText: typeof metadata.summary?.text === 'string' ? metadata.summary.text : null,
+        summaryText: readRenderableSummaryText(metadata),
         path: typeof metadata.path === 'string' ? metadata.path : '',
         homeDir: typeof metadata.homeDir === 'string' ? metadata.homeDir : null,
         host: typeof metadata.host === 'string' ? metadata.host : null,

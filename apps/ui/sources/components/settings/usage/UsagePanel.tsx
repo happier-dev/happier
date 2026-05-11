@@ -58,12 +58,12 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         padding: 32,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     loadingText: {
         marginTop: 12,
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontWeight: '600',
     },
 }));

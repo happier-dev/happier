@@ -25,27 +25,27 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'stretch',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     contentContainer: {
         flex: 1,
         maxWidth: layout.maxWidth,
     },
     dateHeader: {
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         paddingTop: 20,
         paddingBottom: 8,
         paddingHorizontal: 24,
     },
     dateHeaderText: {
         ...Typography.default('semiBold'),
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         fontSize: 14,
         fontWeight: '600',
         letterSpacing: 0.1,
     },
     sessionCard: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         marginHorizontal: 16,
         marginBottom: 1,
         paddingVertical: 16,
@@ -73,13 +73,13 @@ const styles = StyleSheet.create((theme) => ({
     sessionTitle: {
         fontSize: 15,
         fontWeight: '500',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 2,
         ...Typography.default('semiBold'),
     },
     sessionSubtitle: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     emptyContainer: {
@@ -90,7 +90,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     emptyText: {
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         ...Typography.default(),
     },

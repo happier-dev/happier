@@ -14,7 +14,7 @@ export const ExecutionRunList = React.memo((props: Readonly<{
     const { theme } = useUnistyles();
 
     if (!props.runs || props.runs.length === 0) {
-        return <Text style={{ color: theme.colors.textSecondary }}>{t('runs.empty')}</Text>;
+        return <Text style={{ color: theme.colors.text.secondary }}>{t('runs.empty')}</Text>;
     }
 
     const grouped = new Map<string, ExecutionRunRowRun[]>();
@@ -37,7 +37,7 @@ export const ExecutionRunList = React.memo((props: Readonly<{
         <View style={{ gap: 10 }}>
             {groupEntries.map(([groupId, runs]) => (
                 <View key={`group:${groupId}`} style={{ gap: 8 }}>
-                    <Text style={{ color: theme.colors.textSecondary, fontWeight: '600' }}>
+                    <Text style={{ color: theme.colors.text.secondary, fontWeight: '600' }}>
                         {t('runs.groupLabel', { groupId })}
                     </Text>
                     {runs.map((run) => (

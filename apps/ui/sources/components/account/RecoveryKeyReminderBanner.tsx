@@ -55,7 +55,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
             <Item
                 title={t('settingsAccount.secretKey')}
                 subtitle={t('settingsAccount.backupDescription')}
-                icon={<Ionicons name="key-outline" size={28} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="key-outline" size={28} color={theme.colors.text.secondary} />}
                 onPress={() => {
                     Modal.show({
                         component: SecretKeyBackupModal,
@@ -76,7 +76,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
                         }}
                         hitSlop={12}
                     >
-                        <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
+                        <Ionicons name="close" size={20} color={theme.colors.text.secondary} />
                     </Pressable>
                 }
             />

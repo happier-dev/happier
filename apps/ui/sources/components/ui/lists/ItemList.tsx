@@ -24,7 +24,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flex: 1,
         ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     contentContainer: {
         paddingBottom: Platform.select({ ios: 34, default: 16 }),
@@ -67,7 +67,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
     const installWebModalWheelFix = isWeb && isInsideModalBoundary && rawOnWheel == null;
 
     // Override background for non-inset grouped lists on iOS
-    const backgroundColor = (isIOS && !insetGrouped) ? theme.colors.surface : theme.colors.groupped.background;
+    const backgroundColor = (isIOS && !insetGrouped) ? theme.colors.surface.base : theme.colors.background.canvas;
 
     const { onScroll, ...restScrollViewProps } = scrollViewProps;
 
@@ -131,7 +131,7 @@ export const ItemListStatic = React.memo<Omit<ItemListProps, keyof ScrollViewPro
     const isIOS = Platform.OS === 'ios';
 
     // Override background for non-inset grouped lists on iOS
-    const backgroundColor = (isIOS && !insetGrouped) ? theme.colors.surface : theme.colors.groupped.background;
+    const backgroundColor = (isIOS && !insetGrouped) ? theme.colors.surface.base : theme.colors.background.canvas;
 
     return (
         <View 

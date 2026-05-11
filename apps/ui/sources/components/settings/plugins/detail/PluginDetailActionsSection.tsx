@@ -24,7 +24,7 @@ export function PluginDetailActionsSection(props: Readonly<{
                 testID={`settings.plugins.detail.${props.installed.pluginId}.action.reload`}
                 title={t('settingsPlugins.reloadAction')}
                 subtitle={t('settingsPlugins.reloadSubtitle')}
-                icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.text.secondary} />}
                 onPress={() => props.onAction('reload', props.installed.pluginId)}
                 disabled={!props.canRunActions || props.actionInFlight}
                 loading={props.actionInFlight}
@@ -40,7 +40,7 @@ export function PluginDetailActionsSection(props: Readonly<{
                             latestVersion: props.updateState.catalogVersion ?? props.installed.version,
                         })
                         : (props.updateState.sourceUrl ?? props.installed.version)}
-                    icon={<Ionicons name="cloud-download-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="cloud-download-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onAction('update', props.installed.pluginId)}
                     disabled={!props.canRunActions || props.actionInFlight}
                     showChevron={false}
@@ -54,7 +54,7 @@ export function PluginDetailActionsSection(props: Readonly<{
                     <Ionicons
                         name={props.installed.enabled ? 'close-circle-outline' : 'checkmark-circle-outline'}
                         size={29}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                     />
                 )}
                 onPress={() => props.onAction(props.installed.enabled ? 'disable' : 'enable', props.installed.pluginId)}

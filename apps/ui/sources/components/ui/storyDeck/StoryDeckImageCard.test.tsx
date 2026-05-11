@@ -45,6 +45,21 @@ const card = {
 } satisfies ImageCardData;
 
 describe('StoryDeckImageCard', () => {
+    it('uses the wide title key only in wide layout', async () => {
+        const { StoryDeckImageCard } = await import('./StoryDeckImageCard');
+        const cardWithWideTitle = {
+            ...card,
+            wideTitleKey: 'releaseNotes.test.wideTitle',
+        } satisfies ImageCardData;
+
+        const stacked = await renderScreen(<StoryDeckImageCard card={cardWithWideTitle} isCurrent testID="story-image" />);
+        expect(stacked.getTextContent()).toContain('releaseNotes.test.title');
+        expect(stacked.getTextContent()).not.toContain('releaseNotes.test.wideTitle');
+
+        const wide = await renderScreen(<StoryDeckImageCard card={cardWithWideTitle} isCurrent layout="wide" testID="story-image-wide" />);
+        expect(wide.getTextContent()).toContain('releaseNotes.test.wideTitle');
+    });
+
     it('switches to fallbackUrl after the primary image fails', async () => {
         const { StoryDeckImageCard } = await import('./StoryDeckImageCard');
         const screen = await renderScreen(<StoryDeckImageCard card={card} isCurrent testID="story-image" />);

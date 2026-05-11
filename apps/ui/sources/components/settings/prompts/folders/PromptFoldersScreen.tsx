@@ -22,7 +22,7 @@ import { t } from '@/text';
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.groupped.background,
+    backgroundColor: theme.colors.background.canvas,
   },
   content: {
     paddingVertical: 12,

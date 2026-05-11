@@ -24,8 +24,10 @@ import { createNewSessionLinkedFilesActionChip } from '@/components/sessions/age
 
 type ThemeLike = Readonly<{
     colors: Readonly<{
-        success: string;
-        textDestructive: string;
+        state: Readonly<{
+            success: Readonly<{ foreground: string }>;
+            danger: Readonly<{ foreground: string }>;
+        }>;
     }>;
 }>;
 
@@ -86,11 +88,11 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
 
         return {
             text: online ? t('status.online') : t('newSession.machineOfflineCannotStartStatus'),
-            color: online ? params.theme.colors.success : params.theme.colors.textDestructive,
-            dotColor: online ? params.theme.colors.success : params.theme.colors.textDestructive,
+            color: online ? params.theme.colors.state.success.foreground : params.theme.colors.state.danger.foreground,
+            dotColor: online ? params.theme.colors.state.success.foreground : params.theme.colors.state.danger.foreground,
             isPulsing: online,
         };
-    }, [params.selectedMachine, params.theme.colors.success, params.theme.colors.textDestructive]);
+    }, [params.selectedMachine, params.theme.colors.state.success.foreground, params.theme.colors.state.danger.foreground]);
 
     const handleAutomationSettingsChange = React.useCallback((next: AutomationSettingsValue) => {
         params.setAutomationDraft(sanitizeNewSessionAutomationDraft(next));

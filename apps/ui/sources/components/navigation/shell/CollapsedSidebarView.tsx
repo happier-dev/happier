@@ -21,9 +21,9 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         borderRightWidth: StyleSheet.hairlineWidth,
-        borderRightColor: theme.colors.divider,
+        borderRightColor: theme.colors.border.default,
         paddingHorizontal: DESKTOP_SIDEBAR_CHROME_COLLAPSED_HORIZONTAL_PADDING_PX,
         gap: DESKTOP_SIDEBAR_CHROME_COLLAPSED_VERTICAL_GAP_PX,
     },
@@ -126,7 +126,7 @@ export const CollapsedSidebarView = React.memo((props: CollapsedSidebarViewProps
                         accessibilityRole="button"
                         accessibilityLabel={t('common.expand')}
                     >
-                        <SidebarCollapseIcon color={theme.colors.header.tint} />
+                        <SidebarCollapseIcon color={theme.colors.chrome.header.foreground} />
                     </Pressable>
                 ) : null}
             </View>

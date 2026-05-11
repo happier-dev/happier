@@ -13,6 +13,13 @@ const stylesheet = StyleSheet.create(() => ({
     browseActionContainer: {
         marginTop: -4,
     },
+    browseActionGroupSurface: {
+        backgroundColor: 'transparent',
+        boxShadow: 'none',
+        shadowOpacity: 0,
+        shadowRadius: 0,
+        elevation: 0,
+    },
 }));
 
 export type SessionsListStorageChromeProps = Readonly<{
@@ -36,12 +43,16 @@ export const SessionsListStorageChrome = React.memo((props: SessionsListStorageC
                 />
             ) : null}
             {showExternalSessionBrowseAction ? (
-                <ItemGroup style={styles.browseActionContainer}>
+                <ItemGroup
+                    style={styles.browseActionContainer}
+                    containerStyle={styles.browseActionGroupSurface}
+                    constrainToContentWidth={false}
+                >
                     <Item
                         testID="direct-sessions-browse-button"
                         title={t('externalSessions.browseOpenExisting')}
                         subtitle={t('externalSessions.browseActionSubtitle')}
-                        icon={<Ionicons name="folder-open-outline" size={22} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="folder-open-outline" size={22} color={theme.colors.text.secondary} />}
                         onPress={() => {
                             router.push('/direct/browse');
                         }}

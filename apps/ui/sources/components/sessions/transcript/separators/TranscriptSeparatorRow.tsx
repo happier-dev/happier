@@ -22,13 +22,13 @@ export function TranscriptSeparatorRow(props: Readonly<{
   const padding = props.padding === 'none' ? 'none' : 'default';
   const chipContent = (
     <>
-      <Ionicons name={props.iconName} size={14} color={theme.colors.textSecondary} />
+      <Ionicons name={props.iconName} size={14} color={theme.colors.text.secondary} />
       <View style={styles.textStack}>
-        <Text testID={props.titleTestID} style={[styles.title, { color: theme.colors.text }]} numberOfLines={1}>
+        <Text testID={props.titleTestID} style={[styles.title, { color: theme.colors.text.primary }]} numberOfLines={1}>
           {props.title}
         </Text>
         {props.subtitle ? (
-          <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+          <Text style={[styles.subtitle, { color: theme.colors.text.secondary }]} numberOfLines={1}>
             {props.subtitle}
           </Text>
         ) : null}
@@ -47,7 +47,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
       ]}
     >
       <View style={styles.row}>
-        <View style={[styles.line, { backgroundColor: theme.colors.divider }]} />
+        <View style={[styles.line, { backgroundColor: theme.colors.border.default }]} />
         {props.onPress ? (
           <Pressable
             testID={props.chipTestID}
@@ -56,7 +56,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
             accessibilityLabel={props.accessibilityLabel ?? props.title}
             style={({ pressed }) => [
               styles.chip,
-              { backgroundColor: theme.colors.surface, borderColor: theme.colors.divider, opacity: pressed ? 0.82 : 1 },
+              { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default, opacity: pressed ? 0.82 : 1 },
             ]}
           >
             {chipContent}
@@ -64,12 +64,12 @@ export function TranscriptSeparatorRow(props: Readonly<{
         ) : (
           <View
             testID={props.chipTestID}
-            style={[styles.chip, { backgroundColor: theme.colors.surface, borderColor: theme.colors.divider }]}
+            style={[styles.chip, { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default }]}
           >
             {chipContent}
           </View>
         )}
-        <View style={[styles.line, { backgroundColor: theme.colors.divider }]} />
+        <View style={[styles.line, { backgroundColor: theme.colors.border.default }]} />
       </View>
     </View>
   );

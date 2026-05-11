@@ -308,16 +308,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
 	        const menuItems = (() => {
 	            const items: DropdownMenuItem[] = [];
-	            items.push({ id: 'edit', title: t('session.pendingMessages.actions.edit'), icon: <Ionicons name="pencil-outline" size={16} color={theme.colors.textSecondary} /> });
-	            items.push({ id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.textSecondary} /> });
+	            items.push({ id: 'edit', title: t('session.pendingMessages.actions.edit'), icon: <Ionicons name="pencil-outline" size={16} color={theme.colors.text.secondary} /> });
+	            items.push({ id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} /> });
 	            if (canSteerNow && !hasDecryptFailure) {
-	                items.push({ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Ionicons name="navigate-outline" size={16} color={theme.colors.textSecondary} /> });
+	                items.push({ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Ionicons name="navigate-outline" size={16} color={theme.colors.text.secondary} /> });
 	            }
 	            if (!hasDecryptFailure) {
 	                items.push({
 	                    id: 'sendNow',
 	                    title: canSteerNow ? t('session.pendingMessages.actions.sendNowInterrupt') : t('session.pendingMessages.actions.sendNow'),
-	                    icon: <Ionicons name="paper-plane-outline" size={16} color={theme.colors.textSecondary} />,
+	                    icon: <Ionicons name="paper-plane-outline" size={16} color={theme.colors.text.secondary} />,
 	                });
 	            }
 	            return items;
@@ -360,7 +360,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             accessibilityLabel={t('session.pendingMessages.title')}
                             style={({ pressed }) => ([
                                 styles.userMessageBubble,
-                                { backgroundColor: theme.colors.userMessageBackground, opacity: pressed ? 0.82 : 0.9 },
+                                { backgroundColor: theme.colors.message.user.background, opacity: pressed ? 0.82 : 0.9 },
                             ])}
                         >
                             {isExpanded ? (
@@ -368,7 +368,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             ) : (
                                 <Text
                                     numberOfLines={collapsedLines}
-                                    style={[styles.collapsedPlainText, { color: theme.colors.text }]}
+                                    style={[styles.collapsedPlainText, { color: theme.colors.text.primary }]}
                                 >
                                     {text}
                                 </Text>
@@ -387,7 +387,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         opacity: pressed ? 0.8 : 1,
                                     })}
                                 >
-                                    <Text style={{ color: theme.colors.textLink, fontSize: 12, ...Typography.default('semiBold') }}>
+                                    <Text style={{ color: theme.colors.text.link, fontSize: 12, ...Typography.default('semiBold') }}>
                                         {isExpanded ? t('session.pendingMessages.actions.viewLess') : t('session.pendingMessages.actions.viewMore')}
                                     </Text>
                                 </Pressable>
@@ -399,7 +399,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             {...(!isWeb ? { pointerEvents: 'none' as const } : null)}
                             style={[
                                 styles.pendingAffordanceChip,
-                                { backgroundColor: theme.colors.surface, borderColor: theme.colors.divider },
+                                { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default },
                                 hideChipBecauseNextHovered ? { opacity: 0 } : null,
                                 isWeb ? { pointerEvents: 'none' as const } : null,
                             ]}
@@ -408,14 +408,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 <ActivityIndicator
                                     testID={`pendingMessages.acceptedIndicator:${message.id}`}
                                     size="small"
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             ) : (
                                 <>
-                                    <Ionicons name="time-outline" size={8} color={theme.colors.textSecondary} />
+                                    <Ionicons name="time-outline" size={8} color={theme.colors.text.secondary} />
                                     <Text
                                         testID={`pendingMessages.pendingAffordanceLabel:${message.id}`}
-                                        style={[styles.pendingAffordanceText, { color: theme.colors.textSecondary }]}
+                                        style={[styles.pendingAffordanceText, { color: theme.colors.text.secondary }]}
                                     >
                                         {t('session.pendingMessages.badgeLabel', { count: 0 })}
                                     </Text>
@@ -504,12 +504,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         openMenuKey,
         pendingIndexById,
         props.pendingMessages.length,
-        theme.colors.divider,
-        theme.colors.surface,
-        theme.colors.textLink,
-        theme.colors.textSecondary,
-        theme.colors.userMessageBackground,
-        theme.colors.userMessageText,
+        theme.colors.border.default,
+        theme.colors.surface.base,
+        theme.colors.text.link,
+        theme.colors.text.secondary,
+        theme.colors.message.user.background,
+        theme.colors.message.user.foreground,
         toggleMessageExpanded,
     ]);
 
@@ -519,10 +519,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const menuOpen = openMenuKey === menuKey;
 
         const menuItems: DropdownMenuItem[] = [
-            { id: 'requeue', title: t('session.pendingMessages.actions.requeue'), icon: <Ionicons name="return-up-back-outline" size={16} color={theme.colors.textSecondary} /> },
-            { id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.textSecondary} /> },
-            ...(canSteerNow ? [{ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Ionicons name="navigate-outline" size={16} color={theme.colors.textSecondary} /> } as const] : []),
-            { id: 'sendNow', title: canSteerNow ? t('session.pendingMessages.actions.sendNowInterrupt') : t('session.pendingMessages.actions.sendNow'), icon: <Ionicons name="paper-plane-outline" size={16} color={theme.colors.textSecondary} /> },
+            { id: 'requeue', title: t('session.pendingMessages.actions.requeue'), icon: <Ionicons name="return-up-back-outline" size={16} color={theme.colors.text.secondary} /> },
+            { id: 'remove', title: t('common.remove'), icon: <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} /> },
+            ...(canSteerNow ? [{ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Ionicons name="navigate-outline" size={16} color={theme.colors.text.secondary} /> } as const] : []),
+            { id: 'sendNow', title: canSteerNow ? t('session.pendingMessages.actions.sendNowInterrupt') : t('session.pendingMessages.actions.sendNow'), icon: <Ionicons name="paper-plane-outline" size={16} color={theme.colors.text.secondary} /> },
         ];
 
         return (
@@ -562,10 +562,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 { backgroundColor: theme.colors.input.background, opacity: pressed ? 0.75 : 0.82 },
                             ])}
                         >
-                            <Text numberOfLines={collapsedLines} style={{ color: theme.colors.text, ...Typography.default() }}>
+                            <Text numberOfLines={collapsedLines} style={{ color: theme.colors.text.primary, ...Typography.default() }}>
                                 {text}
                             </Text>
-                            <Text style={{ marginTop: 6, color: theme.colors.textSecondary, fontSize: 12, ...Typography.default('semiBold') }}>
+                            <Text style={{ marginTop: 6, color: theme.colors.text.secondary, fontSize: 12, ...Typography.default('semiBold') }}>
                                 {t('session.pendingMessages.discarded.label')}
                             </Text>
                         </Pressable>
@@ -623,8 +623,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         isWeb,
         openMenuKey,
         theme.colors.input.background,
-        theme.colors.text,
-        theme.colors.textSecondary,
+        theme.colors.text.primary,
+        theme.colors.text.secondary,
     ]);
 
     const displayedDiscarded = React.useMemo(() => {
@@ -673,7 +673,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <Ionicons
                                         name={isQueueExpanded ? 'chevron-up' : 'chevron-down'}
                                         size={13}
-                                        color={theme.colors.textSecondary}
+                                        color={theme.colors.text.secondary}
                                     />
                                 ) : null}
                                 padding="none"
@@ -714,10 +714,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 />
                                 {displayedDiscarded.length > 0 ? (
                                     <View style={{ marginTop: 4 }}>
-                                        <Text style={[styles.discardedTitle, { color: theme.colors.textSecondary }]}>
+                                        <Text style={[styles.discardedTitle, { color: theme.colors.text.secondary }]}>
                                             {t('session.pendingMessages.discarded.title')}
                                         </Text>
-                                        <Text style={[styles.discardedSubtitle, { color: theme.colors.textSecondary }]}>
+                                        <Text style={[styles.discardedSubtitle, { color: theme.colors.text.secondary }]}>
                                             {t('session.pendingMessages.discarded.subtitle')}
                                         </Text>
                                         <View style={{ marginTop: 10 }}>
@@ -728,11 +728,11 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             </ScrollView>
 
                             <ScrollEdgeFades
-                                color={theme.colors.surface}
+                                color={theme.colors.surface.base}
                                 edges={{ top: scrollEdge.visibility.top, bottom: scrollEdge.visibility.bottom }}
                             />
                             <ScrollEdgeIndicators
-                                color={theme.colors.textSecondary}
+                                color={theme.colors.text.secondary}
                                 edges={{ top: scrollEdge.visibility.top, bottom: scrollEdge.visibility.bottom }}
                             />
                         </View>
@@ -752,7 +752,7 @@ function IconAction(props: {
 }) {
     const { theme } = useUnistyles();
     const isDestructive = props.tone === 'destructive';
-    const tint = isDestructive ? theme.colors.textDestructive : theme.colors.textSecondary;
+    const tint = isDestructive ? theme.colors.state.danger.foreground : theme.colors.text.secondary;
     return (
         <Pressable
             testID={props.testID}
@@ -765,7 +765,7 @@ function IconAction(props: {
                 borderRadius: 6,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: pressed ? theme.colors.surfacePressedOverlay : 'transparent',
+                backgroundColor: pressed ? theme.colors.surface.pressedOverlay : 'transparent',
                 opacity: pressed ? 1 : 0.65,
                 ...(Platform.OS === 'web' ? { cursor: 'pointer' as const } : null),
             })}
@@ -797,7 +797,7 @@ function ReorderDragHandleAffordance(props: {
                 isWeb ? ({ pointerEvents: 'none' } as const) : null,
             ]}
         >
-            <Ionicons name="reorder-three-outline" size={12} color={theme.colors.textSecondary} />
+            <Ionicons name="reorder-three-outline" size={12} color={theme.colors.text.secondary} />
         </View>
     );
 }

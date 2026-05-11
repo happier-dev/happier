@@ -68,7 +68,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 10,
     },
     header: {
@@ -78,12 +78,12 @@ const styles = StyleSheet.create((theme) => ({
     url: {
         flex: 1,
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
     status: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
 }));

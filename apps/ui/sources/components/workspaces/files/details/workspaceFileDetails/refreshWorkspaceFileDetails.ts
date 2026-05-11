@@ -16,6 +16,7 @@ export type WorkspaceFileDetailsFileContent = Readonly<{
     isBinary: boolean;
     binaryBase64?: string | null;
     binaryMime?: string | null;
+    binarySizeBytes?: number | null;
 }>;
 
 export type WorkspaceFileDetailsRefreshResult = Readonly<{
@@ -40,11 +41,19 @@ function resolveMaxPreviewBytes(): number | null {
     return Math.floor(maxPreviewBytesRaw);
 }
 
+function resolveOptionalMaxBytes(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        return null;
+    }
+    return Math.floor(value);
+}
+
 export async function refreshWorkspaceFileDetails(input: Readonly<{
     scope: WorkspaceScopeBase;
     filePath: string;
     diffMode: FileDiffMode;
     fileEntryKind?: ScmEntryKind | null;
+    maxImagePreviewBytes?: number | null;
 }>): Promise<WorkspaceFileDetailsRefreshResult> {
     let failedReadError: string | null = null;
     let diffContent: string | null = null;
@@ -67,8 +76,11 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
 
         const imageMime = getImageMimeTypeFromPath(input.filePath);
         const wantsBinaryPreview = typeof imageMime === 'string' && imageMime.trim().length > 0;
+        const maxPreviewBytes = wantsBinaryPreview
+            ? resolveOptionalMaxBytes(input.maxImagePreviewBytes)
+            : resolveMaxPreviewBytes();
+        let statSizeBytes: number | null = null;
 
-        const maxPreviewBytes = resolveMaxPreviewBytes();
         if (maxPreviewBytes != null) {
             const stat = await callDaemonWorkspaceStatFileRpc({
                 machineId: input.scope.machineId,
@@ -76,6 +88,15 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
                 rootPath: input.scope.rootPath,
                 request: { path: input.filePath },
             });
+            if (
+                stat.success
+                && stat.exists === true
+                && typeof stat.sizeBytes === 'number'
+                && Number.isFinite(stat.sizeBytes)
+                && stat.sizeBytes >= 0
+            ) {
+                statSizeBytes = Math.floor(stat.sizeBytes);
+            }
             if (
                 stat.success
                 && stat.exists === true
@@ -94,6 +115,17 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
 
         if (isKnownBinaryPath(input.filePath) && !wantsBinaryPreview) {
             fileContent = { content: '', isBinary: true };
+            return {
+                status: 'ready',
+                error: null,
+                diffContent,
+                fileContent,
+                fileWriteSupported: true,
+            };
+        }
+
+        if (wantsBinaryPreview) {
+            fileContent = { content: '', isBinary: true, binaryMime: imageMime, binarySizeBytes: statSizeBytes };
             return {
                 status: 'ready',
                 error: null,
@@ -124,17 +156,6 @@ export async function refreshWorkspaceFileDetails(input: Readonly<{
         }
 
         const encodedContent = readResponse.contentBase64 || '';
-
-        if (wantsBinaryPreview) {
-            fileContent = { content: '', isBinary: true, binaryBase64: encodedContent, binaryMime: imageMime };
-            return {
-                status: 'ready',
-                error: null,
-                diffContent,
-                fileContent,
-                fileWriteSupported: true,
-            };
-        }
 
         const decodedContent = decodeUtf8Base64(encodedContent);
         if (isBinaryContent(decodedContent)) {

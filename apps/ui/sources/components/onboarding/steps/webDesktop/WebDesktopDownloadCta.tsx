@@ -31,13 +31,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         textAlign: 'center',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 16,
         lineHeight: 22,
     },
     subtitle: {
         textAlign: 'center',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         lineHeight: 18,
         maxWidth: HANDOFF_TEXT_MAX_WIDTH,

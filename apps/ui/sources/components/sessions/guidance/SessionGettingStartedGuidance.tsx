@@ -76,7 +76,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 28,
         marginTop: 10,
         fontSize: 20,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
         textAlign: 'center',
     },
@@ -85,7 +85,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: 720,
         marginBottom: 16,
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
         textAlign: 'center',
     },
@@ -103,7 +103,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: 720,
         marginBottom: 14,
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     terminalText: {
@@ -125,13 +125,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     stepTitle: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     stepDescription: {
         marginTop: 2,
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
         maxWidth: 560,
     },
@@ -140,13 +140,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexBasis: 0,
     },
     codeBlock: {
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderRadius: 8,
         paddingHorizontal: 12,
         paddingTop: 10,
         paddingBottom: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         flexDirection: 'row',
         alignItems: 'flex-start',
         justifyContent: 'space-between',
@@ -393,7 +393,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
                                           onPress={() => copyTextToClipboard({ label: step.copyLabel ?? t('common.command'), text: step.command ?? '' })}
                                       >
                                           {normalizeNodeForView(
-                                              <Ionicons name="copy-outline" size={16} color={theme.colors.textSecondary} />,
+                                              <Ionicons name="copy-outline" size={16} color={theme.colors.text.secondary} />,
                                           )}
                                       </Pressable>
                                 </View>

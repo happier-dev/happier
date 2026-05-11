@@ -18,7 +18,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: -2,
     },
     permissionRequestTitle: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         ...Typography.default('semiBold'),
     },
@@ -28,13 +28,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderBottomLeftRadius: 0,
         borderBottomRightRadius: 0,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated,
         overflow: 'hidden',
     },
     divider: {
         height: 1,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
         opacity: 1,
     },
 }));
@@ -101,14 +101,14 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                     </ScrollView>
 
                     <ScrollEdgeFades
-                        color={theme.colors.surfaceHighest}
+                        color={theme.colors.surface.elevated}
                         edges={{
                             top: props.fadeVisibility?.top === true,
                             bottom: props.fadeVisibility?.bottom === true,
                         }}
                     />
                     <ScrollEdgeIndicators
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                         edges={{
                             top: props.fadeVisibility?.top === true,
                             bottom: props.fadeVisibility?.bottom === true,

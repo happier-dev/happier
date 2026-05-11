@@ -18,10 +18,10 @@ export function ToolHeader({ tool }: ToolHeaderProps) {
             tool,
             metadata: null,
             iconSize: 18,
-            iconColorPrimary: theme.colors.header.tint,
-            iconColorSecondary: theme.colors.header.tint,
+            iconColorPrimary: theme.colors.chrome.header.foreground,
+            iconColorSecondary: theme.colors.chrome.header.foreground,
         });
-    }, [theme.colors.header.tint, tool]);
+    }, [theme.colors.chrome.header.foreground, tool]);
 
     return (
         <View style={styles.container}>
@@ -61,12 +61,12 @@ const styles = StyleSheet.create((theme) => ({
     title: {
         fontSize: 13,
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         textAlign: 'center',
     },
     subtitle: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         marginTop: 2,
     },

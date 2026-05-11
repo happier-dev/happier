@@ -30,6 +30,19 @@ describe('resolveStoryDeckMediaSources', () => {
             fallbackUrl: 'https://cdn.example.com/media.png',
         }).urls).toEqual(['https://cdn.example.com/media.png']);
     });
+
+    it('uses desktop video media overrides without leaking base video URLs', () => {
+        const resolved = resolveStoryDeckMediaSources({
+            key: 'mobile-demo.mp4',
+            desktop: {
+                key: 'desktop-demo.mp4',
+                fallbackUrl: 'https://cdn.example.com/desktop-demo.mp4',
+            },
+        }, { surface: 'desktop' });
+
+        expect(resolved.urls.join(' ')).toContain('desktop-demo.mp4');
+        expect(resolved.urls.join(' ')).not.toContain('mobile-demo.mp4');
+    });
 });
 
 describe('resolveStoryDeckPosterSources', () => {
@@ -42,6 +55,16 @@ describe('resolveStoryDeckPosterSources', () => {
             'http://localhost:4150/poster.png',
             'https://cdn.example.com/poster.png',
         ]);
+    });
+
+    it('uses surface-specific poster overrides independently from the video override', () => {
+        expect(resolveStoryDeckPosterSources({
+            key: 'mobile-demo.mp4',
+            posterUrl: 'https://cdn.example.com/mobile-poster.webp',
+            desktop: {
+                posterUrl: 'https://cdn.example.com/desktop-poster.webp',
+            },
+        }, { surface: 'desktop' }).urls).toEqual(['https://cdn.example.com/desktop-poster.webp']);
     });
 });
 
@@ -70,6 +93,45 @@ describe('resolveStoryDeckImageSources', () => {
             },
         ]);
         expect(resolved.cacheKey).toBe('local:hero-bundle|remote:https://cdn.example.com/hero.png');
+    });
+
+    it('uses desktop image overrides as a replacement for base image sources', () => {
+        const baseSource = { uri: 'asset://base' };
+        const desktopSource = { uri: 'asset://desktop' };
+
+        const resolved = resolveStoryDeckImageSources({
+            localAssetKey: 'base-hero',
+            key: 'base-remote.webp',
+            altKey: 'releaseNotes.hero.alt',
+            desktop: {
+                localAssetKey: 'desktop-hero',
+            },
+        }, {
+            surface: 'desktop',
+            resolveBundledImageAsset: (key) => {
+                if (key === 'base-hero') return baseSource;
+                if (key === 'desktop-hero') return desktopSource;
+                return null;
+            },
+        });
+
+        expect(resolved.sources).toEqual([{
+            kind: 'local',
+            key: 'desktop-hero',
+            source: desktopSource,
+        }]);
+        expect(resolved.cacheKey).toBe('local:desktop-hero');
+    });
+
+    it('falls back to base image media when the requested surface has no override', () => {
+        expect(resolveStoryDeckImageSources({
+            url: 'https://cdn.example.com/base.webp',
+            altKey: 'releaseNotes.hero.alt',
+        }, { surface: 'mobile' }).sources).toEqual([{
+            kind: 'remote',
+            uri: 'https://cdn.example.com/base.webp',
+            source: { uri: 'https://cdn.example.com/base.webp' },
+        }]);
     });
 });
 

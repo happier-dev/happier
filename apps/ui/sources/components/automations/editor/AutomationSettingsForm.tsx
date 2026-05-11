@@ -34,8 +34,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: Platform.select({ ios: 10, default: 12 }),
         borderWidth: 0.5,
-        borderColor: theme.colors.divider,
-        color: theme.colors.text,
+        borderColor: theme.colors.border.default,
+        color: theme.colors.text.primary,
     },
 }));
 
@@ -76,18 +76,18 @@ export const AutomationSettingsForm = React.memo((props: Props) => {
             id: 'interval',
             title: t('automations.form.schedule.intervalTitle'),
             subtitle: t('automations.form.schedule.intervalSubtitle'),
-            icon: <Ionicons name="repeat-outline" size={18} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="repeat-outline" size={18} color={theme.colors.text.secondary} />,
         },
         {
             id: 'cron',
             title: t('automations.form.schedule.cronTitle'),
             subtitle: t('automations.form.schedule.cronSubtitle'),
-            icon: <Ionicons name="calendar-outline" size={18} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="calendar-outline" size={18} color={theme.colors.text.secondary} />,
         },
-    ]), [theme.colors.textSecondary]);
+    ]), [theme.colors.text.secondary]);
     const selectedScheduleIcon = props.value.scheduleKind === 'cron'
-        ? <Ionicons name="calendar-outline" size={18} color={theme.colors.textSecondary} />
-        : <Ionicons name="repeat-outline" size={18} color={theme.colors.textSecondary} />;
+        ? <Ionicons name="calendar-outline" size={18} color={theme.colors.text.secondary} />
+        : <Ionicons name="repeat-outline" size={18} color={theme.colors.text.secondary} />;
 
     const compactHeaderStyle = React.useMemo<ViewStyle | undefined>(() => {
         if ((props.groupHeaderDensity ?? 'default') !== 'compact') return undefined;

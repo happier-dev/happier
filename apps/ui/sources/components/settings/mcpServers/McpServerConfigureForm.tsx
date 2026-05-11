@@ -153,7 +153,7 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
                                 <Item
                                     title={t('settings.mcpServersAdvancedCommandEditorTitle')}
                                     subtitle={t('settings.mcpServersAdvancedCommandEditorSubtitle')}
-                                    icon={<Ionicons name="options-outline" size={29} color={theme.colors.textSecondary} />}
+                                    icon={<Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />}
                                     selected={advancedCommandEditorOpen}
                                     onPress={() => setAdvancedCommandEditorOpen((value) => !value)}
                                 />
@@ -263,7 +263,7 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
                     <Item
                         title={t('settings.mcpServersBindingsEmptyTitle')}
                         subtitle={t('settings.mcpServersBindingsEmptySubtitle')}
-                        icon={<Ionicons name="pin-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="pin-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                     />
                 </ItemGroup>
@@ -322,7 +322,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     fieldLabel: {
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         marginBottom: 8,
         marginTop: 12,
         fontWeight: '600',
@@ -335,7 +335,7 @@ const styles = StyleSheet.create((theme) => ({
         ...SETTINGS_TEXT_INPUT_METRICS,
         color: theme.colors.input.text,
         borderWidth: 0.5,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     advancedEditorRow: {
         marginTop: 12,

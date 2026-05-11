@@ -183,7 +183,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                 <Item
                     title={t('subAgentGuidance.settings.overview.explainerTitle')}
                     subtitle={t('subAgentGuidance.settings.overview.explainerSubtitle')}
-                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
                 <Item
@@ -244,7 +244,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                         <Item
                             title={t('subAgentGuidance.settings.characterBudget.title')}
                             subtitle={t('subAgentGuidance.settings.characterBudget.subtitle', { value: maxChars.toLocaleString() })}
-                            icon={<Ionicons name="text-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="text-outline" size={29} color={theme.colors.text.secondary} />}
                             onPress={async () => {
                                 const raw = await Modal.prompt(
                                     t('subAgentGuidance.settings.characterBudget.promptTitle'),
@@ -270,7 +270,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                             <Item
                                 title={t('subAgentGuidance.settings.rules.emptyTitle')}
                                 subtitle={t('subAgentGuidance.settings.rules.emptySubtitle')}
-                                icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
                                 onPress={() => {
                                     void addRule();
                                 }}
@@ -286,7 +286,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                                         <Ionicons
                                             name={entry.enabled === false ? 'pause-circle-outline' : 'play-circle-outline'}
                                             size={29}
-                                            color={entry.enabled === false ? theme.colors.textSecondary : theme.colors.success}
+                                            color={entry.enabled === false ? theme.colors.text.secondary : theme.colors.state.success.foreground}
                                         />
                                     }
                                     onPress={() => {
@@ -299,7 +299,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                         <Item
                             title={t('subAgentGuidance.settings.rules.addRuleTitle')}
                             subtitle={t('subAgentGuidance.settings.rules.addRuleSubtitle')}
-                            icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.text.secondary} />}
                             onPress={() => {
                                 void addRule();
                             }}
@@ -312,20 +312,20 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
                                 <View
                                     style={{
                                         borderWidth: 1,
-                                        borderColor: theme.colors.divider,
+                                        borderColor: theme.colors.border.default,
                                         borderRadius: 12,
                                         padding: 12,
-                                        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
+                                        backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
                                     }}
                                 >
-                                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
+                                    <Text style={{ fontSize: 12, color: theme.colors.text.secondary }}>
                                         {t('subAgentGuidance.settings.preview.systemPromptLabel')}
                                     </Text>
                                     <Text
                                         style={{
                                             marginTop: 8,
                                             fontSize: 12,
-                                            color: theme.colors.text,
+                                            color: theme.colors.text.primary,
                                             ...Typography.mono(),
                                             lineHeight: 16,
                                         }}

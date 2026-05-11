@@ -104,7 +104,7 @@ export default function MachineInstallablesScreen() {
             <Stack.Screen options={screenOptions} />
             <ScrollView
                 contentContainerStyle={{ paddingBottom: 24 }}
-                style={{ backgroundColor: theme.colors.groupped.background }}
+                style={{ backgroundColor: theme.colors.background.canvas }}
             >
                 <ItemGroup title={t('machine.installables.aboutGroupTitle')}>
                     <Item

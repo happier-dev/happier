@@ -88,7 +88,7 @@ export const RoundButton = React.memo((props: {
         inverted: {
             backgroundColor: 'transparent',
             borderColor: 'transparent',
-            textColor: theme.colors.text,
+            textColor: theme.colors.text.primary,
         }
     }
 

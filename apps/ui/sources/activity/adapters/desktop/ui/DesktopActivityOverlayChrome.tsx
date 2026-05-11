@@ -288,7 +288,7 @@ export function DesktopActivityOverlayChromeHighlights(props: Readonly<{
                 style={[
                     styles.topGlow,
                     toneStyle.topGlow,
-                    { backgroundColor: props.theme.colors.overlay.text },
+                    { backgroundColor: props.theme.colors.overlay.foreground },
                 ]}
             />
             <View
@@ -302,7 +302,7 @@ export function DesktopActivityOverlayChromeHighlights(props: Readonly<{
                 style={[
                     styles.innerRim,
                     toneStyle.innerRim,
-                    { borderColor: props.theme.colors.overlay.text },
+                    { borderColor: props.theme.colors.overlay.foreground },
                 ]}
             />
         </View>

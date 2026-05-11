@@ -58,8 +58,8 @@ const setRootBackgroundColor = () => {
             ? (Appearance.getColorScheme() === 'dark' ? 'dark' : 'light')
             : themePreference;
     const color = resolvedTheme === 'dark'
-        ? appThemes.dark.colors.groupped.background
-        : appThemes.light.colors.groupped.background;
+        ? appThemes.dark.colors.background.canvas
+        : appThemes.light.colors.background.canvas;
     UnistylesRuntime.setRootViewBackgroundColor(color);
 };
 

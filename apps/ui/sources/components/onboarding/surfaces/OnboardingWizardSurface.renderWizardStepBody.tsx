@@ -61,7 +61,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     stepId: WizardStepId;
     testIDPrefix: string;
     styles: OnboardingWizardSurfaceStyles;
-    theme: Readonly<{ colors: Readonly<{ textSecondary: string }> }>;
+    theme: Readonly<{ colors: Readonly<{ text: Readonly<{ secondary: string }> }> }>;
 
     layout: 'portrait' | 'landscape';
     authEntryOptions: AuthEntryOptions;
@@ -229,7 +229,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                     <TextInput
                         testID={`${params.testIDPrefix}-relay-url-input`}
                         placeholder={t('common.urlPlaceholder')}
-                        placeholderTextColor={params.theme.colors.textSecondary}
+                        placeholderTextColor={params.theme.colors.text.secondary}
                         autoCapitalize="none"
                         autoCorrect={false}
                         value={params.urlDraft}

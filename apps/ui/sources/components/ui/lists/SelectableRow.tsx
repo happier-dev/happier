@@ -64,24 +64,24 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: 'transparent',
     },
     rowPressed: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     rowHovered: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     rowSelected: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
-        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surface.pressedOverlay,
+        borderColor: theme.colors.border.default,
     },
     // Palette variant states (match old CommandPaletteItem styles exactly)
     rowSelectablePressed: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     rowSelectableHovered: {
-        backgroundColor: theme.dark ? theme.colors.surfaceHighest : theme.colors.surfaceHigh,
+        backgroundColor: theme.dark ? theme.colors.surface.elevated : theme.colors.surface.inset,
     },
     rowSelectableSelected: {
-        backgroundColor: theme.colors.surfaceSelected,
+        backgroundColor: theme.colors.surface.selected,
         borderColor: theme.colors.accent.blue,
     },
     rowDisabled: {
@@ -110,28 +110,28 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         ...Typography.default(),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: Platform.select({ ios: 16, default: 15 }),
         lineHeight: Platform.select({ ios: 20, default: 20 }),
         letterSpacing: Platform.select({ ios: -0.2, default: 0 }),
     },
     titleSelectable: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 15,
         letterSpacing: -0.2,
     },
     titleDestructive: {
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
     },
     subtitle: {
         ...Typography.default(),
         marginTop: 2,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 13, default: 13 }),
         lineHeight: 18,
     },
     subtitleSelectable: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         letterSpacing: -0.1,
     },
     right: {

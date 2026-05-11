@@ -1,11 +1,22 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installFormsCommonModuleMocks } from './formsTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const localSettingState = vi.hoisted(() => ({
+    uiFontScale: 1,
+}));
+
+vi.mock('@/sync/store/hooks', () => ({
+    useLocalSetting: (key: string) => {
+        if (key === 'uiFontScale') return localSettingState.uiFontScale;
+        return undefined;
+    },
+}));
 
 installFormsCommonModuleMocks({
     reactNative: async () => {
@@ -25,7 +36,25 @@ vi.mock('react-textarea-autosize', () => ({
     default: (props: any) => React.createElement('TextareaAutosize', props, null),
 }));
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((merged, entry) => ({
+            ...merged,
+            ...flattenStyle(entry),
+        }), {});
+    }
+    if (typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
 describe('MultiTextInput', () => {
+    afterEach(() => {
+        localSettingState.uiFontScale = 1;
+    });
+
     it('forwards testID to the TextInput', async () => {
         const { MultiTextInput } = await import('./MultiTextInput');
         let tree!: renderer.ReactTestRenderer;
@@ -38,6 +67,20 @@ describe('MultiTextInput', () => {
         expect(input.props.testID).toBe('composer-input');
     });
 
+    it('uses the caller textStyle font size as the scaled native input base', async () => {
+        localSettingState.uiFontScale = 1.25;
+
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const tree = (await renderScreen(<MultiTextInput
+                    testID="composer-input"
+                    value=""
+                    textStyle={{ fontSize: 16 }}
+                    onChangeText={() => {}}
+                />)).tree;
+        const input = tree.findByType('TextInput' as any);
+        expect(flattenStyle(input.props.style).fontSize).toBe(20);
+    });
+
     it('forwards testID as data-testid on web textarea', async () => {
         const { MultiTextInput } = await import('./MultiTextInput.web');
         let tree!: renderer.ReactTestRenderer;
@@ -48,6 +91,22 @@ describe('MultiTextInput', () => {
                 }))).tree;
         const input = tree.findByType('TextareaAutosize' as any);
         expect(input.props['data-testid']).toBe('composer-input');
+    });
+
+    it('uses the caller textStyle font size as the scaled web textarea base', async () => {
+        localSettingState.uiFontScale = 1.25;
+
+        const { MultiTextInput } = await import('./MultiTextInput.web');
+        const tree = (await renderScreen(React.createElement(MultiTextInput as unknown as React.ComponentType<Record<string, unknown>>, {
+                    testID: 'composer-input',
+                    value: '',
+                    textStyle: { fontSize: 16 },
+                    onChangeText: () => {},
+        }))).tree;
+        const input = tree.findByType('TextareaAutosize' as any);
+        expect(input.props.style.fontSize).toBe('20px');
+        expect(input.props.style.color).toBeDefined();
+        expect(input.props.style.fontFamily).toBeDefined();
     });
 
     it('prevents the default paste behavior when web files are pasted and forwards the files', async () => {

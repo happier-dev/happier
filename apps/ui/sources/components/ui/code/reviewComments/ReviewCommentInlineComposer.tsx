@@ -22,7 +22,7 @@ export function ReviewCommentInlineComposer(props: {
                 value={props.value}
                 onChangeText={props.onChange}
                 placeholder={t('files.reviewComments.placeholder')}
-                placeholderTextColor={theme.colors.textSecondary}
+                placeholderTextColor={theme.colors.text.secondary}
                 multiline
                 style={styles.input}
             />
@@ -53,15 +53,15 @@ const styles = StyleSheet.create((theme) => ({
         padding: 10,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.base,
         gap: 10,
     },
     input: {
         minHeight: 54,
         maxHeight: 160,
         padding: 0,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default(),
         fontSize: 13,
         lineHeight: 18,
@@ -81,10 +81,10 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: 8,
-        backgroundColor: theme.colors.button?.primary?.background ?? theme.colors.text,
+        backgroundColor: theme.colors.button?.primary?.background ?? theme.colors.text.primary,
     },
     primaryText: {
-        color: theme.colors.button?.primary?.tint ?? theme.colors.surface,
+        color: theme.colors.button?.primary?.tint ?? theme.colors.surface.base,
         fontSize: 12,
         fontWeight: '700',
         ...Typography.default('semiBold'),
@@ -93,12 +93,12 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 8,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfacePressed ?? theme.colors.surface,
+        backgroundColor: theme.colors.surface.pressed ?? theme.colors.surface.base,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     secondaryText: {
-        color: theme.colors.button?.secondary?.tint ?? theme.colors.textSecondary,
+        color: theme.colors.button?.secondary?.tint ?? theme.colors.text.secondary,
         fontSize: 12,
         fontWeight: '700',
         ...Typography.default('semiBold'),
@@ -107,10 +107,10 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         paddingVertical: 8,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     dangerText: {
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
         fontSize: 12,
         fontWeight: '700',
         ...Typography.default('semiBold'),

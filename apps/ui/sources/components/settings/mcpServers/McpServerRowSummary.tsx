@@ -47,18 +47,18 @@ const styles = StyleSheet.create((theme) => ({
     itemSubtitle: {
         ...Typography.default('regular'),
         ...ITEM_SUBTITLE_TEXT_METRICS.comfortable,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     primary: {
         ...Typography.default('regular'),
         fontSize: 14,
         lineHeight: 20,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     secondary: {
         ...Typography.default('regular'),
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));

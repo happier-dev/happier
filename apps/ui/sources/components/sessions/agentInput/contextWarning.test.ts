@@ -26,7 +26,7 @@ describe('getContextWarning', () => {
 
         expect(warning).toEqual(
             expect.objectContaining({
-                color: lightTheme.colors.warning,
+                color: lightTheme.colors.state.neutral.foreground,
             }),
         );
         expect(warning?.text).toContain('100');

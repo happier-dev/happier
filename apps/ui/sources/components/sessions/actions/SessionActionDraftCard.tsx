@@ -175,11 +175,11 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
               padding: 12,
               borderRadius: 12,
               borderWidth: 1,
-              borderColor: theme.colors.divider,
-              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border.default,
+              backgroundColor: theme.colors.surface.base,
             }}
           >
-            <Text style={{ color: theme.colors.text, fontWeight: '600', marginBottom: 8 }}>{title}</Text>
+            <Text style={{ color: theme.colors.text.primary, fontWeight: '600', marginBottom: 8 }}>{title}</Text>
 
             {fields.length > 0 ? (
               <ActionInputFields
@@ -190,7 +190,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                 onPatch={setInputPatch}
               />
             ) : (
-            <Text style={{ color: theme.colors.textSecondary }}>{t('session.actionsDraft.noInputHints')}</Text>
+            <Text style={{ color: theme.colors.text.secondary }}>{t('session.actionsDraft.noInputHints')}</Text>
           )}
 
           {error ? (
@@ -209,7 +209,7 @@ export function SessionActionDraftCard(props: Readonly<{ sessionId: string; draf
                 opacity: props.draft.status === 'running' || isSubmitting ? 0.4 : pressed ? 0.7 : 1,
               })}
             >
-              <Text style={{ color: theme.colors.textSecondary }}>{t('common.cancel')}</Text>
+              <Text style={{ color: theme.colors.text.secondary }}>{t('common.cancel')}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"

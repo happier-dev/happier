@@ -42,21 +42,21 @@ export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorPr
                     <ItemGroup key={group.serverId} title={title}>
                         {group.loading ? (
                             <View>
-                                <Text style={[emptyTextStyle, { color: theme.colors.textSecondary }]}>
+                                <Text style={[emptyTextStyle, { color: theme.colors.text.secondary }]}>
                                     {t('common.loading')}
                                 </Text>
                             </View>
                         ) : null}
                         {!group.loading && group.signedOut ? (
                             <View>
-                                <Text style={[emptyTextStyle, { color: theme.colors.textSecondary }]}>
+                                <Text style={[emptyTextStyle, { color: theme.colors.text.secondary }]}>
                                     {t('server.signedOut')}
                                 </Text>
                             </View>
                         ) : null}
                         {!group.loading && !group.signedOut && group.machines.length === 0 ? (
                             <View>
-                                <Text style={[emptyTextStyle, { color: theme.colors.textSecondary }]}>
+                                <Text style={[emptyTextStyle, { color: theme.colors.text.secondary }]}>
                                     {t('newSession.noMachinesFound')}
                                 </Text>
                             </View>
@@ -72,7 +72,7 @@ export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorPr
                                         testID={props.testIdPrefix ? `${props.testIdPrefix}:${machine.id}` : undefined}
                                         title={machine.metadata?.displayName || machine.metadata?.host || machine.id}
                                         subtitle={machine.metadata?.host || machine.id}
-                                        icon={<Ionicons name="desktop-outline" size={20} color={theme.colors.textSecondary} />}
+                                        icon={<Ionicons name="desktop-outline" size={20} color={theme.colors.text.secondary} />}
                                         selected={isSelected}
                                         detail={online ? t('status.online') : t('status.offline')}
                                         disabled={!online}

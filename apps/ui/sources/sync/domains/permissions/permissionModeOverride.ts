@@ -1,6 +1,7 @@
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Session } from '../state/storageTypes';
 import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { readSessionPermissionModeField } from '@/sync/state/selectors';
 import { normalizePermissionModeForAgentType } from './permissionModeOptions';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
@@ -10,15 +11,16 @@ export type PermissionModeOverrideForSpawn = {
 };
 
 export function getPermissionModeOverrideForSpawn(session: Session): PermissionModeOverrideForSpawn | null {
-    const localUpdatedAt = session.permissionModeUpdatedAt;
-    if (typeof localUpdatedAt !== 'number') return null;
+    const localPermissionMode = readSessionPermissionModeField(session);
+    const localUpdatedAt = localPermissionMode.updatedAt;
+    if (localUpdatedAt === null) return null;
 
     const metadataUpdatedAt = session.metadata?.permissionModeUpdatedAt ?? null;
     const metadataUpdatedAtNumber = typeof metadataUpdatedAt === 'number' ? metadataUpdatedAt : 0;
     if (localUpdatedAt <= metadataUpdatedAtNumber) return null;
 
     const parsed =
-        typeof session.permissionMode === 'string' ? parsePermissionIntentAlias(session.permissionMode) : null;
+        typeof localPermissionMode.value === 'string' ? parsePermissionIntentAlias(localPermissionMode.value) : null;
     const flavor = typeof session.metadata?.flavor === 'string' ? session.metadata.flavor : null;
     const agentId = resolveAgentIdFromFlavor(flavor);
     const normalized = agentId

@@ -259,7 +259,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                             {toolForRendering.state === 'completed' && toolForRendering.result && (
                                 <View style={styles.section}>
                                     <View style={styles.sectionHeader}>
-                                        <Ionicons name="log-out" size={20} color={theme.colors.success} />
+                                        <Ionicons name="log-out" size={20} color={theme.colors.state.success.foreground} />
                                         <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
                                     </View>
                                     <CodeView
@@ -271,7 +271,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                             {toolForRendering.state === 'running' && toolForRendering.result && (
                                 <View style={styles.section}>
                                     <View style={styles.sectionHeader}>
-                                        <Ionicons name="log-out" size={20} color={theme.colors.success} />
+                                        <Ionicons name="log-out" size={20} color={theme.colors.state.success.foreground} />
                                         <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
                                     </View>
                                     <StructuredResultView tool={toolForRendering} metadata={metadata || null} messages={messages} sessionId={sessionId} />
@@ -282,7 +282,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                             {toolForRendering.state === 'error' && toolForRendering.result && (
                                 <View style={styles.section}>
                                     <View style={styles.sectionHeader}>
-                                        <Ionicons name="close-circle" size={20} color={theme.colors.warningCritical} />
+                                        <Ionicons name="close-circle" size={20} color={theme.colors.state.danger.foreground} />
                                         <Text style={styles.sectionTitle}>{t('tools.fullView.error')}</Text>
                                     </View>
                                     <View style={styles.errorContainer}>
@@ -299,7 +299,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                             {toolForRendering.state === 'completed' && !toolForRendering.result && (
                                 <View style={styles.section}>
                                     <View style={styles.emptyOutputContainer}>
-                                        <Ionicons name="checkmark-circle-outline" size={48} color={theme.colors.success} />
+                                        <Ionicons name="checkmark-circle-outline" size={48} color={theme.colors.state.success.foreground} />
                                         <Text style={styles.emptyOutputText}>{t('tools.fullView.completed')}</Text>
                                         <Text style={styles.emptyOutputSubtext}>{t('tools.fullView.noOutput')}</Text>
                                     </View>
@@ -320,7 +320,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         paddingTop: 12,
     },
     contentWrapper: {
@@ -350,28 +350,28 @@ const styles = StyleSheet.create((theme) => ({
     sectionTitle: {
         fontSize: 17,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     description: {
         fontSize: 14,
         lineHeight: 20,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     toolId: {
         fontSize: 12,
         fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     errorContainer: {
-        backgroundColor: theme.colors.box.error.background,
+        backgroundColor: theme.colors.state.danger.background,
         borderRadius: 8,
         padding: 16,
         borderWidth: 1,
-        borderColor: theme.colors.box.error.border,
+        borderColor: theme.colors.state.danger.border,
     },
     errorText: {
         fontSize: 14,
-        color: theme.colors.box.error.text,
+        color: theme.colors.state.danger.foreground,
         lineHeight: 20,
     },
     emptyOutputContainer: {
@@ -382,11 +382,11 @@ const styles = StyleSheet.create((theme) => ({
     emptyOutputText: {
         fontSize: 16,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     emptyOutputSubtext: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));
 

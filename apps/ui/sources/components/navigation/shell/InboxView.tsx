@@ -36,7 +36,7 @@ import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySu
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     emptyContainer: {
         flex: 1,
@@ -50,14 +50,14 @@ const styles = StyleSheet.create((theme) => ({
     emptyTitle: {
         fontSize: 20,
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 8,
         textAlign: 'center',
     },
     emptyDescription: {
         fontSize: 16,
         ...Typography.default(),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         lineHeight: 22,
     },
@@ -71,7 +71,7 @@ function HeaderTitleTablet() {
     return (
         <Text style={{
             fontSize: 17,
-            color: theme.colors.header.tint,
+            color: theme.colors.chrome.header.foreground,
             fontWeight: '600',
             ...Typography.default('semiBold'),
         }}>
@@ -121,7 +121,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
         return (
             <View style={styles.container}>
                 {isTablet && (
-                    <View style={{ backgroundColor: theme.colors.groupped.background }}>
+                    <View style={{ backgroundColor: theme.colors.background.canvas }}>
                         <Header
                             title={<HeaderTitleTablet />}
                             headerRight={() => null}
@@ -133,7 +133,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                 )}
                 <RecoveryKeyReminderBanner />
                 <View style={styles.emptyContainer}>
-                    <ActivityIndicator size="large" color={theme.colors.textSecondary} />
+                    <ActivityIndicator size="large" color={theme.colors.text.secondary} />
                 </View>
             </View>
         );
@@ -143,7 +143,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
         return (
             <View style={styles.container}>
                 {isTablet && (
-                    <View style={{ backgroundColor: theme.colors.groupped.background }}>
+                    <View style={{ backgroundColor: theme.colors.background.canvas }}>
                         <Header
                             title={<HeaderTitleTablet />}
                             headerRight={() => null}
@@ -159,7 +159,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                         source={require('@/assets/images/brutalist/Brutalism 10.png')}
                         contentFit="contain"
                         style={[{ width: 64, height: 64 }, styles.emptyIcon]}
-                        tintColor={theme.colors.textSecondary}
+                        tintColor={theme.colors.text.secondary}
                     />
                     <Text style={styles.emptyTitle}>{t('inbox.emptyTitle')}</Text>
                     <Text style={styles.emptyDescription}>{t('inbox.emptyDescription')}</Text>
@@ -171,7 +171,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
     return (
         <View style={styles.container}>
             {isTablet && (
-                <View style={{ backgroundColor: theme.colors.groupped.background }}>
+                <View style={{ backgroundColor: theme.colors.background.canvas }}>
                     <Header
                         title={<HeaderTitleTablet />}
                         headerRight={() => null}

@@ -101,13 +101,13 @@ const OpenAiCompatTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
             id: 'mp3',
             title: MP3_FORMAT_TITLE,
             subtitle: t('settingsVoice.local.ttsFormatOptions.mp3Subtitle'),
-            icon: <Ionicons name="musical-notes-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="musical-notes-outline" size={22} color={theme.colors.text.secondary} />,
           },
           {
             id: 'wav',
             title: WAV_FORMAT_TITLE,
             subtitle: t('settingsVoice.local.ttsFormatOptions.wavSubtitle'),
-            icon: <Ionicons name="pulse-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="pulse-outline" size={22} color={theme.colors.text.secondary} />,
           },
         ]}
         onSelect={(id) => {

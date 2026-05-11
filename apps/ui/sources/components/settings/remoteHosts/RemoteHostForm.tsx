@@ -270,7 +270,7 @@ export const RemoteHostForm = React.memo(function RemoteHostForm(props: CustomMo
                                         onChangeText={setPrivateKeyMaterialDraft}
                                     />
                                     {showStoredKeyHint ? (
-                                        <Text style={{ color: theme.colors.textSecondary }}>
+                                        <Text style={{ color: theme.colors.text.secondary }}>
                                             {t('settings.remoteHostsPrivateKeySavedHint')}
                                         </Text>
                                     ) : null}

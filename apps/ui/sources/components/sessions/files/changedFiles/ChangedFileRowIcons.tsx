@@ -23,31 +23,31 @@ export function ChangedFileStatusIcon(props: {
 
     switch (file.status) {
         case 'modified':
-            statusColor = theme.colors.warning;
+            statusColor = theme.colors.state.neutral.foreground;
             statusIcon = 'diff-modified';
             break;
         case 'added':
-            statusColor = theme.colors.success;
+            statusColor = theme.colors.state.success.foreground;
             statusIcon = 'diff-added';
             break;
         case 'deleted':
-            statusColor = theme.colors.textDestructive;
+            statusColor = theme.colors.state.danger.foreground;
             statusIcon = 'diff-removed';
             break;
         case 'renamed':
-            statusColor = theme.colors.textLink;
+            statusColor = theme.colors.text.link;
             statusIcon = 'arrow-right';
             break;
         case 'copied':
-            statusColor = theme.colors.textLink;
+            statusColor = theme.colors.text.link;
             statusIcon = 'copy';
             break;
         case 'conflicted':
-            statusColor = theme.colors.textDestructive;
+            statusColor = theme.colors.state.danger.foreground;
             statusIcon = 'alert';
             break;
         case 'untracked':
-            statusColor = theme.colors.textSecondary;
+            statusColor = theme.colors.text.secondary;
             statusIcon = 'file';
             break;
         default:

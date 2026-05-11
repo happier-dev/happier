@@ -25,19 +25,19 @@ export function CommandPaletteItem({ command, isSelected, onPress, onHover }: Co
             onPress={onPress}
             onHover={onHover}
             left={command.icon ? (
-                <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: theme.colors.surfacePressedOverlay, alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: 32, height: 32, borderRadius: 8, backgroundColor: theme.colors.surface.pressedOverlay, alignItems: 'center', justifyContent: 'center' }}>
                     <Ionicons
                         name={command.icon as any}
                         size={20}
-                        color={isSelected ? theme.colors.accent.blue : theme.colors.textSecondary}
+                        color={isSelected ? theme.colors.accent.blue : theme.colors.text.secondary}
                     />
                 </View>
             ) : null}
             title={command.title}
             subtitle={command.subtitle ?? undefined}
             right={command.shortcut ? (
-                <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: theme.colors.surfacePressedOverlay, borderRadius: 6 }}>
-                    <Text style={{ ...Typography.mono(), fontSize: 12, color: theme.colors.textSecondary, fontWeight: '500' }}>
+                <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: theme.colors.surface.pressedOverlay, borderRadius: 6 }}>
+                    <Text style={{ ...Typography.mono(), fontSize: 12, color: theme.colors.text.secondary, fontWeight: '500' }}>
                         {command.shortcut}
                     </Text>
                 </View>

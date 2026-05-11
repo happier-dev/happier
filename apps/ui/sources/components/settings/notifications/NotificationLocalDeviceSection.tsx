@@ -68,7 +68,7 @@ export function NotificationLocalDeviceSection({
             <Item
                 title={t('settingsNotifications.local.readyTitle')}
                 subtitle={t('settingsNotifications.local.readySubtitle')}
-                icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
+                icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
                 rightElement={(
                     <Switch
                         value={localNotifications.events.ready !== false}
@@ -81,7 +81,7 @@ export function NotificationLocalDeviceSection({
             <Item
                 title={t('settingsNotifications.local.readyPreviewTitle')}
                 subtitle={t('settingsNotifications.local.readyPreviewSubtitle')}
-                icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={localNotifications.previewBehavior !== 'status_only'}
@@ -96,7 +96,7 @@ export function NotificationLocalDeviceSection({
             <Item
                 title={t('settingsNotifications.local.permissionRequestsTitle')}
                 subtitle={t('settingsNotifications.local.permissionRequestsSubtitle')}
-                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={localNotifications.events.permission_request !== false}
@@ -109,7 +109,7 @@ export function NotificationLocalDeviceSection({
             <Item
                 title={t('settingsNotifications.local.userActionsTitle')}
                 subtitle={t('settingsNotifications.local.userActionsSubtitle')}
-                icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={localNotifications.events.user_action_request !== false}

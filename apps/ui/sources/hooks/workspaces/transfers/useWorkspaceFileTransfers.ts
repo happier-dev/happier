@@ -11,6 +11,7 @@ import {
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { createNativeCacheFileSink, type NativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
 
 export type WorkspaceUploadEntry =
     | Readonly<{ kind: 'web'; file: File; relativePath: string }>
@@ -73,15 +74,6 @@ function joinRepoPath(parentDir: string, relativePath: string): string {
     if (!cleanParent) return cleanRel.replace(/\/+/g, '/');
     if (!cleanRel) return cleanParent;
     return `${cleanParent}/${cleanRel}`.replace(/\/+/g, '/');
-}
-
-function joinFileUri(baseUri: string, childPath: string): string {
-    const base = String(baseUri ?? '').trim();
-    const child = String(childPath ?? '').trim().replace(/^\/+/g, '');
-    if (!base) return child;
-    if (!child) return base;
-    const withSlash = base.endsWith('/') ? base : `${base}/`;
-    return `${withSlash}${child}`;
 }
 
 async function openWorkspaceUploadSourceReader(entry: WorkspaceUploadEntry): Promise<{
@@ -247,54 +239,7 @@ export async function buildUploadEntryPlan(input: Readonly<{
     return { ok: true, tasks };
 }
 
-async function writeNativeFileChunk(handle: any, bytes: Uint8Array): Promise<void> {
-    handle.writeBytes(bytes);
-}
-
-async function createNativeDownloadSink(input: Readonly<{ name: string }>): Promise<
-    | { ok: true; fileUri: string; close: () => Promise<void>; writeBytes: (bytes: Uint8Array) => Promise<void>; cleanup: () => Promise<void> }
-    | { ok: false; error: string }
-> {
-    try {
-        const FileSystem: any = await import('expo-file-system');
-        const cacheDir = String(FileSystem.cacheDirectory ?? FileSystem.Paths?.cache ?? '').trim();
-        if (!cacheDir) {
-            return { ok: false, error: 'No cache directory available' };
-        }
-
-        const downloadsDir = joinFileUri(cacheDir, 'happier-downloads');
-        await FileSystem.makeDirectoryAsync(downloadsDir, { intermediates: true });
-
-        const fileUri = joinFileUri(downloadsDir, input.name);
-        const file = new FileSystem.File(fileUri);
-        file.create();
-        const handle = file.open();
-        if (typeof handle.offset === 'number' || handle.offset === null) {
-            handle.offset = 0;
-        }
-
-        const close = async () => {
-            try { handle.close(); } catch { }
-        };
-
-        const cleanup = async () => {
-            try { await close(); } catch { }
-            try { file.delete(); } catch { }
-        };
-
-    return {
-        ok: true,
-        fileUri: file.uri,
-        close,
-        cleanup,
-        writeBytes: async (bytes) => await writeNativeFileChunk(handle, bytes),
-    };
-} catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Failed to create download sink' };
-}
-}
-
-type NativeDownloadSink = Extract<Awaited<ReturnType<typeof createNativeDownloadSink>>, { ok: true }>;
+type NativeDownloadSink = NativeCacheFileSink;
 
 export function useWorkspaceFileTransfers(params: Readonly<{
     workspaceScope: WorkspaceScopeBase | null;
@@ -600,7 +545,10 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                             return;
                         }
 
-                        const sink = await createNativeDownloadSink({ name: init.name || 'download' });
+                        const sink = await createNativeCacheFileSink({
+                            directoryName: 'happier-downloads',
+                            fileName: init.name || 'download',
+                        });
                         if (!sink.ok) {
                             return {
                                 success: false,

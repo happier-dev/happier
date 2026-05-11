@@ -4,7 +4,7 @@ import { resolvePreferredMachineId } from '@/components/settings/pickers/resolve
 import { normalizeOptionalParam } from '@/profileRouteParams';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
-import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
+import { useStableRecentPathsResolver } from '@/utils/sessions/useStableRecentPathsForMachine';
 
 type RecentMachinePathsList = Array<{ machineId: string; path: string }>;
 
@@ -30,6 +30,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     pathParam: unknown;
     persistedMachineId?: unknown;
     persistedPath?: unknown;
+    cacheScopeKey?: string | null;
 }>): Readonly<{
     selectedMachineId: string | null;
     setSelectedMachineId: React.Dispatch<React.SetStateAction<string | null>>;
@@ -42,6 +43,11 @@ export function useNewSessionMachinePathState(params: Readonly<{
     const recentMachinePaths = React.useMemo((): RecentMachinePathsList => {
         return Array.isArray(params.recentMachinePaths) ? (params.recentMachinePaths as any[]).slice() as any : [];
     }, [params.recentMachinePaths]);
+    const resolveRecentPathsForMachine = useStableRecentPathsResolver({
+        recentMachinePaths,
+        sessions: params.sessions,
+        cacheScopeKey: params.cacheScopeKey,
+    });
 
     const resolveMachineId = React.useCallback((preferredMachineId: string | null): string | null => {
         const preferredOnlineMachineId = resolvePreferredMachineId({
@@ -60,15 +66,11 @@ export function useNewSessionMachinePathState(params: Readonly<{
 
     const getBestPathForMachine = React.useCallback((machineId: string | null): string => {
         if (!machineId) return '';
-        const recent = getRecentPathsForMachine({
-            machineId,
-            recentMachinePaths,
-            sessions: params.sessions,
-        });
+        const recent = resolveRecentPathsForMachine(machineId);
         if (recent.length > 0) return recent[0]!;
         const machine = params.machines.find((m) => m.id === machineId);
         return machine?.metadata?.homeDir ?? '';
-    }, [params.machines, params.sessions, recentMachinePaths]);
+    }, [params.machines, resolveRecentPathsForMachine]);
 
     const getPersistedPathForMachine = React.useCallback((machineId: string | null): string => {
         if (!machineId) return '';

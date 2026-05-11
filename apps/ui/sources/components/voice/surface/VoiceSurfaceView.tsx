@@ -37,7 +37,7 @@ export function VoiceSurfaceView(props: Readonly<{
     const containerStyle = [
         styles.container,
         {
-            backgroundColor: theme.colors.surface,
+            backgroundColor: theme.colors.surface.base,
         },
         props.model.style,
     ];
@@ -51,16 +51,16 @@ export function VoiceSurfaceView(props: Readonly<{
                         canBargeIn={props.model.canBargeIn}
                         isConnecting={props.model.isConnecting}
                         isListening={props.model.isListening}
-                        micBadgeStyle={{ backgroundColor: theme.colors.surfaceHigh, borderColor: theme.colors.divider }}
-                        micIconColor={theme.colors.text}
+                        micBadgeStyle={{ backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default }}
+                        micIconColor={theme.colors.text.primary}
                         onBargeIn={props.model.onBargeIn}
                         statusDotColor={statusInfo.dot}
                         statusLabel={statusInfo.label}
                         statusTestID={`voice-surface-status:${props.model.variant}:${props.model.status}`}
-                        statusTextColor={theme.colors.text}
+                        statusTextColor={theme.colors.text.primary}
                         styles={styles}
                         subtitle={props.model.subtitle}
-                        subtitleColor={theme.colors.textSecondary}
+                        subtitleColor={theme.colors.text.secondary}
                     />
 
                     <VoiceSurfaceControls
@@ -81,9 +81,9 @@ export function VoiceSurfaceView(props: Readonly<{
                         openLabel={props.model.openLabel}
                         startStopLabel={props.model.startStopLabel}
                         styles={styles}
-                        textColor={theme.colors.textSecondary}
+                        textColor={theme.colors.text.secondary}
                         teleportLabel={t('voiceSurface.a11y.teleport')}
-                        tintColor={theme.colors.button?.primary?.tint ?? theme.colors.text}
+                        tintColor={theme.colors.button?.primary?.tint ?? theme.colors.text.primary}
                         toggleTestID={`voice-surface-toggle:${props.model.variant}`}
                         onCancelTurn={props.model.onCancelTurn}
                         onToggleMute={props.model.onToggleMute}
@@ -101,11 +101,11 @@ export function VoiceSurfaceView(props: Readonly<{
                     entryTestIdPrefix={`voice-surface-activity-entry:${props.model.variant}:`}
                     expanded={props.model.expanded}
                     entries={props.model.visibleTranscriptEntries}
-                    eventTextColor={theme.colors.text}
+                    eventTextColor={theme.colors.text.primary}
                     onToggleExpanded={props.model.onToggleExpanded}
                     styles={styles}
                     title={t('voiceActivity.title')}
-                    titleColor={theme.colors.textSecondary}
+                    titleColor={theme.colors.text.secondary}
                     toggleLabel={props.model.toggleActivityLabel}
                     toggleTestID={`voice-surface-activity-toggle:${props.model.variant}`}
                 />
@@ -182,7 +182,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     feedContainer: {
         borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     feedHeader: {
         flexDirection: 'row',

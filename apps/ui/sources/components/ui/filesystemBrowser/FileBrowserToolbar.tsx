@@ -68,9 +68,9 @@ export function FileBrowserToolbar({
         <View
             {...rest}
             onLayout={handleLayout}
-            style={[styles.row, { borderBottomColor: theme.colors.divider }, style]}
+            style={[styles.row, { borderBottomColor: theme.colors.border.default }, style]}
         >
-            <View style={[styles.searchWrap, { borderColor: theme.colors.divider, backgroundColor: theme.colors.surface }]}>
+            <View style={[styles.searchWrap, { borderColor: theme.colors.border.default, backgroundColor: theme.colors.surface.base }]}>
                 <TextInput
                     testID={searchTestID}
                     placeholder={searchPlaceholder}
@@ -80,8 +80,8 @@ export function FileBrowserToolbar({
                     autoCorrect={false}
                     spellCheck={false}
                     clearButtonMode="never"
-                    style={[styles.searchInput, { color: theme.colors.text }]}
-                    placeholderTextColor={theme.colors.textSecondary}
+                    style={[styles.searchInput, { color: theme.colors.text.primary }]}
+                    placeholderTextColor={theme.colors.text.secondary}
                 />
             </View>
             <View style={styles.actions}>
@@ -113,8 +113,8 @@ export function FileBrowserToolbarIconButton({
             style={(state) => ([
                 styles.iconButton,
                 {
-                    borderColor: selected ? theme.colors.textLink : theme.colors.divider,
-                    backgroundColor: theme.colors.surface,
+                    borderColor: selected ? theme.colors.text.link : theme.colors.border.default,
+                    backgroundColor: theme.colors.surface.base,
                     opacity: disabled ? 0.5 : (state.pressed ? 0.75 : 1),
                 },
                 typeof userStyle === 'function' ? userStyle(state) : userStyle,

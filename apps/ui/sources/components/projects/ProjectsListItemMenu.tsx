@@ -49,28 +49,28 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
             nextItems.push({
                 id: props.pinAction,
                 title: pinTitle,
-                icon: <Ionicons name="pin-outline" size={16} color={props.theme.colors.textSecondary} />,
+                icon: <Ionicons name="pin-outline" size={16} color={props.theme.colors.text.secondary} />,
             });
         }
         nextItems.push(
             {
                 id: 'rename',
                 title: renameTitle,
-                icon: <Ionicons name="pencil-outline" size={16} color={props.theme.colors.textSecondary} />,
+                icon: <Ionicons name="pencil-outline" size={16} color={props.theme.colors.text.secondary} />,
             },
             {
                 id: 'reset',
                 title: resetTitle,
-                icon: <Ionicons name="refresh-outline" size={16} color={props.theme.colors.textSecondary} />,
+                icon: <Ionicons name="refresh-outline" size={16} color={props.theme.colors.text.secondary} />,
             },
             {
                 id: 'remove',
                 title: removeTitle,
-                icon: <Ionicons name="trash-outline" size={16} color={props.theme.colors.deleteAction} />,
+                icon: <Ionicons name="trash-outline" size={16} color={props.theme.colors.state.danger.foreground} />,
             },
         );
         return nextItems;
-    }, [pinTitle, props.pinAction, props.theme.colors.deleteAction, props.theme.colors.textSecondary, removeTitle, renameTitle, resetTitle]);
+    }, [pinTitle, props.pinAction, props.theme.colors.state.danger.foreground, props.theme.colors.text.secondary, removeTitle, renameTitle, resetTitle]);
 
     const handleSelect = React.useCallback((itemId: string) => {
         if ((itemId === 'pin' || itemId === 'unpin') && props.pinAction) {
@@ -114,7 +114,7 @@ export const ProjectsListItemMenu = React.memo((props: ProjectsListItemMenuProps
                     hitSlop={10}
                     style={{ width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }}
                 >
-                    <Octicons name="kebab-horizontal" size={14} color={props.theme.colors.textSecondary} />
+                    <Octicons name="kebab-horizontal" size={14} color={props.theme.colors.text.secondary} />
                 </Pressable>
             )}
         />

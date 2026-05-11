@@ -9,11 +9,11 @@ export function FriendsGateCentered(props: { title: string; body?: string; child
 
     return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-            <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>
+            <Text style={{ fontSize: 20, fontWeight: '600', marginBottom: 8, color: theme.colors.text.primary }}>
                 {props.title}
             </Text>
             {props.body ? (
-                <Text style={{ textAlign: 'center', marginBottom: 16, color: theme.colors.textSecondary }}>
+                <Text style={{ textAlign: 'center', marginBottom: 16, color: theme.colors.text.secondary }}>
                     {props.body}
                 </Text>
             ) : null}
@@ -73,13 +73,13 @@ export function FriendsProviderConnectControls(props: {
                     marginTop: props.notAvailableMarginTop ?? 0,
                 }}
             >
-                <Text style={{ color: theme.colors.textSecondary }}>
+                <Text style={{ color: theme.colors.text.secondary }}>
                     {props.notAvailableLabel}
                 </Text>
             </Pressable>
 
             {showHint && props.unavailableReason ? (
-                <Text style={{ textAlign: 'center', marginTop: 8, color: theme.colors.textSecondary }}>
+                <Text style={{ textAlign: 'center', marginTop: 8, color: theme.colors.text.secondary }}>
                     {props.unavailableReason}
                 </Text>
             ) : null}

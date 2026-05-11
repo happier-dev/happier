@@ -3,12 +3,11 @@ import { BaseModal } from './BaseModal';
 import { CustomModalConfig, type CustomModalChromeConfig } from '../types';
 import { ModalCardFrame } from './card/ModalCardFrame';
 
-import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
-
 interface CustomModalProps {
     config: CustomModalConfig;
     onClose: () => void;
     showBackdrop?: boolean;
+    visible: boolean;
     zIndexBase?: number;
 }
 
@@ -18,20 +17,9 @@ function areDimensionOptionsEqual(
 ): boolean {
     if (a === b) return true;
     if (!a || !b) return false;
-    const aViewportMargin = a.viewportMargin as Record<string, unknown> | number | null | undefined;
-    const bViewportMargin = b.viewportMargin as Record<string, unknown> | number | null | undefined;
-    const viewportMarginEqual = (() => {
-        if (aViewportMargin === bViewportMargin) return true;
-        if (typeof aViewportMargin === 'number' || typeof bViewportMargin === 'number') {
-            return aViewportMargin === bViewportMargin;
-        }
-        return (aViewportMargin?.horizontal ?? null) === (bViewportMargin?.horizontal ?? null)
-            && (aViewportMargin?.vertical ?? null) === (bViewportMargin?.vertical ?? null);
-    })();
     return a.size === b.size
         && a.width === b.width
-        && a.maxHeightRatio === b.maxHeightRatio
-        && viewportMarginEqual;
+        && a.maxHeightRatio === b.maxHeightRatio;
 }
 
 function areChromeConfigsEqual(
@@ -43,17 +31,17 @@ function areChromeConfigsEqual(
     if (a.kind !== b.kind) return false;
 
     if (a.kind === 'card' && b.kind === 'card') {
-        return areReactNodesStructurallyEqual(a.title, b.title)
-            && areReactNodesStructurallyEqual(a.subtitle, b.subtitle)
-            && areReactNodesStructurallyEqual(a.leading, b.leading)
-            && areReactNodesStructurallyEqual(a.actions, b.actions)
-            && areReactNodesStructurallyEqual(a.footer, b.footer)
-            && a.scrollHost === b.scrollHost
-            && a.bodyScroll === b.bodyScroll
+        return a.title === b.title
+            && a.subtitle === b.subtitle
+            && a.leading === b.leading
+            && a.actions === b.actions
+            && a.footer === b.footer
             && a.testID === b.testID
             && a.titleTestID === b.titleTestID
             && a.subtitleTestID === b.subtitleTestID
             && a.closeButtonTestID === b.closeButtonTestID
+            && a.layout === b.layout
+            && a.bodyScroll === b.bodyScroll
             && areDimensionOptionsEqual(
                 (a.dimensions ?? null) as Record<string, unknown> | null,
                 (b.dimensions ?? null) as Record<string, unknown> | null,
@@ -88,12 +76,12 @@ function mergeChromeConfig(
             subtitle: override.subtitle !== undefined ? override.subtitle : base.subtitle,
             actions: override.actions !== undefined ? override.actions : base.actions,
             footer: override.footer !== undefined ? override.footer : base.footer,
-            scrollHost: override.scrollHost !== undefined ? override.scrollHost : base.scrollHost,
-            bodyScroll: override.bodyScroll !== undefined ? override.bodyScroll : base.bodyScroll,
             testID: override.testID !== undefined ? override.testID : base.testID,
             titleTestID: override.titleTestID !== undefined ? override.titleTestID : base.titleTestID,
             subtitleTestID: override.subtitleTestID !== undefined ? override.subtitleTestID : base.subtitleTestID,
             closeButtonTestID: override.closeButtonTestID !== undefined ? override.closeButtonTestID : base.closeButtonTestID,
+            layout: override.layout !== undefined ? override.layout : base.layout,
+            bodyScroll: override.bodyScroll !== undefined ? override.bodyScroll : base.bodyScroll,
             dimensions: mergedDimensions,
         };
     }
@@ -101,7 +89,7 @@ function mergeChromeConfig(
     return override;
 }
 
-export function CustomModal({ config, onClose, showBackdrop = true, zIndexBase }: CustomModalProps) {
+export function CustomModal({ config, onClose, showBackdrop = true, visible, zIndexBase }: CustomModalProps) {
     const Component = config.component;
     const [chromeOverride, setChromeOverride] = React.useState<CustomModalChromeConfig | null | undefined>(undefined);
     const effectiveChrome = chromeOverride === undefined ? config.chrome : chromeOverride;
@@ -129,7 +117,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, zIndexBase }
 
     return (
         <BaseModal
-            visible={true}
+            visible={visible}
             onClose={handleClose}
             closeOnBackdrop={config.closeOnBackdrop ?? true}
             showBackdrop={showBackdrop}
@@ -143,12 +131,12 @@ export function CustomModal({ config, onClose, showBackdrop = true, zIndexBase }
                     subtitle={chrome.subtitle}
                     actions={chrome.actions}
                     footer={chrome.footer}
-                    scrollHost={chrome.scrollHost}
-                    bodyScroll={chrome.bodyScroll ?? 'none'}
                     testID={chrome.testID}
                     titleTestID={chrome.titleTestID}
                     subtitleTestID={chrome.subtitleTestID}
                     closeButtonTestID={chrome.closeButtonTestID}
+                    layout={chrome.layout ?? 'fit'}
+                    bodyScroll={chrome.bodyScroll ?? 'none'}
                     dimensions={chrome.dimensions}
                     onClose={handleClose}
                 >

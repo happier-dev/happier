@@ -104,7 +104,7 @@ export const ZenHome = () => {
                     }}>
                         {undoneTodos.length === 0 ? (
                             <View style={{ padding: 20, alignItems: 'center' }}>
-                                <Text style={{ color: theme.colors.textSecondary, fontSize: 16 }}>
+                                <Text style={{ color: theme.colors.text.secondary, fontSize: 16 }}>
                                     {t('zen.home.noTasksYet')}
                                 </Text>
                             </View>

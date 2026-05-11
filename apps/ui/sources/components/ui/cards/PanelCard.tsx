@@ -41,7 +41,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 11,
         lineHeight: 14,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         textTransform: 'uppercase',
         letterSpacing: 0.24,
     },
@@ -50,13 +50,13 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 28,
         lineHeight: 34,
         letterSpacing: -0.6,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     subtitle: {
         ...Typography.default(),
         fontSize: 14,
         lineHeight: 20,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));
 

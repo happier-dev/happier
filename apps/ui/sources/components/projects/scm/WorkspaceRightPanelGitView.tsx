@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import { router } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -32,6 +33,7 @@ import {
     machineScmBranchRebase,
     machineScmHostingRepositoryDescribePublishTargets,
     machineScmHostingRepositoryPublish,
+    machineScmPullRequestOpenCompose,
     machineScmPullRequestOpenOrReuse,
     machineScmRemoteAdd,
     machineScmRemoteRemove,
@@ -300,7 +302,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     const addRemote = React.useCallback(
         (request: { name: string; fetchUrl: string; pushUrl?: string }) => runWorkspaceUpdateMutation({
             operation: 'remote_add',
-            fallbackError: 'Failed to add remote.',
+            fallbackError: t('files.sourceControlOperations.update.remotes.errors.addFailed'),
             run: () => machineScmRemoteAdd(scope.machineId, {
                 cwd: scope.rootPath,
                 ...request,
@@ -311,7 +313,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     const setRemoteUrl = React.useCallback(
         (request: { name: string; fetchUrl: string; pushUrl: string | null }) => runWorkspaceUpdateMutation({
             operation: 'remote_set_url',
-            fallbackError: 'Failed to update remote.',
+            fallbackError: t('files.sourceControlOperations.update.remotes.errors.saveFailed'),
             run: () => machineScmRemoteSetUrl(scope.machineId, {
                 cwd: scope.rootPath,
                 ...request,
@@ -322,7 +324,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     const removeRemote = React.useCallback(
         (name: string) => runWorkspaceUpdateMutation({
             operation: 'remote_remove',
-            fallbackError: 'Failed to remove remote.',
+            fallbackError: t('files.sourceControlOperations.update.remotes.errors.removeFailed'),
             run: () => machineScmRemoteRemove(scope.machineId, { cwd: scope.rootPath, name }),
         }),
         [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
@@ -330,7 +332,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     const mergeBranch = React.useCallback(
         (sourceRef: string) => runWorkspaceUpdateMutation({
             operation: 'branch_merge',
-            fallbackError: 'Failed to merge branch.',
+            fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.mergeFailed'),
             run: () => machineScmBranchMerge(scope.machineId, { cwd: scope.rootPath, sourceRef }),
         }),
         [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
@@ -338,7 +340,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     const rebaseBranch = React.useCallback(
         (sourceRef: string) => runWorkspaceUpdateMutation({
             operation: 'branch_rebase',
-            fallbackError: 'Failed to rebase branch.',
+            fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.rebaseFailed'),
             run: () => machineScmBranchRebase(scope.machineId, { cwd: scope.rootPath, sourceRef }),
         }),
         [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
@@ -346,7 +348,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     const continueBranchOperation = React.useCallback(
         (operation: 'merge' | 'rebase') => runWorkspaceUpdateMutation({
             operation: 'branch_operation_continue',
-            fallbackError: 'Failed to continue operation.',
+            fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.continueFailed'),
             run: () => machineScmBranchOperationContinue(scope.machineId, { cwd: scope.rootPath, operation }),
         }),
         [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
@@ -354,7 +356,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     const abortBranchOperation = React.useCallback(
         (operation: 'merge' | 'rebase') => runWorkspaceUpdateMutation({
             operation: 'branch_operation_abort',
-            fallbackError: 'Failed to abort operation.',
+            fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.abortFailed'),
             run: () => machineScmBranchOperationAbort(scope.machineId, { cwd: scope.rootPath, operation }),
         }),
         [runWorkspaceUpdateMutation, scope.machineId, scope.rootPath],
@@ -365,6 +367,13 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     );
     const openOrReusePullRequest = React.useCallback(
         (request: { base: string; head: string }) => machineScmPullRequestOpenOrReuse(scope.machineId, {
+            cwd: scope.rootPath,
+            ...request,
+        }),
+        [scope.machineId, scope.rootPath],
+    );
+    const openComposePullRequest = React.useCallback(
+        (request: { base: string; head: string }) => machineScmPullRequestOpenCompose(scope.machineId, {
             cwd: scope.rootPath,
             ...request,
         }),
@@ -391,6 +400,12 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         }),
         [scope.machineId, scope.rootPath],
     );
+    const openGitHubConnectedService = React.useCallback(() => {
+        router.push({ pathname: '/(app)/settings/connected-services/[serviceId]', params: { serviceId: 'github' } });
+    }, []);
+    const openMachineInstallables = React.useCallback(() => {
+        router.push(`/machine/${encodeURIComponent(scope.machineId)}/installables?serverId=${encodeURIComponent(scope.serverId)}` as never);
+    }, [scope.machineId, scope.serverId]);
 
     if (error && !snapshot) {
         return (
@@ -405,8 +420,8 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     if (loading && !snapshot) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, gap: 10 }}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.textSecondary, ...Typography.default() }}>
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <Text style={{ color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.loading')}
                 </Text>
             </View>
@@ -465,6 +480,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                         snapshot={snapshot}
                         disabled={scmOperationBusy}
                         onOpenOrReuse={openOrReusePullRequest}
+                        onOpenCompose={openComposePullRequest}
                         onCreateFeatureBranch={createFeatureBranch}
                         onRefresh={refresh}
                     />
@@ -477,6 +493,10 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                         onDescribePublishTargets={describePublishTargets}
                         onPublishRepository={publishRepository}
                         onRefresh={refresh}
+                        onConnectGitHub={openGitHubConnectedService}
+                        onInstallGh={openMachineInstallables}
+                        onUseManagedGh={openMachineInstallables}
+                        onAuthenticateGh={openMachineInstallables}
                     />
                     <SourceControlRemotesSection
                         theme={theme}

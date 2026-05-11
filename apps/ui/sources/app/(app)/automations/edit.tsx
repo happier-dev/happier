@@ -225,9 +225,9 @@ export default React.memo(function AutomationEditScreen() {
             accessibilityRole="button"
             accessibilityLabel={t('common.back')}
         >
-            <Ionicons name="chevron-back" size={22} color={theme.colors.header.tint} />
+            <Ionicons name="chevron-back" size={22} color={theme.colors.chrome.header.foreground} />
         </Pressable>
-    ), [automationId, router, theme.colors.header.tint]);
+    ), [automationId, router, theme.colors.chrome.header.foreground]);
 
     const headerRight = React.useCallback(() => null, []);
 
@@ -248,12 +248,12 @@ export default React.memo(function AutomationEditScreen() {
                     <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                         {isWaitingForExistingSessionHydration ? (
                             <View style={stylesMessage.loadingContainer}>
-                                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                             </View>
                         ) : null}
                         {automation?.targetType === 'new_session' && !isWaitingForExistingSessionHydration ? (
                             <View style={stylesMessage.loadingContainer}>
-                                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                             </View>
                         ) : null}
                         {automation?.targetType === 'existing_session' && existingSessionAvailability ? (

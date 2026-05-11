@@ -15,9 +15,9 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
     },
     header: {
-        backgroundColor: theme.colors.header.background,
+        backgroundColor: theme.colors.chrome.header.background,
         borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
+        borderBottomColor: theme.colors.border.default,
     },
     headerContent: {
         flexDirection: 'row',
@@ -26,7 +26,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     headerTitle: {
         fontSize: 17,
-        color: theme.colors.header.tint,
+        color: theme.colors.chrome.header.foreground,
         ...Typography.default('semiBold'),
     },
 }));

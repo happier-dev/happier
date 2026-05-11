@@ -112,20 +112,20 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 12,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     rowCompact: {
         paddingVertical: 10,
         gap: 10,
     },
     rowSelected: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
     rowDisabled: {
         opacity: 0.55,
     },
     rowHovered: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     rowContent: {
         flex: 1,
@@ -161,7 +161,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 15,
         lineHeight: 19,
     },
@@ -171,7 +171,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     subtitle: {
         ...Typography.default(),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         lineHeight: 18,
     },
@@ -187,19 +187,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     statusLabel: {
         ...Typography.default('semiBold'),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         lineHeight: 16,
     },
     badge: {
         paddingHorizontal: 10,
         paddingVertical: 5,
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
         borderRadius: 999,
     },
     badgeText: {
         ...Typography.default(),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         lineHeight: 16,
     },
@@ -216,32 +216,32 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     details: {
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderTopColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     iconBoxBase: {
         width: 26,
         height: 26,
         borderRadius: 7,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
     iconBoxDone: {
-        borderColor: theme.colors.success,
-        backgroundColor: theme.colors.surfaceSelected,
+        borderColor: theme.colors.state.success.foreground,
+        backgroundColor: theme.colors.surface.selected,
     },
     iconBoxError: {
-        borderColor: theme.colors.warningCritical,
-        backgroundColor: theme.colors.surfaceSelected,
+        borderColor: theme.colors.state.danger.foreground,
+        backgroundColor: theme.colors.surface.selected,
     },
     iconBoxQueued: {
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     iconBoxRunning: {
         borderColor: theme.colors.accent.blue,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     iconPlainBase: {
         width: 30,
@@ -347,7 +347,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                 <Ionicons
                     name={props.expanded ? 'chevron-up' : 'chevron-down'}
                     size={16}
-                    color={theme.colors.textSecondary}
+                    color={theme.colors.text.secondary}
                 />
             </Pressable>
         </View>
@@ -367,7 +367,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     usesCompactNestedRow ? styles.rowCompact : null,
                     props.selected ? styles.rowSelected : null,
                     hovered && !props.selected && rowOnPress ? styles.rowHovered : null,
-                    pressed && rowOnPress ? { backgroundColor: theme.colors.surfacePressed } : null,
+                    pressed && rowOnPress ? { backgroundColor: theme.colors.surface.pressed } : null,
                     dimRow ? styles.rowDisabled : null,
                 ])}
             >
@@ -398,12 +398,12 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                                     size={usesCompactNestedRow ? 18 : (usesOnboardingVariant ? 22 : 16)}
                                     color={
                                         status === 'done'
-                                            ? theme.colors.success
+                                            ? theme.colors.state.success.foreground
                                             : status === 'error'
-                                                ? theme.colors.warningCritical
+                                                ? theme.colors.state.danger.foreground
                                                 : props.selected
                                                     ? theme.colors.accent.blue
-                                                    : theme.colors.textTertiary
+                                                    : theme.colors.text.tertiary
                                     }
                                 />
                             ) : null}

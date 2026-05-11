@@ -181,7 +181,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                         ? t('settingsNotifications.pushTroubleshooting.status.accountSettingEnabledSubtitle')
                         : t('settingsNotifications.pushTroubleshooting.status.accountSettingDisabledSubtitle')}
                     detail={pushEnabled ? t('common.enabled') : t('common.disabled')}
-                    icon={<Ionicons name="options-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -189,7 +189,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                     title={t('settingsNotifications.pushTroubleshooting.permission.title')}
                     subtitle={permissionSubtitle}
                     detail={permissionDetail}
-                    icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                     loading={loading && permission == null}
@@ -200,7 +200,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                         ? t('settingsNotifications.pushTroubleshooting.token.subtitle', { fingerprint: tokenFingerprint })
                         : t('settingsNotifications.pushTroubleshooting.token.unavailableSubtitle')}
                     detail={currentTokenPresentOnServer ? t('settingsNotifications.pushTroubleshooting.token.registered') : undefined}
-                    icon={<Ionicons name="key-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="key-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -223,7 +223,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                     testID="settings-notifications-push-troubleshooting-reregister"
                     title={t('settingsNotifications.pushTroubleshooting.actions.reregisterTitle')}
                     subtitle={t('settingsNotifications.pushTroubleshooting.actions.reregisterSubtitle')}
-                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.warning} />}
+                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.state.neutral.foreground} />}
                     onPress={() => { void reregister(); }}
                     disabled={!auth.credentials}
                     showChevron={false}
@@ -232,7 +232,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                     testID="settings-notifications-push-troubleshooting-refresh"
                     title={t('settingsNotifications.pushTroubleshooting.actions.refreshTitle')}
                     subtitle={t('settingsNotifications.pushTroubleshooting.actions.refreshSubtitle')}
-                    icon={<Ionicons name="cloud-download-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="cloud-download-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => { void loadTroubleshootingState({ showErrors: true }); }}
                     loading={loading}
                     disabled={!auth.credentials}
@@ -248,7 +248,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                     <Item
                         title={t('settingsNotifications.pushTroubleshooting.devices.emptyTitle')}
                         subtitle={t('settingsNotifications.pushTroubleshooting.devices.emptySubtitle')}
-                        icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                         loading={loading}
@@ -291,7 +291,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                                 subtitle={subtitle}
                                 subtitleLines={0}
                                 detail={isCurrent ? t('settingsNotifications.pushTroubleshooting.devices.thisDevice') : undefined}
-                                icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.text.secondary} />}
                                 rightElement={removeAction}
                                 loading={deletingToken === row.token}
                                 disabled={deletingToken != null}

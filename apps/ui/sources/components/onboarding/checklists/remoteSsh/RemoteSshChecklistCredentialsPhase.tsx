@@ -102,10 +102,10 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
                                 variant="selectable"
                                 selected={props.hostPickerOpen}
                                 onPress={toggle}
-                                left={<Ionicons name="server-outline" size={18} color={theme.colors.textSecondary} />}
+                                left={<Ionicons name="server-outline" size={18} color={theme.colors.text.secondary} />}
                                 title={selectedItem?.title ?? t('setupOnboarding.remoteHosts.hostPickerTitle')}
                                 subtitle={selectedItem?.subtitle ?? t('setupOnboarding.remoteHosts.hostPickerSubtitle')}
-                                right={<Ionicons name="chevron-down" size={18} color={theme.colors.textSecondary} />}
+                                right={<Ionicons name="chevron-down" size={18} color={theme.colors.text.secondary} />}
                             />
                         )}
                     />

@@ -44,9 +44,9 @@ export const PrimaryCircleIconButton = React.memo(
     const computedDisabled = Boolean(props.disabled || props.loading || !props.onPress);
     const primary = theme.colors.button?.primary;
     const backgroundColor = props.active
-      ? (primary?.background ?? theme.colors.surfaceHigh ?? theme.colors.surface)
-      : (primary?.disabled ?? theme.colors.divider);
-    const tintColor = primary?.tint ?? theme.colors.text;
+      ? (primary?.background ?? theme.colors.surface.inset ?? theme.colors.surface.base)
+      : (primary?.disabled ?? theme.colors.border.default);
+    const tintColor = primary?.tint ?? theme.colors.text.primary;
 
     return (
       <View style={[styles.root, props.style]}>

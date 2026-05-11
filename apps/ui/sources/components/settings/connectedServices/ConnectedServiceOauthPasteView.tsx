@@ -178,7 +178,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
       <ItemList>
         <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
+            <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -189,7 +189,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
     <ItemList>
       <ItemGroup title={t('connectedServices.oauthPaste.connectWebGroupTitle')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ color: theme.colors.textSecondary }}>
+          <Text style={{ color: theme.colors.text.secondary }}>
             {copy?.connectWebDescription ?? t('connectedServices.oauthPaste.connectWebDescription')}
           </Text>
         </View>
@@ -197,8 +197,8 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
 
       <ItemGroup title={t('connectedServices.oauthPaste.openAuthorizationUrl')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{t('connectedServices.oauthPaste.openAuthorizationUrl')}</Text>
-          <Text selectable={true} style={{ color: theme.colors.textSecondary }}>
+          <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{t('connectedServices.oauthPaste.openAuthorizationUrl')}</Text>
+          <Text selectable={true} style={{ color: theme.colors.text.secondary }}>
             {authorizationUrl || t('connectedServices.oauthPaste.preparing')}
           </Text>
           <View style={{ marginTop: 12 }}>
@@ -211,7 +211,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
             />
           </View>
           <View style={{ marginTop: 8 }}>
-            <Text style={{ color: theme.colors.textSecondary }}>
+            <Text style={{ color: theme.colors.text.secondary }}>
               {authorizationUrl ? t('connectedServices.oauthPaste.opensInNewTab') : t('connectedServices.oauthPaste.preparing')}
             </Text>
           </View>
@@ -220,7 +220,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
 
       <ItemGroup title={t('connectedServices.oauthPaste.pasteRedirectUrl')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ color: theme.colors.textSecondary, marginBottom: 8 }}>
+          <Text style={{ color: theme.colors.text.secondary, marginBottom: 8 }}>
             {copy?.pasteRedirectUrlPromptBody ?? t('connectedServices.oauthPaste.pasteRedirectUrlPromptBody')}
           </Text>
           <TextInput
@@ -241,7 +241,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
             onPress={busy ? undefined : handlePaste}
           />
           <View style={{ marginTop: 8 }}>
-            <Text selectable={true} style={{ color: theme.colors.textSecondary }}>{redirectUri}</Text>
+            <Text selectable={true} style={{ color: theme.colors.text.secondary }}>{redirectUri}</Text>
           </View>
         </View>
       </ItemGroup>
@@ -265,7 +265,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 42,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: theme.colors.divider,
+    borderColor: theme.colors.border.default,
     backgroundColor: theme.colors.input.background,
     color: theme.colors.input.text,
     paddingHorizontal: 12,

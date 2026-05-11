@@ -25,7 +25,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     message: {
         fontSize: 13,
         textAlign: 'center',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         lineHeight: 18,
     },
     footer: {
@@ -38,18 +38,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
     },
     footerButtonPressed: {
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
     },
     footerSeparator: {
         height: 1,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
     },
     footerButtonText: {
         fontSize: 15,
-        color: theme.colors.textLink,
+        color: theme.colors.text.link,
     },
     footerButtonTextPrimary: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));
 

@@ -8,7 +8,7 @@ import { t } from '@/text';
 
 const styles = StyleSheet.create((theme) => ({
   fieldLabel: {
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     fontSize: 14,
     marginBottom: 8,
   },

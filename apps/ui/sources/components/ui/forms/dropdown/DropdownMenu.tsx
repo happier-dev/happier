@@ -228,15 +228,15 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 ? item.rightElement
                 : item.shortcut
                     ? (
-                        <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: theme.colors.surfacePressedOverlay, borderRadius: 6 }}>
-                            <Text style={{ fontSize: 12, color: theme.colors.textSecondary, fontWeight: '500' }}>
+                        <View style={{ paddingHorizontal: 10, paddingVertical: 5, backgroundColor: theme.colors.surface.pressedOverlay, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 12, color: theme.colors.text.secondary, fontWeight: '500' }}>
                                 {item.shortcut}
                             </Text>
                         </View>
                     )
                     : null,
         }));
-    }, [props.items, rowVariant, theme.colors.textSecondary]);
+    }, [props.items, rowVariant, theme.colors.text.secondary]);
 
     const closeOnSelect = props.closeOnSelect !== false;
     const onRequestClose = React.useCallback(() => props.onOpenChange(false), [props]);
@@ -302,8 +302,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     rightElement={renderDropdownItemTriggerRightElement({
                         detail,
                         open: props.open,
-                        detailColor: theme.colors.textSecondary,
-                        chevronColor: theme.colors.textSecondary,
+                        detailColor: theme.colors.text.secondary,
+                        chevronColor: theme.colors.text.secondary,
                         detailDensity: resolvedTriggerDensity,
                     })}
                     onPress={toggle}
@@ -325,7 +325,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
             });
         }
         return props.trigger;
-    }, [closeMenu, openMenu, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.textSecondary, toggle]);
+    }, [closeMenu, openMenu, props.itemTrigger, props.open, props.trigger, resolvedTriggerDensity, selectedItemForTrigger, theme.colors.text.secondary, toggle]);
 
     const {
         searchQuery,
@@ -469,11 +469,11 @@ export function DropdownMenu(props: DropdownMenuProps) {
                                         style={{
                                             borderRadius: rowVariant === 'slim' ? 8 : 10,
                                             borderWidth: 1,
-                                            borderColor: theme.colors.divider,
+                                            borderColor: theme.colors.border.default,
                                             paddingHorizontal: rowVariant === 'slim' ? 10 : 12,
                                             paddingVertical: rowVariant === 'slim' ? 8 : 10,
                                             fontSize: rowVariant === 'slim' ? 14 : 15,
-                                            color: theme.colors.text,
+                                            color: theme.colors.text.primary,
                                         }}
                                     />
                                 </View>

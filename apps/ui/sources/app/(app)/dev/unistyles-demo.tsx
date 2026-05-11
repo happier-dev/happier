@@ -8,7 +8,7 @@ const { width: screenWidth } = Dimensions.get('window');
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     scrollContent: {
         padding: 16,
@@ -16,7 +16,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     section: {
         marginBottom: 24,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: 12,
         padding: 16,
         shadowColor: '#000',
@@ -38,9 +38,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         padding: 16,
         borderRadius: 8,
         marginBottom: 12,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: 2,
-        borderColor: theme.colors.surface,
+        borderColor: theme.colors.surface.base,
     },
     themeText: {
         color: 'white',
@@ -82,7 +82,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     responsiveBox: {
         flex: 1,
-        backgroundColor: theme.colors.surface,  // TODO: change to primary
+        backgroundColor: theme.colors.surface.base,  // TODO: change to primary
         padding: 16,
         borderRadius: 8,
         minHeight: 80,
@@ -117,7 +117,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         fontFamily: 'monospace',
     },
     themeButton: {
-        backgroundColor: theme.colors.surface,  // TODO: change to primary
+        backgroundColor: theme.colors.surface.base,  // TODO: change to primary
         padding: 12,
         borderRadius: 8,
         marginHorizontal: 4,
@@ -135,7 +135,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         marginBottom: 12,
     },
     adaptiveBox: {
-        backgroundColor: theme.colors.surface,  // TODO: change to primary
+        backgroundColor: theme.colors.surface.base,  // TODO: change to primary
         padding: {
             xs: 8,
             sm: 12,
@@ -190,7 +190,7 @@ export default function UnistylesDemo() {
                             Current Theme: {rt.themeName}
                         </Text>
                         <Text style={[styles.themeText, { fontSize: 14, opacity: 0.8 }]}>
-                            Primary: {theme.colors.surface}  // TODO: change to primary
+                            Primary: {theme.colors.surface.base}  // TODO: change to primary
                         </Text>
                     </View>
 

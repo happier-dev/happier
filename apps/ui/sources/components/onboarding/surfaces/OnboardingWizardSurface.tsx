@@ -829,7 +829,7 @@ export function OnboardingWizardSurface(props: OnboardingWizardSurfaceProps) {
         relayLine: string;
     }>) => (
         <View testID={params.testID} style={styles.relayHintBlock}>
-            <Ionicons name="cloud-outline" size={12} style={styles.relayHintIcon} color={theme.colors.textSecondary} />
+            <Ionicons name="cloud-outline" size={12} style={styles.relayHintIcon} color={theme.colors.text.secondary} />
             <Text testID={`${params.testID}-line`} style={styles.relayHintLine}>{params.relayLine}</Text>
         </View>
     ), [styles]);

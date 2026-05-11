@@ -24,7 +24,7 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     loading: {
         flex: 1,
@@ -81,7 +81,7 @@ export function SessionAutomationsScreen(props: { sessionId: string }) {
     if (loading) {
         return (
             <View style={styles.loading}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }

@@ -103,7 +103,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 999,
         paddingHorizontal: 10,
         paddingVertical: 6,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     badgeRow: {
         flexDirection: 'row',

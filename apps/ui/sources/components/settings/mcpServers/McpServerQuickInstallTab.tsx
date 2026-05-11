@@ -67,13 +67,13 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
                             testID={`mcp.server.quickInstall.preset.${preset.id}`}
                             title={preset.title}
                             subtitle={preset.description}
-                            icon={<Ionicons name="flash-outline" size={29} color={theme.colors.success} />}
+                            icon={<Ionicons name="flash-outline" size={29} color={theme.colors.state.success.foreground} />}
                             selected={selected}
                             rightElement={(
                                 <Ionicons
                                     name="checkmark-circle"
                                     size={22}
-                                    color={theme.colors.text}
+                                    color={theme.colors.text.primary}
                                     style={{ opacity: selected ? 1 : 0 }}
                                 />
                             )}
@@ -89,7 +89,7 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
                         testID="mcp.server.quickInstall.empty"
                         title={t('settings.mcpServersQuickInstallEmptyTitle')}
                         subtitle={t('settings.mcpServersQuickInstallEmptySubtitle')}
-                        icon={<Ionicons name="flash-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="flash-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -112,7 +112,7 @@ export const McpServerQuickInstallTab = React.memo(function McpServerQuickInstal
                                             key={`${draft.preset.id}:${warning}`}
                                             title={draft.preset.title}
                                             subtitle={warning}
-                                            icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                                            icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.text.secondary} />}
                                             showChevron={false}
                                             mode="info"
                                         />

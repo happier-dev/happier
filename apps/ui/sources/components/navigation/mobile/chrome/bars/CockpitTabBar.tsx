@@ -10,9 +10,9 @@ import { Typography } from '@/constants/Typography';
 
 const styles = StyleSheet.create((theme) => ({
     outerContainer: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     innerContainer: {
         flexDirection: 'row',
@@ -35,11 +35,11 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
     labelActive: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     labelInactive: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));
 
@@ -72,7 +72,7 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
             <View style={styles.innerContainer}>
                 {props.tabs.map((tab) => {
                     const active = tab.id === props.activeSurface;
-                    const tintColor = active ? theme.colors.text : theme.colors.textSecondary;
+                    const tintColor = active ? theme.colors.text.primary : theme.colors.text.secondary;
                     return (
                         <Pressable
                             key={tab.id}

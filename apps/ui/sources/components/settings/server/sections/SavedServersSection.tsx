@@ -65,7 +65,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                           key={targetKey}
                           title={group.name}
                           subtitle={t('server.serverCount', { count: group.serverIds.length })}
-                          icon={<Ionicons name="albums-outline" size={18} color={theme.colors.textSecondary} />}
+                          icon={<Ionicons name="albums-outline" size={18} color={theme.colors.text.secondary} />}
                           selected={isSelected}
                           showChevron={false}
                           detail={isSelected ? t('server.active') : undefined}
@@ -156,7 +156,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                         title={profile.name}
                         subtitle={subtitle}
                         subtitleLines={0}
-                        icon={<Ionicons name="server-outline" size={18} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="server-outline" size={18} color={theme.colors.text.secondary} />}
                         selected={isActive}
                         showChevron={false}
                         detail={isActive ? t('server.active') : isDeviceDefault ? t('server.default') : undefined}

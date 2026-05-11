@@ -165,4 +165,15 @@ describe('useReleaseNotesLauncher', () => {
 
         await hook.unmount();
     });
+
+    it('does not open the release story without an explicit story allow', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = '';
+        const hook = await renderLauncherAndUnread();
+
+        expect(hook.getCurrent().unread.hasUnread).toBe(true);
+        expect(hook.getCurrent().launcher.open()).toBe(false);
+        expect(modalState.show).not.toHaveBeenCalled();
+
+        await hook.unmount();
+    });
 });

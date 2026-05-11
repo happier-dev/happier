@@ -65,7 +65,7 @@ export const PromptExternalLinksGroup = React.memo(function PromptExternalLinksG
                         testID={`${props.linkTestIDPrefix}.${index}`}
                         title={title}
                         subtitle={subtitle}
-                        icon={<Ionicons name="link-outline" size={22} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="link-outline" size={22} color={theme.colors.text.secondary} />}
                         onPress={() => openManageScreen(link)}
                         rightElement={(
                             <ItemRowActions

@@ -83,29 +83,29 @@ const styles = StyleSheet.create((theme) => ({
     title: {
         fontSize: 15,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     body: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         lineHeight: 18,
     },
     options: {
         gap: 6,
         padding: 10,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
     },
     optionLine: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     optionMore: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     hint: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));

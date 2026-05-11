@@ -48,7 +48,7 @@ export const AcpCatalogSettingsSections = React.memo(function AcpCatalogSettings
             testID="settings.acpCatalog.addBackend"
             title={t('settings.acpCatalogAddBackend')}
             subtitle={t('settings.acpCatalogAddBackendSubtitle')}
-            icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.success} />}
+            icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
             onPress={() => router.push('/(app)/settings/acp-backend')}
         />
     );

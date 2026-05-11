@@ -52,13 +52,21 @@ vi.mock('./SessionListStorageTabsBar', () => ({
     SessionListStorageTabsBar: (props: any) => React.createElement('SessionListStorageTabsBar', props, props.children),
 }));
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}
+
 describe('SessionsListStorageChrome', () => {
     beforeEach(() => {
         standardCleanup();
         routerPushSpy.mockReset();
     });
 
-    it('renders the direct browse action as an item row and routes it to the direct browse screen', async () => {
+    it('renders the direct browse action as a sidebar row and routes it to the direct browse screen', async () => {
         const { SessionsListStorageChrome } = await import('./SessionsListStorageChrome');
         const screen = await renderScreen(
             <SessionsListStorageChrome
@@ -68,8 +76,19 @@ describe('SessionsListStorageChrome', () => {
             />,
         );
 
-        expect(() => screen.findByType('ItemGroup' as never)).not.toThrow();
+        const itemGroups = screen.findAllByType('ItemGroup' as never);
+        expect(itemGroups).toHaveLength(1);
+        expect(itemGroups[0]?.props.constrainToContentWidth).toBe(false);
         expect(() => screen.findByProps({ testID: 'direct-sessions-browse-button' })).not.toThrow();
+        const browseContainerStyle = flattenStyle(itemGroups[0]?.props.style);
+        expect(browseContainerStyle.marginTop).toBe(-4);
+        expect(browseContainerStyle.maxWidth).toBeUndefined();
+        expect(browseContainerStyle.backgroundColor).toBeUndefined();
+        const browseSurfaceStyle = flattenStyle(itemGroups[0]?.props.containerStyle);
+        expect(browseSurfaceStyle.backgroundColor).toBe('transparent');
+        expect(browseSurfaceStyle.boxShadow).toBe('none');
+        expect(browseSurfaceStyle.shadowOpacity).toBe(0);
+        expect(browseSurfaceStyle.elevation).toBe(0);
 
         await screen.pressByTestIdAsync('direct-sessions-browse-button');
 

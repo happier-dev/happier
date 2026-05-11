@@ -68,7 +68,7 @@ const styles = StyleSheet.create((theme) => ({
         maxWidth: '100%',
         paddingTop: 0,
         // Keep the toggle row on the "white" surface. Detail fields get their own grouped surface.
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     fullWidth: {
         width: '100%',
@@ -80,17 +80,17 @@ const styles = StyleSheet.create((theme) => ({
         paddingBottom: 0,
     },
     headerSection: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     headerSectionWithBorder: {
         borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
+        borderBottomColor: theme.colors.border.default,
     },
     enableItem: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     bodySection: {
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         // Avoid double-padding: ItemGroup already carries its own insets; this is just a surface break.
         paddingVertical: 0,
     },

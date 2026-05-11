@@ -23,17 +23,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 14,
         paddingHorizontal: 16,
         paddingVertical: 16,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     title: {
         fontSize: 15,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     message: {
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     actions: {
         flexDirection: 'row',
@@ -44,10 +44,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     actionButton: {
         borderRadius: 999,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         paddingHorizontal: 12,
         paddingVertical: 8,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     primaryButton: {
         backgroundColor: theme.colors.button.primary.background,
@@ -56,7 +56,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     actionText: {
         fontSize: 12,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     primaryActionText: {
         color: theme.colors.button.primary.tint,

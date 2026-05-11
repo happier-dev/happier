@@ -182,7 +182,7 @@ export const SessionShareDialog = memo(function SessionShareDialog({
                     ) : (
                         <Item
                             title={t('session.sharing.noShares')}
-                            icon={<Ionicons name="people-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="people-outline" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                             showDivider={false}
                         />
@@ -214,6 +214,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     options: {
         paddingLeft: 24,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
 }));

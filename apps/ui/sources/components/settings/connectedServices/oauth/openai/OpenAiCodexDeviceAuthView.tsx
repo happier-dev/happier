@@ -213,7 +213,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
       <ItemList>
         <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.deviceAuth.invalidConfig')}</Text>
+            <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.deviceAuth.invalidConfig')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -227,7 +227,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
           <View
             style={[
               styles.codeRow,
-              { backgroundColor: theme.colors.surfaceHigh, borderColor: theme.colors.divider },
+              { backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default },
             ]}
           >
             <Text
@@ -236,7 +236,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
               style={[
                 styles.codeText,
                 Typography.mono('semiBold'),
-                { color: theme.colors.text },
+                { color: theme.colors.text.primary },
               ]}
             >
               {deviceAuth?.userCode || t('connectedServices.deviceAuth.preparing')}
@@ -248,25 +248,25 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
               onPress={!deviceAuth?.userCode ? undefined : () => void copyUserCode()}
               style={[
                 styles.copyButton,
-                { borderColor: theme.colors.divider, backgroundColor: theme.colors.surfaceHighest },
+                { borderColor: theme.colors.border.default, backgroundColor: theme.colors.surface.elevated },
               ]}
             >
               <Ionicons
                 name={copied ? 'checkmark-outline' : 'copy-outline'}
                 size={14}
-                color={copied ? (theme.colors.success ?? theme.colors.textSecondary) : theme.colors.textSecondary}
+                color={copied ? (theme.colors.state.success.foreground ?? theme.colors.text.secondary) : theme.colors.text.secondary}
               />
               <Text
                 style={[
                   styles.copyButtonText,
-                  { color: copied ? (theme.colors.success ?? theme.colors.textSecondary) : theme.colors.textSecondary },
+                  { color: copied ? (theme.colors.state.success.foreground ?? theme.colors.text.secondary) : theme.colors.text.secondary },
                 ]}
               >
                 {copied ? t('common.copied') : t('common.copy')}
               </Text>
             </Pressable>
           </View>
-          <Text style={{ color: theme.colors.textSecondary, marginTop: 10 }}>
+          <Text style={{ color: theme.colors.text.secondary, marginTop: 10 }}>
             {t('connectedServices.deviceAuth.securityHint')}
           </Text>
         </View>
@@ -274,7 +274,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
 
       <ItemGroup title={t('connectedServices.deviceAuth.openVerificationUrl')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text selectable={true} style={{ color: theme.colors.text }}>
+          <Text selectable={true} style={{ color: theme.colors.text.primary }}>
             {deviceAuth?.verificationUrl || t('connectedServices.deviceAuth.preparing')}
           </Text>
           <View style={{ marginTop: 12 }}>
@@ -289,7 +289,7 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
               }
             />
           </View>
-          <Text style={{ color: theme.colors.textSecondary, marginTop: 10 }}>
+          <Text style={{ color: theme.colors.text.secondary, marginTop: 10 }}>
             {t('connectedServices.deviceAuth.deviceAuthDisabledHint')}
           </Text>
         </View>
@@ -298,16 +298,16 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
       <ItemGroup title={t('connectedServices.deviceAuth.waiting')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
           {starting ? (
-            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.deviceAuth.preparing')}</Text>
+            <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.deviceAuth.preparing')}</Text>
           ) : (
             <>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                {polling ? <ActivityIndicator size="small" color={theme.colors.textSecondary} /> : null}
-                <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.deviceAuth.waiting')}</Text>
+                {polling ? <ActivityIndicator size="small" color={theme.colors.text.secondary} /> : null}
+                <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.deviceAuth.waiting')}</Text>
               </View>
               {error ? (
                 <View style={{ marginTop: 10 }}>
-                  <Text style={{ color: theme.colors.textDestructive }}>{error}</Text>
+                  <Text style={{ color: theme.colors.state.danger.foreground }}>{error}</Text>
                 </View>
               ) : null}
             </>

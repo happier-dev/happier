@@ -20,6 +20,18 @@ type AssetIndexBuilder = (params: {
                 posterKey?: string;
                 localPosterAssetKey?: string;
                 accessibilityLabelKey?: string;
+                mobile?: {
+                    key?: string;
+                    localAssetKey?: string;
+                    posterKey?: string;
+                    localPosterAssetKey?: string;
+                };
+                desktop?: {
+                    key?: string;
+                    localAssetKey?: string;
+                    posterKey?: string;
+                    localPosterAssetKey?: string;
+                };
             };
             titleKey: string;
             bodyKey: string;
@@ -159,5 +171,63 @@ describe('release notes bundled asset index generation', () => {
         } | undefined;
 
         expect(Object.keys(index?.assets ?? {})).toEqual(['v9.9.9/demo.mp4']);
+    });
+
+    it('includes remote media override keys in the generated asset index', () => {
+        const moduleExports = releaseNotesParser as typeof releaseNotesParser & {
+            buildReleaseNotesAssetIndexForTests?: AssetIndexBuilder;
+        };
+        expect(moduleExports.buildReleaseNotesAssetIndexForTests).toBeTypeOf('function');
+
+        const root = join(tmpdir(), `happier-release-notes-parser-overrides-${Date.now()}`);
+        const assetsDir = join(root, 'assets');
+        mkdirSync(join(assetsDir, 'v9.9.9'), { recursive: true });
+        writeFileSync(join(assetsDir, 'v9.9.9', 'hero-mobile.webp'), 'mobile-image');
+        writeFileSync(join(assetsDir, 'v9.9.9', 'demo-mobile.mp4'), 'mobile-video');
+        writeFileSync(join(assetsDir, 'v9.9.9', 'demo-desktop.mp4'), 'desktop-video');
+        writeFileSync(join(assetsDir, 'v9.9.9', 'demo-desktop-poster.webp'), 'desktop-poster');
+
+        const index = moduleExports.buildReleaseNotesAssetIndexForTests?.({
+            releases: [{
+                releaseId: 'v9.9.9',
+                cards: [{
+                    kind: 'image',
+                    titleKey: 'releaseNotes.v9_9_9.cards.hero.title',
+                    bodyKey: 'releaseNotes.v9_9_9.cards.hero.body',
+                    media: {
+                        localAssetKey: 'release-v9-hero',
+                        altKey: 'releaseNotes.v9_9_9.cards.hero.alt',
+                        mobile: {
+                            key: 'hero-mobile.webp',
+                        },
+                    },
+                }, {
+                    kind: 'video',
+                    titleKey: 'releaseNotes.v9_9_9.cards.video.title',
+                    bodyKey: 'releaseNotes.v9_9_9.cards.video.body',
+                    media: {
+                        key: 'demo-mobile.mp4',
+                        localPosterAssetKey: 'release-v9-video-poster',
+                        accessibilityLabelKey: 'releaseNotes.v9_9_9.cards.video.label',
+                        desktop: {
+                            key: 'demo-desktop.mp4',
+                            posterKey: 'demo-desktop-poster.webp',
+                        },
+                    },
+                }],
+            }],
+            assetsDir,
+            assetBaseUrl: 'https://cdn.example.test/release-notes/',
+            generatedAt: '2026-05-09T00:00:00.000Z',
+        }) as {
+            assets?: Record<string, unknown>;
+        } | undefined;
+
+        expect(Object.keys(index?.assets ?? {}).sort()).toEqual([
+            'v9.9.9/demo-desktop-poster.webp',
+            'v9.9.9/demo-desktop.mp4',
+            'v9.9.9/demo-mobile.mp4',
+            'v9.9.9/hero-mobile.webp',
+        ]);
     });
 });

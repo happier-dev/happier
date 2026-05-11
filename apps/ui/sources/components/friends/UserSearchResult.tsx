@@ -81,7 +81,7 @@ export function UserSearchResult({
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: 12,
         marginHorizontal: 16,
         marginVertical: 4,
@@ -99,12 +99,12 @@ const styles = StyleSheet.create((theme) => ({
     name: {
         fontSize: 16,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 2,
     },
     username: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     button: {
         backgroundColor: theme.colors.button.primary.background,
@@ -115,7 +115,7 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
     },
     buttonDisabled: {
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
     },
     buttonText: {
         color: theme.colors.button.primary.tint,
@@ -123,7 +123,7 @@ const styles = StyleSheet.create((theme) => ({
         fontWeight: '600',
     },
     buttonTextDisabled: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 14,
         fontWeight: '500',
     },

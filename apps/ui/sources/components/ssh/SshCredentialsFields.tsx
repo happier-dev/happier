@@ -299,7 +299,7 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
 
             {isWizardLayout ? (
                 <View style={{ gap: margins.sm }}>
-                    <Text style={{ color: theme.colors.textSecondary }}>
+                    <Text style={{ color: theme.colors.text.secondary }}>
                         {t('settings.machineSetupRemoteSshAuthMethodLabel')}
                     </Text>
                     <SegmentedTabBar

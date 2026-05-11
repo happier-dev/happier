@@ -378,7 +378,7 @@ export default React.memo(function SessionSettingsScreen() {
                     itemTrigger={{
                         title: t('settingsFeatures.sessionListInactiveGrouping'),
                         subtitle: t('settingsFeatures.sessionListInactiveGroupingSubtitle'),
-                        icon: <Ionicons name="calendar-outline" size={29} color={theme.colors.success} />,
+                        icon: <Ionicons name="calendar-outline" size={29} color={theme.colors.state.success.foreground} />,
                         showSelectedSubtitle: false,
                     }}
                     items={groupingMenuItems}
@@ -537,7 +537,7 @@ export default React.memo(function SessionSettingsScreen() {
                             subtitle: opt.subtitle,
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name={opt.iconName as any} size={22} color={theme.colors.textSecondary} />
+                                    <Ionicons name={opt.iconName as any} size={22} color={theme.colors.text.secondary} />
                                 </View>
                             ),
                         }))}
@@ -616,7 +616,7 @@ export default React.memo(function SessionSettingsScreen() {
                     testID="settings-session-replay-enabled-item"
                     title={t('settingsSession.replayResume.enabledTitle')}
                     subtitle={sessionReplayEnabled ? t('settingsSession.replayResume.enabledSubtitleOn') : t('settingsSession.replayResume.enabledSubtitleOff')}
-                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.success} />}
+                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.state.success.foreground} />}
                     rightElement={<Switch value={sessionReplayEnabled} onValueChange={setSessionReplayEnabled} />}
                     showChevron={false}
                     onPress={() => setSessionReplayEnabled(!sessionReplayEnabled)}
@@ -637,7 +637,7 @@ export default React.memo(function SessionSettingsScreen() {
                             popoverBoundaryRef={popoverBoundaryRef}
                             itemTrigger={{
                                 title: t('settingsSession.replayResume.strategyTitle'),
-                                icon: <Ionicons name="list-outline" size={29} color={theme.colors.success} />,
+                                icon: <Ionicons name="list-outline" size={29} color={theme.colors.state.success.foreground} />,
                             }}
                             items={replayStrategyOptions.map((opt) => ({
                                 id: opt.key,
@@ -645,7 +645,7 @@ export default React.memo(function SessionSettingsScreen() {
                                 subtitle: opt.subtitle,
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name="chatbox-ellipses-outline" size={22} color={theme.colors.textSecondary} />
+                                        <Ionicons name="chatbox-ellipses-outline" size={22} color={theme.colors.text.secondary} />
                                     </View>
                                 ),
                             }))}
@@ -861,13 +861,13 @@ const styles = StyleSheet.create((theme) => ({
     fieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         marginBottom: 4,
     },
     fieldLabelMuted: {
         ...Typography.default('regular'),
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 4,
     },
     textInput: {

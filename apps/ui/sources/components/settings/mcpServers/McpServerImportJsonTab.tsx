@@ -73,7 +73,7 @@ export const McpServerImportJsonTab = React.memo(function McpServerImportJsonTab
                             key={`error:${index}`}
                             title={t('settings.mcpServersImportJsonErrorTitle')}
                             subtitle={error}
-                            icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.textDestructive} />}
+                            icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
                             showChevron={false}
                             mode="info"
                         />
@@ -88,7 +88,7 @@ export const McpServerImportJsonTab = React.memo(function McpServerImportJsonTab
                             key={`warning:${index}`}
                             title={t('settings.mcpServersImportJsonWarningsTitle')}
                             subtitle={warning}
-                            icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                             mode="info"
                         />
@@ -132,7 +132,7 @@ export const McpServerImportJsonTab = React.memo(function McpServerImportJsonTab
                         testID="mcp.server.importJson.empty"
                         title={t('settings.mcpServersImportJsonEmptyTitle')}
                         subtitle={t('settings.mcpServersImportJsonEmptySubtitle')}
-                        icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -165,7 +165,7 @@ const styles = StyleSheet.create((theme) => ({
         marginVertical: 16,
         borderRadius: 14,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.input.background,
         color: theme.colors.input.text,
         paddingHorizontal: 14,

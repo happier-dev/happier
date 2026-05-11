@@ -21,7 +21,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     label: {
         fontSize: 12,
         fontWeight: '700',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         letterSpacing: 0.6,
         marginBottom: Platform.select({ ios: 4, default: 5 }),
     },
@@ -30,7 +30,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     supportingText: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: Platform.select({ ios: 4, default: 5 }),
     },
 }));

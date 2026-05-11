@@ -176,17 +176,17 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 10,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 6,
     },
     title: {
         fontSize: 12,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     line: {
         fontSize: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontFamily: 'Menlo',
     },
 }));

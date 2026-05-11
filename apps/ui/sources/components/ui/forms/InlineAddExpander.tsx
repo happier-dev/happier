@@ -104,7 +104,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingBottom: 16,
     },
     helpText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 14,
         lineHeight: 20,
         marginBottom: 12,

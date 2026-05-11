@@ -57,7 +57,7 @@ export const OtaUpdateStatusSection = React.memo(function OtaUpdateStatusSection
 
     const errorMessage = toErrorMessage(downloadError) ?? toErrorMessage(checkError);
     const actionSubtitle = errorMessage
-        ? <Text style={{ color: theme.colors.textSecondary }}>{errorMessage}</Text>
+        ? <Text style={{ color: theme.colors.text.secondary }}>{errorMessage}</Text>
         : isUpdatePending
             ? t('updateBanner.pressToApply')
             : t('updateBanner.checkNowSubtitle');
@@ -91,7 +91,7 @@ export const OtaUpdateStatusSection = React.memo(function OtaUpdateStatusSection
                     title={t('updateBanner.nativeUpdateAvailable')}
                     subtitle={Platform.OS === 'ios' ? t('updateBanner.tapToUpdateAppStore') : t('updateBanner.tapToUpdatePlayStore')}
                     onPress={openStoreUpdate}
-                    icon={<Ionicons name="download-outline" size={24} color={theme.colors.success} />}
+                    icon={<Ionicons name="download-outline" size={24} color={theme.colors.state.success.foreground} />}
                 />
             ) : null}
             {otaRuntimeSupported ? (

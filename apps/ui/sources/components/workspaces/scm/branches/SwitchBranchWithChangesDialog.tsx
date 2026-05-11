@@ -30,20 +30,20 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 12,
         paddingHorizontal: 14,
         borderRadius: 12,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     buttonTitle: {
         ...Typography.default('semiBold'),
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     buttonSubtitle: {
         marginTop: 4,
         ...Typography.default(),
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     cancelButton: {
         paddingVertical: 10,
@@ -53,7 +53,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     cancelText: {
         ...Typography.default('semiBold'),
         fontSize: 14,
-        color: theme.colors.textLink,
+        color: theme.colors.text.link,
     },
 }));
 

@@ -45,7 +45,7 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
     <ItemGroup title={props.title}>
       {props.profiles.length === 0 ? (
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.detail.profiles.empty')}</Text>
+          <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.detail.profiles.empty')}</Text>
         </View>
       ) : null}
 
@@ -82,7 +82,7 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
         const subtitle = status === 'connected' ? subtitleParts.join(' • ') : t('connectedServices.detail.profiles.needsReauth');
 
         const iconName = status === 'connected' ? 'checkmark-circle-outline' : 'warning-outline';
-        const iconColor = status === 'connected' ? theme.colors.success : theme.colors.accent.orange;
+        const iconColor = status === 'connected' ? theme.colors.state.success.foreground : theme.colors.accent.orange;
         const isDefault = profileId === props.defaultProfileId;
 
         const actions: ItemAction[] = [
@@ -90,7 +90,7 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
             id: 'default',
             title: isDefault ? t('connectedServices.detail.actions.unsetDefault') : t('connectedServices.detail.actions.setDefault'),
             icon: isDefault ? 'star' : 'star-outline',
-            color: isDefault ? theme.colors.button.primary.background : theme.colors.textSecondary,
+            color: isDefault ? theme.colors.button.primary.background : theme.colors.text.secondary,
             onPress: () => props.onSetDefaultProfile(isDefault ? '' : profileId),
           },
           {

@@ -25,10 +25,10 @@ export const SessionNoticeBanner = React.memo((props: SessionNoticeBannerProps) 
                 props.style,
             ]}
         >
-            <Text style={{ color: theme.colors.text, fontSize: 14, fontWeight: '700', marginBottom: 4 }}>
+            <Text style={{ color: theme.colors.text.primary, fontSize: 14, fontWeight: '700', marginBottom: 4 }}>
                 {props.title}
             </Text>
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 13, lineHeight: 18 }}>
+            <Text style={{ color: theme.colors.text.secondary, fontSize: 13, lineHeight: 18 }}>
                 {props.body}
             </Text>
         </View>

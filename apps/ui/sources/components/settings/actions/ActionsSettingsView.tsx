@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
-import { View, Platform, Pressable } from 'react-native';
+import { View, Platform } from 'react-native';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { getActionSpec, type ActionId } from '@happier-dev/protocol';
+import { type ActionId, type ActionsSettingsV1 } from '@happier-dev/protocol';
 
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
-import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -19,74 +19,95 @@ import { t } from '@/text';
 import {
     buildActionSettingsEntries,
     type ActionSettingsEntry,
-    type ActionSettingsTargetEntry,
 } from './buildActionSettingsEntries';
-import { buildActionSettingsDisplayModel } from './buildActionSettingsDisplayModel';
 import {
-    getActionTargetApprovalRequired,
-    resolveActionSettingsApprovalSurface,
     setActionEnabled,
-    setActionTargetApprovalRequired,
-    setActionTargetSelected,
 } from './actionSettingsTargets';
 import { normalizeActionsSettings } from './normalizeActionsSettings';
+import {
+    listActionSettingsEntryStatusParts,
+    resolveActionSettingsEntryStatusSummary,
+} from './resolveActionSettingsEntryStatusSummary';
 
 const stylesheet = StyleSheet.create((theme) => ({
-    targetsContainer: {
-        paddingHorizontal: Platform.select({ ios: 16, default: 14 }),
-        paddingVertical: Platform.select({ ios: 14, default: 16 }),
-        gap: 16,
+    actionRightAccessory: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Platform.select({ ios: 8, default: 10 }),
     },
-    section: {
-        gap: 10,
+    actionStatus: {
+        maxWidth: Platform.select({ ios: 128, default: 260 }),
     },
-    sectionTitle: {
-        color: theme.colors.textSecondary,
-        fontSize: Platform.select({ ios: 13, default: 13 }),
-        lineHeight: 18,
-        textTransform: 'uppercase',
-        fontWeight: Platform.select({ ios: '500', default: '600' }),
-        letterSpacing: Platform.select({ ios: -0.08, default: 0.2 }),
+    actionStatusText: {
+        color: theme.colors.text.secondary,
+        fontSize: Platform.select({ ios: 12, default: 12 }),
+        lineHeight: 16,
+    },
+    actionConfigureIcon: {
+        width: Platform.select({ ios: 24, default: 24 }),
+        height: Platform.select({ ios: 24, default: 24 }),
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     emptyState: {
         paddingHorizontal: Platform.select({ ios: 16, default: 14 }),
         paddingVertical: Platform.select({ ios: 16, default: 18 }),
     },
     emptyText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 15, default: 14 }),
         lineHeight: 20,
     },
-    unavailableSummary: {
-        paddingHorizontal: Platform.select({ ios: 16, default: 14 }),
-        paddingVertical: Platform.select({ ios: 14, default: 16 }),
-        gap: 14,
-    },
-    approvalToggleRow: {
-        paddingTop: 10,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 10,
-    },
-    approvalToggleLabel: {
-        color: theme.colors.textSecondary,
-        fontSize: Platform.select({ ios: 13, default: 13 }),
-        lineHeight: 18,
-    },
 }));
 
-function buildTileSubtitle(target: ActionSettingsTargetEntry): string {
-    if (target.reasonKey) {
-        return t(target.reasonKey);
-    }
-    return t(target.subtitleKey);
+function ActionSettingsRowAccessory(props: Readonly<{
+    entry: ActionSettingsEntry;
+    settings: ActionsSettingsV1;
+    testIDPrefix: string;
+    onEnabledChange: (enabled: boolean) => void;
+}>) {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const statusSummary = React.useMemo(() => resolveActionSettingsEntryStatusSummary({
+        settings: props.settings,
+        actionId: props.entry.actionId,
+        targets: props.entry.targets,
+    }), [props.entry.actionId, props.entry.targets, props.settings]);
+    const statusText = React.useMemo(() => (
+        listActionSettingsEntryStatusParts(statusSummary)
+            .map((part) => t(part.labelKey, { count: part.count }))
+            .join(' · ')
+    ), [statusSummary]);
+
+    return (
+        <View style={styles.actionRightAccessory}>
+            {statusText ? (
+                <View testID={`${props.testIDPrefix}:status`} style={styles.actionStatus}>
+                    <Text style={styles.actionStatusText} numberOfLines={1}>
+                        {statusText}
+                    </Text>
+                </View>
+            ) : null}
+            <Switch
+                testID={`${props.testIDPrefix}:enabled`}
+                value={props.entry.enabled}
+                onValueChange={props.onEnabledChange}
+            />
+            <View
+                testID={`${props.testIDPrefix}:configure`}
+                style={styles.actionConfigureIcon}
+                accessibilityRole="image"
+                accessibilityLabel={t('settingsActions.configureActionAccessibilityLabel')}
+            >
+                <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
+            </View>
+        </View>
+    );
 }
 
 export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const styles = stylesheet;
     const [searchQuery, setSearchQuery] = React.useState('');
     const [rawSettings, setRawSettings] = useSettingMutable('actionsSettingsV1');
@@ -113,7 +134,6 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         availability,
         translate: t,
     }), [availability, searchQuery, settings]);
-    const displayModel = React.useMemo(() => buildActionSettingsDisplayModel(entries), [entries]);
 
     const commitSettings = React.useCallback((next: unknown) => {
         setRawSettings(normalizeActionsSettings(next));
@@ -123,50 +143,9 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         commitSettings(setActionEnabled({ settings, actionId, enabled }));
     }, [commitSettings, settings]);
 
-    const handleSectionSelectionChange = React.useCallback((entry: ActionSettingsEntry, targets: readonly ActionSettingsTargetEntry[], nextSelectedIds: string[]) => {
-        let nextSettings = settings;
-        const selectedSet = new Set(nextSelectedIds);
-
-        for (const target of targets) {
-            const nextSelected = selectedSet.has(target.id);
-            if (nextSelected === target.selected) {
-                continue;
-            }
-            nextSettings = setActionTargetSelected({
-                settings: nextSettings,
-                actionId: entry.actionId,
-                targetId: target.id,
-                selected: nextSelected,
-            });
-        }
-
-        commitSettings(nextSettings);
-    }, [commitSettings, settings]);
-
-    const handleApprovalRequiredChange = React.useCallback((actionId: ActionId, targetId: ActionSettingsTargetEntry['id'], approvalRequired: boolean) => {
-        commitSettings(setActionTargetApprovalRequired({
-            settings,
-            actionId,
-            targetId,
-            approvalRequired,
-        }));
-    }, [commitSettings, settings]);
-
-    const buildUnavailableTargetsSubtitle = React.useCallback((targets: readonly ActionSettingsTargetEntry[]) => {
-        const targetTitles = targets.map((target) => t(target.titleKey)).join(', ');
-        const reasons = Array.from(new Set(
-            targets
-                .map((target) => target.reasonKey)
-                .filter((reasonKey): reasonKey is NonNullable<typeof reasonKey> => Boolean(reasonKey))
-                .map((reasonKey) => t(reasonKey)),
-        ));
-
-        if (reasons.length === 0) {
-            return targetTitles;
-        }
-
-        return `${targetTitles}. ${reasons.join(' ')}`;
-    }, []);
+    const openActionDetails = React.useCallback((actionId: ActionId) => {
+        router.push(`/settings/actions/${encodeURIComponent(actionId)}`);
+    }, [router]);
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -176,17 +155,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                 placeholder={t('settingsActions.searchPlaceholder')}
             />
 
-            <ItemGroup title={t('common.actions')} footer={t('settingsActions.aboutFooter')}>
-                <Item
-                    title={t('settings.about')}
-                    subtitle={t('settingsActions.aboutSubtitle')}
-                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
-                    mode="info"
-                    showChevron={false}
-                />
-            </ItemGroup>
-
-            {displayModel.entries.length === 0 ? (
+            {entries.length === 0 ? (
                 <ItemGroup>
                     <View style={styles.emptyState}>
                         <Text style={styles.emptyText}>{t('settingsActions.noResults')}</Text>
@@ -194,111 +163,38 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                 </ItemGroup>
             ) : null}
 
-            {displayModel.entries.map((entry) => {
-                const actionEnabled = entry.enabled;
-                const actionTestIdPrefix = `settings-actions:action:${entry.actionId}`;
+            {entries.length > 0 ? (
+                <ItemGroup title={t('common.actions')} footer={t('settingsActions.aboutFooter')}>
+                    {entries.map((entry) => {
+                        const actionEnabled = entry.enabled;
+                        const actionTestIdPrefix = `settings-actions:action:${entry.actionId}`;
 
-                return (
-                    <ItemGroup key={entry.actionId} footer={entry.actionId}>
+                        return (
                         <Item
+                            key={entry.actionId}
                             testID={actionTestIdPrefix}
                             title={entry.title}
                             subtitle={entry.description ?? t('settingsActions.noDescription')}
-                            detail={actionEnabled ? t('common.enabled') : t('common.disabled')}
                             icon={(
                                 <Ionicons
                                     name={actionEnabled ? 'flash-outline' : 'flash-off-outline'}
                                     size={29}
-                                    color={actionEnabled ? theme.colors.success : theme.colors.warningCritical}
+                                    color={actionEnabled ? theme.colors.state.success.foreground : theme.colors.state.danger.foreground}
                                 />
                             )}
                             rightElement={(
-                                <Switch
-                                    testID={`${actionTestIdPrefix}:enabled`}
-                                    value={actionEnabled}
-                                    onValueChange={(nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
+                                <ActionSettingsRowAccessory
+                                    entry={entry}
+                                    settings={settings}
+                                    testIDPrefix={actionTestIdPrefix}
+                                    onEnabledChange={(nextValue) => handleActionEnabledChange(entry.actionId, nextValue)}
                                 />
                             )}
                             showChevron={false}
-                            onPress={() => handleActionEnabledChange(entry.actionId, !actionEnabled)}
+                            onPress={() => openActionDetails(entry.actionId)}
                         />
-
-                        {entry.sections.length > 0 ? (
-                            <View style={styles.targetsContainer}>
-                                {entry.sections.map((section) => (
-                                    <View key={section.id} style={styles.section}>
-                                        <Text style={styles.sectionTitle}>{t(section.titleKey)}</Text>
-                                        <SelectionTiles
-                                            selectionMode="multiple"
-                                            testIdPrefix={`${actionTestIdPrefix}:target`}
-                                            options={section.targets.map((target) => ({
-                                                id: target.id,
-                                                title: t(target.titleKey),
-                                                subtitle: buildTileSubtitle(target),
-                                                icon: target.icon as React.ComponentProps<typeof Ionicons>['name'],
-                                            }))}
-                                            value={section.selectedIds}
-                                            onChange={(nextValue) => handleSectionSelectionChange(entry, section.targets, nextValue)}
-                                            renderOptionFooter={({ option, selected }) => {
-                                                if (!selected) {
-                                                    return null;
-                                                }
-
-                                                if (!resolveActionSettingsApprovalSurface(entry.actionId, option.id)) {
-                                                    return null;
-                                                }
-
-                                                const approvalRequired = getActionTargetApprovalRequired({
-                                                    settings,
-                                                    actionId: entry.actionId,
-                                                    targetId: option.id,
-                                                });
-
-                                                return (
-                                                    <Pressable
-                                                        onPress={(event) => {
-                                                            if (typeof (event as any)?.stopPropagation === 'function') {
-                                                                (event as any).stopPropagation();
-                                                            }
-                                                        }}
-                                                    >
-                                                        <View style={styles.approvalToggleRow}>
-                                                            <Text style={styles.approvalToggleLabel}>
-                                                                {t('settingsActions.requireApproval')}
-                                                            </Text>
-                                                            <Switch
-                                                                compact
-                                                                testID={`${actionTestIdPrefix}:target:${option.id}:require-approval`}
-                                                                value={approvalRequired}
-                                                                onValueChange={(nextValue) => handleApprovalRequiredChange(entry.actionId, option.id, nextValue)}
-                                                            />
-                                                        </View>
-                                                    </Pressable>
-                                                );
-                                            }}
-                                        />
-                                    </View>
-                                ))}
-                            </View>
-                        ) : null}
-                    </ItemGroup>
-                );
-            })}
-
-            {displayModel.unavailableEntries.length > 0 ? (
-                <ItemGroup title={t('settingsActions.badges.unavailable')}>
-                    <View style={styles.unavailableSummary}>
-                        {displayModel.unavailableEntries.map((entry) => (
-                            <Item
-                                key={`unavailable-${entry.actionId}`}
-                                title={entry.title}
-                                subtitle={buildUnavailableTargetsSubtitle(entry.targets)}
-                                icon={<Ionicons name="eye-off-outline" size={29} color={theme.colors.textSecondary} />}
-                                mode="info"
-                                showChevron={false}
-                            />
-                        ))}
-                    </View>
+                        );
+                    })}
                 </ItemGroup>
             ) : null}
         </ItemList>

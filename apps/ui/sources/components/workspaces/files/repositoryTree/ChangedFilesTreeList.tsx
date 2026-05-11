@@ -115,11 +115,11 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                     const badge = badgeIndex?.getDirectoryBadge(node.fullPath) ?? null;
                     const rightElement = badge ? (
                         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                            <Text style={{ fontSize: 12, color: props.theme.colors.warning, ...Typography.mono('semiBold') }}>
+                            <Text style={{ fontSize: 12, color: props.theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
                                 {`${badge.kindLetter}${badge.changedCount}`}
                             </Text>
                             {badge.added > 0 ? (
-                                <Text style={{ fontSize: 12, color: props.theme.colors.success, ...Typography.mono('semiBold') }}>
+                                <Text style={{ fontSize: 12, color: props.theme.colors.state.success.foreground, ...Typography.mono('semiBold') }}>
                                     {`+${badge.added}`}
                                 </Text>
                             ) : null}
@@ -127,7 +127,7 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                                 <Text
                                     style={{
                                         fontSize: 12,
-                                        color: props.theme.colors.danger ?? props.theme.colors.textDestructive ?? props.theme.colors.warning,
+                                        color: props.theme.colors.state.danger.foreground ?? props.theme.colors.state.danger.foreground ?? props.theme.colors.state.neutral.foreground,
                                         ...Typography.mono('semiBold'),
                                     }}
                                 >
@@ -141,7 +141,7 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                     return (
                         <Item
                             title={`${node.name}/`}
-                            icon={<Ionicons name={isExpanded ? 'folder-open-outline' : 'folder-outline'} size={16} color={props.theme.colors.textLink} />}
+                            icon={<Ionicons name={isExpanded ? 'folder-open-outline' : 'folder-outline'} size={16} color={props.theme.colors.text.link} />}
                             density="tight"
                             rightElement={rightElement}
                             showChevron={false}
@@ -158,11 +158,11 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                 const resolved = badgeIndex?.getFileBadge(node.fullPath) ?? null;
                 const rightElement = resolved ? (
                     <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                        <Text style={{ fontSize: 12, color: props.theme.colors.warning, ...Typography.mono('semiBold') }}>
+                        <Text style={{ fontSize: 12, color: props.theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
                             {resolved.kindLetter}
                         </Text>
                         {resolved.added > 0 ? (
-                            <Text style={{ fontSize: 12, color: props.theme.colors.success, ...Typography.mono('semiBold') }}>
+                            <Text style={{ fontSize: 12, color: props.theme.colors.state.success.foreground, ...Typography.mono('semiBold') }}>
                                 {`+${resolved.added}`}
                             </Text>
                         ) : null}
@@ -170,7 +170,7 @@ export const ChangedFilesTreeList = React.memo((props: ChangedFilesTreeListProps
                             <Text
                                 style={{
                                     fontSize: 12,
-                                    color: props.theme.colors.danger ?? props.theme.colors.textDestructive ?? props.theme.colors.warning,
+                                    color: props.theme.colors.state.danger.foreground ?? props.theme.colors.state.danger.foreground ?? props.theme.colors.state.neutral.foreground,
                                     ...Typography.mono('semiBold'),
                                 }}
                             >

@@ -18,7 +18,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 24,
     },
     emptyText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         textAlign: 'center',
     },

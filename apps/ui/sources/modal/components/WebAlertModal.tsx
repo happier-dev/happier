@@ -27,19 +27,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         fontSize: 17,
         textAlign: 'center',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 4,
     },
     message: {
         fontSize: 13,
         textAlign: 'center',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginTop: 4,
         lineHeight: 18,
     },
     buttonContainer: {
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     buttonRow: {
         flexDirection: 'row',
@@ -55,32 +55,32 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
     },
     buttonPressed: {
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
     },
     separatorVertical: {
         width: 1,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
     },
     separatorHorizontal: {
         height: 1,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
     },
     buttonText: {
         fontSize: 17,
-        color: theme.colors.textLink,
+        color: theme.colors.text.link,
         textAlign: 'center',
         lineHeight: 20,
         flexShrink: 1,
         paddingHorizontal: 2,
     },
     primaryText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     cancelText: {
         fontWeight: '400',
     },
     destructiveText: {
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
     },
 }));
 

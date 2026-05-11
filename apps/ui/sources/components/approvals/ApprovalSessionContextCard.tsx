@@ -54,7 +54,7 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
                         onPress={() => router.push(`/session/${props.session!.id}`)}
                         style={({ pressed }) => [styles.openButton, pressed && styles.openButtonPressed]}
                     >
-                        <Ionicons name="open-outline" size={16} color={theme.colors.text} />
+                        <Ionicons name="open-outline" size={16} color={theme.colors.text.primary} />
                     </Pressable>
                 ) : null}
             </View>
@@ -62,12 +62,12 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
             <View style={styles.requesterRow}>
                 {props.requesterAgentId ? (
                     <View style={styles.requesterChip}>
-                        <Ionicons name="sparkles-outline" size={12} color={theme.colors.textSecondary} />
+                        <Ionicons name="sparkles-outline" size={12} color={theme.colors.text.secondary} />
                         <Text style={styles.metaText}>{props.requesterAgentId}</Text>
                     </View>
                 ) : null}
                 <View style={styles.requesterChip}>
-                    <Ionicons name="git-branch-outline" size={12} color={theme.colors.textSecondary} />
+                    <Ionicons name="git-branch-outline" size={12} color={theme.colors.text.secondary} />
                     <Text style={styles.metaText}>{props.requesterSurface}</Text>
                 </View>
             </View>
@@ -79,8 +79,8 @@ const styles = StyleSheet.create((theme) => ({
     card: {
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated,
         padding: 16,
         gap: 12,
     },
@@ -96,14 +96,14 @@ const styles = StyleSheet.create((theme) => ({
     title: {
         fontSize: 16,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     contextChips: {
         marginTop: 8,
     },
     metaText: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 18,
     },
     openButton: {
@@ -113,11 +113,11 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     openButtonPressed: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
     requesterRow: {
         flexDirection: 'row',
@@ -132,7 +132,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: 6,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
 }));

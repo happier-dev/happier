@@ -42,7 +42,7 @@ export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props
                 <View style={styles.labelContainer}>
                     <View style={styles.labelRow}>
                         <View style={styles.labelGutter}>
-                            <Ionicons name="sparkles-outline" size={16} color={theme.colors.textSecondary} />
+                            <Ionicons name="sparkles-outline" size={16} color={theme.colors.text.secondary} />
                         </View>
                         <ThinkingPulseLabel
                             label={props.label}
@@ -64,7 +64,7 @@ export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props
                     <Ionicons
                         name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
                         size={16}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                     />
                 </View>
             </Pressable>
@@ -121,7 +121,7 @@ const styles = StyleSheet.create((theme) => ({
     labelText: {
         fontSize: 13,
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     headerRight: {
         width: 18,
@@ -132,7 +132,7 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         minWidth: 0,
         marginLeft: 8,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         fontStyle: 'italic',
         opacity: 0.95,

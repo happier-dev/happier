@@ -26,13 +26,13 @@ describe('control gradient theme tokens', () => {
     });
 
     it('defines segmented control gradients without replacing solid color fallbacks', () => {
-        expect(lightTheme.colors.segmentedControl.trackBackground).toBe(lightTheme.colors.surfaceHighest);
-        expect(lightTheme.colors.segmentedControl.activeBackground).toBe(lightTheme.colors.surface);
+        expect(lightTheme.colors.segmentedControl.trackBackground).toBe(lightTheme.colors.surface.elevated);
+        expect(lightTheme.colors.segmentedControl.activeBackground).toBe(lightTheme.colors.surface.base);
         expect(lightTheme.colors.segmentedControl.trackGradient).toBeUndefined();
         expect(lightTheme.colors.segmentedControl.activeGradient?.colors).toEqual(['#FDFDFD', '#FFFFFF']);
 
-        expect(darkTheme.colors.segmentedControl.trackBackground).toBe(darkTheme.colors.surfaceHighest);
-        expect(darkTheme.colors.segmentedControl.activeBackground).toBe(darkTheme.colors.surface);
+        expect(darkTheme.colors.segmentedControl.trackBackground).toBe(darkTheme.colors.surface.elevated);
+        expect(darkTheme.colors.segmentedControl.activeBackground).toBe(darkTheme.colors.surface.base);
         expect(darkTheme.colors.segmentedControl.trackGradient).toBeUndefined();
         expect(darkTheme.colors.segmentedControl.activeGradient?.colors).toEqual(['#202020', '#232323']);
     });

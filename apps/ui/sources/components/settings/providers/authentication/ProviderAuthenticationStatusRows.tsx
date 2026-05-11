@@ -62,7 +62,7 @@ export const ProviderAuthenticationStatusRows = React.memo(function ProviderAuth
                 testID="settings-provider-auth-status"
                 title={t('settingsProviders.authentication.statusTitle')}
                 subtitle={resolveAuthStateSubtitle(props.authStatus)}
-                icon={<Ionicons name="shield-checkmark-outline" size={22} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="shield-checkmark-outline" size={22} color={theme.colors.text.secondary} />}
                 mode="info"
             />
             {props.authStatus?.accountLabel ? (
@@ -70,7 +70,7 @@ export const ProviderAuthenticationStatusRows = React.memo(function ProviderAuth
                     testID="settings-provider-auth-account"
                     title={t('settingsProviders.authentication.loggedInAsTitle')}
                     subtitle={props.authStatus.accountLabel}
-                    icon={<Ionicons name="person-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="person-outline" size={22} color={theme.colors.text.secondary} />}
                     mode="info"
                     copy={props.authStatus.accountLabel}
                 />
@@ -80,7 +80,7 @@ export const ProviderAuthenticationStatusRows = React.memo(function ProviderAuth
                     testID="settings-provider-auth-method"
                     title={t('settingsProviders.authentication.methodTitle')}
                     subtitle={methodSubtitle}
-                    icon={<Ionicons name="key-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="key-outline" size={22} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
             ) : null}
@@ -89,7 +89,7 @@ export const ProviderAuthenticationStatusRows = React.memo(function ProviderAuth
                     testID="settings-provider-auth-source"
                     title={t('settingsProviders.authentication.sourceTitle')}
                     subtitle={sourceSubtitle}
-                    icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
             ) : null}
@@ -98,7 +98,7 @@ export const ProviderAuthenticationStatusRows = React.memo(function ProviderAuth
                     testID="settings-provider-auth-reason"
                     title={t('settingsProviders.authentication.reasonTitle')}
                     subtitle={reasonSubtitle}
-                    icon={<Ionicons name="alert-circle-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="alert-circle-outline" size={22} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
             ) : null}
@@ -107,7 +107,7 @@ export const ProviderAuthenticationStatusRows = React.memo(function ProviderAuth
                     testID="settings-provider-auth-last-checked"
                     title={t('settingsProviders.authentication.lastCheckedTitle')}
                     subtitle={checkedAtSubtitle}
-                    icon={<Ionicons name="time-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="time-outline" size={22} color={theme.colors.text.secondary} />}
                     mode="info"
                 />
             ) : null}

@@ -48,7 +48,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         flexWrap: 'wrap',
         paddingHorizontal: 12,
         paddingVertical: 8,
-        backgroundColor: theme.colors.box.warning.background,
+        backgroundColor: theme.colors.state.warning.background,
         borderRadius: 8,
         marginTop: 4,
         marginHorizontal: 8,
@@ -56,7 +56,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
     const warningTextStyle: TextStyle = {
         flex: 1,
         fontSize: 12,
-        color: theme.colors.box.warning.text,
+        color: theme.colors.state.warning.foreground,
         marginLeft: 6,
         ...Typography.default()
     };
@@ -66,11 +66,11 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         paddingHorizontal: 8,
         paddingVertical: 4,
         borderRadius: 6,
-        backgroundColor: theme.colors.box.warning.text,
+        backgroundColor: theme.colors.state.warning.foreground,
     };
     const switchButtonTextStyle: TextStyle = {
         fontSize: 12,
-        color: theme.colors.box.warning.background,
+        color: theme.colors.state.warning.background,
         fontWeight: '700',
         ...Typography.default(),
     };
@@ -116,7 +116,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                         <Ionicons
                             name="information-circle"
                             size={16}
-                            color={theme.colors.box.warning.text}
+                            color={theme.colors.state.warning.foreground}
                         />
                         <Text selectable style={warningTextStyle}>
                             {t(textKey)}
@@ -153,7 +153,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         props.permissionsInUiWhileLocal,
         switchButtonStyle,
         switchButtonTextStyle,
-        theme.colors.box.warning.text,
+        theme.colors.state.warning.foreground,
         warningContainerStyle,
         warningTextStyle,
     ]);
@@ -191,7 +191,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                         <Ionicons
                             name="information-circle"
                             size={16}
-                            color={theme.colors.box.warning.text}
+                            color={theme.colors.state.warning.foreground}
                         />
                         <Text selectable style={warningTextStyle}>
                             {t(textKey)}
@@ -224,7 +224,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         props.directControl,
         switchButtonStyle,
         switchButtonTextStyle,
-        theme.colors.box.warning.text,
+        theme.colors.state.warning.foreground,
         warningContainerStyle,
         warningTextStyle,
     ]);

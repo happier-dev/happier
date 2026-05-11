@@ -25,6 +25,9 @@ const manifest: ReleaseNotesManifest = {
                 localAssetKey: 'release-v1-hero',
                 key: 'hero-remote.webp',
                 altKey: 'releaseNotes.v1.hero.alt',
+                desktop: {
+                    key: 'hero-desktop.webp',
+                },
             },
         }, {
             kind: 'video',
@@ -34,6 +37,14 @@ const manifest: ReleaseNotesManifest = {
                 key: 'v1.0.0/demo.mp4',
                 localPosterAssetKey: 'release-v1-video-poster',
                 accessibilityLabelKey: 'releaseNotes.v1.video.label',
+                mobile: {
+                    key: 'demo-mobile.mp4',
+                    posterKey: 'demo-mobile-poster.webp',
+                },
+                desktop: {
+                    key: 'demo-desktop.mp4',
+                    posterKey: 'demo-desktop-poster.webp',
+                },
             },
         }],
     }],
@@ -59,7 +70,12 @@ function assetIndexFor(keys: string[]): ReleaseNotesAssetIndex {
 describe('manifest asset coverage', () => {
     it('normalizes manifest media keys by release id', () => {
         expect(collectReleaseNotesManifestMediaKeys(manifest)).toEqual([
+            'v1.0.0/demo-desktop-poster.webp',
+            'v1.0.0/demo-desktop.mp4',
+            'v1.0.0/demo-mobile-poster.webp',
+            'v1.0.0/demo-mobile.mp4',
             'v1.0.0/demo.mp4',
+            'v1.0.0/hero-desktop.webp',
             'v1.0.0/hero-remote.webp',
         ]);
     });
@@ -67,12 +83,27 @@ describe('manifest asset coverage', () => {
     it('requires the asset index to cover every manifest media key', () => {
         expect(doesAssetIndexCoverReleaseNotesManifest(
             manifest,
-            assetIndexFor(['v1.0.0/demo.mp4', 'v1.0.0/hero-remote.webp']),
+            assetIndexFor([
+                'v1.0.0/demo.mp4',
+                'v1.0.0/demo-desktop-poster.webp',
+                'v1.0.0/demo-desktop.mp4',
+                'v1.0.0/demo-mobile-poster.webp',
+                'v1.0.0/demo-mobile.mp4',
+                'v1.0.0/hero-desktop.webp',
+                'v1.0.0/hero-remote.webp',
+            ]),
         )).toBe(true);
 
         const incomplete = assetIndexFor(['v1.0.0/demo.mp4']);
 
         expect(doesAssetIndexCoverReleaseNotesManifest(manifest, incomplete)).toBe(false);
-        expect(findMissingReleaseNotesAssetKeys(manifest, incomplete)).toEqual(['v1.0.0/hero-remote.webp']);
+        expect(findMissingReleaseNotesAssetKeys(manifest, incomplete)).toEqual([
+            'v1.0.0/demo-desktop-poster.webp',
+            'v1.0.0/demo-desktop.mp4',
+            'v1.0.0/demo-mobile-poster.webp',
+            'v1.0.0/demo-mobile.mp4',
+            'v1.0.0/hero-desktop.webp',
+            'v1.0.0/hero-remote.webp',
+        ]);
     });
 });

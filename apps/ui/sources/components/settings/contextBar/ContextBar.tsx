@@ -46,7 +46,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         width: '100%',
     },
     inputWrapper: {

@@ -676,7 +676,7 @@ function RootLayout() {
     useWebBackdropBlurPreference();
     usePierreDiffWorkerPoolWarmup();
     const navigationTheme = React.useMemo(() => {
-        const background = isDesktopOverlayWindow ? 'transparent' : theme.colors.groupped.background;
+        const background = isDesktopOverlayWindow ? 'transparent' : theme.colors.background.canvas;
         if (theme.dark) {
             return {
                 ...DarkTheme,
@@ -693,7 +693,7 @@ function RootLayout() {
                 background,
             }
         };
-    }, [isDesktopOverlayWindow, theme.colors.groupped.background, theme.dark]);
+    }, [isDesktopOverlayWindow, theme.colors.background.canvas, theme.dark]);
 
     const onRestart = React.useCallback(() => {
         if (Platform.OS === 'web') {

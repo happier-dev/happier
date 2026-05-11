@@ -46,9 +46,9 @@ export function AgentInputInlineRefreshAccessory(props: AgentInputInlineRefreshA
                 ]}
             >
                 {probe.phase === 'idle' ? (
-                    <Ionicons name="refresh-outline" size={18} color={theme.colors.textSecondary} />
+                    <Ionicons name="refresh-outline" size={18} color={theme.colors.text.secondary} />
                 ) : (
-                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                 )}
             </Pressable>
         );
@@ -60,7 +60,7 @@ export function AgentInputInlineRefreshAccessory(props: AgentInputInlineRefreshA
 
     return (
         <View style={styles.button}>
-            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
         </View>
     );
 }
@@ -73,11 +73,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         backgroundColor: 'transparent',
     },
     buttonPressed: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     buttonDisabled: {
         opacity: 0.6,

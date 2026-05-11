@@ -7,3 +7,7 @@ const RELEASE_NOTES_FEATURE_ID = 'app.ui.releaseNotes' as const satisfies Featur
 export function isReleaseNotesFeatureEnabled(): boolean {
     return getFeatureBuildPolicyDecision(RELEASE_NOTES_FEATURE_ID) !== 'deny';
 }
+
+export function isReleaseNotesStoryCardsEnabled(): boolean {
+    return getFeatureBuildPolicyDecision(RELEASE_NOTES_FEATURE_ID) === 'allow';
+}

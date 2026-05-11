@@ -23,7 +23,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'center',
     },
     iconButton: {
-        color: theme.colors.header.tint,
+        color: theme.colors.chrome.header.foreground,
     },
     logoContainer: {
         // marginHorizontal: 4,
@@ -31,7 +31,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         height: 32,
         alignItems: 'center',
         justifyContent: 'center',
-        tintColor: theme.colors.header.tint,
+        tintColor: theme.colors.chrome.header.foreground,
     },
     titleContainer: {
         flex: 1,
@@ -39,12 +39,12 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     titleText: {
         fontSize: 16,
-        color: theme.colors.header.tint,
+        color: theme.colors.chrome.header.foreground,
         ...Typography.default('semiBold'),
     },
     subtitleText: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: -2,
     },
     statusContainer: {
@@ -74,7 +74,7 @@ export const HomeHeader = React.memo(() => {
     const showAutomations = automationsSupport?.enabled !== false;
 
     return (
-        <View style={{ backgroundColor: theme.colors.groupped.background }}>
+        <View style={{ backgroundColor: theme.colors.background.canvas }}>
             <Header
                 title={<HeaderTitleWithSubtitle />}
                 headerRight={() => <HeaderRight />}
@@ -96,7 +96,7 @@ export const HomeHeaderNotAuth = React.memo(() => {
             headerRight={() => <HeaderRightNotAuth />}
             headerLeft={() => <HeaderLeft showAutomations={false} />}
             headerShadowVisible={false}
-            headerBackgroundColor={theme.colors.groupped.background}
+            headerBackgroundColor={theme.colors.background.canvas}
         />
     )
 });
@@ -113,7 +113,7 @@ function HeaderRight() {
             hitSlop={15}
             style={styles.headerButton}
         >
-            <Ionicons name="add-outline" size={28} color={theme.colors.header.tint} />
+            <Ionicons name="add-outline" size={28} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 }
@@ -131,7 +131,7 @@ function HeaderRightNotAuth() {
             hitSlop={15}
             style={styles.headerButton}
         >
-            <Ionicons name="server-outline" size={24} color={theme.colors.header.tint} />
+            <Ionicons name="server-outline" size={24} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 }
@@ -157,7 +157,7 @@ function HeaderLeft(props: { showAutomations: boolean }) {
                     accessibilityRole="button"
                     accessibilityLabel={t('automations.openA11y')}
                 >
-                    <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
+                    <Ionicons name="timer-outline" size={22} color={theme.colors.chrome.header.foreground} />
                 </Pressable>
             ) : null}
         </View>

@@ -14,11 +14,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     disabledContainer: {
         flex: 1,
@@ -30,11 +30,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     disabledTitle: {
         fontSize: 18,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     disabledBody: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
 }));
@@ -47,7 +47,7 @@ export function AutomationsGate(props: { children: React.ReactNode }) {
     if (!support || support.loading) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }
@@ -58,7 +58,7 @@ export function AutomationsGate(props: { children: React.ReactNode }) {
                 <ItemList style={{ paddingTop: 0 }}>
                     <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
 	                        <View style={styles.disabledContainer}>
-	                            <Ionicons name="timer-outline" size={56} color={theme.colors.textSecondary} />
+	                            <Ionicons name="timer-outline" size={56} color={theme.colors.text.secondary} />
 	                            <Text style={styles.disabledTitle}>{t('automations.gate.disabledTitle')}</Text>
 	                            <Text style={styles.disabledBody}>
 	                                {t('automations.gate.disabledBody')}

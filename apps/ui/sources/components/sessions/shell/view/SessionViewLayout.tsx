@@ -62,9 +62,9 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                         position: 'absolute',
                         top: 8,
                         alignSelf: 'center',
-                        backgroundColor: theme.colors.box.warning.background,
+                        backgroundColor: theme.colors.state.warning.background,
                         borderWidth: 1,
-                        borderColor: theme.colors.box.warning.border,
+                        borderColor: theme.colors.state.warning.border,
                         borderRadius: 100,
                         paddingHorizontal: 14,
                         paddingVertical: 7,
@@ -74,11 +74,11 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                         ...shadowLevelStyle(theme.colors.shadowLevels[3]),
                     }}
                 >
-                    <Ionicons name="warning-outline" size={14} color={theme.colors.box.warning.text} style={{ marginRight: 6 }} />
-                    <Text style={{ fontSize: 12, color: theme.colors.box.warning.text, fontWeight: '600' }}>
+                    <Ionicons name="warning-outline" size={14} color={theme.colors.state.warning.foreground} style={{ marginRight: 6 }} />
+                    <Text style={{ fontSize: 12, color: theme.colors.state.warning.foreground, fontWeight: '600' }}>
                         {t('sessionInfo.cliVersionOutdated')}
                     </Text>
-                    <Ionicons name="close" size={14} color={theme.colors.box.warning.text} style={{ marginLeft: 8 }} />
+                    <Ionicons name="close" size={14} color={theme.colors.state.warning.foreground} style={{ marginLeft: 8 }} />
                 </Pressable>
             )}
 
@@ -105,7 +105,7 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                         width: 44,
                         height: 44,
                         borderRadius: 22,
-                        backgroundColor: Color(theme.colors.header.background).alpha(0.9).rgb().string(),
+                        backgroundColor: Color(theme.colors.chrome.header.background).alpha(0.9).rgb().string(),
                         alignItems: 'center',
                         justifyContent: 'center',
                         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
@@ -115,7 +115,7 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
                     <Ionicons
                         name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
                         size={24}
-                        color={theme.colors.text}
+                        color={theme.colors.text.primary}
                     />
                 </Pressable>
             )}

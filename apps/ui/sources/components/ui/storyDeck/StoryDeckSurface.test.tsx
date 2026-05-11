@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import type { StoryDeckCard } from '@/changelog/releaseNotes/types';
+import type { StoryDeckCard, StoryDeckImageCard } from '@/changelog/releaseNotes/types';
 
 const shared = vi.hoisted(() => ({
     reducedMotion: false,
@@ -25,6 +25,14 @@ vi.mock('react-native', async () => {
     const ReactModule = await import('react');
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
+        PanResponder: {
+            create: (config: Record<string, unknown>) => ({
+                panHandlers: {
+                    onMoveShouldSetResponder: config.onMoveShouldSetPanResponder,
+                    onResponderRelease: config.onPanResponderRelease,
+                },
+            }),
+        },
         useWindowDimensions: () => ({ width: shared.windowWidth, height: 640 }),
         ScrollView: ReactModule.forwardRef((
             props: Record<string, unknown>,
@@ -69,6 +77,23 @@ const cards: StoryDeckCard[] = [
         rows: [{ iconId: 'rocket', titleKey: 'releaseNotes.test.row', bodyKey: 'releaseNotes.test.body' }],
     },
 ];
+
+type FutureImageMedia = StoryDeckImageCard['media'] & Readonly<{
+    primaryUrl: string;
+}>;
+
+function createImageCard(key: string): StoryDeckImageCard {
+    return {
+        kind: 'image',
+        titleKey: `releaseNotes.test.${key}.title`,
+        bodyKey: `releaseNotes.test.${key}.body`,
+        media: {
+            key,
+            altKey: `releaseNotes.test.${key}.alt`,
+            primaryUrl: `https://cdn.example.com/${key}.png`,
+        } satisfies FutureImageMedia,
+    };
+}
 
 describe('StoryDeckSurface', () => {
     it('lets the horizontal pager own slide motion and avoids wrapping it in StepTransitionFrame', async () => {
@@ -117,5 +142,119 @@ describe('StoryDeckSurface', () => {
 
         expect(shared.scrollTo).toHaveBeenCalledWith({ x: 480, animated: true });
         expect(screen.findByTestId('story-page-0')?.props.style).toContainEqual({ width: 480 });
+    });
+
+    it('uses the bounded wide modal width before the first layout measurement', async () => {
+        shared.reducedMotion = false;
+        shared.windowWidth = 1200;
+        shared.scrollTo.mockClear();
+
+        const { StoryDeckSurface } = await import('./StoryDeckSurface');
+        const screen = await renderScreen(<StoryDeckSurface cards={cards} onComplete={() => {}} testID="story" />);
+
+        expect(screen.findByTestId('story-page-0')?.props.style).toContainEqual({ width: 860 });
+        await screen.pressByTestIdAsync('story-footer-primary');
+
+        expect(shared.scrollTo).toHaveBeenCalledWith({ x: 860, animated: true });
+    });
+
+    it('keeps wide media cards in a stable media-left layout by default', async () => {
+        shared.reducedMotion = false;
+        shared.windowWidth = 1200;
+
+        const { StoryDeckSurface } = await import('./StoryDeckSurface');
+        const screen = await renderScreen(
+            <StoryDeckSurface
+                cards={[createImageCard('one'), createImageCard('two')]}
+                onComplete={() => {}}
+                testID="story"
+            />,
+        );
+
+        expect(screen.findByTestId('story-card-0')?.props.style).not.toContainEqual({ flexDirection: 'row-reverse' });
+        expect(screen.findByTestId('story-card-1')?.props.style).not.toContainEqual({ flexDirection: 'row-reverse' });
+    });
+
+    it('can use the soft blur transition without driving the horizontal pager', async () => {
+        shared.reducedMotion = false;
+        shared.windowWidth = 1200;
+        shared.scrollTo.mockClear();
+
+        const { StoryDeckSurface } = await import('./StoryDeckSurface');
+        const screen = await renderScreen(
+            <StoryDeckSurface
+                cards={cards}
+                onComplete={() => {}}
+                slideAnimation="softBlur"
+                testID="story"
+            />,
+        );
+
+        expect(screen.findByTestId('story-soft-slide')).not.toBeNull();
+        await screen.pressByTestIdAsync('story-footer-primary');
+
+        expect(shared.scrollTo).not.toHaveBeenCalled();
+        expect(screen.findByTestId('story-page-1')).not.toBeNull();
+    });
+
+    it('keeps the current soft slide layer in normal flow so the card body does not collapse', async () => {
+        shared.reducedMotion = false;
+        shared.windowWidth = 1200;
+
+        const { StoryDeckSurface } = await import('./StoryDeckSurface');
+        const screen = await renderScreen(
+            <StoryDeckSurface
+                cards={cards}
+                onComplete={() => {}}
+                slideAnimation="softBlur"
+                testID="story"
+            />,
+        );
+
+        const currentLayer = screen.findByTestId('story-soft-slide-current-layer');
+        expect(currentLayer?.props.style).not.toContainEqual(expect.objectContaining({ position: 'absolute' }));
+    });
+
+    it('supports horizontal drag gestures for soft slide navigation', async () => {
+        shared.reducedMotion = false;
+        shared.windowWidth = 1200;
+
+        const { StoryDeckSurface } = await import('./StoryDeckSurface');
+        const screen = await renderScreen(
+            <StoryDeckSurface
+                cards={cards}
+                onComplete={() => {}}
+                slideAnimation="softBlur"
+                testID="story"
+            />,
+        );
+
+        const gestureSurface = screen.findByTestId('story-soft-slide-gesture-surface');
+
+        expect(gestureSurface?.props.onMoveShouldSetResponder({}, { dx: -90, dy: 5 })).toBe(true);
+        act(() => {
+            gestureSurface?.props.onResponderRelease({}, { dx: -90, dy: 5 });
+        });
+
+        expect(screen.findByTestId('story-page-1')).not.toBeNull();
+    });
+
+    it('uses the bounded wide deck width for media before the first card layout measurement', async () => {
+        shared.reducedMotion = false;
+        shared.windowWidth = 1200;
+
+        const { StoryDeckSurface } = await import('./StoryDeckSurface');
+        const screen = await renderScreen(
+            <StoryDeckSurface
+                cards={[createImageCard('one')]}
+                onComplete={() => {}}
+                slideAnimation="softBlur"
+                testID="story"
+            />,
+        );
+
+        expect(screen.findByTestId('story-card-0-media-image')?.props.style).toEqual(
+            expect.objectContaining({ width: 361, height: 361 }),
+        );
     });
 });

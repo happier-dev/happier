@@ -51,7 +51,7 @@ type Props = CustomModalInjectedProps & Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     subtitle: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     body: {
@@ -334,7 +334,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                     ? t('settingsSession.handoff.workspaceTransfer.enabledSubtitle')
                                     : t('settingsSession.handoff.workspaceTransfer.disabledSubtitle')
                             }
-                            icon={<Octicons name="file-directory" size={18} color={theme.colors.textSecondary} />}
+                            icon={<Octicons name="file-directory" size={18} color={theme.colors.text.secondary} />}
                             rightElement={
                                 <Switch
                                     value={effectiveWorkspaceTransferEnabled}
@@ -361,7 +361,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             itemTrigger={{
                                 title: t('settingsSession.handoff.workspaceTransfer.strategy.title'),
                                 subtitle: t('settingsSession.handoff.workspaceTransfer.strategy.subtitle'),
-                                icon: <Octicons name="git-branch" size={18} color={theme.colors.textSecondary} />,
+                                icon: <Octicons name="git-branch" size={18} color={theme.colors.text.secondary} />,
                                 itemProps: {
                                     disabled: workspaceTransferControlsDisabled,
                                     testID: 'session-handoff-workspace-transfer-strategy-trigger',
@@ -396,7 +396,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             itemTrigger={{
                                 title: t('settingsSession.handoff.conflictPolicy.title'),
                                 subtitle: t('settingsSession.handoff.conflictPolicy.subtitle'),
-                                icon: <Octicons name="copy" size={18} color={theme.colors.textSecondary} />,
+                                icon: <Octicons name="copy" size={18} color={theme.colors.text.secondary} />,
                                 itemProps: {
                                     disabled: workspaceTransferControlsDisabled,
                                 },
@@ -427,7 +427,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                             itemTrigger={{
                                 title: t('settingsSession.handoff.includeIgnoredMode.title'),
                                 subtitle: t('settingsSession.handoff.includeIgnoredMode.subtitle'),
-                                icon: <Octicons name="filter" size={18} color={theme.colors.textSecondary} />,
+                                icon: <Octicons name="filter" size={18} color={theme.colors.text.secondary} />,
                                 itemProps: {
                                     disabled: workspaceTransferControlsDisabled,
                                 },
@@ -445,7 +445,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                         />
                         {includeIgnoredMode === 'include_selected' ? (
                             <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 }}>
-                                <Text style={{ fontSize: 14, marginBottom: 8, color: theme.colors.textSecondary }}>
+                                <Text style={{ fontSize: 14, marginBottom: 8, color: theme.colors.text.secondary }}>
                                     {t('settingsSession.handoff.includeIgnoredMode.globsTitle')}
                                 </Text>
                                 <TextInput
@@ -462,10 +462,10 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                         minHeight: 44,
                                         borderRadius: 10,
                                         borderWidth: 1,
-                                        borderColor: theme.colors.divider,
+                                        borderColor: theme.colors.border.default,
                                         paddingHorizontal: 12,
                                         paddingVertical: 10,
-                                        color: theme.colors.text,
+                                        color: theme.colors.text.primary,
                                     }}
                                 />
                             </View>
@@ -489,7 +489,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                 itemTrigger={{
                                     title: t('settingsSession.handoff.directTargetMode.title'),
                                     subtitle: t('settingsSession.handoff.directTargetMode.subtitle'),
-                                    icon: <Octicons name="arrow-switch" size={18} color={theme.colors.textSecondary} />,
+                                    icon: <Octicons name="arrow-switch" size={18} color={theme.colors.text.secondary} />,
                                 }}
                                 items={SESSION_HANDOFF_DIRECT_TARGET_MODE_OPTIONS.map((item) => ({
                                     id: item.id,

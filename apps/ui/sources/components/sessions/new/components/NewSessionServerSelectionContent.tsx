@@ -37,7 +37,7 @@ export type NewSessionServerSelectionContentProps = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         minHeight: 0,
     },
     header: {
@@ -53,7 +53,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingRight: 12,
     },
     headerTitle: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 18,
         lineHeight: 24,
         fontWeight: Platform.select({ ios: '600', default: '700' }),
@@ -230,7 +230,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                     {React.createElement(Ionicons, {
                         name: 'close',
                         size: 20,
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                     })}
                 </Pressable>
             </View>
@@ -251,7 +251,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                                     <Ionicons
                                         name="server-outline"
                                         size={18}
-                                        color={theme.colors.textSecondary}
+                                        color={theme.colors.text.secondary}
                                     />
                                 )}
                                 selected={isSelected}

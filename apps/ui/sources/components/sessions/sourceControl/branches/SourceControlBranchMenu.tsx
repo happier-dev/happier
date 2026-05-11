@@ -128,7 +128,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             loading,
             hasMachineTarget: Boolean(machineTarget),
             worktreeRows,
-            checkIconColor: theme.colors.textSecondary,
+            checkIconColor: theme.colors.text.secondary,
         });
     }, [
         branches,
@@ -140,7 +140,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         includeRemotes,
         loading,
         machineTarget,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
         worktreeRows,
     ]);
 

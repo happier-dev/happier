@@ -113,7 +113,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
             <Item
                 title={props.depTitle}
                 subtitle={subtitle}
-                icon={<Ionicons name={props.depIconName} size={22} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name={props.depIconName} size={22} color={theme.colors.text.secondary} />}
                 showChevron={false}
                 onPress={() => props.refreshLatestVersion?.()}
             />
@@ -127,7 +127,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                         version: props.depStatus.latestVersionCheck.latestVersion,
                         tag: props.depStatus.latestVersionCheck.label ?? props.depStatus.sourceKind,
                     })}
-                    icon={<Ionicons name="cloud-download-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="cloud-download-outline" size={22} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             )}
@@ -136,7 +136,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 <Item
                     title={t('deps.ui.registryCheck')}
                     subtitle={t('deps.ui.registryCheckFailed', { error: props.depStatus.latestVersionCheck.errorMessage })}
-                    icon={<Ionicons name="cloud-offline-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="cloud-offline-outline" size={22} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             )}
@@ -144,7 +144,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
             <Item
                 title={installButtonLabel}
                 subtitle={props.installModal.description}
-                icon={<Ionicons name="download-outline" size={22} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="download-outline" size={22} color={theme.colors.text.secondary} />}
                 disabled={isInstalling || props.capabilitiesStatus === 'loading'}
                 onPress={async () => {
                     const alertTitle = props.depStatus?.installed
@@ -159,14 +159,14 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                         ],
                     );
                 }}
-                rightElement={isInstalling ? <ActivityIndicator size="small" color={theme.colors.textSecondary} /> : undefined}
+                rightElement={isInstalling ? <ActivityIndicator size="small" color={theme.colors.text.secondary} /> : undefined}
             />
 
             {props.depStatus?.lastInstallLogPath && (
                 <Item
                     title={t('deps.ui.lastInstallLog')}
                     subtitle={props.depStatus.lastInstallLogPath}
-                    icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     onPress={() => Modal.alert(t('deps.ui.installLogTitle'), props.depStatus?.lastInstallLogPath ?? '')}
                 />
@@ -176,7 +176,7 @@ export function InstallableDepInstaller(props: InstallableDepInstallerProps) {
                 <Item
                     title={t('settingsProviders.authentication.lastCheckedTitle')}
                     subtitle={formatTimestamp(props.depStatus.lastBackgroundUpdateCheckAtMs)}
-                    icon={<Ionicons name="time-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="time-outline" size={22} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             )}

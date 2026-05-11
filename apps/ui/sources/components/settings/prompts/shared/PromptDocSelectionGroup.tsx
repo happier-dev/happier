@@ -28,9 +28,9 @@ export const PromptDocSelectionGroup = React.memo(function PromptDocSelectionGro
         props.promptDocs.map((doc) => ({
             id: doc.id,
             title: doc.title,
-            icon: <Ionicons name="document-text-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />,
         }))
-    ), [props.promptDocs, theme.colors.textSecondary]);
+    ), [props.promptDocs, theme.colors.text.secondary]);
 
     const selectedPromptTitle = React.useMemo(() => {
         const selectedPrompt = props.promptDocs.find((doc) => doc.id === props.selectedArtifactId) ?? null;
@@ -58,7 +58,7 @@ export const PromptDocSelectionGroup = React.memo(function PromptDocSelectionGro
                 testID="promptTemplate.target.edit"
                 title={t('promptLibrary.editSelectedPrompt')}
                 subtitle={props.selectedArtifactId ? selectedPromptTitle : t('promptLibrary.editSelectedPromptDisabled')}
-                icon={<Ionicons name="pencil-outline" size={22} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="pencil-outline" size={22} color={theme.colors.text.secondary} />}
                 disabled={!props.selectedArtifactId}
                 onPress={() => {
                     if (!props.selectedArtifactId) return;

@@ -6,8 +6,11 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 
 export type WizardStepDotsProps = Readonly<{
     currentStepIndex: number;
+    maxVisibleDots?: number;
     stepCount: number;
 }>;
+
+const DEFAULT_MAX_VISIBLE_DOTS = 5;
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -21,40 +24,57 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 7,
         height: 7,
         borderRadius: 999,
-        backgroundColor: theme.colors.textSecondary,
+        backgroundColor: theme.colors.text.secondary,
         opacity: 0.35,
     },
     activeDot: {
         width: 14,
         height: 7,
-        backgroundColor: theme.colors.text,
+        backgroundColor: theme.colors.text.primary,
         opacity: 0.35,
     },
 }));
+
+function resolveVisibleDotRange(total: number, activeIndex: number, maxVisibleDots: number) {
+    if (total <= maxVisibleDots) {
+        return { start: 0, end: total };
+    }
+
+    const halfWindow = Math.floor(maxVisibleDots / 2);
+    const maxStart = total - maxVisibleDots;
+    const start = Math.max(0, Math.min(activeIndex - halfWindow, maxStart));
+    return { start, end: start + maxVisibleDots };
+}
 
 export function WizardStepDots(props: WizardStepDotsProps) {
     useUnistyles();
     const styles = stylesheet;
     const dots = Math.max(0, props.stepCount);
     const activeIndex = Math.max(0, Math.min(props.currentStepIndex, dots - 1));
+    const maxVisibleDots = Math.max(1, props.maxVisibleDots ?? DEFAULT_MAX_VISIBLE_DOTS);
+    const visibleRange = resolveVisibleDotRange(dots, activeIndex, maxVisibleDots);
     const reducedMotion = useReducedMotionPreference();
 
     return (
         <View
             style={styles.root}
+            testID="wizard-step-dots"
             accessibilityRole="progressbar"
             accessibilityValue={{ now: activeIndex + 1, min: 1, max: dots }}
         >
-            {Array.from({ length: dots }).map((_, index) => (
-                <WizardStepDot
-                    // eslint-disable-next-line react/no-array-index-key
-                    key={index}
-                    active={index === activeIndex}
-                    baseStyle={styles.dot}
-                    activeStyle={styles.activeDot}
-                    reducedMotion={reducedMotion}
-                />
-            ))}
+            {Array.from({ length: visibleRange.end - visibleRange.start }).map((_, offset) => {
+                const index = visibleRange.start + offset;
+                return (
+                    <WizardStepDot
+                        // eslint-disable-next-line react/no-array-index-key
+                        key={index}
+                        active={index === activeIndex}
+                        baseStyle={styles.dot}
+                        activeStyle={styles.activeDot}
+                        reducedMotion={reducedMotion}
+                    />
+                );
+            })}
         </View>
     );
 }

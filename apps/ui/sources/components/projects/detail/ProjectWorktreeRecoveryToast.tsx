@@ -25,9 +25,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 10,
         borderRadius: 12,
-        backgroundColor: theme.colors.box.warning.background,
+        backgroundColor: theme.colors.state.warning.background,
         borderWidth: 1,
-        borderColor: theme.colors.box.warning.border,
+        borderColor: theme.colors.state.warning.border,
         shadowColor: theme.colors.overlay.scrim,
         shadowOpacity: 0.12,
         shadowRadius: 12,
@@ -36,7 +36,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     message: {
         flexShrink: 1,
-        color: theme.colors.box.warning.text,
+        color: theme.colors.state.warning.foreground,
         fontSize: 13,
     },
 }));
@@ -64,7 +64,7 @@ export const ProjectWorktreeRecoveryToast = React.memo((props: Readonly<{
     return (
         <View testID="project-worktree-recovery-toast" pointerEvents="none" style={styles.container}>
             <View style={styles.toast}>
-                <Ionicons name="warning-outline" size={16} color={theme.colors.box.warning.text} />
+                <Ionicons name="warning-outline" size={16} color={theme.colors.state.warning.foreground} />
                 <Text style={styles.message}>
                     {t('projects.detail.missingWorktreeRecovered')}
                 </Text>

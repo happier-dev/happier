@@ -19,7 +19,7 @@ const TERMINAL_PROMPT = '$ ';
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     webview: {
         flex: 1,
@@ -30,11 +30,11 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     loadingOverlay: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         justifyContent: 'center',
         alignItems: 'center',
         zIndex: 1000,
@@ -42,18 +42,18 @@ const styles = StyleSheet.create((theme) => ({
     loadingText: {
         marginTop: 16,
         fontSize: 16,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     errorContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
         padding: 20,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     errorText: {
         fontSize: 16,
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
         textAlign: 'center',
         marginBottom: 20,
     },
@@ -73,37 +73,37 @@ const styles = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         alignItems: 'center',
         padding: 20,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     unsupportedTitle: {
         fontSize: 18,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 20,
     },
     unsupportedText: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         marginBottom: 24,
     },
     terminalContainer: {
-        backgroundColor: theme.colors.terminal.background,
+        backgroundColor: theme.colors.surface.inset,
         borderRadius: 8,
         padding: 16,
         minWidth: 280,
         borderWidth: 1,
-        borderColor: theme.colors.modal.border,
+        borderColor: theme.colors.border.modal,
     },
     terminalPrompt: {
         fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
         fontSize: 14,
-        color: theme.colors.terminal.prompt,
+        color: theme.colors.state.success.foreground,
     },
     terminalCommand: {
         fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
         fontSize: 14,
-        color: theme.colors.terminal.command,
+        color: theme.colors.text.primary,
     },
 }));
 
@@ -124,7 +124,7 @@ export const OAuthView = React.memo((props: {
     config: OAuthViewConfig
 }) => {
     const { theme } = useUnistyles();
-    const resolvedBackgroundColor = props.backgroundColor ?? theme.colors.surface;
+    const resolvedBackgroundColor = props.backgroundColor ?? theme.colors.surface.base;
     // Unsupported on web
     if (Platform.OS === 'web') {
         return <OAuthViewUnsupported {...props} />;
@@ -189,9 +189,9 @@ export const OAuthViewRender = React.memo((props: {
     foregroundColor?: string;
 }) => {
     const { theme } = useUnistyles();
-    const resolvedBackgroundColor = props.backgroundColor ?? theme.colors.surface;
-    const resolvedForegroundColor = props.foregroundColor ?? theme.colors.text;
-    const resolvedErrorColor = props.foregroundColor ?? theme.colors.textDestructive;
+    const resolvedBackgroundColor = props.backgroundColor ?? theme.colors.surface.base;
+    const resolvedForegroundColor = props.foregroundColor ?? theme.colors.text.primary;
+    const resolvedErrorColor = props.foregroundColor ?? theme.colors.state.danger.foreground;
     const resolvedRetryTextColor = props.foregroundColor ?? theme.colors.button.primary.tint;
     const [exchangingTokens, setExchangingTokens] = React.useState(false);
     const [webViewLoading, setWebViewLoading] = React.useState(true);

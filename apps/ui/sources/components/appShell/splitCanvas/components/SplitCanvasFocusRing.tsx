@@ -24,7 +24,7 @@ export const SplitCanvasFocusRing = React.memo((props: Readonly<{
                 bottom: 0,
                 left: 0,
                 borderWidth: props.keyboardVisible ? 2 : 1,
-                borderColor: props.keyboardVisible ? theme.colors.accent.blue : theme.colors.divider,
+                borderColor: props.keyboardVisible ? theme.colors.accent.blue : theme.colors.border.default,
                 borderRadius: 12,
                 opacity: props.keyboardVisible ? 0.95 : 0.72,
             }}

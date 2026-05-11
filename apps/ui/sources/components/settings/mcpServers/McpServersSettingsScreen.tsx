@@ -80,9 +80,9 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
             id: machine.id,
             title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
             subtitle: machine.id,
-            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
         }));
-    }, [machines, theme.colors.textSecondary]);
+    }, [machines, theme.colors.text.secondary]);
 
     const previewAgentIds = React.useMemo(() => listMcpPreviewAgentIds(), []);
 
@@ -93,8 +93,8 @@ export const McpServersSettingsScreen = React.memo(function McpServersSettingsSc
 
     const agentItems = React.useMemo(() => getAgentDropdownMenuItems({
         agentIds: previewAgentIds,
-        iconColor: theme.colors.textSecondary,
-    }), [previewAgentIds, theme.colors.textSecondary]);
+        iconColor: theme.colors.text.secondary,
+    }), [previewAgentIds, theme.colors.text.secondary]);
 
     const selectedAgentTools = React.useMemo(() => getAgentCore(selectedAgentId).tools, [selectedAgentId]);
 

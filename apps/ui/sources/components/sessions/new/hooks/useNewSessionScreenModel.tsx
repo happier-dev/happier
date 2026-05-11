@@ -102,7 +102,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const headerHeight = useHeaderHeight();
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     const keyboardHeight = useKeyboardHeight();
-    const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
+    const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text.primary : theme.colors.button.primary.background;
     const popoverBoundaryRef = React.useRef<View>(null!);
 
     const newSessionSidePadding = 16;
@@ -450,6 +450,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         pathParam: effectivePathParam,
         persistedMachineId: persistedDraft?.selectedMachineId ?? tempSessionData?.machineId,
         persistedPath: hydratedPersistedAuthoringDraft?.directory ?? hydratedTempAuthoringDraft?.directory,
+        cacheScopeKey: capabilityServerId,
     });
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: selectedMachineId,

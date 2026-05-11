@@ -437,7 +437,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                         <Ionicons
                             name={definition.iconName}
                             size={18}
-                            color={selectedProviderId === providerId ? theme.colors.accent.blue : theme.colors.textSecondary}
+                            color={selectedProviderId === providerId ? theme.colors.accent.blue : theme.colors.text.secondary}
                         />
                     )}
                     title={t(definition.titleKey)}
@@ -446,7 +446,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                 />
             );
         })
-    ), [isBusy, isUnavailable, selectedProviderId, theme.colors.accent.blue, theme.colors.textSecondary, visibleProviderIds]);
+    ), [isBusy, isUnavailable, selectedProviderId, theme.colors.accent.blue, theme.colors.text.secondary, visibleProviderIds]);
 
     const providerConfigFields = (
         <>
@@ -488,7 +488,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
     );
 
     if (presentation === 'wizard') {
-        const overlayScrimColor = theme.colors.overlay?.scrimWizard ?? theme.colors.surface;
+        const overlayScrimColor = theme.colors.overlay?.scrimWizard ?? theme.colors.surface.base;
         const showBusyOverlay = isBusy && activeTaskSnapshot != null;
         return (
             <View testID={props.testID} style={{ width: '100%', gap: 12, position: 'relative' }}>
@@ -500,7 +500,7 @@ export const RelayAccessControlSection = React.memo(function RelayAccessControlS
                     ) : null}
 
                     {lastErrorMessage ? (
-                        <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                        <Text style={{ color: theme.colors.text.secondary, textAlign: 'center' }}>
                             {lastErrorMessage}
                         </Text>
                     ) : null}

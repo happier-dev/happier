@@ -422,7 +422,7 @@ export function DesktopActivityOverlayCollapsed(props: Readonly<{
                                     kind: 'badge',
                                 }),
                             ]}>
-                                <Text style={[styles.countText, { color: theme.colors.overlay.text }]}>
+                                <Text style={[styles.countText, { color: theme.colors.overlay.foreground }]}>
                                     {String(props.model.collapsed.sessionCount)}
                                 </Text>
                             </View>
@@ -454,13 +454,13 @@ export function DesktopActivityOverlayCollapsed(props: Readonly<{
                         style={[styles.textContainer, slidePushStyle]}
                     >
                         <View style={styles.titleRow}>
-                            <Text numberOfLines={1} style={[styles.title, { color: theme.colors.overlay.text }]}>
+                            <Text numberOfLines={1} style={[styles.title, { color: theme.colors.overlay.foreground }]}>
                                 {activeSlide.title}
                             </Text>
                             {activeSlide.animatedEllipsis ? (
                                 <Text
                                     testID="desktop-activity-overlay-collapsed-ellipsis"
-                                    style={[styles.ellipsis, { color: theme.colors.overlay.text }]}
+                                    style={[styles.ellipsis, { color: theme.colors.overlay.foreground }]}
                                 >
                                     {'.'.repeat(ellipsisFrame)}
                                 </Text>
@@ -474,14 +474,14 @@ export function DesktopActivityOverlayCollapsed(props: Readonly<{
                                         kind: 'badge',
                                     }),
                                 ]}>
-                                    <Text style={[styles.countText, { color: theme.colors.overlay.text }]}>
+                                    <Text style={[styles.countText, { color: theme.colors.overlay.foreground }]}>
                                         {String(props.model.collapsed.sessionCount)}
                                     </Text>
                                 </View>
                             ) : null}
                         </View>
                         {activeSlide.subtitle ? (
-                            <Text numberOfLines={1} style={[styles.status, { color: theme.colors.overlay.textSecondary }]}>
+                            <Text numberOfLines={1} style={[styles.status, { color: theme.colors.overlay.secondaryForeground }]}>
                                 {activeSlide.subtitle}
                             </Text>
                         ) : null}

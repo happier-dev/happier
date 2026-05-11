@@ -21,7 +21,7 @@ import { readSkillBundleArtifactState } from './readSkillBundleArtifactState';
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     content: {
         padding: 16,
@@ -40,7 +40,7 @@ const styles = StyleSheet.create((theme) => ({
         marginBottom: 12,
     },
     fieldLabel: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 14,
         marginBottom: 8,
     },
@@ -48,7 +48,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 12,
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         minHeight: 320,
     },
 }));

@@ -26,22 +26,22 @@ export const ExecutionRunStatusPill = React.memo((props: Readonly<{ status: unkn
     const colors = (() => {
         switch (status) {
             case 'running':
-                return { bg: theme.colors.surfaceHigh, fg: theme.colors.textSecondary };
+                return { bg: theme.colors.surface.inset, fg: theme.colors.text.secondary };
             case 'succeeded':
-                return { bg: theme.colors.surfaceHigh, fg: theme.colors.text };
+                return { bg: theme.colors.surface.inset, fg: theme.colors.text.primary };
             case 'failed':
-                return { bg: theme.colors.surfaceHigh, fg: theme.colors.text };
+                return { bg: theme.colors.surface.inset, fg: theme.colors.text.primary };
             case 'cancelled':
-                return { bg: theme.colors.surfaceHigh, fg: theme.colors.textSecondary };
+                return { bg: theme.colors.surface.inset, fg: theme.colors.text.secondary };
             case 'timeout':
-                return { bg: theme.colors.surfaceHigh, fg: theme.colors.textSecondary };
+                return { bg: theme.colors.surface.inset, fg: theme.colors.text.secondary };
             case 'unknown':
-                return { bg: theme.colors.surfaceHigh, fg: theme.colors.textSecondary };
+                return { bg: theme.colors.surface.inset, fg: theme.colors.text.secondary };
         }
     })();
 
     return (
-        <View style={[styles.pill, { backgroundColor: colors.bg, borderColor: theme.colors.divider }]}>
+        <View style={[styles.pill, { backgroundColor: colors.bg, borderColor: theme.colors.border.default }]}>
             <Text style={[styles.text, { color: colors.fg }]}>
                 {status}
             </Text>

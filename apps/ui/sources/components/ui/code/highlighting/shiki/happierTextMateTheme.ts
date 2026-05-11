@@ -30,15 +30,18 @@ function toHex6(value: string): string {
 
 function buildHappierTextMateTheme(params: Readonly<{ id: string; type: 'light' | 'dark'; theme: HappierThemeLike }>): ThemeRegistration {
     const colors = params.theme.colors as any;
-    const bg = toHex6(colors?.surfaceHigh ?? colors?.surface ?? '#000000');
-    const fg = toHex6(colors?.syntaxDefault ?? colors?.text ?? '#ffffff');
+    const surface = colors?.surface as { base?: string; inset?: string } | undefined;
+    const text = colors?.text as { primary?: string; secondary?: string } | undefined;
+    const syntax = colors?.syntax as Record<string, string | undefined> | undefined;
+    const bg = toHex6(surface?.inset ?? surface?.base ?? '#000000');
+    const fg = toHex6(syntax?.default ?? text?.primary ?? '#ffffff');
 
-    const keyword = toHex6(colors?.syntaxKeyword ?? fg);
-    const string = toHex6(colors?.syntaxString ?? fg);
-    const number = toHex6(colors?.syntaxNumber ?? fg);
-    const comment = toHex6(colors?.syntaxComment ?? colors?.textSecondary ?? fg);
-    const func = toHex6(colors?.syntaxFunction ?? keyword);
-    const punctuation = toHex6(colors?.syntaxComment ?? fg);
+    const keyword = toHex6(syntax?.keyword ?? fg);
+    const string = toHex6(syntax?.string ?? fg);
+    const number = toHex6(syntax?.number ?? fg);
+    const comment = toHex6(syntax?.comment ?? text?.secondary ?? fg);
+    const func = toHex6(syntax?.function ?? keyword);
+    const punctuation = toHex6(syntax?.comment ?? fg);
 
     return withStableId(
         {

@@ -26,7 +26,7 @@ type SearchResultsListProps = {
 
 function renderFileIconForSearch(file: FileItem, theme: any) {
     if (file.fileType === 'folder') {
-        return <Ionicons name="folder-outline" size={18} color={theme.colors.textSecondary} />;
+        return <Ionicons name="folder-outline" size={18} color={theme.colors.text.secondary} />;
     }
 
     const { name } = normalizeRepoPathParts({ fileName: file.fileName, filePath: file.filePath, fullPath: file.fullPath });
@@ -55,11 +55,11 @@ export const SearchResultsList = React.memo(({
                     paddingTop: 40,
                 }}
             >
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                 <Text
                     style={{
                         fontSize: 16,
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                         textAlign: 'center',
                         marginTop: 16,
                         ...Typography.default(),
@@ -85,12 +85,12 @@ export const SearchResultsList = React.memo(({
                 <Octicons
                     name={searchQuery ? 'search' : 'file-directory'}
                     size={48}
-                    color={theme.colors.textSecondary}
+                    color={theme.colors.text.secondary}
                 />
                 <Text
                     style={{
                         fontSize: 16,
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                         textAlign: 'center',
                         marginTop: 16,
                         ...Typography.default(),
@@ -102,7 +102,7 @@ export const SearchResultsList = React.memo(({
                     <Text
                         style={{
                             fontSize: 14,
-                            color: theme.colors.textSecondary,
+                            color: theme.colors.text.secondary,
                             textAlign: 'center',
                             marginTop: 8,
                             ...Typography.default(),
@@ -124,18 +124,18 @@ export const SearchResultsList = React.memo(({
                 Boolean(searchQuery) ? (
                     <View
                         style={{
-                            backgroundColor: theme.colors.surfaceHigh,
+                            backgroundColor: theme.colors.surface.inset,
                             paddingHorizontal: 16,
                             paddingVertical: 12,
                             borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                            borderBottomColor: theme.colors.divider,
+                            borderBottomColor: theme.colors.border.default,
                         }}
                     >
                         <Text
                             style={{
                                 fontSize: 14,
                                 fontWeight: '600',
-                                color: theme.colors.textLink,
+                                color: theme.colors.text.link,
                                 ...Typography.default(),
                             }}
                         >
@@ -157,12 +157,12 @@ export const SearchResultsList = React.memo(({
                                 nameMaxWidth={220}
                                 pathTextStyle={{
                                     fontSize: 13,
-                                    color: theme.colors.textSecondary,
+                                    color: theme.colors.text.secondary,
                                     ...Typography.default(),
                                 }}
                                 nameTextStyle={{
                                     fontSize: 13,
-                                    color: theme.colors.text,
+                                    color: theme.colors.text.primary,
                                     ...Typography.default('semiBold'),
                                 }}
                             />

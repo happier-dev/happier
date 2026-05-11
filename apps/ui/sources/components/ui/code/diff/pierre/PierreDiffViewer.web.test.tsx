@@ -154,6 +154,25 @@ describe('PierreDiffViewer (web)', () => {
         });
     });
 
+    it('publishes theme-backed selection CSS variables for Pierre selected lines', async () => {
+        const { resolvePierreSelectionStyle } = await import('./PierreDiffViewer.web');
+
+        expect(resolvePierreSelectionStyle({
+            colors: {
+                surface: {
+                    base: '#surface',
+                    inset: '#surface-inset',
+                },
+                success: '#success',
+            },
+        })).toMatchObject({
+            '--diffs-bg-selection': '#surface-inset',
+            '--diffs-selection-number-fg': '#surface',
+            '--diffs-bg-selection-number': '#success',
+            '--diffs-selection-base': '#success',
+        });
+    });
+
     it('passes tokenization budgets into Pierre options', async () => {
         fileDiffSpy.mockClear();
         const { PierreDiffViewer } = await import('./PierreDiffViewer.web');

@@ -16,7 +16,7 @@ import { t } from '@/text';
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.groupped.background,
+    backgroundColor: theme.colors.background.canvas,
   },
 }));
 
@@ -80,7 +80,7 @@ export const PromptTemplatesScreen = React.memo(() => {
                 testID={`promptTemplates.entry.${entry.id}`}
                 title={entry.title}
                 subtitle={subtitle}
-                icon={<Ionicons name="flash-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="flash-outline" size={29} color={theme.colors.text.secondary} />}
                 onPress={() => router.push(`/settings/prompts/templates/${entry.id}`)}
                 rightElement={(
                   <ItemRowActions
@@ -110,7 +110,7 @@ export const PromptTemplatesScreen = React.memo(() => {
               testID="promptTemplates.empty"
               title={t('promptLibrary.templatesEmptyTitle')}
               subtitle={t('promptLibrary.templatesEmptySubtitle')}
-              icon={<Ionicons name="flash-outline" size={29} color={theme.colors.textSecondary} />}
+              icon={<Ionicons name="flash-outline" size={29} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           )}

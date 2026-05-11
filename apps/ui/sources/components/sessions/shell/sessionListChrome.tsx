@@ -45,7 +45,7 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
     const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const [menuOpen, setMenuOpen] = React.useState(false);
-    const actionIconColor = theme.colors.textSecondary;
+    const actionIconColor = theme.colors.text.secondary;
     const activeGrouping = sessionListActiveGroupingV1 === 'date' ? 'date' : 'project';
     const inactiveGrouping = sessionListInactiveGroupingV1 === 'date' ? 'date' : 'project';
     const isHideInactiveSessionsEnabled = hideInactiveSessions === true;
@@ -165,7 +165,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
     const showHoverActions = !isWeb || isRowHovered || isActionsHovered || menuOpen;
     const showChevron = !isWeb || collapsed || showHoverActions;
     const menuEnabled = Boolean(item.workspaceScopeHint);
-    const actionIconColor = theme.colors.textSecondary;
+    const actionIconColor = theme.colors.text.secondary;
     const canCreateSession = Boolean(item.workspaceScopeHint);
 
     const menuItems = resolveProjectGroupHeaderMenuItems({
@@ -175,7 +175,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
         actionIconColor,
     });
 
-    const chevronColor = theme.colors.textSecondary;
+    const chevronColor = theme.colors.text.secondary;
     return (
         <View style={styles.groupHeaderSection}>
             <Pressable
@@ -281,7 +281,7 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     const isWeb = Platform.OS === 'web';
     const [isHovered, setIsHovered] = React.useState(false);
     const [isOrderingMenuOpen, setIsOrderingMenuOpen] = React.useState(false);
-    const headerChevronColor = theme.colors.textSecondary;
+    const headerChevronColor = theme.colors.text.secondary;
     const isPrimaryHeader = props.showOrderingMenu === true;
     const showChevron = !isWeb || props.collapsed || isHovered || isOrderingMenuOpen;
     const showOrderingMenu = props.showOrderingMenu === true;

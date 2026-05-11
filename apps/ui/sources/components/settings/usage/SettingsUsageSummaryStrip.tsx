@@ -42,7 +42,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     emptyState: {
         borderRadius: 16,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         paddingVertical: 18,
         alignItems: 'center',
         gap: 8,
@@ -50,11 +50,11 @@ const styles = StyleSheet.create((theme) => ({
     },
     emptyText: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     errorCard: {
         borderRadius: 16,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 14,
         paddingVertical: 12,
         gap: 4,

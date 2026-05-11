@@ -11,4 +11,15 @@ describe('WizardStepDots', () => {
 
         expect(screen.getTextContent()).not.toContain('1 / 8');
     });
+
+    it('caps long step counts to a small visible dot window', async () => {
+        const screen = await renderScreen(<WizardStepDots currentStepIndex={7} stepCount={15} />);
+
+        expect(screen.findAllByType('Animated.View' as never)).toHaveLength(5);
+        expect(screen.findByTestId('wizard-step-dots')?.props.accessibilityValue).toEqual({
+            now: 8,
+            min: 1,
+            max: 15,
+        });
+    });
 });

@@ -425,10 +425,10 @@ export default React.memo(function ProfilePickerScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={t('common.back')}
             >
-                <Ionicons name="chevron-back" size={22} color={theme.colors.header.tint} />
+                <Ionicons name="chevron-back" size={22} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
-    }, [handleBackPress, theme.colors.header.tint]);
+    }, [handleBackPress, theme.colors.chrome.header.foreground]);
 
     const screenOptions = React.useCallback(() => {
         return {
@@ -455,13 +455,13 @@ export default React.memo(function ProfilePickerScreen() {
                         <Item
                             title={t('settingsFeatures.profiles')}
                             subtitle={t('settingsFeatures.profilesDisabled')}
-                            icon={<Ionicons name="person-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="person-outline" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                         />
                         <Item
                             title={t('settings.featuresTitle')}
                             subtitle={t('settings.featuresSubtitle')}
-                            icon={<Ionicons name="flask-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="flask-outline" size={29} color={theme.colors.text.secondary} />}
                             onPress={() => router.push('/settings/features')}
                         />
                     </ItemGroup>

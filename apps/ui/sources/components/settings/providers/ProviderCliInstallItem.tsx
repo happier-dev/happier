@@ -39,10 +39,10 @@ export function ProviderCliInstallItem(props: ProviderCliInstallItemProps) {
         <Item
             title={title}
             subtitle={subtitle}
-            icon={<Ionicons name="download-outline" size={29} color={theme.colors.textSecondary} />}
+            icon={<Ionicons name="download-outline" size={29} color={theme.colors.text.secondary} />}
             showChevron={false}
             disabled={isInstalling || !props.machineId || !autoInstallAvailable || installabilityKind === 'checking'}
-            rightElement={isInstalling ? <ActivityIndicator size="small" color={theme.colors.textSecondary} /> : undefined}
+            rightElement={isInstalling ? <ActivityIndicator size="small" color={theme.colors.text.secondary} /> : undefined}
             onPress={async () => {
                 if (!props.machineId) {
                     Modal.alert(t('common.error'), t('settingsProviders.cliInstaller.noMachineSelected'));

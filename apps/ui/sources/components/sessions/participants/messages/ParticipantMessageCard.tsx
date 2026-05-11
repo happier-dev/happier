@@ -38,18 +38,18 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         gap: 8,
     },
     toText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontWeight: '600',
     },
     bodyText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
     },
 }));

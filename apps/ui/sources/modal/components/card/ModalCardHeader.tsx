@@ -30,7 +30,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
         gap: 12,
         borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
+        borderBottomColor: theme.colors.border.default,
     },
     headerLeadingWrap: {
         flexDirection: 'row',
@@ -46,12 +46,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         fontSize: 17,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     subtitle: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     actionsWrap: {

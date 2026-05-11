@@ -13,11 +13,11 @@ export function ChangedFilesSectionHeader(props: {
     return (
         <View
             style={{
-                backgroundColor: theme.colors.surfaceHigh,
+                backgroundColor: theme.colors.surface.inset,
                 paddingHorizontal: 16,
                 paddingVertical: 12,
                 borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                borderBottomColor: theme.colors.divider,
+                borderBottomColor: theme.colors.border.default,
             }}
         >
             <Text

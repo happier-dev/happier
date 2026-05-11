@@ -189,7 +189,7 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
             <ToolSectionView>
                 {errorMessage ? <ToolError message={errorMessage} /> : null}
                 <View style={styles.fileContainer}>
-                    <Octicons name="file-diff" size={16} color={theme.colors.textSecondary} />
+                    <Octicons name="file-diff" size={16} color={theme.colors.text.secondary} />
                     <Text style={styles.fileName}>{fileName}</Text>
                     {allDeletes ? <Text style={styles.applied}>{t('common.deleted')}</Text> : null}
                     {applied ? <Text style={styles.applied}>{t('common.applied')}</Text> : null}
@@ -210,7 +210,7 @@ export const PatchView = React.memo<ToolViewProps>(({ tool, metadata, detailLeve
 
                     return (
                         <View key={index} style={styles.fileRow}>
-                            <Octicons name="file-diff" size={14} color={theme.colors.textSecondary} />
+                            <Octicons name="file-diff" size={14} color={theme.colors.text.secondary} />
                             <Text style={styles.fileNameMulti}>{fileName}</Text>
                         </View>
                     );
@@ -225,7 +225,7 @@ const styles = StyleSheet.create((theme) => ({
         gap: 12,
     },
     fullBlock: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderRadius: 8,
         overflow: 'hidden',
     },
@@ -233,22 +233,22 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 10,
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
         borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: theme.colors.divider,
+        borderBottomColor: theme.colors.border.default,
     },
     fileContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
         padding: 12,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderRadius: 8,
     },
     filesContainer: {
         padding: 12,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderRadius: 8,
         gap: 8,
     },
@@ -259,17 +259,17 @@ const styles = StyleSheet.create((theme) => ({
     },
     fileName: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontWeight: '500',
     },
     fileNameMulti: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     applied: {
         marginLeft: 'auto',
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
 }));

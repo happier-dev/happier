@@ -229,12 +229,12 @@ const stylesheet = StyleSheet.create((theme) => ({
   container: {
     width: "100%",
     overflow: "hidden",
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.surface.base,
   },
   title: {
     fontSize: 12,
     fontWeight: "600",
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     textTransform: "uppercase",
   },
   body: {
@@ -254,16 +254,16 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingTop: 12,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.divider,
+    borderBottomColor: theme.colors.border.default,
   },
   bodyDetailedShell: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.surface.base,
   },
   bodyDetailed: {
     flexDirection: "row",
     alignItems: "stretch",
     minHeight: 272,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.surface.base,
   },
   bodyDetailedStacked: {
     flexDirection: "column",
@@ -274,16 +274,16 @@ const stylesheet = StyleSheet.create((theme) => ({
   railScroll: {
     width: 190,
     maxWidth: "30%",
-    backgroundColor: theme.colors.groupped.background,
+    backgroundColor: theme.colors.background.canvas,
     borderRightWidth: 1,
-    borderRightColor: theme.colors.divider,
+    borderRightColor: theme.colors.border.default,
   },
   railScrollContent: {
     paddingBottom: 10,
   },
   detailScroll: {
     flex: 1,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.surface.base,
   },
   detailScrollContent: {
     paddingHorizontal: 12,

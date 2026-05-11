@@ -302,7 +302,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                 <ItemGroup title={t('diagnosis.sections.overview')}>
                     <Item
                         title={t('diagnosis.overview.activeServer')}
-                        subtitle={<Text style={{ color: theme.colors.textSecondary }}>{activeServerUrl || t('status.unknown')}</Text>}
+                        subtitle={<Text style={{ color: theme.colors.text.secondary }}>{activeServerUrl || t('status.unknown')}</Text>}
                         detail={activeServerSnapshot.serverId}
                         icon={<Ionicons name="server-outline" size={24} color={theme.colors.accent.blue} />}
                         onPress={() => router.push('/server')}
@@ -363,7 +363,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         />
                         <Item
                             title={t('diagnosis.pasteDoctorJson.parse')}
-                            icon={<Ionicons name="checkmark-outline" size={20} color={theme.colors.success} />}
+                            icon={<Ionicons name="checkmark-outline" size={20} color={theme.colors.state.success.foreground} />}
                             onPress={parsePasted}
                             loading={parsing}
                             density="compact"
@@ -383,7 +383,7 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                     {onlineMachinesActiveServer.slice(0, 3).length === 0 ? (
                         <Item
                             title={t('diagnosis.machineRuns.none')}
-                            icon={<Ionicons name="laptop-outline" size={24} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="laptop-outline" size={24} color={theme.colors.text.secondary} />}
                             disabled
                         />
                     ) : onlineMachinesActiveServer.slice(0, 3).map((m) => {
@@ -397,10 +397,10 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                                     : t('diagnosis.machineRuns.idle');
                         const subtitle = status.status === 'error' ? status.detail : undefined;
                         const iconColor = status.status === 'ready'
-                            ? theme.colors.success
+                            ? theme.colors.state.success.foreground
                             : status.status === 'error'
-                                ? theme.colors.warningCritical
-                                : theme.colors.textSecondary;
+                                ? theme.colors.state.danger.foreground
+                                : theme.colors.text.secondary;
 
                         return (
                             <Item
@@ -428,14 +428,14 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                         <Item
                             title={t('diagnosis.findings.notRun')}
                             subtitle={t('diagnosis.findings.notRunSubtitle')}
-                            icon={<Ionicons name="information-circle-outline" size={24} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="information-circle-outline" size={24} color={theme.colors.text.secondary} />}
                             disabled
                         />
                     ) : report.findings.length === 0 ? (
                         <Item
                             title={t('diagnosis.findings.none')}
                             subtitle={t('diagnosis.findings.noneSubtitle')}
-                            icon={<Ionicons name="checkmark-circle-outline" size={24} color={theme.colors.success} />}
+                            icon={<Ionicons name="checkmark-circle-outline" size={24} color={theme.colors.state.success.foreground} />}
                             disabled
                         />
                     ) : report.findings.map((finding, idx) => (
@@ -445,20 +445,20 @@ export const DiagnosisView = React.memo(function DiagnosisView() {
                             title={resolveFindingTitle(finding)}
                             subtitle={
                                 <View>
-                                    <Text style={{ color: theme.colors.textSecondary }}>{resolveFindingSubtitle(finding)}</Text>
+                                    <Text style={{ color: theme.colors.text.secondary }}>{resolveFindingSubtitle(finding)}</Text>
                                     <View style={{ height: 8 }} />
                                     {resolveFindingSteps(finding).map((step, stepIdx) => (
-                                        <Text key={stepIdx} style={{ color: theme.colors.textSecondary }}>
+                                        <Text key={stepIdx} style={{ color: theme.colors.text.secondary }}>
                                             {`${stepIdx + 1}. ${step}`}
                                         </Text>
                                     ))}
                                     <View style={{ height: 8 }} />
-                                    <Text style={{ color: theme.colors.textSecondary }}>
+                                    <Text style={{ color: theme.colors.text.secondary }}>
                                         {t('diagnosis.findings.code', { code: finding.code })}
                                     </Text>
                                 </View>
                             }
-                            icon={<Ionicons name="alert-circle-outline" size={24} color={finding.severity === 'error' ? theme.colors.warningCritical : theme.colors.accent.orange} />}
+                            icon={<Ionicons name="alert-circle-outline" size={24} color={finding.severity === 'error' ? theme.colors.state.danger.foreground : theme.colors.accent.orange} />}
                             copy={finding.code}
                         />
                     ))}
@@ -480,21 +480,21 @@ const diagnosisStyles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 10,
         backgroundColor: theme.colors.input.background,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         marginBottom: 8,
     },
     helperText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 6,
     },
     okText: {
-        color: theme.colors.success,
+        color: theme.colors.state.success.foreground,
         marginTop: 6,
     },
     errorText: {
-        color: theme.colors.warningCritical,
+        color: theme.colors.state.danger.foreground,
         marginTop: 6,
     },
 }));

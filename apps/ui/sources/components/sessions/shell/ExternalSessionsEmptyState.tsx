@@ -48,7 +48,7 @@ export function ExternalSessionsEmptyState(props: ExternalSessionsEmptyStateProp
                     <Ionicons
                         name="folder-open-outline"
                         size={48}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                         style={{ marginBottom: 12 }}
                     />
                 )}

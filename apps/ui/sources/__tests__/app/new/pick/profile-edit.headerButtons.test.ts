@@ -68,7 +68,12 @@ installPickerCommonModuleMocks({
         }).module,
     unistyles: async () =>
         (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({
-            theme: { colors: { header: PICKER_THEME_COLORS.header, groupped: PICKER_THEME_COLORS.groupped } },
+            theme: {
+                colors: {
+                    background: PICKER_THEME_COLORS.background,
+                    chrome: PICKER_THEME_COLORS.chrome,
+                },
+            },
             runtime: { insets: { bottom: 0 } },
         }),
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),

@@ -49,7 +49,7 @@ export function ModelPickerOverlay(props: {
 }) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const selectedIndicatorColor = theme.dark ? theme.colors.text : theme.colors.button.primary.background;
+    const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
     const [query, setQuery] = React.useState('');
     const lastCommittedCustomModelRef = React.useRef<string | null>(null);
     const optionValues = React.useMemo(() => {
@@ -211,11 +211,11 @@ export function ModelPickerOverlay(props: {
                                 hitSlop={6}
                             >
                                 {probe.phase === 'idle' ? (
-                                    <Ionicons name="refresh-outline" size={18} color={theme.colors.textSecondary} />
+                                    <Ionicons name="refresh-outline" size={18} color={theme.colors.text.secondary} />
                                 ) : (
                                     <ActivityIndicator
                                         size="small"
-                                        color={theme.colors.textSecondary}
+                                        color={theme.colors.text.secondary}
                                         accessibilityLabel={probe.phase === 'loading'
                                             ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
                                             : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
@@ -226,7 +226,7 @@ export function ModelPickerOverlay(props: {
                             <View style={styles.refreshIconButton}>
                                 <ActivityIndicator
                                     size="small"
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                     accessibilityLabel={probe.phase === 'loading'
                                         ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
                                         : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
@@ -351,7 +351,7 @@ export function ModelPickerOverlay(props: {
                                 value={customValue}
                                 onChangeText={handleCustomValueChange}
                                 placeholder={t('agentInput.model.customPlaceholder')}
-                                placeholderTextColor={theme.colors.input?.placeholder ?? theme.colors.textSecondary}
+                                placeholderTextColor={theme.colors.input?.placeholder ?? theme.colors.text.secondary}
                                 autoCorrect={false}
                                 autoCapitalize="none"
                                 onSubmitEditing={handleSubmitCustomModel}
@@ -383,7 +383,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         fontSize: 11,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     effectiveBlock: {
         paddingTop: 0,
@@ -398,12 +398,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         backgroundColor: 'transparent',
         flexShrink: 0,
     },
     refreshIconButtonPressed: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     refreshIconButtonDisabled: {
         opacity: 0.6,
@@ -411,7 +411,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     noteText: {
         fontSize: 10,
         lineHeight: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     searchContainer: {
         paddingHorizontal: 0,
@@ -429,11 +429,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 13,
         paddingHorizontal: 9,
         paddingVertical: 8,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         gap: 3,
     },
     optionCardSelected: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     optionCardPressed: {
         opacity: 0.86,
@@ -449,7 +449,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         lineHeight: 15,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     optionCardIndicator: {
         minWidth: 18,
@@ -460,14 +460,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     optionCardDescription: {
         fontSize: 10,
         lineHeight: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     selectedControlsPanel: {
         marginTop: 8,
         gap: 5,
         padding: 10,
         borderRadius: 13,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     selectedControlGroup: {
         gap: 3,
@@ -487,12 +487,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontWeight: '700',
         letterSpacing: 0.35,
         textTransform: 'uppercase',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     selectedControlDescription: {
         fontSize: 9,
         lineHeight: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     selectedControlChoices: {
         flexDirection: 'row',
@@ -504,7 +504,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 999,
         paddingHorizontal: 8,
         paddingVertical: 4,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -514,7 +514,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     selectedControlChoiceLabel: {
         fontSize: 10,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     selectedControlChoiceLabelSelected: {
         color: theme.colors.button.primary.tint,
@@ -522,11 +522,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     searchInput: {
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         paddingHorizontal: 10,
         paddingVertical: 7,
         fontSize: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     customEditor: {
         paddingHorizontal: 0,
@@ -540,10 +540,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 13,
         paddingHorizontal: 10,
         paddingVertical: 9,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     customEntryRowSelected: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     customEntryHeader: {
         flexDirection: 'row',
@@ -566,19 +566,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         lineHeight: 15,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     customEntryDescription: {
         fontSize: 10,
         lineHeight: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     rowPressed: {
         opacity: 0.85,
     },
     emptyText: {
         fontSize: 11,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         paddingHorizontal: 0,
         paddingVertical: 8,
     },

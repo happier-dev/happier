@@ -40,7 +40,52 @@ describe('StoryDeckListCard', () => {
         const screen = await renderScreen(<StoryDeckListCard card={createListCard(6)} testID="story-list" />);
 
         expect(screen.findAllByType('GestureHandlerScrollView')).toHaveLength(0);
-        expect(screen.findByTestId('story-list-rows-static')).toBeTruthy();
+        const staticRows = screen.findByTestId('story-list-rows-static');
+        expect(staticRows).toBeTruthy();
+        expect(staticRows?.props.style).toContainEqual({ rowGap: 25 });
+    });
+
+    it('uses two columns for static list rows in wide story-deck layouts', async () => {
+        const { StoryDeckListCard } = await import('./StoryDeckListCard');
+        const screen = await renderScreen(<StoryDeckListCard card={createListCard(6)} layout="wide" testID="story-list" />);
+
+        const staticRows = screen.findByTestId('story-list-rows-static');
+        expect(staticRows?.props.style).toContainEqual({
+            width: '100%',
+            alignSelf: 'center',
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            columnGap: 25,
+            rowGap: 25,
+        });
+    });
+
+    it('uses two columns for scrollable list rows in wide story-deck layouts', async () => {
+        const { StoryDeckListCard } = await import('./StoryDeckListCard');
+        const screen = await renderScreen(<StoryDeckListCard card={createListCard(9)} layout="wide" testID="story-list" />);
+
+        const scrollView = screen.findByTestId('story-list-rows-scroll');
+        expect(scrollView?.props.contentContainerStyle).toMatchObject({ paddingBottom: 8 });
+        const rowsGrid = screen.findByTestId('story-list-rows-grid');
+        expect(rowsGrid).toBeTruthy();
+        expect(rowsGrid?.props.style).toContainEqual({
+            width: '100%',
+            alignSelf: 'center',
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            columnGap: 25,
+            rowGap: 25,
+        });
+        const wideRows = screen.tree.root.findAll((node) => (
+            Array.isArray(node.props.style)
+            && node.props.style.some((style: unknown) => (
+                style != null
+                && typeof style === 'object'
+                && 'flexBasis' in style
+                && style.flexBasis === '47%'
+            ))
+        ));
+        expect(wideRows.length).toBeGreaterThan(0);
     });
 
     it('adds vertical scrolling, edge fades, and chevron indicators for long list cards', async () => {
@@ -49,6 +94,8 @@ describe('StoryDeckListCard', () => {
 
         const scrollView = screen.findByTestId('story-list-rows-scroll');
         expect(scrollView?.type).toBe('GestureHandlerScrollView');
+        expect(scrollView?.props.contentContainerStyle).toMatchObject({ paddingBottom: 8 });
+        expect(screen.findByTestId('story-list-rows-grid')?.props.style).toContainEqual({ rowGap: 25 });
 
         act(() => {
             scrollView?.props.onLayout?.({ nativeEvent: { layout: { width: 320, height: 240 } } });

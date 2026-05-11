@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { applySessionStateFieldMetadataPatch } from "@happier-dev/agents/session/state/metadataPatch";
+import { applyRuntimeDescriptorSessionMetadata } from "@happier-dev/agents/session/state/metadataWriters";
 import type { PermissionMode, ModelMode } from "@/sync/domains/permissions/permissionTypes";
 import type {
     PrimaryTurnStatusV1,
@@ -312,7 +312,7 @@ export const MetadataSchema = z.preprocess((value) => {
         const { agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1, ...rest } = metadata;
         return rest;
     }
-    return applySessionStateFieldMetadataPatch(metadata, 'identity.runtimeDescriptor', runtimeDescriptorV1);
+    return applyRuntimeDescriptorSessionMetadata(metadata, runtimeDescriptorV1);
 }, MetadataObjectSchema);
 
 export type Metadata = z.infer<typeof MetadataSchema>;

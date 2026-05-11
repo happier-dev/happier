@@ -108,33 +108,33 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         gap: 10,
     },
     headerText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 15,
         fontWeight: '600',
     },
     summaryText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
     },
     section: {
         gap: 6,
         paddingTop: 8,
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     sectionTitle: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         fontWeight: '600',
     },
     sectionItem: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontFamily: 'Menlo',
     },
@@ -143,7 +143,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: 10,
         paddingHorizontal: 12,
         borderRadius: 10,
-        backgroundColor: theme.colors.textLink,
+        backgroundColor: theme.colors.text.link,
         alignItems: 'center',
     },
     adoptButtonDisabled: {
@@ -155,7 +155,7 @@ const styles = StyleSheet.create((theme) => ({
         fontWeight: '600',
     },
     errorText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
 }));

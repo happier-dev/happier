@@ -27,7 +27,7 @@ import { trackAccountRestored } from '@/track';
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     container: {
         flex: 1,
@@ -48,14 +48,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         fontSize: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 6,
         textAlign: 'center',
         ...Typography.default('semiBold'),
     },
     subtitle: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 20,
         textAlign: 'center',
         ...Typography.default(),
@@ -63,11 +63,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     statusCard: {
         marginTop: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 14,
         paddingHorizontal: 16,
         paddingVertical: 14,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     embeddedStatusCard: {
         marginTop: 10,
@@ -75,13 +75,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     codeLabel: {
         marginTop: 12,
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     codeValue: {
         marginTop: 6,
         fontSize: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         letterSpacing: 1,
         ...Typography.mono(),
     },
@@ -278,7 +278,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     <Text style={styles.subtitle}>{t('common.loading')}</Text>
 
                     <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
-                        <ActivityIndicator size="small" color={theme.colors.text} />
+                        <ActivityIndicator size="small" color={theme.colors.text.primary} />
                     </View>
 
                     <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
@@ -456,7 +456,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 <Text style={styles.subtitle}>{statusText}</Text>
 
                 <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
-                    <ActivityIndicator size="small" color={theme.colors.text} />
+                    <ActivityIndicator size="small" color={theme.colors.text.primary} />
                     {confirmCode ? (
                         <>
                             <Text style={styles.codeLabel}>{t('connect.confirmCodeLabel')}</Text>

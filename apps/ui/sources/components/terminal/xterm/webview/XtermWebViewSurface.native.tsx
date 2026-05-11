@@ -45,10 +45,10 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
             () =>
                 buildXtermWebViewHtml({
                     theme: {
-                        backgroundColor: theme.colors.surface,
-                        textColor: theme.colors.text,
-                        cursorColor: theme.colors.text,
-                        selectionBackgroundColor: theme.colors.surfaceSelected,
+                        backgroundColor: theme.colors.surface.base,
+                        textColor: theme.colors.text.primary,
+                        cursorColor: theme.colors.text.primary,
+                        selectionBackgroundColor: theme.colors.surface.selected,
                         isDark: Boolean(theme.dark),
                     },
                     fontSizePx: Math.max(8, Math.round(props.fontSize)),
@@ -61,9 +61,9 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                 maxChunkBytes,
                 props.fontSize,
                 props.lineHeightPx,
-                theme.colors.surface,
-                theme.colors.surfaceSelected,
-                theme.colors.text,
+                theme.colors.surface.base,
+                theme.colors.surface.selected,
+                theme.colors.text.primary,
                 theme.dark,
             ],
         );
@@ -118,10 +118,10 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                 v: 1,
                 type: 'setTheme',
                 payload: {
-                    backgroundColor: theme.colors.surface,
-                    textColor: theme.colors.text,
-                    cursorColor: theme.colors.text,
-                    selectionBackgroundColor: theme.colors.surfaceSelected,
+                    backgroundColor: theme.colors.surface.base,
+                    textColor: theme.colors.text.primary,
+                    cursorColor: theme.colors.text.primary,
+                    selectionBackgroundColor: theme.colors.surface.selected,
                     isDark: Boolean(theme.dark),
                 },
             });
@@ -137,16 +137,16 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
             postEnvelope,
             props.fontSize,
             props.lineHeightPx,
-            theme.colors.surface,
-            theme.colors.surfaceSelected,
-            theme.colors.text,
+            theme.colors.surface.base,
+            theme.colors.surface.selected,
+            theme.colors.text.primary,
             theme.dark,
         ]);
 
         return (
             <View
                 testID={props.testID}
-                style={{ flex: 1, minHeight: 0, minWidth: 0, borderWidth: 1, borderColor: theme.colors.divider, borderRadius: 10, overflow: 'hidden' }}
+                style={{ flex: 1, minHeight: 0, minWidth: 0, borderWidth: 1, borderColor: theme.colors.border.default, borderRadius: 10, overflow: 'hidden' }}
             >
                 <WebView
                     ref={webViewRef}
@@ -174,10 +174,10 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                                 v: 1,
                                 type: 'setTheme',
                                 payload: {
-                                    backgroundColor: theme.colors.surface,
-                                    textColor: theme.colors.text,
-                                    cursorColor: theme.colors.text,
-                                    selectionBackgroundColor: theme.colors.surfaceSelected,
+                                    backgroundColor: theme.colors.surface.base,
+                                    textColor: theme.colors.text.primary,
+                                    cursorColor: theme.colors.text.primary,
+                                    selectionBackgroundColor: theme.colors.surface.selected,
                                     isDark: Boolean(theme.dark),
                                 },
                             });

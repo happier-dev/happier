@@ -49,7 +49,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     row: {
         flex: 1,
@@ -126,7 +126,7 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
                             setSidebarWidthBasisPx(windowWidth);
                         }}
                     >
-                        <View style={{ flex: 1, minHeight: 0, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: theme.colors.divider }}>
+                        <View style={{ flex: 1, minHeight: 0, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: theme.colors.border.default }}>
                             <SettingsSidebarComponent />
                         </View>
                     </ResizableDockedPaneComponent>

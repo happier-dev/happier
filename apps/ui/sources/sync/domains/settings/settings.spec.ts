@@ -472,9 +472,9 @@ describe('settings', () => {
             expect((parsed as any).filesDiffTokenizationMaxBytes).toBeGreaterThan(0);
             expect((parsed as any).filesDiffTokenizationMaxLines).toBeGreaterThan(0);
             expect((parsed as any).filesCodeViewJsonInferenceMaxBytes).toBeGreaterThan(0);
-            expect((parsed as any).filesImagePreviewCacheMaxEntries).toBeGreaterThan(0);
-            expect((parsed as any).filesImagePreviewCacheMaxTotalBytes).toBeGreaterThan(0);
-            expect((parsed as any).filesImagePreviewMaxBytes).toBeGreaterThan(0);
+            expect((parsed as any).filesImagePreviewCacheMaxEntries).toBe(32);
+            expect((parsed as any).filesImagePreviewCacheMaxTotalBytes).toBe(96 * 1024 * 1024);
+            expect((parsed as any).filesImagePreviewMaxBytes).toBe(16 * 1024 * 1024);
             expect((parsed as any).filesEditorChangeDebounceMs).toBeGreaterThan(0);
             expect((parsed as any).filesEditorMaxFileBytes).toBeGreaterThan(0);
         });

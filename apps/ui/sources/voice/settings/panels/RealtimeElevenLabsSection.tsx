@@ -331,7 +331,7 @@ export function RealtimeElevenLabsSection(props: {
                         <Ionicons
                           name={previewingVoiceId === voice.voiceId ? 'stop-circle-outline' : 'play-circle-outline'}
                           size={22}
-                          color={theme.colors.textSecondary}
+                          color={theme.colors.text.secondary}
                         />
                       </Pressable>
                     ),

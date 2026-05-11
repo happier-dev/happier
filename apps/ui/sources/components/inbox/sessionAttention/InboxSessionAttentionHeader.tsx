@@ -30,7 +30,7 @@ export const InboxSessionAttentionHeader = React.memo(function InboxSessionAtten
                 onPress={props.onOpenSession}
                 style={({ pressed }) => [styles.openButton, pressed && styles.openButtonPressed]}
             >
-                <Ionicons name="open-outline" size={16} color={theme.colors.text} />
+                <Ionicons name="open-outline" size={16} color={theme.colors.text.primary} />
             </Pressable>
         </View>
     );
@@ -53,7 +53,7 @@ const styles = StyleSheet.create((theme) => ({
     title: {
         fontSize: 16,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     openButton: {
         width: 32,
@@ -62,10 +62,10 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     openButtonPressed: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
 }));

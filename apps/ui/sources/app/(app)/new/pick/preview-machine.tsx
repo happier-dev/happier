@@ -72,9 +72,9 @@ export default React.memo(function PreviewMachinePickerScreen() {
             accessibilityRole="button"
             accessibilityLabel={t('common.back')}
         >
-            <Ionicons name="chevron-back" size={22} color={theme.colors.header.tint} />
+            <Ionicons name="chevron-back" size={22} color={theme.colors.chrome.header.foreground} />
         </Pressable>
-    ), [navigation, router, theme.colors.header.tint]);
+    ), [navigation, router, theme.colors.chrome.header.foreground]);
 
     const screenOptions = React.useCallback(() => {
         return {

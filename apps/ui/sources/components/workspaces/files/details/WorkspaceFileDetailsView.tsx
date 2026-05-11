@@ -48,6 +48,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useCodeLinesSyntaxHighlighting } from '@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting';
 import { resolveSessionWorkspacePath } from '@/sync/domains/session/resolveSessionWorkspacePath';
 import { resolveFileDetailsDisplayMode } from './workspaceFileDetails/resolveFileDetailsDisplayMode';
+import { useSessionImagePreview } from '@/components/sessions/files/content/imagePreview/useSessionImagePreview';
 
 export type WorkspaceFileDeepLinkAnchor = Readonly<{
     source: ReviewCommentSource;
@@ -129,6 +130,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     const filesEditorBridgeMaxChunkBytes = useSetting('filesEditorBridgeMaxChunkBytes');
     const filesEditorWebMonacoEnabled = useSetting('filesEditorWebMonacoEnabled');
     const filesEditorNativeCodeMirrorEnabled = useSetting('filesEditorNativeCodeMirrorEnabled');
+    const filesImagePreviewMaxBytes = useSetting('filesImagePreviewMaxBytes');
 
     const scrollFades = useScrollEdgeFades({
         enabledEdges: { top: true, bottom: true },
@@ -224,6 +226,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                 filePath,
                 diffMode,
                 fileEntryKind: fileEntry?.kind ?? null,
+                maxImagePreviewBytes: typeof filesImagePreviewMaxBytes === 'number' ? filesImagePreviewMaxBytes : null,
             });
 
             setDiffContent(result.diffContent);
@@ -244,7 +247,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                 }
             }
         }
-    }, [diffMode, fileEntry?.kind, filePath, scope]);
+    }, [diffMode, fileEntry?.kind, filePath, filesImagePreviewMaxBytes, scope]);
 
     React.useEffect(() => {
         void refreshAll();
@@ -430,6 +433,30 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         setDisplayMode('diff');
     }, [displayMode, previewTooLarge]);
 
+    const imagePreviewMime = fileContent?.binaryMime ?? null;
+    const imagePreviewCacheKey = React.useMemo(() => {
+        if (!imagePreviewMime) return null;
+        return [
+            scope?.serverId ?? '',
+            scope?.machineId ?? '',
+            scope?.rootPath ?? '',
+            filePath,
+            fileContent?.binarySizeBytes ?? '',
+            lineSelectionFingerprint ?? '',
+        ].join(':');
+    }, [fileContent?.binarySizeBytes, filePath, imagePreviewMime, lineSelectionFingerprint, scope?.machineId, scope?.rootPath, scope?.serverId]);
+    const imagePreview = useSessionImagePreview({
+        sessionId: sessionId || props.scopeId,
+        filePath,
+        enabled: Boolean(scope && imagePreviewMime),
+        cacheKey: imagePreviewCacheKey,
+        mimeType: imagePreviewMime,
+        sizeBytes: fileContent?.binarySizeBytes ?? null,
+        workspaceScope: scope,
+        cacheScopeId: scope ? `${scope.serverId}:${scope.machineId}:${scope.rootPath}` : null,
+    });
+    const imagePreviewUri = imagePreview.status === 'loaded' ? imagePreview.uri : null;
+
     if (!scope) {
         return <FileLoadingState theme={theme} filePath={filePath} />;
     }
@@ -444,13 +471,6 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
 
     const isBinaryFile = fileContent?.isBinary === true;
     const showDownloadAction = downloadActionsAvailable && (previewTooLarge || isBinaryFile);
-    const imagePreviewUri = (() => {
-        const base64 = fileContent?.binaryBase64 ?? null;
-        const mime = fileContent?.binaryMime ?? null;
-        if (typeof base64 !== 'string' || base64.trim().length === 0) return null;
-        if (typeof mime !== 'string' || mime.trim().length === 0) return null;
-        return `data:${mime};base64,${base64}`;
-    })();
     const showDiscardAction = Boolean(
         sessionId
         && fileStatusForHeaderActions
@@ -483,7 +503,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     ) : null;
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
+        <View style={[styles.container, { backgroundColor: theme.colors.surface.base }]}>
             <View
                 style={{
                     width: '100%',
@@ -538,11 +558,11 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                             paddingVertical: 10,
                             borderRadius: 12,
                             borderWidth: 1,
-                            borderColor: theme.colors.divider,
-                            backgroundColor: theme.colors.surfaceHigh,
+                            borderColor: theme.colors.border.default,
+                            backgroundColor: theme.colors.surface.inset,
                         }}
                     >
-                        <Text style={{ fontSize: 13, color: theme.colors.textSecondary, ...Typography.default() }}>
+                        <Text style={{ fontSize: 13, color: theme.colors.text.secondary, ...Typography.default() }}>
                             {error}
                         </Text>
                     </View>
@@ -579,7 +599,12 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                         onScroll={scrollFades.onScroll}
                         scrollEventThrottle={16}
                     >
-                        <FileBinaryState theme={theme} filePath={filePath} imagePreviewUri={imagePreviewUri} />
+                        <FileBinaryState
+                            theme={theme}
+                            filePath={filePath}
+                            imagePreviewUri={imagePreviewUri}
+                            imagePreviewSvgXml={imagePreview.status === 'loaded' ? imagePreview.svgXml : null}
+                        />
                     </ScrollView>
                 ) : (
                     <FileContentPanel
@@ -612,10 +637,10 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
 
                 {displayMode === 'file' && isEditingFile ? null : (
                     <>
-                        <ScrollEdgeFades color={theme.colors.surface} size={18} edges={scrollFades.visibility} />
+                        <ScrollEdgeFades color={theme.colors.surface.base} size={18} edges={scrollFades.visibility} />
                         <ScrollEdgeIndicators
                             edges={scrollFades.visibility}
-                            color={theme.colors.textSecondary}
+                            color={theme.colors.text.secondary}
                             size={14}
                             opacity={0.35}
                         />
@@ -629,6 +654,6 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
 }));

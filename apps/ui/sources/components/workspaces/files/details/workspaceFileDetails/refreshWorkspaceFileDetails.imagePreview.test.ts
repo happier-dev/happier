@@ -30,7 +30,7 @@ vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
 }));
 
 vi.mock('@/config', () => ({
-    config: { filesPreviewMaxBytes: 1024 * 1024 },
+    config: { filesPreviewMaxBytes: 10 },
 }));
 
 installWorkspaceFileDetailsCommonModuleMocks();
@@ -53,12 +53,15 @@ describe('refreshWorkspaceFileDetails (image preview)', () => {
             filePath: 'image.png',
             diffMode: 'pending',
             fileEntryKind: 'modified',
+            maxImagePreviewBytes: 1024 * 1024,
         });
 
         expect(result.status).toBe('ready');
         expect(result.error).toBeNull();
         expect(result.fileContent?.isBinary).toBe(true);
         expect(result.fileContent?.binaryMime).toBe('image/png');
-        expect(result.fileContent?.binaryBase64).toBe(pngBase64);
+        expect(result.fileContent?.binaryBase64).toBeUndefined();
+        expect(result.fileContent?.binarySizeBytes).toBe(10);
+        expect(workspaceReadFileSpy).not.toHaveBeenCalled();
     });
 });

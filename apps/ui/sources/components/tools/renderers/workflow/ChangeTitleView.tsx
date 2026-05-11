@@ -28,17 +28,17 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 6,
     },
     label: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
     title: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontWeight: '600',
     },
 }));

@@ -75,13 +75,13 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         gap: 10,
     },
     headerText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 15,
         fontWeight: '600',
     },
@@ -89,7 +89,7 @@ const styles = StyleSheet.create((theme) => ({
         gap: 8,
     },
     filePathText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         fontWeight: '600',
     },
@@ -97,7 +97,7 @@ const styles = StyleSheet.create((theme) => ({
         gap: 6,
         paddingVertical: 8,
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     commentHeader: {
         flexDirection: 'row',
@@ -107,7 +107,7 @@ const styles = StyleSheet.create((theme) => ({
     anchorText: {
         flex: 1,
         minWidth: 0,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         ...Typography.default(),
     },
@@ -116,7 +116,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: 3,
     },
     jumpText: {
-        color: theme.colors.textLink,
+        color: theme.colors.text.link,
         fontSize: 12,
         fontWeight: '600',
     },
@@ -124,25 +124,25 @@ const styles = StyleSheet.create((theme) => ({
         gap: 4,
         padding: 10,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.elevated,
     },
     codeText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontFamily: 'Menlo',
         fontSize: 12,
     },
     codeMutedText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
         fontSize: 12,
     },
     commentText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         paddingVertical: 8,
         paddingHorizontal: 10,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         ...Typography.default(),
     },
 }));

@@ -23,24 +23,24 @@ const stylesheet = StyleSheet.create((theme) => ({
     optionButton: {
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
         paddingHorizontal: 14,
         paddingVertical: 12,
         gap: 2,
     },
     optionTitle: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     optionSubtitle: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     optionPrimaryBorder: {
-        borderColor: theme.colors.textLink,
+        borderColor: theme.colors.text.link,
     },
     cancelRow: {
         paddingVertical: 10,
@@ -48,7 +48,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     cancelText: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
 }));

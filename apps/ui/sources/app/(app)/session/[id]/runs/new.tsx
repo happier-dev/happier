@@ -42,7 +42,7 @@ export default function SessionNewRunScreen() {
 
     if (hasIntentParam && initialIntent === null) {
         return (
-            <View style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
+            <View style={{ flex: 1, backgroundColor: theme.colors.background?.canvas ?? theme.colors.surface.base }}>
                 <Stack.Screen options={screenOptions} />
                 <ConstrainedScreenContent
                     style={{
@@ -52,14 +52,14 @@ export default function SessionNewRunScreen() {
                         gap: 16,
                     }}
                 >
-                    <Text style={{ color: theme.colors.textSecondary }}>{t('errors.invalidFormat')}</Text>
+                    <Text style={{ color: theme.colors.text.secondary }}>{t('errors.invalidFormat')}</Text>
                 </ConstrainedScreenContent>
             </View>
         );
     }
 
     return (
-        <View style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
+        <View style={{ flex: 1, backgroundColor: theme.colors.background?.canvas ?? theme.colors.surface.base }}>
             <Stack.Screen options={screenOptions} />
             <ConstrainedScreenContent
                 style={{
@@ -70,9 +70,9 @@ export default function SessionNewRunScreen() {
                 }}
             >
                 {!sessionId ? (
-                    <Text style={{ color: theme.colors.text }}>{t('errors.sessionDeleted')}</Text>
+                    <Text style={{ color: theme.colors.text.primary }}>{t('errors.sessionDeleted')}</Text>
                 ) : !hydrateReady ? (
-                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                 ) : (
                     <SessionExecutionRunLauncherView
                         sessionId={sessionId}

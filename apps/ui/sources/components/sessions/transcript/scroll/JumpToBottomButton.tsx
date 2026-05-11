@@ -28,7 +28,7 @@ export const JumpToBottomButton = React.memo(function JumpToBottomButton(props: 
             <Text style={styles.label} numberOfLines={1}>
                 {label}
             </Text>
-            <Ionicons name="chevron-down" size={16} color={theme.colors.text} />
+            <Ionicons name="chevron-down" size={16} color={theme.colors.text.primary} />
         </Pressable>
     );
 });
@@ -41,9 +41,9 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         paddingVertical: 8,
         borderRadius: 999,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
     badge: {
@@ -58,11 +58,11 @@ const styles = StyleSheet.create((theme) => ({
     badgeText: {
         fontSize: 11,
         fontWeight: '700',
-        color: theme.colors.surface,
+        color: theme.colors.surface.base,
     },
     label: {
         fontSize: 13,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));

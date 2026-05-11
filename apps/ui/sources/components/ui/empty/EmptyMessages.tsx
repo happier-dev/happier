@@ -21,28 +21,28 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     hostText: {
         fontSize: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         textAlign: 'center',
         marginBottom: 4,
         ...Typography.default('semiBold'),
     },
     pathText: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         marginBottom: 40,
         ...Typography.default('regular'),
     },
     noMessagesText: {
         fontSize: 20,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         marginBottom: 8,
         ...Typography.default('regular'),
     },
     createdText: {
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         lineHeight: 24,
         ...Typography.default(),
@@ -97,7 +97,7 @@ export function EmptyMessages({ session }: EmptyMessagesProps) {
             <Ionicons 
                 name={osIcon}
                 size={72} 
-                color={theme.colors.textSecondary}
+                color={theme.colors.text.secondary}
                 style={styles.iconContainer}
             />
             

@@ -9,9 +9,12 @@ export type StoryDeckIconId = string;
 
 export type TranslationKey = string;
 
+export type StoryDeckMediaSurface = 'mobile' | 'desktop';
+
 export type StoryDeckListCard = Readonly<{
     kind: 'list';
     titleKey: TranslationKey;
+    wideTitleKey?: TranslationKey;
     rows: ReadonlyArray<Readonly<{
         iconId: StoryDeckIconId;
         titleKey: TranslationKey;
@@ -19,36 +22,55 @@ export type StoryDeckListCard = Readonly<{
     }>>;
 }>;
 
+export type StoryDeckImageMediaOverride = Readonly<{
+    localAssetKey?: string;
+    key?: string;
+    altKey?: TranslationKey;
+    primaryUrl?: string;
+    fallbackUrl?: string;
+    url?: string;
+}>;
+
+export type StoryDeckImageMedia = StoryDeckImageMediaOverride & Readonly<{
+    altKey: TranslationKey;
+    mobile?: StoryDeckImageMediaOverride;
+    desktop?: StoryDeckImageMediaOverride;
+}>;
+
 export type StoryDeckImageCard = Readonly<{
     kind: 'image';
     titleKey: TranslationKey;
+    wideTitleKey?: TranslationKey;
     bodyKey: TranslationKey;
-    media: Readonly<{
-        localAssetKey?: string;
-        key?: string;
-        altKey: TranslationKey;
-        primaryUrl?: string;
-        fallbackUrl?: string;
-        url?: string;
-    }>;
+    media: StoryDeckImageMedia;
+}>;
+
+export type StoryDeckVideoMediaOverride = Readonly<{
+    key?: string;
+    localPosterAssetKey?: string;
+    posterKey?: string;
+    primaryUrl?: string;
+    fallbackUrl?: string;
+    posterUrl?: string;
+    posterFallbackUrl?: string;
+    accessibilityLabelKey?: TranslationKey;
+    loop?: boolean;
+    muted?: boolean;
+}>;
+
+export type StoryDeckVideoMedia = StoryDeckVideoMediaOverride & Readonly<{
+    key: string;
+    accessibilityLabelKey: TranslationKey;
+    mobile?: StoryDeckVideoMediaOverride;
+    desktop?: StoryDeckVideoMediaOverride;
 }>;
 
 export type StoryDeckVideoCard = Readonly<{
     kind: 'video';
     titleKey: TranslationKey;
+    wideTitleKey?: TranslationKey;
     bodyKey: TranslationKey;
-    media: Readonly<{
-        key: string;
-        localPosterAssetKey?: string;
-        posterKey?: string;
-        accessibilityLabelKey: TranslationKey;
-        primaryUrl?: string;
-        fallbackUrl?: string;
-        posterUrl?: string;
-        posterFallbackUrl?: string;
-        loop?: boolean;
-        muted?: boolean;
-    }>;
+    media: StoryDeckVideoMedia;
 }>;
 
 export type StoryDeckCard = StoryDeckListCard | StoryDeckImageCard | StoryDeckVideoCard;

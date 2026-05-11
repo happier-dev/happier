@@ -220,7 +220,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             right: 0,
                             bottom: 0,
                             zIndex: overlayZIndexBase + 1,
-                            backgroundColor: theme.colors.surface,
+                            backgroundColor: theme.colors.surface.base,
                             transform: [
                                 {
                                     translateX: detailsPresence.progress.interpolate({
@@ -274,7 +274,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             right: 0,
                             bottom: 0,
                             zIndex: layout.right === 'overlay' ? overlayZIndexBase + 3 : overlayZIndexBase - 1,
-                            backgroundColor: theme.colors.surface,
+                            backgroundColor: theme.colors.surface.base,
                             opacity: layout.right === 'overlay' ? 1 : 0,
                             transform: [
                                 {
@@ -342,8 +342,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             minHeight: 0,
                             minWidth: 0,
                             borderLeftWidth: 1,
-                            borderLeftColor: theme.colors.divider,
-                            backgroundColor: theme.colors.surface,
+                            borderLeftColor: theme.colors.border.default,
+                            backgroundColor: theme.colors.surface.base,
                         }}
                     >
                         {detailsPresence.node}
@@ -389,8 +389,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             minHeight: 0,
                             minWidth: 0,
                             borderLeftWidth: 1,
-                            borderLeftColor: theme.colors.divider,
-                            backgroundColor: theme.colors.surface,
+                            borderLeftColor: theme.colors.border.default,
+                            backgroundColor: theme.colors.surface.base,
                         }}
                     >
                         {rightPresence.node}

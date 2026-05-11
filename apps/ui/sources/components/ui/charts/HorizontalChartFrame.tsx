@@ -92,9 +92,9 @@ export function HorizontalChartFrame(props: HorizontalChartFrameProps): React.Re
             >
                 {children}
             </ScrollView>
-            <ScrollEdgeFades color={theme.colors.surface} size={20} edges={fades.visibility} />
+            <ScrollEdgeFades color={theme.colors.surface.base} size={20} edges={fades.visibility} />
             <ScrollEdgeIndicators
-                color={theme.colors.textSecondary}
+                color={theme.colors.text.secondary}
                 size={14}
                 opacity={0.45}
                 edges={fades.visibility}

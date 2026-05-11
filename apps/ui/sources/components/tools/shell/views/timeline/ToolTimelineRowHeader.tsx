@@ -68,7 +68,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
             >
                 <View style={styles.icon}>
                     {disclosure?.behavior === 'persistent' && disclosureChevronName ? (
-                        <Ionicons name={disclosureChevronName} size={chevronSize} color={theme.colors.textSecondary} />
+                        <Ionicons name={disclosureChevronName} size={chevronSize} color={theme.colors.text.secondary} />
                     ) : hoverEnabled && disclosureChevronName ? (
                         <View style={styles.iconStack}>
                             <View
@@ -89,7 +89,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                                 <Ionicons
                                     name={disclosureChevronName}
                                     size={chevronSize}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             </View>
                         </View>
@@ -133,7 +133,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                         accessibilityLabel={t('toolView.open')}
                         style={({ pressed }) => [styles.open, pressed && styles.openPressed]}
                     >
-                        <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
+                        <Ionicons name="open-outline" size={18} color={theme.colors.text.secondary} />
                     </Pressable>
                 </View>
             ) : null}
@@ -162,7 +162,7 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         minHeight: 28,
     },
     rowPressed: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
     icon: {
         width: 18,
@@ -205,7 +205,7 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         fontSize: 13,
         lineHeight: 20,
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         flexShrink: 0,
     },
     titleCompact: {
@@ -214,7 +214,7 @@ const styles = StyleSheet.create((theme, _runtime) => ({
     },
     subtitleInline: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('regular'),
     },
     statusInline: {
@@ -243,6 +243,6 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         borderRadius: 10,
     },
     openPressed: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
 }));

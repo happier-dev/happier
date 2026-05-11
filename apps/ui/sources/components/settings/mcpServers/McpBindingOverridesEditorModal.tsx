@@ -32,7 +32,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         marginBottom: 8,
         marginTop: 8,
     },
@@ -45,7 +45,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...SETTINGS_TEXT_INPUT_METRICS,
         color: theme.colors.input.text,
         borderWidth: 0.5,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     padded: {
         paddingHorizontal: 16,
@@ -319,7 +319,7 @@ export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorM
                 <Item
                     testID="mcp.bindingOverrides.save"
                     title={t('common.save')}
-                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.success} />}
+                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.state.success.foreground} />}
                     onPress={onSave}
                 />
             </ItemGroup>

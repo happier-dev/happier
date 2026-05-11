@@ -35,7 +35,7 @@ export const ConnectedServiceOauthEmbeddedView = React.memo(function ConnectedSe
     <ItemList>
       <ItemGroup title={t('connectedServices.oauthEmbedded.title')}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={{ color: theme.colors.textSecondary }}>
+          <Text style={{ color: theme.colors.text.secondary }}>
             {t('connectedServices.oauthEmbedded.description')}
           </Text>
         </View>

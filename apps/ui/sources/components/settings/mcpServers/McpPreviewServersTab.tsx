@@ -160,7 +160,7 @@ export const McpPreviewServersTab = React.memo(function McpPreviewServersTab(pro
                         testID="settings.mcpServers.preview.empty"
                         title={t('settings.mcpServersPreviewEmptyTitle')}
                         subtitle={t('settings.mcpServersPreviewEmptySubtitle')}
-                        icon={<Ionicons name="eye-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="eye-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -266,7 +266,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.input.background,
         color: theme.colors.input.text,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         paddingHorizontal: 12,
         paddingVertical: 8,
         fontSize: 14,

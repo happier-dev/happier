@@ -113,7 +113,7 @@ export function ChangedFilesList({
         return (
             <>
                 {showSectionHeader ? (
-                    <ChangedFilesSectionHeader theme={theme} color={theme.colors.textSecondary}>
+                    <ChangedFilesSectionHeader theme={theme} color={theme.colors.text.secondary}>
                         {t('files.repositoryChangedFiles', { count: repositoryChangedFiles.length })}
                     </ChangedFilesSectionHeader>
                 ) : null}
@@ -142,17 +142,17 @@ export function ChangedFilesList({
                 {showSectionHeader ? (
                     <View
                         style={{
-                            backgroundColor: theme.colors.surfaceHigh,
+                            backgroundColor: theme.colors.surface.inset,
                             paddingHorizontal: 16,
                             paddingVertical: 12,
                             borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                            borderBottomColor: theme.colors.divider,
+                            borderBottomColor: theme.colors.border.default,
                         }}
                     >
                         <Text
                             style={{
                                 fontSize: 14,
-                                color: theme.colors.text,
+                                color: theme.colors.text.primary,
                                 ...Typography.default('semiBold'),
                             }}
                         >
@@ -162,7 +162,7 @@ export function ChangedFilesList({
                             style={{
                                 marginTop: 4,
                                 fontSize: 12,
-                                color: theme.colors.textSecondary,
+                                color: theme.colors.text.secondary,
                                 ...Typography.default(),
                             }}
                         >
@@ -173,7 +173,7 @@ export function ChangedFilesList({
 
                 {filteredTurnAttributedFiles.length === 0 ? (
                     <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                        <Text style={{ color: theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
                             {t('files.noLatestTurnChanges')}
                         </Text>
                     </View>
@@ -209,17 +209,17 @@ export function ChangedFilesList({
                 {showSectionHeader ? (
                     <View
                         style={{
-                            backgroundColor: theme.colors.surfaceHigh,
+                            backgroundColor: theme.colors.surface.inset,
                             paddingHorizontal: 16,
                             paddingVertical: 12,
                             borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                            borderBottomColor: theme.colors.divider,
+                            borderBottomColor: theme.colors.border.default,
                         }}
                     >
                         <Text
                             style={{
                                 fontSize: 14,
-                                color: theme.colors.text,
+                                color: theme.colors.text.primary,
                                 ...Typography.default('semiBold'),
                             }}
                         >
@@ -231,7 +231,7 @@ export function ChangedFilesList({
                             style={{
                                 marginTop: 4,
                                 fontSize: 12,
-                                color: theme.colors.textSecondary,
+                                color: theme.colors.text.secondary,
                                 ...Typography.default(),
                             }}
                         >
@@ -244,7 +244,7 @@ export function ChangedFilesList({
 
                 {files.length === 0 && !checkpointUnavailable ? (
                     <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                        <Text style={{ color: theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
                             {isCheckpointMode ? t('files.noCheckpointTurnChanges') : t('files.noAgentReportedTurnChanges')}
                         </Text>
                     </View>
@@ -274,17 +274,17 @@ export function ChangedFilesList({
             {showSectionHeader ? (
                 <View
                     style={{
-                        backgroundColor: theme.colors.surfaceHigh,
+                        backgroundColor: theme.colors.surface.inset,
                         paddingHorizontal: 16,
                         paddingVertical: 12,
                         borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                        borderBottomColor: theme.colors.divider,
+                        borderBottomColor: theme.colors.border.default,
                     }}
                 >
                     <Text
                         style={{
                             fontSize: 14,
-                            color: theme.colors.text,
+                            color: theme.colors.text.primary,
                             ...Typography.default('semiBold'),
                         }}
                     >
@@ -294,7 +294,7 @@ export function ChangedFilesList({
                         style={{
                             marginTop: 4,
                             fontSize: 12,
-                            color: theme.colors.textSecondary,
+                            color: theme.colors.text.secondary,
                             ...Typography.default(),
                         }}
                     >
@@ -306,7 +306,7 @@ export function ChangedFilesList({
                         style={{
                             marginTop: 2,
                             fontSize: 11,
-                            color: theme.colors.textSecondary,
+                            color: theme.colors.text.secondary,
                             ...Typography.default(),
                         }}
                     >
@@ -319,7 +319,7 @@ export function ChangedFilesList({
                             style={{
                                 marginTop: 2,
                                 fontSize: 11,
-                                color: theme.colors.textSecondary,
+                                color: theme.colors.text.secondary,
                                 ...Typography.default(),
                             }}
                         >
@@ -331,7 +331,7 @@ export function ChangedFilesList({
 
             {filteredSessionAttributedFiles.length === 0 ? (
                 <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                    <Text style={{ color: theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
                         {t('files.noSessionAttributedChanges')}
                     </Text>
                 </View>

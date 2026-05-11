@@ -31,9 +31,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         borderStyle: 'solid',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         overflow: 'visible',
     },
 }));

@@ -21,7 +21,7 @@ const ViewWithWheel = View as unknown as React.ComponentType<
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         minHeight: 0,
         minWidth: 0,
     },
@@ -30,8 +30,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingTop: 10,
         paddingBottom: 8,
         borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-        borderBottomColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderBottomColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
@@ -44,7 +44,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 10,
     },
     loadingText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         textAlign: 'center',
     },
@@ -186,10 +186,10 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
 
     const renderLoadingFallback = React.useCallback(() => (
         <View style={styles.loading}>
-            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             <Text style={styles.loadingText}>{t('common.loading')}</Text>
         </View>
-    ), [styles.loading, styles.loadingText, theme.colors.textSecondary]);
+    ), [styles.loading, styles.loadingText, theme.colors.text.secondary]);
 
     const headerPaddingTop = props.headerPaddingTop ?? 10;
 
@@ -226,7 +226,7 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                                 <Octicons
                                     name="plus-circle"
                                     size={44}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                     style={{ marginBottom: 12 }}
                                 />
                             )}

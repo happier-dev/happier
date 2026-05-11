@@ -70,8 +70,8 @@ export const ChangedFilesViewModeMenu = React.memo((props: ChangedFilesViewModeM
     const items = React.useMemo<DropdownMenuItem[]>(() => selectableModes.map((mode) => ({
         id: mode,
         title: getModeLabel(mode),
-        icon: <Octicons name={getModeIcon(mode)} size={14} color={props.theme.colors.textSecondary} />,
-    })), [props.theme.colors.textSecondary, selectableModes]);
+        icon: <Octicons name={getModeIcon(mode)} size={14} color={props.theme.colors.text.secondary} />,
+    })), [props.theme.colors.text.secondary, selectableModes]);
 
     const onSelect = React.useCallback((itemId: string) => {
         if (
@@ -90,7 +90,7 @@ export const ChangedFilesViewModeMenu = React.memo((props: ChangedFilesViewModeM
     if (selectableModes.length <= 1 || !selectedMode) return null;
 
     const triggerLabel = props.triggerLabel ?? t('files.toolbar.view');
-    const triggerLabelColor = props.triggerLabelColor ?? props.theme.colors.textSecondary;
+    const triggerLabelColor = props.triggerLabelColor ?? props.theme.colors.text.secondary;
 
     return (
         <DropdownMenu
@@ -119,15 +119,15 @@ export const ChangedFilesViewModeMenu = React.memo((props: ChangedFilesViewModeM
                             height: 30,
                             borderRadius: 10,
                             borderWidth: 1,
-                            borderColor: props.theme.colors.divider,
-                            backgroundColor: props.theme.colors.surface,
+                            borderColor: props.theme.colors.border.default,
+                            backgroundColor: props.theme.colors.surface.base,
                             gap: 6,
                         },
                         props.triggerStyle,
                         { opacity: pressed ? 0.78 : 1 },
                     ]}
                 >
-                    <Octicons name={getModeIcon(selectedMode)} size={14} color={props.theme.colors.textSecondary} />
+                    <Octicons name={getModeIcon(selectedMode)} size={14} color={props.theme.colors.text.secondary} />
                     <Text
                         numberOfLines={1}
                         style={[
@@ -144,7 +144,7 @@ export const ChangedFilesViewModeMenu = React.memo((props: ChangedFilesViewModeM
                         {triggerLabel}
                     </Text>
                     <View style={{ marginLeft: -2 }}>
-                        <Octicons name={triggerOpen ? 'chevron-up' : 'chevron-down'} size={13} color={props.theme.colors.textSecondary} />
+                        <Octicons name={triggerOpen ? 'chevron-up' : 'chevron-down'} size={13} color={props.theme.colors.text.secondary} />
                     </View>
                 </Pressable>
             )}

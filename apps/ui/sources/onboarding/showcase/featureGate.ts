@@ -4,6 +4,6 @@ import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBu
 
 const ONBOARDING_SHOWCASE_FEATURE_ID = 'app.ui.onboardingShowcase' as const satisfies FeatureId;
 
-export function isOnboardingShowcaseFeatureEnabled(): boolean {
-    return getFeatureBuildPolicyDecision(ONBOARDING_SHOWCASE_FEATURE_ID) !== 'deny';
+export function isOnboardingShowcaseAutoShowEnabled(): boolean {
+    return getFeatureBuildPolicyDecision(ONBOARDING_SHOWCASE_FEATURE_ID) === 'allow';
 }

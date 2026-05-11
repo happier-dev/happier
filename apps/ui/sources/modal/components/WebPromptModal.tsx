@@ -27,13 +27,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         fontSize: 17,
         textAlign: 'center',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 4
     },
     message: {
         fontSize: 13,
         textAlign: 'center',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginTop: 4,
         lineHeight: 18
     },
@@ -41,17 +41,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         height: 36,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 8,
         paddingHorizontal: 10,
         marginTop: 16,
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         backgroundColor: theme.colors.input.background
     },
     buttonContainer: {
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
         flexDirection: 'row'
     },
     button: {
@@ -61,15 +61,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center'
     },
     buttonPressed: {
-        backgroundColor: theme.colors.divider
+        backgroundColor: theme.colors.border.default
     },
     buttonSeparator: {
         width: 1,
-        backgroundColor: theme.colors.divider
+        backgroundColor: theme.colors.border.default
     },
     buttonText: {
         fontSize: 17,
-        color: theme.colors.textLink
+        color: theme.colors.text.link
     },
     cancelText: {
         fontWeight: '400'

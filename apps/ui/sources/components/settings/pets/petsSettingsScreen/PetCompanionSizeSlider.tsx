@@ -61,16 +61,16 @@ export function PetCompanionSizeSlider(props: PetCompanionSizeSliderProps): Reac
         >
             <View style={styles.header}>
                 <View style={styles.copy}>
-                    <Text numberOfLines={1} style={[styles.title, { color: theme.colors.text }]}>
+                    <Text numberOfLines={1} style={[styles.title, { color: theme.colors.text.primary }]}>
                         {t('settingsPets.companionSizeTitle')}
                     </Text>
-                    <Text numberOfLines={2} style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+                    <Text numberOfLines={2} style={[styles.subtitle, { color: theme.colors.text.secondary }]}>
                         {t('settingsPets.companionSizeSubtitle')}
                     </Text>
                 </View>
                 <Text
                     testID="settings-pets-companion-size-slider-value"
-                    style={[styles.value, { color: theme.colors.textSecondary }]}
+                    style={[styles.value, { color: theme.colors.text.secondary }]}
                 >
                     {t('settingsPets.companionSizeValue', { percent })}
                 </Text>
@@ -87,7 +87,7 @@ export function PetCompanionSizeSlider(props: PetCompanionSizeSliderProps): Reac
                     props.showDivider === false ? styles.lastRowPadding : null,
                 ]}
             >
-                <View style={[styles.track, { backgroundColor: theme.colors.divider }]}>
+                <View style={[styles.track, { backgroundColor: theme.colors.border.default }]}>
                     <View
                         testID="settings-pets-companion-size-slider-fill"
                         style={[
@@ -105,7 +105,7 @@ export function PetCompanionSizeSlider(props: PetCompanionSizeSliderProps): Reac
                             {
                                 left: `${Math.round(progress * 100)}%`,
                                 backgroundColor: theme.colors.button.primary.background,
-                                borderColor: theme.colors.surface,
+                                borderColor: theme.colors.surface.base,
                             },
                         ]}
                     />

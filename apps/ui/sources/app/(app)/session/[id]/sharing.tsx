@@ -229,9 +229,9 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
     if (!session) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="trash-outline" size={48} color={theme.colors.textSecondary} />
+                <Ionicons name="trash-outline" size={48} color={theme.colors.text.secondary} />
                 <Text style={{
-                    color: theme.colors.text,
+                    color: theme.colors.text.primary,
                     fontSize: 20,
                     marginTop: 16,
                     ...Typography.default('semiBold')
@@ -287,9 +287,9 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
     if (!canManage) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="lock-closed-outline" size={48} color={theme.colors.textSecondary} />
+                <Ionicons name="lock-closed-outline" size={48} color={theme.colors.text.secondary} />
                 <Text style={{
-                    color: theme.colors.text,
+                    color: theme.colors.text.primary,
                     fontSize: 20,
                     marginTop: 16,
                     ...Typography.default('semiBold')
@@ -297,7 +297,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                     {t('errors.permissionDenied')}
                 </Text>
                 <Text style={{
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     fontSize: 15,
                     marginTop: 8,
                     paddingHorizontal: 24,
@@ -328,14 +328,14 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                     ) : (
                         <Item
                             title={t('session.sharing.noShares')}
-                            icon={<Ionicons name="people-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="people-outline" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                         />
                     )}
                     {canManage && (
                         <Item
                             title={t('session.sharing.addShare')}
-                            icon={<Ionicons name="person-add-outline" size={29} color={theme.colors.success} />}
+                            icon={<Ionicons name="person-add-outline" size={29} color={theme.colors.state.success.foreground} />}
                             onPress={openFriendSelector}
                         />
                     )}
@@ -350,7 +350,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                                 ? t('session.sharing.expiresOn') + ': ' + new Date(publicShare.expiresAt).toLocaleDateString()
                                 : t('session.sharing.never')
                             }
-                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.success} />}
+                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.state.success.foreground} />}
                             onPress={openPublicLink}
                         />
                     ) : (
@@ -385,9 +385,9 @@ export default memo(() => {
     if (!isDataReady || !sessionHydrated) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                 <Text style={{
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     fontSize: 17,
                     marginTop: 16,
                     ...Typography.default('semiBold')

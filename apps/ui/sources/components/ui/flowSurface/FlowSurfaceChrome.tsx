@@ -54,14 +54,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 24,
         lineHeight: 30,
         letterSpacing: -0.4,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         textAlign: 'center',
     },
     subtitle: {
         ...Typography.default(),
         fontSize: 15,
         lineHeight: 21,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     body: {

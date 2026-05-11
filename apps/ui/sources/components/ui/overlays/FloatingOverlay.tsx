@@ -11,9 +11,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
         borderRadius: 12,
         overflow: 'hidden',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: Platform.OS === 'web' ? 0 : 0.5,
-        borderColor: theme.colors.modal.border,
+        borderColor: theme.colors.border.modal,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
 }));
@@ -162,7 +162,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
             {content}
             {scrollEnabled && fadeCfg ? (
                 <ScrollEdgeFades
-                    color={theme.colors.surface}
+                    color={theme.colors.surface.base}
                     size={fadeCfg.size}
                     edges={fades.visibility}
                 />
@@ -171,7 +171,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
             {scrollEnabled && indicatorCfg ? (
                 <ScrollEdgeIndicators
                     edges={fades.visibility}
-                    color={theme.colors.textSecondary}
+                    color={theme.colors.text.secondary}
                     size={indicatorCfg.size}
                     opacity={indicatorCfg.opacity}
                 />
@@ -187,9 +187,9 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     const arrowBoxStyle: ViewStyle & { boxShadow?: string } = {
         width: arrowSize,
         height: arrowSize,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: Platform.OS === 'web' ? 0 : 0.5,
-        borderColor: theme.colors.modal.border,
+        borderColor: theme.colors.border.modal,
         transform: [{ rotate: '45deg' as const }],
     };
 

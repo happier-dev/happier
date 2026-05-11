@@ -61,7 +61,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     titleText: {
         fontSize: 16,
-        color: theme.colors.header.tint,
+        color: theme.colors.chrome.header.foreground,
         ...Typography.default('semiBold'),
     },
     statusContainer: {
@@ -92,12 +92,12 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: 20,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     primaryPaneFallbackText: {
         textAlign: 'center',
         maxWidth: 520,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 15,
         ...Typography.default(),
     },
@@ -150,7 +150,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                         hitSlop={15}
                         style={styles.headerButton}
                     >
-                        <Ionicons name="timer-outline" size={22} color={theme.colors.header.tint} />
+                        <Ionicons name="timer-outline" size={22} color={theme.colors.chrome.header.foreground} />
                     </Pressable>
                 ) : null}
                 <Pressable
@@ -159,7 +159,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                     hitSlop={15}
                     style={styles.headerButton}
                 >
-                    <Ionicons name="add-outline" size={28} color={theme.colors.header.tint} />
+                    <Ionicons name="add-outline" size={28} color={theme.colors.chrome.header.foreground} />
                 </Pressable>
             </View>
         );
@@ -177,7 +177,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                 disabled={!friendsIdentityReady}
                 accessibilityState={{ disabled: !friendsIdentityReady }}
             >
-                <Ionicons name="person-add-outline" size={24} color={theme.colors.header.tint} />
+                <Ionicons name="person-add-outline" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }
@@ -202,7 +202,7 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                 hitSlop={15}
                 style={styles.headerButton}
             >
-                <Ionicons name="server-outline" size={24} color={theme.colors.header.tint} />
+                <Ionicons name="server-outline" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
     }
@@ -247,7 +247,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
             externalSessionsEnabled={externalSessionsEnabled}
             storageKind={storageKind}
             isTablet={isTablet}
-            themeGroupedBackground={theme.colors.groupped.background}
+            themeGroupedBackground={theme.colors.background.canvas}
         />
     );
 });

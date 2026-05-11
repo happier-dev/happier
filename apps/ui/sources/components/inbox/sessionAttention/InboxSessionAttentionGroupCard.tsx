@@ -90,8 +90,8 @@ const styles = StyleSheet.create((theme) => ({
         marginBottom: 12,
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated,
         overflow: 'hidden',
     },
     items: {

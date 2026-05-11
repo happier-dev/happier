@@ -123,9 +123,9 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
-    }), [theme.colors.divider, theme.colors.surface]);
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
+    }), [theme.colors.border.default, theme.colors.surface.base]);
 
     const openFileTab = React.useCallback((path: string, intent: 'default' | 'pinned' = 'default') => {
         const fileName = path.split('/').pop() ?? path;
@@ -151,12 +151,12 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
             </ItemGroup>
             {props.renderEmptyStateSupplementaryContent ? props.renderEmptyStateSupplementaryContent() : null}
             <View style={{ alignItems: 'center', paddingHorizontal: 24, paddingTop: 6 }}>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 13, ...Typography.default(), textAlign: 'center', maxWidth: 680 }}>
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 13, ...Typography.default(), textAlign: 'center', maxWidth: 680 }}>
                     {t('projects.details.emptyBody')}
                 </Text>
             </View>
         </ItemList>
-    ), [displayName, displayPath, machineName, props, theme.colors.textSecondary]);
+    ), [displayName, displayPath, machineName, props, theme.colors.text.secondary]);
 
     const renderWorkspaceInfo = React.useCallback(() => (
         <ItemList testID="project-details-workspace-info" containerStyle={{ paddingTop: 12 }}>
@@ -294,8 +294,8 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
 
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-                <Octicons name="info" size={18} color={theme.colors.textSecondary} />
-                <Text style={{ marginTop: 10, color: theme.colors.textSecondary, fontSize: 13, ...Typography.default(), textAlign: 'center', maxWidth: 520 }}>
+                <Octicons name="info" size={18} color={theme.colors.text.secondary} />
+                <Text style={{ marginTop: 10, color: theme.colors.text.secondary, fontSize: 13, ...Typography.default(), textAlign: 'center', maxWidth: 520 }}>
                     {t('projects.details.placeholderUnsupportedBody')}
                 </Text>
             </View>
@@ -310,7 +310,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         props.workspaceRef.machineId,
         props.workspaceRef.serverId,
         renderWorkspaceInfo,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
         workspaceCacheKey,
         workspaceScope,
         effectiveRootPath,
@@ -329,7 +329,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         };
         return (
             <>
-                {props.renderHeaderActionsPrefix ? props.renderHeaderActionsPrefix({ iconButtonStyle, iconColor: theme.colors.textSecondary }) : null}
+                {props.renderHeaderActionsPrefix ? props.renderHeaderActionsPrefix({ iconButtonStyle, iconColor: theme.colors.text.secondary }) : null}
                 {hasWorkspaceReviewCommentDrafts ? (
                     <Pressable
                         onPress={openNewSessionWithReviewComments}
@@ -338,7 +338,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         accessibilityRole="button"
                         accessibilityLabel={t('newSession.title')}
                     >
-                        <Ionicons name="chatbox-ellipses-outline" size={18} color={theme.colors.textSecondary} />
+                        <Ionicons name="chatbox-ellipses-outline" size={18} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
                 {props.showTerminalHeaderAction !== false && deviceType !== 'phone' ? (
@@ -354,7 +354,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         accessibilityRole="button"
                         accessibilityLabel={t('settings.terminal')}
                     >
-                        <Ionicons name="terminal-outline" size={18} color={theme.colors.textSecondary} />
+                        <Ionicons name="terminal-outline" size={18} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
                 {props.showFocusModeToggle !== false && Platform.OS === 'web' ? (
@@ -372,7 +372,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         <Ionicons
                             name={paneFocusMode.active ? 'contract-outline' : 'expand-outline'}
                             size={18}
-                            color={theme.colors.textSecondary}
+                            color={theme.colors.text.secondary}
                         />
                     </Pressable>
                 ) : null}
@@ -383,7 +383,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
                         accessibilityRole="button"
                         accessibilityLabel={t('common.close')}
                     >
-                        <Octicons name="chevron-right" size={18} color={theme.colors.textSecondary} />
+                        <Octicons name="chevron-right" size={18} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
             </>
@@ -401,7 +401,7 @@ export const WorkspaceDetailsPanel = React.memo((props: WorkspaceDetailsPanelPro
         props.workspaceRef.serverId,
         requestClose,
         router,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
         deviceType,
         effectiveRootPath,
     ]);

@@ -30,7 +30,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     emptyText: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     chartCanvas: {
         flexDirection: 'row',
@@ -50,7 +50,7 @@ const styles = StyleSheet.create((theme) => ({
         top: 0,
         bottom: 24,
         width: 1,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
         opacity: 0.7,
     },
     valueLabel: {
@@ -58,7 +58,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 11,
         lineHeight: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     barWrap: {
         flex: 1,
@@ -74,7 +74,7 @@ const styles = StyleSheet.create((theme) => ({
         maxHeight: 150,
         justifyContent: 'flex-end',
         borderRadius: 999,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         overflow: 'hidden',
     },
     barAnchor: {
@@ -86,7 +86,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 11,
         lineHeight: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     footer: {
@@ -99,10 +99,10 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     footerValue: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
 }));

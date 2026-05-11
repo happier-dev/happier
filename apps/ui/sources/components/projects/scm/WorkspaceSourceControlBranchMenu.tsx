@@ -105,7 +105,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
             loading,
             hasMachineTarget: true,
             worktreeRows,
-            checkIconColor: theme.colors.textSecondary,
+            checkIconColor: theme.colors.text.secondary,
         });
         if (props.onRequestCreateWorktreeFromAnotherBranch) {
             return built;
@@ -130,7 +130,7 @@ export function WorkspaceSourceControlBranchMenu(props: WorkspaceSourceControlBr
         includeRemotes,
         loading,
         props.onRequestCreateWorktreeFromAnotherBranch,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
         worktreeRows,
     ]);
 

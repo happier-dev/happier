@@ -30,13 +30,13 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         gap: 10,
     },
     markdownText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
     },
     findingsBlock: {
@@ -46,12 +46,12 @@ const styles = StyleSheet.create((theme) => ({
         gap: 2,
     },
     findingTitle: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         fontWeight: '600',
     },
     findingSummary: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
 }));

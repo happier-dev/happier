@@ -69,8 +69,8 @@ export function NotificationLiveActivityRemoteUpdatesSection({
                             name={row.icon as keyof typeof Ionicons.glyphMap}
                             size={29}
                             color={row.detailKey.endsWith('.available') || row.detailKey.endsWith('.bestEffort')
-                                ? theme.colors.success
-                                : theme.colors.textSecondary}
+                                ? theme.colors.state.success.foreground
+                                : theme.colors.text.secondary}
                         />
                     )}
                     mode="info"

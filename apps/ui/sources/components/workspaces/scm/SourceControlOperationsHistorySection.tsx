@@ -45,12 +45,12 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
     }, [historyEntries.length, historyHasMore, visibleCount]);
 
     if (historyLoading && historyEntries.length === 0) {
-        return <ActivityIndicator size="small" color={theme.colors.textSecondary} />;
+        return <ActivityIndicator size="small" color={theme.colors.text.secondary} />;
     }
 
     if (historyEntries.length === 0) {
         return (
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+            <Text style={{ color: theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
                 {t('files.operationsHistory.noCommitsAvailable')}
             </Text>
         );
@@ -61,7 +61,7 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
             <Text
                 style={{
                     fontSize: 12,
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     marginBottom: 6,
                     ...Typography.default('semiBold'),
                 }}

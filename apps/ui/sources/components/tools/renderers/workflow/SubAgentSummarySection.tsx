@@ -81,7 +81,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     summaryText: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 18,
     },
     toolItem: {
@@ -94,7 +94,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     toolTitle: {
         fontSize: 14,
         fontWeight: '500',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'monospace',
         flex: 1,
     },
@@ -108,7 +108,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     moreToolsText: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontStyle: 'italic',
         opacity: 0.7,
     },
@@ -208,13 +208,13 @@ export const SubAgentSummarySection = React.memo<{
                     <Text style={styles.toolTitle}>{item.title}</Text>
                     <View style={styles.statusContainer}>
                         {item.state === 'running' && (
-                            <ActivityIndicator size={Platform.OS === 'ios' ? 'small' : (14 as any)} color={theme.colors.warning} />
+                            <ActivityIndicator size={Platform.OS === 'ios' ? 'small' : (14 as any)} color={theme.colors.state.neutral.foreground} />
                         )}
                         {item.state === 'completed' && (
-                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.success} />
+                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.state.success.foreground} />
                         )}
                         {item.state === 'error' && (
-                            <Ionicons name="close-circle" size={16} color={theme.colors.textDestructive} />
+                            <Ionicons name="close-circle" size={16} color={theme.colors.state.danger.foreground} />
                         )}
                     </View>
                 </View>

@@ -45,7 +45,7 @@ export const ConnectButton = React.memo(() => {
                 <Ionicons 
                     name="link-outline" 
                     size={16} 
-                    color={theme.colors.textSecondary}
+                    color={theme.colors.text.secondary}
                     style={styles.manualToggleIcon}
                 />
                 <Text style={styles.manualToggleText}>
@@ -105,19 +105,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     manualToggleText: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textDecorationLine: 'underline',
     },
     manualEntryContainer: {
         marginTop: 12,
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         width: 210,
     },
     manualEntryLabel: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 8,
     },
     manualEntryRow: {
@@ -128,7 +128,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         backgroundColor: theme.colors.input.background,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 6,
         padding: 8,
         fontSize: 12,

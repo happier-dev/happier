@@ -5,7 +5,7 @@ import { useNavigation } from '@react-navigation/native';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Typography } from '@/constants/Typography';
 import { useHeaderHeight } from '@/utils/platform/responsive';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -48,6 +48,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     const navigation = useNavigation();
     const insets = useChromeSafeAreaInsets();
     const headerHeight = useHeaderHeight();
+    const maxWidth = useLayoutMaxWidth();
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
     const backButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-back');
     const avatarButtonTestId = resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-header-avatar');
@@ -62,9 +63,9 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     };
 
     return (
-        <View style={[styles.container, { paddingTop: includeTopInset ? insets.top : 0, backgroundColor: theme.colors.header.background }]}>
+        <View style={[styles.container, { paddingTop: includeTopInset ? insets.top : 0, backgroundColor: theme.colors.chrome.header.background }]}>
             <View style={[styles.contentWrapper, constrainWidth ? null : { alignItems: 'stretch' }]}>
-                <View style={[styles.content, { height: headerHeight }, constrainWidth ? null : { maxWidth: '100%' }]}>
+                <View style={[styles.content, { height: headerHeight, maxWidth }, constrainWidth ? null : { maxWidth: '100%' }]}>
                 <Pressable
                     onPress={handleBackPress}
                     testID={backButtonTestId}
@@ -76,7 +77,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                     <Ionicons
                         name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
                         size={Platform.select({ ios: 28, default: 24 })}
-                        color={theme.colors.header.tint}
+                        color={theme.colors.chrome.header.foreground}
                     />
                 </Pressable>
                 
@@ -88,7 +89,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                             style={[
                                 styles.title,
                                 {
-                                    color: theme.colors.header.tint,
+                                    color: theme.colors.chrome.header.foreground,
                                     ...Typography.default('semiBold')
                                 }
                             ]}
@@ -102,8 +103,8 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                                     style={[
                                         styles.badge,
                                         {
-                                            backgroundColor: theme.colors.surfaceHigh,
-                                            borderColor: theme.colors.divider,
+                                            backgroundColor: theme.colors.surface.inset,
+                                            borderColor: theme.colors.border.default,
                                         },
                                     ]}
                                     testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, `session-header-badge:${index}`)}
@@ -113,7 +114,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                                         style={[
                                             styles.badgeText,
                                             {
-                                                color: theme.colors.textSecondary,
+                                                color: theme.colors.text.secondary,
                                                 ...Typography.default('semiBold'),
                                             },
                                         ]}
@@ -132,7 +133,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                                 styles.subtitle,
                                 shouldUseWebSubtitleStartEllipsis ? styles.subtitleHeadWeb : null,
                                 {
-                                    color: theme.colors.header.tint,
+                                    color: theme.colors.chrome.header.foreground,
                                     opacity: 0.7,
                                     ...Typography.default()
                                 }
@@ -189,7 +190,6 @@ const styles = StyleSheet.create(() => ({
         alignItems: 'center',
         paddingHorizontal: Platform.OS === 'ios' ? 8 : 16,
         width: '100%',
-        maxWidth: layout.headerMaxWidth,
     },
     backButton: {
         marginRight: 8,

@@ -98,10 +98,10 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             tool: toolForSession,
             metadata: props.metadata,
             iconSize: 18,
-            iconColorPrimary: theme.colors.text,
-            iconColorSecondary: theme.colors.textSecondary,
+            iconColorPrimary: theme.colors.text.primary,
+            iconColorSecondary: theme.colors.text.secondary,
         });
-    }, [props.metadata, theme.colors.text, theme.colors.textSecondary, toolForSession]);
+    }, [props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
 
     const toolForRendering = headerModel.toolForRendering;
     const isWaitingForPermission = headerModel.isWaitingForPermission;
@@ -193,10 +193,10 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             tool,
             metadata: props.metadata,
             iconSize,
-            iconColorPrimary: theme.colors.text,
-            iconColorSecondary: theme.colors.textSecondary,
+            iconColorPrimary: theme.colors.text.primary,
+            iconColorSecondary: theme.colors.text.secondary,
         }).icon;
-    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text, theme.colors.textSecondary, tool]);
+    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, tool]);
 
     // Apply the per-tool detail level preference for the timeline card.
     // - title: hide the tool body
@@ -223,22 +223,22 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 
     const statusKind = resolveToolStatusIndicatorKind(toolForRendering);
     if (statusKind === 'permission_blocked') {
-        statusIcon = <Ionicons name="remove-circle-outline" size={20} color={theme.colors.textSecondary} />;
+        statusIcon = <Ionicons name="remove-circle-outline" size={20} color={theme.colors.text.secondary} />;
     } else if (statusKind === 'permission_pending') {
-        statusIcon = <Ionicons name="lock-closed-outline" size={20} color={theme.colors.warning} />;
+        statusIcon = <Ionicons name="lock-closed-outline" size={20} color={theme.colors.state.neutral.foreground} />;
     } else if (isToolUseError) {
-        statusIcon = <Ionicons name="remove-circle-outline" size={20} color={theme.colors.textSecondary} />;
+        statusIcon = <Ionicons name="remove-circle-outline" size={20} color={theme.colors.text.secondary} />;
         hideDefaultError = true;
         minimal = true;
     } else {
         switch (statusKind) {
             case 'running':
                 if (!noStatus) {
-                    statusIcon = <ActivityIndicator size="small" color={theme.colors.text} style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }} />;
+                    statusIcon = <ActivityIndicator size="small" color={theme.colors.text.primary} style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }} />;
                 }
                 break;
             case 'error':
-                statusIcon = <Ionicons name="alert-circle" size={20} color={theme.colors.textDestructive} />;
+                statusIcon = <Ionicons name="alert-circle" size={20} color={theme.colors.state.danger.foreground} />;
                 break;
             case 'completed':
             case 'none':
@@ -328,7 +328,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 <View style={styles.headerRight}>
                     {errorSummary ? (
                         <View style={styles.headerError}>
-                            <Ionicons name="alert-circle" size={18} color={theme.colors.textDestructive} />
+                            <Ionicons name="alert-circle" size={18} color={theme.colors.state.danger.foreground} />
                             <Text style={styles.headerErrorText} numberOfLines={1}>
                                 {errorSummary}
                             </Text>
@@ -351,12 +351,12 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                             accessibilityLabel={secondaryTapAction === 'open' ? t('toolView.open') : t('toolView.expand')}
                         >
                             {secondaryTapAction === 'open' ? (
-                                <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
+                                <Ionicons name="open-outline" size={18} color={theme.colors.text.secondary} />
                             ) : (
                                 <Ionicons
                                     name={isExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
                                     size={18}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             )}
                         </TouchableOpacity>
@@ -407,7 +407,7 @@ function ElapsedView(props: { from: number }) {
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderRadius: 8,
         marginVertical: 4,
         overflow: 'hidden'
@@ -417,7 +417,7 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: 12,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
     },
     headerCompact: {
         paddingHorizontal: 10,
@@ -442,7 +442,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     headerErrorText: {
         fontSize: 13,
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
         ...Typography.default('semiBold'),
     },
     headerActionsContainer: {
@@ -474,13 +474,13 @@ const styles = StyleSheet.create((theme) => ({
     },
     elapsedText: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
     },
     toolName: {
         fontSize: 13,
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     status: {
         fontWeight: '400',
@@ -490,13 +490,13 @@ const styles = StyleSheet.create((theme) => ({
     toolDescription: {
         fontSize: 13,
         fontWeight: '400',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 2,
     },
     compactSubtitle: {
         fontSize: 13,
         fontWeight: '400',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     content: {
         paddingHorizontal: 12,

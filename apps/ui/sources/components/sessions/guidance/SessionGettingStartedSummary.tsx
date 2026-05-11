@@ -44,8 +44,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     inlineCode: {
         ...Typography.mono(),
         fontSize: 13,
-        color: theme.colors.text,
-        backgroundColor: theme.colors.surfaceHighest,
+        color: theme.colors.text.primary,
+        backgroundColor: theme.colors.surface.elevated,
         borderRadius: 4,
         paddingHorizontal: 4,
         paddingVertical: 1,
@@ -89,7 +89,7 @@ export const SessionGettingStartedSummary = React.memo((props: SessionGettingSta
                                     : 'desktop-outline'
                         }
                         size={48}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                         style={{ marginBottom: 12 }}
                     />
                 )}

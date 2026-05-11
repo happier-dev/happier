@@ -104,7 +104,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                                 fontFamily: resolveCodeMonoFontFamily(),
                                 fontSize: 14,
                                 lineHeight: 20,
-                                color: theme.colors.text,
+                                color: theme.colors.text.primary,
                     },
                     webWhitespaceStyle,
                 ]}
@@ -135,7 +135,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                     fontFamily: resolveCodeMonoFontFamily(),
                     fontSize: 14,
                     lineHeight: 20,
-                    color: theme.colors.text,
+                    color: theme.colors.text.primary,
                 },
                 webWhitespaceStyle,
             ]}

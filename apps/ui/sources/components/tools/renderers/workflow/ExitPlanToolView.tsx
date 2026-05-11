@@ -33,12 +33,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     feedbackInput: {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 10,
         paddingHorizontal: 12,
         paddingVertical: 10,
         minHeight: 88,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         textAlignVertical: 'top',
     },
     feedbackActions: {
@@ -71,7 +71,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     rejectButton: {
         backgroundColor: 'transparent',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         paddingHorizontal: 20,
         paddingVertical: 12,
         borderRadius: 8,
@@ -90,14 +90,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontWeight: '600',
     },
     rejectButtonText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 14,
         fontWeight: '600',
     },
     requestChangesButton: {
         backgroundColor: 'transparent',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         paddingHorizontal: 16,
         paddingVertical: 12,
         borderRadius: 8,
@@ -108,7 +108,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 44,
     },
     requestChangesButtonText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 14,
         fontWeight: '600',
     },
@@ -121,7 +121,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     respondedText: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));
 
@@ -317,7 +317,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                         <Ionicons
                             name="checkmark-circle"
                             size={18}
-                            color={theme.colors.textSecondary}
+                            color={theme.colors.text.secondary}
                         />
                         <Text style={styles.respondedText}>
                             {t('tools.exitPlanMode.responded')}
@@ -333,7 +333,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                     value={changeRequestText}
                                     onChangeText={setChangeRequestText}
                                     placeholder={t('tools.exitPlanMode.requestChangesPlaceholder')}
-                                    placeholderTextColor={theme.colors.textSecondary}
+                                    placeholderTextColor={theme.colors.text.secondary}
                                     multiline
                                     editable={!isApproving && !isRejecting}
                                 />
@@ -385,10 +385,10 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                                     activeOpacity={0.7}
                                 >
                                     {isRejecting ? (
-                                        <ActivityIndicator size="small" color={theme.colors.text} />
+                                        <ActivityIndicator size="small" color={theme.colors.text.primary} />
                                     ) : (
                                         <>
-                                            <Ionicons name="close" size={18} color={theme.colors.text} />
+                                            <Ionicons name="close" size={18} color={theme.colors.text.primary} />
                                             <Text style={styles.rejectButtonText}>
                                                 {t('tools.exitPlanMode.reject')}
                                             </Text>
@@ -450,7 +450,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, in
                         <Ionicons
                             name="lock-closed-outline"
                             size={18}
-                            color={theme.colors.textSecondary}
+                            color={theme.colors.text.secondary}
                         />
                         <Text style={styles.respondedText}>
                             {disabledMessage}

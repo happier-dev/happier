@@ -13,7 +13,7 @@ export function ToolError(props: { message: string }) {
     return (
         <View style={[styles.errorContainer, isToolUseError && styles.toolUseErrorContainer]}>
             {isToolUseError && (
-                <Ionicons name="warning" size={16} color={theme.colors.box.warning.text} />
+                <Ionicons name="warning" size={16} color={theme.colors.state.warning.foreground} />
             )}
             <Text style={[styles.errorText, isToolUseError && styles.toolUseErrorText]}>
                 {displayMessage}
@@ -27,25 +27,25 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: 8,
-        backgroundColor: theme.colors.box.error.background,
+        backgroundColor: theme.colors.state.danger.background,
         borderRadius: 6,
         padding: 12,
         borderWidth: 1,
-        borderColor: theme.colors.box.error.border,
+        borderColor: theme.colors.state.danger.border,
         marginBottom: 12,
         maxHeight: 115,
         overflow: 'hidden',
     },
     toolUseErrorContainer: {
-        backgroundColor: theme.colors.box.error.background,
-        borderColor: theme.colors.box.error.border,
+        backgroundColor: theme.colors.state.danger.background,
+        borderColor: theme.colors.state.danger.border,
     },
     errorText: {
         fontSize: 13,
-        color: theme.colors.box.error.text,
+        color: theme.colors.state.danger.foreground,
         flex: 1,
     },
     toolUseErrorText: {
-        color: theme.colors.box.error.text,
+        color: theme.colors.state.danger.foreground,
     },
 }));

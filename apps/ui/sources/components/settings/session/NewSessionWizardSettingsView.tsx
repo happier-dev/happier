@@ -81,7 +81,7 @@ function WizardPresentationDropdown(props: Readonly<{
             itemTrigger={{
                 title: t(props.section.titleKey),
                 subtitle: selectedPresentation.title,
-                icon: <Ionicons name={props.section.iconName} size={29} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name={props.section.iconName} size={29} color={theme.colors.text.secondary} />,
                 showSelectedDetail: false,
                 showSelectedSubtitle: false,
                 itemProps: { testID: `settings-new-session-wizard-${props.section.id}` },
@@ -142,7 +142,7 @@ export const NewSessionWizardSettingsView = React.memo(function NewSessionWizard
                             ? 'settingsSession.sessionCreation.wizardColumnsEnabledSubtitle'
                             : 'settingsSession.sessionCreation.wizardColumnsDisabledSubtitle',
                     )}
-                    icon={<Ionicons name="grid-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="grid-outline" size={29} color={theme.colors.text.secondary} />}
                     rightElement={(
                         <Switch
                             value={columnsEnabled === true}

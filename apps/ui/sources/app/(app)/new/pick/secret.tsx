@@ -135,10 +135,10 @@ export default React.memo(function SecretPickerScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={t('common.back')}
             >
-                <Ionicons name="chevron-back" size={22} color={theme.colors.header.tint} />
+                <Ionicons name="chevron-back" size={22} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
-    }, [handleBackPress, theme.colors.header.tint]);
+    }, [handleBackPress, theme.colors.chrome.header.foreground]);
 
     const screenOptions = React.useMemo(() => {
         return {

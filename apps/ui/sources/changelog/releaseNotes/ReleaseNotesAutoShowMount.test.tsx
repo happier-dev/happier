@@ -133,6 +133,17 @@ describe('ReleaseNotesAutoShowMount', () => {
         expect(releaseNotesLauncherState.open).not.toHaveBeenCalled();
     });
 
+    it('does not auto-open without an explicit release-notes story allow', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = '';
+
+        const { ReleaseNotesAutoShowMount } = await import('./ReleaseNotesAutoShowMount');
+        await renderScreen(<ReleaseNotesAutoShowMount />);
+
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(releaseNotesLauncherState.open).not.toHaveBeenCalled();
+    });
+
     it('waits while another app modal owns the top-level flow', async () => {
         modalState.activeCount = 1;
 

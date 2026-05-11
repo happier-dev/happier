@@ -51,7 +51,7 @@ export const TodoView = React.memo<TodoViewProps>((props) => {
             height: TODO_HEIGHT,
             width: '100%',
             borderRadius: 8,
-            backgroundColor: theme.colors.surfaceHighest,
+            backgroundColor: theme.colors.surface.elevated,
             flexDirection: 'row',
             alignItems: 'center',
             paddingHorizontal: 12
@@ -67,8 +67,8 @@ export const TodoView = React.memo<TodoViewProps>((props) => {
                     height: 24,
                     borderRadius: 12,
                     borderWidth: 2,
-                    borderColor: props.done ? theme.colors.success : theme.colors.textSecondary,
-                    backgroundColor: props.done ? theme.colors.success : 'transparent',
+                    borderColor: props.done ? theme.colors.state.success.foreground : theme.colors.text.secondary,
+                    backgroundColor: props.done ? theme.colors.state.success.foreground : 'transparent',
                     alignItems: 'center',
                     justifyContent: 'center',
                     marginRight: 12
@@ -86,7 +86,7 @@ export const TodoView = React.memo<TodoViewProps>((props) => {
                         paddingTop: 0,
                         paddingBottom: 0,
                         alignSelf: 'center',
-                        color: props.done ? theme.colors.textSecondary : theme.colors.text,
+                        color: props.done ? theme.colors.text.secondary : theme.colors.text.primary,
                         fontSize: 18,
                         flexGrow: 1,
                         textDecorationLine: props.done ? 'line-through' : 'none',
@@ -108,7 +108,7 @@ export const TodoView = React.memo<TodoViewProps>((props) => {
                         justifyContent: 'center'
                     }}
                 >
-                    <MaterialCommunityIcons name="drag" size={24} color={theme.colors.text} />
+                    <MaterialCommunityIcons name="drag" size={24} color={theme.colors.text.primary} />
                 </View>
             )}
         </Pressable>

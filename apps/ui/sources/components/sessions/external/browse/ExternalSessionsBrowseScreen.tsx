@@ -61,8 +61,8 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
     },
     filtersGroupContainer: {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         shadowOpacity: 0,
         elevation: 0,
         marginHorizontal: 12,
@@ -165,19 +165,19 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         id: machine.id,
         title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
         subtitle: machine.active ? t('status.activeNow') : t('status.offline'),
-        icon: <Ionicons name="desktop-outline" size={18} color={theme.colors.textSecondary} />,
-    })), [machines, theme.colors.textSecondary]);
+        icon: <Ionicons name="desktop-outline" size={18} color={theme.colors.text.secondary} />,
+    })), [machines, theme.colors.text.secondary]);
     const providerMenuItems = React.useMemo(() => providers.map((provider) => ({
         id: provider.id,
         title: provider.label,
-        icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.textSecondary} />,
-    })), [providers, theme.colors.textSecondary]);
+        icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.text.secondary} />,
+    })), [providers, theme.colors.text.secondary]);
     const sourceMenuItems = React.useMemo(() => sourceOptions.map((sourceOption) => ({
         id: sourceOption.key,
         title: sourceOption.label,
         subtitle: sourceOption.detail,
-        icon: <Ionicons name="folder-open-outline" size={18} color={theme.colors.textSecondary} />,
-    })), [sourceOptions, theme.colors.textSecondary]);
+        icon: <Ionicons name="folder-open-outline" size={18} color={theme.colors.text.secondary} />,
+    })), [sourceOptions, theme.colors.text.secondary]);
     const formatMachineTriggerSubtitle = React.useCallback((selectedItem: Readonly<{ title: string; subtitle?: React.ReactNode }> | null) => {
         if (!selectedItem) return null;
         const statusLabel = typeof selectedItem.subtitle === 'string' ? selectedItem.subtitle.trim() : '';
@@ -276,7 +276,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                             connectToTrigger={true}
                             itemTrigger={{
                                 title: t('externalSessions.browseMachines'),
-                                icon: <Ionicons name="desktop-outline" size={18} color={theme.colors.textSecondary} />,
+                                icon: <Ionicons name="desktop-outline" size={18} color={theme.colors.text.secondary} />,
                                 subtitleFormatter: formatMachineTriggerSubtitle,
                                 showSelectedDetail: false,
                                 itemProps: {
@@ -300,7 +300,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                             connectToTrigger={true}
                             itemTrigger={{
                                 title: t('externalSessions.browseProviders'),
-                                icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.textSecondary} />,
+                                icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.text.secondary} />,
                                 subtitleFormatter: formatSelectedTitleSubtitle,
                                 showSelectedDetail: false,
                                 itemProps: {
@@ -324,7 +324,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
                             connectToTrigger={true}
                             itemTrigger={{
                                 title: t('externalSessions.browseSources'),
-                                icon: <Ionicons name="folder-open-outline" size={18} color={theme.colors.textSecondary} />,
+                                icon: <Ionicons name="folder-open-outline" size={18} color={theme.colors.text.secondary} />,
                                 subtitleFormatter: formatSelectedTitleSubtitle,
                                 showSelectedDetail: false,
                                 itemProps: {

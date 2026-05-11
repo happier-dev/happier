@@ -81,10 +81,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 15,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderLeftWidth: 2,
         borderRightWidth: 2,
-        borderColor: theme.colors.surface,
+        borderColor: theme.colors.surface.base,
     },
     sessionItemFirst: {
         borderTopLeftRadius: 12,
@@ -98,7 +98,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     embeddedSeparator: {
         borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
+        borderBottomColor: theme.colors.border.default,
     },
     sessionItemCompact: {
         height: SESSION_LIST_ROW_HEIGHT_COMPACT,
@@ -109,11 +109,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
     },
     sessionItemSelected: {
-        backgroundColor: theme.colors.surfaceSelected,
-        borderColor: theme.dark ? theme.colors.surfaceSelected : theme.colors.surface,
+        backgroundColor: theme.colors.surface.selected,
+        borderColor: theme.dark ? theme.colors.surface.selected : theme.colors.surface.base,
     },
     sessionTitleSelected: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     avatarContainer: {
@@ -129,7 +129,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: AVATAR_SIZE_DEFAULT,
         height: AVATAR_SIZE_DEFAULT,
         borderRadius: 999,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
     },
     avatarLoadingCompact: {
         width: AVATAR_SIZE_COMPACT,
@@ -146,7 +146,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: 6,
         height: 6,
         borderRadius: 999,
-        backgroundColor: theme.colors.textLink,
+        backgroundColor: theme.colors.text.link,
     },
     pendingCountContainer: {
         position: 'absolute',
@@ -159,7 +159,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         backgroundColor: theme.colors.input.background,
         borderWidth: 1,
-        borderColor: theme.colors.groupped?.background ?? 'transparent',
+        borderColor: theme.colors.background?.canvas ?? 'transparent',
     },
     pendingCountContainerCompact: {
         top: -3,
@@ -169,7 +169,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     pendingCountText: {
         fontSize: 8,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     draftIconContainer: {
@@ -182,7 +182,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
     },
     draftIconOverlay: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     draftIconContainerCompact: {
         width: 16,
@@ -211,7 +211,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 14,
         flex: 1,
         ...Typography.default(),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     sessionTitleCompact: {
         fontSize: 14,
@@ -224,16 +224,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
     },
     sessionTitleConnected: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     sessionTitleDisconnected: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     sessionTitleLoading: {
         width: '68%',
         height: 14,
         borderRadius: 7,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
     },
     sessionTitleLoadingCompact: {
         width: '60%',
@@ -249,7 +249,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '46%',
         height: 10,
         borderRadius: 999,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         marginTop: 3,
     },
     sessionSubtitleLoadingCompact: {
@@ -262,13 +262,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 8,
         paddingVertical: 2,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.groupped.background,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.background.canvas,
         maxWidth: 140,
     },
     serverBadgeText: {
         fontSize: 10,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     rightArea: {
@@ -290,7 +290,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 999,
     },
     rowActionIcon: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     tagsRow: {
         flexDirection: 'row',
@@ -310,8 +310,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 7,
         paddingVertical: 2,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.groupped.background,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.background.canvas,
         maxWidth: 120,
     },
     tagChipCompact: {
@@ -326,7 +326,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     tagChipText: {
         fontSize: 10,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     tagChipTextCompact: {
@@ -340,9 +340,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 7,
         paddingVertical: 2,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.groupped.background,
-        color: theme.colors.textSecondary,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.background.canvas,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         lineHeight: 18,
         marginLeft: 8,
@@ -350,7 +350,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sessionSubtitle: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 16,
         ...Typography.default(),
     },
@@ -407,7 +407,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     activityTime: {
         fontSize: 10,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     activityTimeMinimal: {
@@ -559,7 +559,7 @@ export const SessionItem = React.memo(
         const isWeb = Platform.OS === 'web';
         const isNativeMobile = Platform.OS === 'ios' || Platform.OS === 'android';
         const showRowActions = isWeb && (isRowHovered || isActionsHovered || tagMenuOpen || moreMenuOpen || isBeingDragged === true);
-        const rowActionIconColor = theme.colors.textSecondary;
+        const rowActionIconColor = theme.colors.text.secondary;
         const readStateAction = React.useMemo(() => {
             if (isArchivedSession) return { kind: 'none' as const, visible: false as const };
             return resolveSessionReadStateAction(resolvedSession);
@@ -962,7 +962,7 @@ export const SessionItem = React.memo(
                 testID={`session-list-item-${resolvedSession.id}`}
                 accessibilityState={{ selected }}
                 android_ripple={Platform.OS === 'android' ? {
-                    color: theme.colors.surfaceRipple,
+                    color: theme.colors.surface.ripple,
                     borderless: false,
                     foreground: true,
                 } : undefined}

@@ -88,7 +88,7 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
                                 testID={`sessions-empty-state-machine:${machine.id}`}
                                 title={t('sessionsList.emptyState.startSessionOnMachine', { machine: machineLabel })}
                                 subtitle={t('sessionsList.emptyState.startSessionOnMachineSubtitle')}
-                                icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.text.secondary} />}
                                 onPress={() => handleStartSession(machine.id)}
                             />
                         );
@@ -102,7 +102,7 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
                         testID="sessions-empty-state-open-setup"
                         title={t('setupOnboarding.openSetupAction')}
                         subtitle={setupSubtitle}
-                        icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.text.secondary} />}
                         onPress={handleOpenSetup}
                     />
                 </ItemGroup>

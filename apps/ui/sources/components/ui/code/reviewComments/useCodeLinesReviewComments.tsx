@@ -189,11 +189,11 @@ export function useCodeLinesReviewComments(params: {
                                     padding: 10,
                                     borderRadius: 10,
                                     borderWidth: 1,
-                                    borderColor: theme.colors.divider,
-                                    backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surface,
+                                    borderColor: theme.colors.border.default,
+                                    backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.base,
                                 }}
                             >
-                                <Text style={{ ...Typography.default(), fontSize: 13, color: theme.colors.text }}>
+                                <Text style={{ ...Typography.default(), fontSize: 13, color: theme.colors.text.primary }}>
                                     {d.body}
                                 </Text>
                                 <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 6, gap: 10 }}>
@@ -206,7 +206,7 @@ export function useCodeLinesReviewComments(params: {
                                             style={{
                                                 ...Typography.default('semiBold'),
                                                 fontSize: 12,
-                                                color: theme.colors.textSecondary,
+                                                color: theme.colors.text.secondary,
                                             }}
                                         >
                                             {t('common.edit')}
@@ -221,7 +221,7 @@ export function useCodeLinesReviewComments(params: {
                                             style={{
                                                 ...Typography.default('semiBold'),
                                                 fontSize: 12,
-                                                color: theme.colors.textDestructive ?? theme.colors.textSecondary,
+                                                color: theme.colors.state.danger.foreground ?? theme.colors.text.secondary,
                                             }}
                                         >
                                             {t('common.delete')}
@@ -287,12 +287,12 @@ export function useCodeLinesReviewComments(params: {
         onUpsertDraft,
         source,
         startEditingDraft,
-        theme.colors.divider,
-        theme.colors.surface,
-        theme.colors.surfaceHighest,
-        theme.colors.text,
-        theme.colors.textDestructive,
-        theme.colors.textSecondary,
+        theme.colors.border.default,
+        theme.colors.surface.base,
+        theme.colors.surface.elevated,
+        theme.colors.text.primary,
+        theme.colors.state.danger.foreground,
+        theme.colors.text.secondary,
     ]);
 
     if (!enabled) return null;

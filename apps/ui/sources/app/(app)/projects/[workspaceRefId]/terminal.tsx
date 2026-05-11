@@ -113,7 +113,7 @@ export default function ProjectTerminalScreenRoute() {
             <Stack.Screen options={screenOptions} />
             <React.Suspense fallback={(
                 <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator color={theme.colors.textSecondary} />
+                    <ActivityIndicator color={theme.colors.text.secondary} />
                 </View>
             )}>
                 {cockpitEnabled ? (

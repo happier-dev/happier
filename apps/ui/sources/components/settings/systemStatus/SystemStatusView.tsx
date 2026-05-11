@@ -277,7 +277,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             detail={String(socket.status)}
             subtitle={
               socket.lastError
-                ? <Text style={{ color: theme.colors.textSecondary }}>{t('systemStatus.ui.socketLastError', { error: socket.lastError })}</Text>
+                ? <Text style={{ color: theme.colors.text.secondary }}>{t('systemStatus.ui.socketLastError', { error: socket.lastError })}</Text>
                 : undefined
             }
             icon={<Ionicons name="cloud-outline" size={24} color={theme.colors.accent.blue} />}
@@ -294,7 +294,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
         <ItemGroup title={t('systemStatus.sections.currentServer')}>
           <Item
             title={t('systemStatus.server.activeServer')}
-            subtitle={<Text style={{ color: theme.colors.textSecondary }}>{activeServerUrl || t('status.unknown')}</Text>}
+            subtitle={<Text style={{ color: theme.colors.text.secondary }}>{activeServerUrl || t('status.unknown')}</Text>}
             detail={activeServerSnapshot.serverId}
             icon={<Ionicons name="server-outline" size={24} color={theme.colors.accent.blue} />}
             onPress={() => router.push('/settings/server')}
@@ -320,16 +320,16 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
           {serverProfiles.length === 0 ? (
             <Item
               title={t('systemStatus.servers.noneConfigured')}
-              icon={<Ionicons name="server-outline" size={24} color={theme.colors.textSecondary} />}
+              icon={<Ionicons name="server-outline" size={24} color={theme.colors.text.secondary} />}
               disabled
             />
           ) : serverProfiles.map((p) => (
             <Item
               key={p.id}
               title={resolveServerProfileLabel(p)}
-              subtitle={<Text style={{ color: theme.colors.textSecondary }}>{sanitizeBugReportUrl(p.serverUrl) ?? p.serverUrl}</Text>}
+              subtitle={<Text style={{ color: theme.colors.text.secondary }}>{sanitizeBugReportUrl(p.serverUrl) ?? p.serverUrl}</Text>}
               detail={p.id === activeServerSnapshot.serverId ? t('systemStatus.servers.active') : p.id}
-              icon={<Ionicons name="server-outline" size={24} color={p.id === activeServerSnapshot.serverId ? theme.colors.success : theme.colors.accent.blue} />}
+              icon={<Ionicons name="server-outline" size={24} color={p.id === activeServerSnapshot.serverId ? theme.colors.state.success.foreground : theme.colors.accent.blue} />}
               copy
             />
           ))}
@@ -356,7 +356,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                 >
                   <Item
                     title={t('systemStatus.machines.none')}
-                    icon={<Ionicons name="laptop-outline" size={24} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="laptop-outline" size={24} color={theme.colors.text.secondary} />}
                     disabled
                   />
                 </ItemGroup>
@@ -384,10 +384,10 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                   const fetchEntry = machineDoctorSnapshotByTargetKey[snapshotKey] ?? { status: 'idle' as const };
                   const doctorRow = (() => {
                     if (fetchEntry.status === 'loading') {
-                      return <Text style={{ color: theme.colors.textSecondary }}>{t('systemStatus.machine.fetchDoctorSnapshot.loading')}</Text>;
+                      return <Text style={{ color: theme.colors.text.secondary }}>{t('systemStatus.machine.fetchDoctorSnapshot.loading')}</Text>;
                     }
                     if (fetchEntry.status === 'error') {
-                      return <Text style={{ color: theme.colors.warningCritical }}>{fetchEntry.detail}</Text>;
+                      return <Text style={{ color: theme.colors.state.danger.foreground }}>{fetchEntry.detail}</Text>;
                     }
                     if (fetchEntry.status === 'ready') {
                       const daemonServerUrl = fetchEntry.snapshot.server.serverUrl;
@@ -397,7 +397,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
 
                       const mismatchLabel = serverMismatch || accountMismatch ? ` • ${t('systemStatus.mismatch')}` : '';
                       return (
-                        <Text style={{ color: serverMismatch || accountMismatch ? theme.colors.warningCritical : theme.colors.textSecondary }}>
+                        <Text style={{ color: serverMismatch || accountMismatch ? theme.colors.state.danger.foreground : theme.colors.text.secondary }}>
                           {t('systemStatus.machine.daemonAttribution', { serverUrl: daemonServerUrl, accountId: daemonAccountId })}
                           {mismatchLabel}
                           {'\n'}
@@ -406,7 +406,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                       );
                     }
                     return (
-                      <Text style={{ color: theme.colors.textSecondary }}>
+                      <Text style={{ color: theme.colors.text.secondary }}>
                         {t('systemStatus.machine.daemonAttributionUnknown')}
                       </Text>
                     );
@@ -414,7 +414,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
 
                   const subtitle = (
                     <View>
-                      <Text style={{ color: online ? theme.colors.success : theme.colors.textSecondary }}>
+                      <Text style={{ color: online ? theme.colors.state.success.foreground : theme.colors.text.secondary }}>
                         {online ? t('systemStatus.machine.online') : t('systemStatus.machine.offline')}
                         {' • '}
                         {meta?.platform ?? t('status.unknown')}
@@ -430,7 +430,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                       <Item
                         title={displayName}
                         subtitle={subtitle}
-                        icon={<Ionicons name="laptop-outline" size={24} color={online ? theme.colors.success : theme.colors.textSecondary} />}
+                        icon={<Ionicons name="laptop-outline" size={24} color={online ? theme.colors.state.success.foreground : theme.colors.text.secondary} />}
                         onPress={() => {
                           const query = serverId ? `?serverId=${encodeURIComponent(serverId)}` : '';
                           router.push(`/machine/${machine.id}${query}`);

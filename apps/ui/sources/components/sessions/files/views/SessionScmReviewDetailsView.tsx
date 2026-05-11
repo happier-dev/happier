@@ -232,8 +232,8 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     if (!effectiveSnapshot && !snapshotError) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 24 }}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                <Text style={{ marginTop: 12, fontSize: 12, color: theme.colors.textSecondary }}>
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <Text style={{ marginTop: 12, fontSize: 12, color: theme.colors.text.secondary }}>
                     {t('common.loading')}
                 </Text>
             </View>
@@ -269,8 +269,8 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                         paddingTop: 10,
                         paddingBottom: 8,
                         borderBottomWidth: 1,
-                        borderBottomColor: theme.colors.divider,
-                        backgroundColor: theme.colors.surfaceHigh,
+                        borderBottomColor: theme.colors.border.default,
+                        backgroundColor: theme.colors.surface.inset,
                     }}
                 >
                     <ChangedFilesViewModeMenu
@@ -331,13 +331,13 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                 onScroll={scrollFades.onScroll}
             />
             <ScrollEdgeFades
-                color={theme.colors.surface}
+                color={theme.colors.surface.base}
                 size={18}
                 edges={scrollFades.visibility}
             />
             <ScrollEdgeIndicators
                 edges={scrollFades.visibility}
-                color={theme.colors.textSecondary}
+                color={theme.colors.text.secondary}
                 size={14}
                 opacity={0.35}
             />

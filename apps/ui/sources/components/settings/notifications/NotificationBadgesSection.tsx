@@ -55,7 +55,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.unreadTitle')}
                 subtitle={t('settingsNotifications.badges.unreadSubtitle')}
-                icon={<Ionicons name="mail-unread-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="mail-unread-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includeUnread !== false}
@@ -68,7 +68,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.permissionRequestsTitle')}
                 subtitle={t('settingsNotifications.badges.permissionRequestsSubtitle')}
-                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includePendingPermissionRequests !== false}
@@ -81,7 +81,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.userActionsTitle')}
                 subtitle={t('settingsNotifications.badges.userActionsSubtitle')}
-                icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includePendingUserActionRequests !== false}
@@ -94,7 +94,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.queuedTitle')}
                 subtitle={t('settingsNotifications.badges.queuedSubtitle')}
-                icon={<Ionicons name="hourglass-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="hourglass-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includeQueuedUserInput !== false}
@@ -107,7 +107,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.friendRequestsTitle')}
                 subtitle={t('settingsNotifications.badges.friendRequestsSubtitle')}
-                icon={<Ionicons name="people-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="people-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includeFriendRequestsInboxCount !== false}
@@ -120,7 +120,7 @@ export function NotificationBadgesSection({
             <Item
                 title={t('settingsNotifications.badges.desktopDotTitle')}
                 subtitle={t('settingsNotifications.badges.desktopDotSubtitle')}
-                icon={<Ionicons name="ellipse-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="ellipse-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={badge.includeDesktopNonNumericDot !== false}

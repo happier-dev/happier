@@ -1,7 +1,8 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -39,12 +40,12 @@ vi.mock('./components/WebPromptModal', () => ({
 vi.mock('./components/CustomModal', () => {
     const React = require('react');
     return {
-        CustomModal: ({ config, onClose, showBackdrop, zIndexBase }: any) =>
+        CustomModal: ({ config, onClose, showBackdrop, visible, zIndexBase }: any) =>
             React.createElement(
                 React.Fragment,
                 null,
-                React.createElement('Backdrop', { showBackdrop, zIndexBase }),
-                React.createElement(config.component, { ...(config.props ?? {}), onClose }),
+                React.createElement('Backdrop', { showBackdrop, visible, zIndexBase }),
+                React.createElement(config.component, { ...(config.props ?? {}), onClose, visible }),
             ),
     };
 });
@@ -72,9 +73,14 @@ function showCustomModal(Modal: { show: (config: { component: React.ComponentTyp
 }
 
 describe('ModalProvider', () => {
+    beforeEach(() => {
+        vi.useRealTimers();
+    });
+
     afterEach(async () => {
         const { Modal } = await import('./ModalManager');
         Modal.setFunctions(() => 'noop', () => {}, () => {});
+        vi.useRealTimers();
     });
 
     it('keeps earlier custom modals mounted when stacking', async () => {
@@ -117,7 +123,37 @@ describe('ModalProvider', () => {
         expect(top?.props.zIndexBase).toBeGreaterThan(bottom?.props.zIndexBase);
     });
 
-    it('keeps earlier modal mounted and transfers top backdrop when the top modal closes', async () => {
+    it('keeps a hidden custom modal mounted until the shared modal exit animation can complete', async () => {
+        vi.useFakeTimers();
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const screen = await renderProvider({ ModalProvider });
+
+        showCustomModal(Modal, DummyModalA);
+
+        act(() => {
+            const modal = screen.findByType(DummyModalA);
+            modal?.props.onClose();
+        });
+
+        expect(screen.findAllByType(DummyModalA).length).toBe(1);
+        expect(screen.findByType(DummyModalA)?.props.visible).toBe(false);
+
+        act(() => {
+            vi.advanceTimersByTime(motionTokens.overlay.modal.exitMs - 1);
+        });
+
+        expect(screen.findAllByType(DummyModalA).length).toBe(1);
+
+        act(() => {
+            vi.advanceTimersByTime(1);
+        });
+
+        expect(screen.findAllByType(DummyModalA).length).toBe(0);
+    });
+
+    it('keeps earlier modal mounted and transfers top backdrop when the top modal finishes closing', async () => {
+        vi.useFakeTimers();
         const { ModalProvider } = await import('./ModalProvider');
         const { Modal } = await import('./ModalManager');
         const screen = await renderProvider({ ModalProvider });
@@ -128,6 +164,14 @@ describe('ModalProvider', () => {
         act(() => {
             const topModal = screen.findByType(DummyModalB);
             topModal?.props.onClose();
+        });
+
+        expect(screen.findAllByType(DummyModalA).length).toBe(1);
+        expect(screen.findAllByType(DummyModalB).length).toBe(1);
+        expect(screen.findByType(DummyModalB)?.props.visible).toBe(false);
+
+        act(() => {
+            vi.advanceTimersByTime(motionTokens.overlay.modal.exitMs);
         });
 
         expect(screen.findAllByType(DummyModalA).length).toBe(1);

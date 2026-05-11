@@ -227,14 +227,14 @@ function BranchOperationBanner(props: Readonly<{
         <View
             style={{
                 borderWidth: 1,
-                borderColor: props.theme.colors.divider,
+                borderColor: props.theme.colors.border.default,
                 borderRadius: 8,
-                backgroundColor: props.theme.colors.surfaceHigh,
+                backgroundColor: props.theme.colors.surface.inset,
                 padding: 10,
                 gap: 8,
             }}
         >
-            <Text style={{ fontSize: 12, color: props.theme.colors.text, ...Typography.default('semiBold') }}>
+            <Text style={{ fontSize: 12, color: props.theme.colors.text.primary, ...Typography.default('semiBold') }}>
                 {t('files.sourceControlOperations.update.branchIntegration.operationInProgress', {
                     operation: props.operationState.kind,
                     source: props.operationState.sourceRef ?? t('status.unknown'),

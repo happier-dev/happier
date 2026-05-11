@@ -176,7 +176,7 @@ export const WorkspaceScmCommitSelectionToggleButton = React.memo((props: Worksp
     const [busy, setBusy] = React.useState(false);
 
     const iconName: OcticonName = props.selectedForCommit ? 'check' : 'plus';
-    const iconColor = props.selectedForCommit ? theme.colors.success : theme.colors.textSecondary;
+    const iconColor = props.selectedForCommit ? theme.colors.state.success.foreground : theme.colors.text.secondary;
     const supported = React.useMemo(() => {
         if (isAtomicCommitStrategy(props.commitStrategy)) return true;
         const capabilities = props.snapshot?.capabilities;
@@ -229,15 +229,15 @@ export const WorkspaceScmCommitSelectionToggleButton = React.memo((props: Worksp
                 height: 28,
                 borderRadius: 10,
                 borderWidth: 1,
-                borderColor: theme.colors.divider,
-                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border.default,
+                backgroundColor: theme.colors.surface.base,
                 alignItems: 'center',
                 justifyContent: 'center',
                 opacity: disabled ? 0.55 : 1,
             }}
         >
             {busy ? (
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             ) : (
                 <Octicons name={iconName} size={14} color={iconColor} />
             )}

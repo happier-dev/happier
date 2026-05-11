@@ -1,0 +1,115 @@
+import * as React from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+
+type TestImagePreviewState =
+    | Readonly<{ status: 'loaded'; uri: string; svgXml: string | null; error: null }>
+    | Readonly<{ status: 'error'; uri: null; error: string }>;
+
+const previewState = vi.hoisted((): { current: TestImagePreviewState } => ({
+    current: {
+        status: 'loaded',
+        uri: 'blob:preview',
+        svgXml: null,
+        error: null,
+    },
+}));
+
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
+
+vi.mock('@/components/sessions/attachments/preview/AttachmentImagePreviewModal', () => ({
+    AttachmentImagePreviewModal: () => null,
+}));
+
+vi.mock('@/components/sessions/files/content/imagePreview/useSessionImagePreview', () => ({
+    useSessionImagePreview: () => previewState.current,
+}));
+
+afterEach(() => {
+    previewState.current = {
+        status: 'loaded',
+        uri: 'blob:preview',
+        svgXml: null,
+        error: null,
+    };
+    standardCleanup();
+});
+
+describe('SessionMediaInlineImages', () => {
+    it('exposes inline image tiles as accessible translated buttons', async () => {
+        const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
+        const { t } = await import('@/text');
+
+        const screen = await renderScreen(
+            <SessionMediaInlineImages
+                sessionId="s1"
+                media={[{
+                    id: 'media-1',
+                    name: 'diagram.png',
+                    path: '.happier/uploads/generated/session-1/message-1/diagram.png',
+                    mimeType: 'image/png',
+                    sizeBytes: 42,
+                    category: 'generated',
+                    role: 'output',
+                }]}
+                onOpenPath={() => {}}
+            />,
+        );
+
+        const tile = screen.findByTestId('message-session-media-inline-image:.happier/uploads/generated/session-1/message-1/diagram.png');
+
+        expect(tile?.props.accessibilityRole).toBe('button');
+        expect(tile?.props.accessibilityLabel).toBe(t('files.sessionMedia.generatedImageA11y', { name: 'diagram.png' }));
+    });
+
+    it('exposes a translated unavailable hint when an inline image preview is missing', async () => {
+        previewState.current = {
+            status: 'error',
+            uri: null,
+            error: 'not found',
+        };
+
+        const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
+        const { t } = await import('@/text');
+
+        const screen = await renderScreen(
+            <SessionMediaInlineImages
+                sessionId="s1"
+                media={[{
+                    id: 'media-1',
+                    name: 'input.png',
+                    path: '.happier/uploads/attachments/session-1/message-1/input.png',
+                    mimeType: 'image/png',
+                    sizeBytes: 42,
+                    category: 'attachment',
+                    role: 'input',
+                }]}
+                onOpenPath={() => {}}
+            />,
+        );
+
+        const tile = screen.findByTestId('message-session-media-inline-image:.happier/uploads/attachments/session-1/message-1/input.png');
+
+        expect(tile?.props.accessibilityRole).toBe('button');
+        expect(tile?.props.accessibilityLabel).toBeTruthy();
+        expect(tile?.props.accessibilityHint).toBe(t('files.sessionMedia.previewUnavailableA11y'));
+    });
+});

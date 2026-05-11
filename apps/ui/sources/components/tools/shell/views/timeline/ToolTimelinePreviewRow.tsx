@@ -36,10 +36,10 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
             tool: props.toolMessage.tool,
             metadata: props.metadata,
             iconSize: 18,
-            iconColorPrimary: theme.colors.text,
-            iconColorSecondary: theme.colors.textSecondary,
+            iconColorPrimary: theme.colors.text.primary,
+            iconColorSecondary: theme.colors.text.secondary,
         });
-    }, [props.metadata, props.toolMessage.tool, theme.colors.text, theme.colors.textSecondary]);
+    }, [props.metadata, props.toolMessage.tool, theme.colors.text.primary, theme.colors.text.secondary]);
 
     const collapsedDetailLevel = React.useMemo(() => {
         const normalizedToolViewDetailLevelDefaultSetting: ToolViewDetailLevelSetting =
@@ -85,10 +85,10 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
             tool: props.toolMessage.tool,
             metadata: props.metadata,
             iconSize,
-            iconColorPrimary: theme.colors.text,
-            iconColorSecondary: theme.colors.textSecondary,
+            iconColorPrimary: theme.colors.text.primary,
+            iconColorSecondary: theme.colors.text.secondary,
         }).icon;
-    }, [iconSize, model.icon, props.metadata, props.toolMessage.tool, theme.colors.text, theme.colors.textSecondary]);
+    }, [iconSize, model.icon, props.metadata, props.toolMessage.tool, theme.colors.text.primary, theme.colors.text.secondary]);
 
     const statusKind = resolveToolStatusIndicatorKind(model.toolForRendering);
     const errorSummary =
@@ -96,7 +96,7 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
     const rightElement =
         statusKind === 'error' ? (
             <View style={styles.errorContainer}>
-                <Ionicons name="alert-circle" size={16} color={theme.colors.textDestructive} />
+                <Ionicons name="alert-circle" size={16} color={theme.colors.state.danger.foreground} />
                 <Text style={styles.errorText} numberOfLines={1}>
                     {errorSummary}
                 </Text>
@@ -127,7 +127,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     errorText: {
         fontSize: 12,
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
         fontWeight: '600',
     },
 }));

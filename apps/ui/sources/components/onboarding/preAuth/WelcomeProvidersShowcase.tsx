@@ -25,7 +25,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     label: {
         ...Typography.default(),
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     showcaseFrame: {

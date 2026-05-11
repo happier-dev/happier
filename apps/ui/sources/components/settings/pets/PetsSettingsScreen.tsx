@@ -362,7 +362,7 @@ export function PetsSettingsScreen() {
                     <Item
                         title={t('settingsPets.disabledTitle')}
                         subtitle={t('settingsPets.disabledSubtitle')}
-                        icon={<Ionicons name="paw-outline" size={25} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="paw-outline" size={25} color={theme.colors.text.secondary} />}
                         mode="info"
                     />
                 </ItemGroup>

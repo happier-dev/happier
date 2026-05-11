@@ -25,7 +25,7 @@ export const ProviderAuthenticationActions = React.memo(function ProviderAuthent
                     subtitle={props.loginActionKind === 'reauthenticate'
                         ? t('settingsProviders.authentication.reauthenticateSubtitle')
                         : t('settingsProviders.authentication.logInSubtitle')}
-                    icon={<Ionicons name="log-in-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="log-in-outline" size={22} color={theme.colors.text.secondary} />}
                     onPress={props.onLaunchLogin}
                 />
             ) : null}
@@ -34,7 +34,7 @@ export const ProviderAuthenticationActions = React.memo(function ProviderAuthent
                     testID="settings-provider-auth-check-now"
                     title={t('settingsProviders.authentication.checkNowTitle')}
                     subtitle={t('settingsProviders.authentication.checkNowSubtitle')}
-                    icon={<Ionicons name="refresh-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="refresh-outline" size={22} color={theme.colors.text.secondary} />}
                     onPress={props.onCheckNow}
                 />
             ) : null}
@@ -43,7 +43,7 @@ export const ProviderAuthenticationActions = React.memo(function ProviderAuthent
                     testID="settings-provider-auth-docs-url"
                     title={t('settingsProviders.setupGuideUrlTitle')}
                     subtitle={props.docsUrl}
-                    icon={<Ionicons name="link-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="link-outline" size={22} color={theme.colors.text.secondary} />}
                     mode="info"
                     copy={props.docsUrl}
                 />

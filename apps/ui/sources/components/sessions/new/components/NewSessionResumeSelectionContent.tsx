@@ -13,7 +13,7 @@ import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         width: '100%',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 16,
         // Match the path popover header padding more closely.
         paddingVertical: 12,
@@ -36,7 +36,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 40,
         justifyContent: 'center',
         borderWidth: 0.5,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     textInput: {
         flex: 1,
@@ -77,9 +77,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.button.primary.background,
     },
     buttonSecondary: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: 0.5,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     buttonText: {
         fontSize: 12,
@@ -89,10 +89,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.button.primary.tint,
     },
     buttonTextSecondary: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     buttonTextDestructive: {
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
     },
     clearButton: {
         paddingVertical: 7,
@@ -100,7 +100,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     helpText: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 12,
         lineHeight: 20,
         ...Typography.default(),
@@ -197,7 +197,7 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
                             ]}
                         >
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                <Ionicons name="clipboard-outline" size={16} color={theme.colors.text} />
+                                <Ionicons name="clipboard-outline" size={16} color={theme.colors.text.primary} />
                                 <Text style={[styles.buttonText, styles.buttonTextSecondary]}>
                                     {t('newSession.resume.paste')}
                                 </Text>
@@ -226,7 +226,7 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
                             ]}
                         >
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                <Ionicons name="close-circle-outline" size={16} color={theme.colors.textDestructive} />
+                                <Ionicons name="close-circle-outline" size={16} color={theme.colors.state.danger.foreground} />
                                 <Text style={[styles.buttonText, styles.buttonTextDestructive]}>
                                     {t('newSession.resume.clearAndRemove')}
                                 </Text>

@@ -4,13 +4,18 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { TextStyle } from 'react-native';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
+import { Typography } from '@/constants/Typography';
 import { tokenizeSimpleSyntaxLine } from '@/components/ui/code/tokenization/simpleSyntaxTokenizer';
-import { resolveCodeMonoFontFamily } from '@/components/ui/code/codeTypography';
 import { ReviewCommentLineAffordance } from '@/components/ui/code/reviewComments/ReviewCommentLineAffordance';
 
 import { CodeGutter } from './CodeGutter';
 import { Text } from '@/components/ui/text/Text';
 
+const resolveMonoTypography = (): TextStyle => (
+    typeof Typography.mono === 'function'
+        ? Typography.mono()
+        : { fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }
+);
 
 export function CodeLineRow(props: {
     line: CodeLine;
@@ -39,8 +44,8 @@ export function CodeLineRow(props: {
     const [isHovered, setIsHovered] = React.useState(false);
     const commentActive = props.commentActive === true;
     const highlighted = props.highlighted === true;
-    const canShowCommentAffordance = isWeb && Boolean(onPressAddComment) && !line.renderIsHeaderLine;
-    const commentAffordanceVisible = isHovered || commentActive;
+    const canShowCommentAffordance = Boolean(onPressAddComment) && !line.renderIsHeaderLine;
+    const commentAffordanceVisible = isWeb ? (isHovered || commentActive) : true;
 
     const intraLineSegments = (Array.isArray(line.renderIntraLineDiffSegments) && line.renderIntraLineDiffSegments.length > 0)
         ? line.renderIntraLineDiffSegments
@@ -50,28 +55,28 @@ export function CodeLineRow(props: {
     const onLongPress = !isWeb && onPressAddComment && !line.renderIsHeaderLine ? () => onPressAddComment(line) : undefined;
 
     const backgroundColor = selected
-        ? theme.colors.surfaceHigh
+        ? theme.colors.surface.inset
         : line.kind === 'add'
-          ? theme.colors.diff.addedBg
+          ? theme.colors.diff.added.background
           : line.kind === 'remove'
-            ? theme.colors.diff.removedBg
+            ? theme.colors.diff.removed.background
             : line.renderIsHeaderLine
-              ? theme.colors.diff.hunkHeaderBg
+              ? theme.colors.diff.hunk.background
               : 'transparent';
 
     const textColor = line.kind === 'add'
-        ? theme.colors.diff.addedText
+        ? theme.colors.diff.added.foreground
         : line.kind === 'remove'
-          ? theme.colors.diff.removedText
+          ? theme.colors.diff.removed.foreground
           : line.renderIsHeaderLine
-            ? theme.colors.diff.hunkHeaderText
-            : theme.colors.diff.contextText;
+            ? theme.colors.diff.hunk.foreground
+            : theme.colors.diff.context.foreground;
 
     const resolveTokenColorWithFallback = React.useCallback((fallback: string, tokenType: string): string => {
-        if (tokenType === 'keyword') return theme.colors.syntaxKeyword ?? fallback;
-        if (tokenType === 'string') return theme.colors.syntaxString ?? fallback;
-        if (tokenType === 'number') return theme.colors.syntaxNumber ?? fallback;
-        if (tokenType === 'comment') return theme.colors.syntaxComment ?? fallback;
+        if (tokenType === 'keyword') return theme.colors.syntax.keyword ?? fallback;
+        if (tokenType === 'string') return theme.colors.syntax.string ?? fallback;
+        if (tokenType === 'number') return theme.colors.syntax.number ?? fallback;
+        if (tokenType === 'comment') return theme.colors.syntax.comment ?? fallback;
         return fallback;
     }, [theme.colors]);
 
@@ -143,6 +148,7 @@ export function CodeLineRow(props: {
                 styles.row,
                 highlighted ? styles.rowHighlighted : null,
                 { backgroundColor },
+                selected ? styles.rowSelected : null,
             ]}
         >
             <Pressable
@@ -156,7 +162,7 @@ export function CodeLineRow(props: {
                     <View testID="review-comment-line-affordance-lane" style={styles.commentButtonLane}>
                         <ReviewCommentLineAffordance
                             active={commentActive}
-                            color={theme.colors.textSecondary}
+                            color={theme.colors.text.secondary}
                             onHoverIn={() => setIsHovered(true)}
                             onHoverOut={() => setIsHovered(false)}
                             onPress={() => onPressAddComment(line)}
@@ -189,15 +195,15 @@ export function CodeLineRow(props: {
                             : intraLineTokensBySegment
                                 ? intraLineTokensBySegment.map(({ segment, tokens }, segIndex) => {
                                     const segmentBg = segment.kind === 'added'
-                                        ? theme.colors.diff.inlineAddedBg
+                                        ? theme.colors.diff.inlineAdded.background
                                         : segment.kind === 'removed'
-                                            ? theme.colors.diff.inlineRemovedBg
+                                            ? theme.colors.diff.inlineRemoved.background
                                             : 'transparent';
 
                                     const segmentFg = segment.kind === 'added'
-                                        ? (theme.colors.diff.inlineAddedText ?? textColor)
+                                        ? (theme.colors.diff.inlineAdded.foreground ?? textColor)
                                         : segment.kind === 'removed'
-                                            ? (theme.colors.diff.inlineRemovedText ?? textColor)
+                                            ? (theme.colors.diff.inlineRemoved.foreground ?? textColor)
                                             : textColor;
 
                                     return (
@@ -256,7 +262,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rowHighlighted: {
         borderLeftWidth: 3,
-        borderLeftColor: theme.colors.textLink ?? theme.colors.textSecondary,
+        borderLeftColor: theme.colors.text.link ?? theme.colors.text.secondary,
+        paddingLeft: 5,
+    },
+    rowSelected: {
+        borderLeftWidth: 3,
+        borderLeftColor: theme.colors.state.success.foreground,
         paddingLeft: 5,
     },
     rowPressable: {
@@ -276,7 +287,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
     },
     codeText: {
-        fontFamily: resolveCodeMonoFontFamily(),
+        ...resolveMonoTypography(),
         fontSize: 13,
         lineHeight: 20,
     },

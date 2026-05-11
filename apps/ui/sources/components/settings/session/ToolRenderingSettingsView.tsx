@@ -51,7 +51,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                             popoverBoundaryRef={popoverBoundaryRef}
                             itemTrigger={{
                                 title: toolKey.title,
-                                icon: <Ionicons name="construct-outline" size={29} color={theme.colors.textSecondary} />,
+                                icon: <Ionicons name="construct-outline" size={29} color={theme.colors.text.secondary} />,
                                 subtitle: (() => {
                                     const key = TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.titleKey;
                                     return key ? tToolDetail(key) : String(selected);
@@ -64,7 +64,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                                 subtitle: tToolDetail(opt.subtitleKey),
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
+                                        <Ionicons name="list-outline" size={22} color={theme.colors.text.secondary} />
                                     </View>
                                 ),
                             }))}
@@ -109,7 +109,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                             popoverBoundaryRef={popoverBoundaryRef}
                             itemTrigger={{
                                 title: toolKey.title,
-                                icon: <Ionicons name="expand-outline" size={29} color={theme.colors.textSecondary} />,
+                                icon: <Ionicons name="expand-outline" size={29} color={theme.colors.text.secondary} />,
                                 subtitle: (() => {
                                     const key = TOOL_EXPANDED_DETAIL_LEVEL_WITH_STYLE_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.titleKey;
                                     return key ? tToolDetail(key) : String(selected);
@@ -122,7 +122,7 @@ export const ToolRenderingSettingsView = React.memo(function ToolRenderingSettin
                                 subtitle: tToolDetail(opt.subtitleKey),
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name="expand-outline" size={22} color={theme.colors.textSecondary} />
+                                        <Ionicons name="expand-outline" size={22} color={theme.colors.text.secondary} />
                                     </View>
                                 ),
                             }))}

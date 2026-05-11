@@ -14,8 +14,8 @@ const BAR_HEIGHT = 4;
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         borderTopWidth: Platform.select({ ios: 0.33, default: 1 }),
-        borderTopColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderTopColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 12,
         paddingVertical: 10,
         gap: 10,
@@ -28,19 +28,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     label: {
         flex: 1,
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     progressTrack: {
         height: BAR_HEIGHT,
         borderRadius: 999,
         overflow: 'hidden',
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
     progressFill: {
         height: BAR_HEIGHT,
         borderRadius: 999,
-        backgroundColor: theme.colors.textLink,
+        backgroundColor: theme.colors.text.link,
     },
     cancelButton: {
         width: 28,
@@ -49,8 +49,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
     },
 }));
 
@@ -112,7 +112,7 @@ function UploadRow(props: Readonly<{ state: Extract<WorkspaceUploadState, { stat
     return (
         <View testID="repository-tree-upload-status" style={{ gap: 8 }}>
             <View style={styles.row}>
-                <Ionicons name="cloud-upload-outline" size={16} color={theme.colors.textSecondary} />
+                <Ionicons name="cloud-upload-outline" size={16} color={theme.colors.text.secondary} />
                 <Text numberOfLines={1} style={styles.label}>{label}</Text>
                 <Pressable
                     testID="repository-tree-upload-cancel"
@@ -122,7 +122,7 @@ function UploadRow(props: Readonly<{ state: Extract<WorkspaceUploadState, { stat
                     style={styles.cancelButton}
                     hitSlop={10}
                 >
-                    <Ionicons name="close" size={16} color={theme.colors.textSecondary} />
+                    <Ionicons name="close" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             </View>
             {props.state.status === 'uploading' ? <TransferProgressBar progress={progress} /> : null}
@@ -143,7 +143,7 @@ function DownloadRow(props: Readonly<{ state: Extract<WorkspaceDownloadState, { 
     return (
         <View testID="repository-tree-download-status" style={{ gap: 8 }}>
             <View style={styles.row}>
-                <Ionicons name="download-outline" size={16} color={theme.colors.textSecondary} />
+                <Ionicons name="download-outline" size={16} color={theme.colors.text.secondary} />
                 <Text numberOfLines={1} style={styles.label}>{label}</Text>
                 <Pressable
                     testID="repository-tree-download-cancel"
@@ -153,7 +153,7 @@ function DownloadRow(props: Readonly<{ state: Extract<WorkspaceDownloadState, { 
                     style={styles.cancelButton}
                     hitSlop={10}
                 >
-                    <Ionicons name="close" size={16} color={theme.colors.textSecondary} />
+                    <Ionicons name="close" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             </View>
             <TransferProgressBar progress={progress} />

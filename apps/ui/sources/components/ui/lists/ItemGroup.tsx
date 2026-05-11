@@ -2,10 +2,14 @@ import * as React from 'react';
 import { View, StyleProp, ViewStyle, TextStyle, Platform } from 'react-native';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Typography } from '@/constants/Typography';
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { withItemGroupDividers } from './ItemGroup.dividers';
 import { countSelectableItems } from './ItemGroup.selectableCount';
+import {
+    ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX,
+    ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX,
+} from './itemGroupSpacing';
 import { Text } from '@/components/ui/text/Text';
 
 
@@ -23,6 +27,7 @@ export interface ItemGroupProps {
     titleStyle?: StyleProp<TextStyle>;
     footerTextStyle?: StyleProp<TextStyle>;
     containerStyle?: StyleProp<ViewStyle>;
+    constrainToContentWidth?: boolean;
     /**
      * Performance: when you already know how many selectable rows are inside the group,
      * pass this to avoid walking the full React children tree on every render.
@@ -36,8 +41,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     container: {
         width: '100%',
-        maxWidth: layout.maxWidth,
-        paddingHorizontal: Platform.select({ ios: 0, default: 4 }),
+        paddingHorizontal: Platform.select(ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX),
     },
     header: {
         paddingTop: Platform.select({ ios: 26, default: 20 }),
@@ -49,15 +53,15 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     headerText: {
         ...Typography.default('regular'),
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 13, default: 14 }),
         lineHeight: Platform.select({ ios: 18, default: 20 }),
         letterSpacing: -0.08,
         textTransform: 'uppercase'
     },
     contentContainerOuter: {
-        backgroundColor: theme.colors.surface,
-        marginHorizontal: Platform.select({ ios: 16, default: 12 }),
+        backgroundColor: theme.colors.surface.base,
+        marginHorizontal: Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX),
         borderRadius: Platform.select({ ios: 10, default: 16 }),
         // IMPORTANT: allow popovers to overflow this rounded container.
         overflow: 'visible',
@@ -73,7 +77,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     footerText: {
         ...Typography.default('regular'),
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 13, default: 14 }),
         lineHeight: Platform.select({ ios: 18, default: 20 }),
         letterSpacing: Platform.select({ ios: -0.08, default: 0 }),
@@ -83,6 +87,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const maxWidth = useLayoutMaxWidth();
 
     const {
         title,
@@ -94,6 +99,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         titleStyle,
         footerTextStyle,
         containerStyle,
+        constrainToContentWidth = true,
         selectableItemCountOverride
     } = props;
 
@@ -110,7 +116,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
 
     return (
         <View style={[styles.wrapper, style]}>
-            <View style={styles.container}>
+            <View style={[styles.container, constrainToContentWidth ? { maxWidth } : undefined]}>
                 {/* Header */}
                 {title ? (
                     <View style={[styles.header, headerStyle]}>

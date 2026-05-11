@@ -31,7 +31,7 @@ export function ServerGroupsSection(props: ServerGroupsSectionProps) {
             <Item
                 title={t('server.multiServerView.enableTitle')}
                 subtitle={t('server.multiServerView.enableSubtitle')}
-                icon={<Ionicons name="layers-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="layers-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={<Switch value={Boolean(props.groupSelectionEnabled)} onValueChange={props.setGroupSelectionEnabled} />}
                 showChevron={false}
                 onPress={() => props.setGroupSelectionEnabled(!props.groupSelectionEnabled)}
@@ -43,8 +43,8 @@ export function ServerGroupsSection(props: ServerGroupsSectionProps) {
                         ? t('server.multiServerView.presentation.flatWithBadges')
                         : t('server.multiServerView.presentation.groupedByServer')
                 }
-                icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
-                rightElement={<Ionicons name="swap-horizontal-outline" size={20} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="list-outline" size={29} color={theme.colors.text.secondary} />}
+                rightElement={<Ionicons name="swap-horizontal-outline" size={20} color={theme.colors.text.secondary} />}
                 showChevron={false}
                 onPress={props.onToggleGroupPresentation}
             />
@@ -56,12 +56,12 @@ export function ServerGroupsSection(props: ServerGroupsSectionProps) {
                             key={`multi-server-${profile.id}`}
                             title={profile.name}
                             subtitle={toServerUrlDisplay(profile.serverUrl)}
-                            icon={<Ionicons name="server-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="server-outline" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Ionicons
                                     name={selected ? 'checkmark-circle' : 'ellipse-outline'}
                                     size={20}
-                                    color={selected ? theme.colors.status.connected : theme.colors.textSecondary}
+                                    color={selected ? theme.colors.status.connected : theme.colors.text.secondary}
                                 />
                             )}
                             showChevron={false}

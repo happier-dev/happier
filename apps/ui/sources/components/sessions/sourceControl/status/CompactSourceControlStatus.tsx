@@ -13,7 +13,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         paddingHorizontal: 6,
         height: 16,
         borderRadius: 4,
@@ -21,7 +21,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fileCountText: {
         fontSize: 10,
         fontWeight: '500',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     lineChanges: {
         flexDirection: 'row',
@@ -31,12 +31,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     addedText: {
         fontSize: 10,
         fontWeight: '600',
-        color: theme.colors.gitAddedText,
+        color: theme.colors.versionControl.added.foreground,
     },
     removedText: {
         fontSize: 10,
         fontWeight: '600',
-        color: theme.colors.gitRemovedText,
+        color: theme.colors.versionControl.removed.foreground,
     },
 }));
 

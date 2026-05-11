@@ -53,8 +53,8 @@ export function DevicePetTileCard(props: Readonly<{
                 styles.tileFrame,
                 widthStyle,
                 {
-                    borderColor: tile.selected ? theme.colors.button.primary.background : theme.colors.divider,
-                    backgroundColor: tile.selected ? theme.colors.surfaceSelected : theme.colors.surface,
+                    borderColor: tile.selected ? theme.colors.button.primary.background : theme.colors.border.default,
+                    backgroundColor: tile.selected ? theme.colors.surface.selected : theme.colors.surface.base,
                 },
             ]}
         >
@@ -65,7 +65,7 @@ export function DevicePetTileCard(props: Readonly<{
                 onPress={tile.onPress}
                 style={({ pressed }) => [
                     styles.tilePressable,
-                    pressed && tile.onPress ? { backgroundColor: theme.colors.surfacePressed } : null,
+                    pressed && tile.onPress ? { backgroundColor: theme.colors.surface.pressed } : null,
                 ]}
             >
                 <View
@@ -97,16 +97,16 @@ export function DevicePetTileCard(props: Readonly<{
                                 <Ionicons
                                     name={tile.selected ? 'checkbox-outline' : 'square-outline'}
                                     size={24}
-                                    color={tile.selected ? theme.colors.text : theme.colors.textSecondary}
+                                    color={tile.selected ? theme.colors.text.primary : theme.colors.text.secondary}
                                 />
                             </View>
                         ) : null}
                     </View>
                     <View style={styles.text}>
-                        <Text numberOfLines={1} adjustsFontSizeToFit style={{ color: theme.colors.text }}>
+                        <Text numberOfLines={1} adjustsFontSizeToFit style={{ color: theme.colors.text.primary }}>
                             {tile.title}
                         </Text>
-                        <Text numberOfLines={2} style={{ color: theme.colors.textSecondary }}>
+                        <Text numberOfLines={2} style={{ color: theme.colors.text.secondary }}>
                             {tile.subtitle}
                         </Text>
                     </View>
@@ -199,7 +199,7 @@ function DaemonPetPreview(props: Readonly<{
                     testID={`${props.testID}-skeleton`}
                     style={[
                         styles.previewSkeleton,
-                        { backgroundColor: theme.colors.surfacePressed },
+                        { backgroundColor: theme.colors.surface.pressed },
                     ]}
                 />
             )}

@@ -31,14 +31,14 @@ export function DetectedClisList({ state, layout = 'inline' }: Props) {
         return [
             Typography.default('regular'),
             {
-                color: theme.colors.textSecondary,
+                color: theme.colors.text.secondary,
                 fontSize: Platform.select({ ios: 15, default: 14 }),
                 lineHeight: 20,
                 letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
                 flexWrap: 'wrap' as const,
             },
         ];
-    }, [theme.colors.textSecondary]);
+    }, [theme.colors.text.secondary]);
 
     const snapshotForRender = React.useMemo(() => {
         if (state.status === 'loaded') return state.snapshot;
@@ -55,7 +55,7 @@ export function DetectedClisList({ state, layout = 'inline' }: Props) {
             <Item
                 title={t('common.loading')}
                 showChevron={false}
-                rightElement={<Ionicons name="time-outline" size={18} color={theme.colors.textSecondary} />}
+                rightElement={<Ionicons name="time-outline" size={18} color={theme.colors.text.secondary} />}
             />
         );
     }
@@ -103,7 +103,7 @@ export function DetectedClisList({ state, layout = 'inline' }: Props) {
             {entries.map(([name, entry], index) => {
                 const available = entry.available;
                 const iconName = available === true ? 'checkmark-circle' : available === false ? 'close-circle' : 'time-outline';
-                const iconColor = available === true ? theme.colors.status.connected : theme.colors.textSecondary;
+                const iconColor = available === true ? theme.colors.status.connected : theme.colors.text.secondary;
                 const version = name === 'tmux' ? (entry.version ?? null) : extractSemver(entry.version);
 
                 const subtitle = available === false

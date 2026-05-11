@@ -21,14 +21,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingTop: 10,
         paddingBottom: 10,
         borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-        borderBottomColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderBottomColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
     },
     inner: {
         flexDirection: 'row',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 10,
         overflow: 'hidden',
     },
@@ -39,15 +39,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
     },
     tabActive: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     tabLabel: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     tabLabelActive: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));
 

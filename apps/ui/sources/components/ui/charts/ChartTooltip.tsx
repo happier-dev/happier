@@ -44,19 +44,19 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     tooltipSubtitle: {
         ...Typography.default(),
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     tooltipValue: {
         ...Typography.default('semiBold'),
         fontSize: 16,
         lineHeight: 20,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));
 

@@ -31,7 +31,7 @@ type ModalCardFrameProps = Readonly<{
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: 14,
         overflow: 'hidden',
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
@@ -41,7 +41,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     footer: {
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     bodyScrollView: {
         flexGrow: 1,

@@ -6,17 +6,37 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t, tLoose } from '@/text';
-import type { StoryDeckImageCard as ImageCardData } from '@/changelog/releaseNotes/types';
+import type { StoryDeckImageCard as ImageCardData, StoryDeckMediaSurface } from '@/changelog/releaseNotes/types';
 
 import { StoryDeckMediaFrame, clampMediaSize } from './StoryDeckMediaFrame';
 import { DEFAULT_STORY_DECK_MEDIA_LOAD_TIMEOUT_MS } from './StoryDeckMediaLoading';
-import { resolveStoryDeckImageSources } from './StoryDeckMediaSources';
+import {
+    resolveStoryDeckImageMediaForSurface,
+    resolveStoryDeckImageSources,
+} from './StoryDeckMediaSources';
+import type { StoryDeckCardLayout } from './storyDeckPresentation';
+import {
+    STORY_DECK_WIDE_CONTENT_BOTTOM_PADDING,
+    STORY_DECK_WIDE_CONTENT_HORIZONTAL_PADDING,
+    STORY_DECK_WIDE_CONTENT_TOP_PADDING,
+    STORY_DECK_WIDE_BODY_FONT_SIZE,
+    STORY_DECK_WIDE_BODY_LINE_HEIGHT,
+    STORY_DECK_WIDE_DETAILS_MAX_WIDTH,
+    STORY_DECK_WIDE_MEDIA_TEXT_GAP,
+    STORY_DECK_WIDE_TITLE_FONT_SIZE,
+    STORY_DECK_WIDE_TITLE_LINE_HEIGHT,
+    resolveWideStoryDeckMediaSize,
+} from './storyDeckLayout';
 
 export type StoryDeckImageCardProps = Readonly<{
     card: ImageCardData;
     testID?: string;
     isCurrent: boolean;
     loadTimeoutMs?: number;
+    mediaSurface?: StoryDeckMediaSurface;
+    layout?: StoryDeckCardLayout;
+    mediaPlacement?: 'start' | 'end';
+    initialContainerWidth?: number;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -26,17 +46,29 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 25,
         minHeight: 0,
     },
+    containerWide: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: STORY_DECK_WIDE_MEDIA_TEXT_GAP,
+        paddingHorizontal: STORY_DECK_WIDE_CONTENT_HORIZONTAL_PADDING,
+        paddingTop: STORY_DECK_WIDE_CONTENT_TOP_PADDING,
+        paddingBottom: STORY_DECK_WIDE_CONTENT_BOTTOM_PADDING,
+    },
+    containerWideMediaEnd: {
+        flexDirection: 'row-reverse',
+    },
     placeholder: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     failurePlaceholder: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     details: {
         paddingHorizontal: 30,
@@ -44,18 +76,35 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 6,
         flexShrink: 1,
     },
+    detailsWide: {
+        flex: 1,
+        minWidth: 0,
+        maxWidth: STORY_DECK_WIDE_DETAILS_MAX_WIDTH,
+        justifyContent: 'center',
+        paddingHorizontal: 0,
+        paddingBottom: 0,
+        gap: 8,
+    },
     title: {
         ...Typography.default('semiBold'),
         fontSize: 19,
         lineHeight: 25,
         letterSpacing: -0.2,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
+    },
+    titleWide: {
+        fontSize: STORY_DECK_WIDE_TITLE_FONT_SIZE,
+        lineHeight: STORY_DECK_WIDE_TITLE_LINE_HEIGHT,
     },
     body: {
         ...Typography.default(),
         fontSize: 15,
         lineHeight: 21,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
+    },
+    bodyWide: {
+        fontSize: STORY_DECK_WIDE_BODY_FONT_SIZE,
+        lineHeight: STORY_DECK_WIDE_BODY_LINE_HEIGHT,
     },
 }));
 
@@ -68,13 +117,29 @@ export function StoryDeckImageCard(props: StoryDeckImageCardProps) {
     const [sourceIndex, setSourceIndex] = React.useState(0);
     const [failed, setFailed] = React.useState(false);
 
-    const resolved = React.useMemo(() => resolveStoryDeckImageSources(props.card.media), [props.card.media]);
+    const isWide = props.layout === 'wide';
+    const titleKey = isWide && props.card.wideTitleKey ? props.card.wideTitleKey : props.card.titleKey;
+    const media = React.useMemo(
+        () => resolveStoryDeckImageMediaForSurface(props.card.media, props.mediaSurface),
+        [props.card.media, props.mediaSurface],
+    );
+    const resolved = React.useMemo(
+        () => resolveStoryDeckImageSources(props.card.media, { surface: props.mediaSurface }),
+        [props.card.media, props.mediaSurface],
+    );
     const imageSource = resolved.sources[sourceIndex] ?? null;
     const loadTimeoutMs = props.loadTimeoutMs ?? DEFAULT_STORY_DECK_MEDIA_LOAD_TIMEOUT_MS;
-    const containerWidth = measuredWidth && measuredWidth > 0 ? measuredWidth : viewportWidth;
-    const mediaSize = clampMediaSize(containerWidth);
+    const fallbackContainerWidth = props.initialContainerWidth && props.initialContainerWidth > 0
+        ? props.initialContainerWidth
+        : viewportWidth;
+    const containerWidth = measuredWidth && measuredWidth > 0 ? measuredWidth : fallbackContainerWidth;
+    const mediaContainerWidth = isWide ? resolveWideStoryDeckMediaSize(containerWidth) : containerWidth;
+    const mediaFramePadding = isWide ? 0 : undefined;
+    const mediaSize = isWide
+        ? clampMediaSize(mediaContainerWidth, mediaContainerWidth, 0)
+        : clampMediaSize(mediaContainerWidth);
 
-    const altLabel = tLoose(props.card.media.altKey);
+    const altLabel = tLoose(media.altKey);
 
     React.useEffect(() => {
         setLoaded(false);
@@ -110,8 +175,21 @@ export function StoryDeckImageCard(props: StoryDeckImageCardProps) {
     }, []);
 
     return (
-        <View style={styles.container} testID={props.testID} onLayout={handleLayout}>
-            <StoryDeckMediaFrame containerWidth={containerWidth}>
+        <View
+            style={[
+                styles.container,
+                isWide ? styles.containerWide : null,
+                isWide && props.mediaPlacement === 'end' ? styles.containerWideMediaEnd : null,
+            ]}
+            testID={props.testID}
+            onLayout={handleLayout}
+        >
+            <StoryDeckMediaFrame
+                containerWidth={mediaContainerWidth}
+                maxSize={isWide ? mediaContainerWidth : undefined}
+                horizontalPadding={mediaFramePadding}
+                topPadding={mediaFramePadding}
+            >
                 {imageSource && !failed ? (
                     <>
                         <Image
@@ -145,9 +223,9 @@ export function StoryDeckImageCard(props: StoryDeckImageCardProps) {
                     </View>
                 )}
             </StoryDeckMediaFrame>
-            <View style={styles.details}>
-                <Text style={styles.title}>{tLoose(props.card.titleKey)}</Text>
-                <Text style={styles.body}>{tLoose(props.card.bodyKey)}</Text>
+            <View style={[styles.details, isWide ? styles.detailsWide : null]}>
+                <Text style={[styles.title, isWide ? styles.titleWide : null]}>{tLoose(titleKey)}</Text>
+                <Text style={[styles.body, isWide ? styles.bodyWide : null]}>{tLoose(props.card.bodyKey)}</Text>
             </View>
         </View>
     );

@@ -17,7 +17,7 @@ export type ProjectFileLinkPickerModalProps = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         maxWidth: 720,
         alignSelf: 'center',
         width: '100%',
@@ -27,8 +27,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingTop: 14,
         paddingBottom: 12,
         borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-        borderBottomColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderBottomColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -36,7 +36,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
         flex: 1,
     },
@@ -47,8 +47,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     body: { flex: 1 },
 }));
@@ -64,7 +64,7 @@ export const ProjectFileLinkPickerModal = React.memo((props: ProjectFileLinkPick
                     {t('files.projectLinkPicker.title')}
                 </Text>
                 <Pressable onPress={props.onClose} style={styles.closeButton} accessibilityRole="button">
-                    <Octicons name="x" size={18} color={theme.colors.textSecondary} />
+                    <Octicons name="x" size={18} color={theme.colors.text.secondary} />
                 </Pressable>
             </View>
             <View style={styles.body}>

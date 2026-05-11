@@ -519,29 +519,29 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         gap: 10,
     },
     headerText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 15,
         fontWeight: '600',
     },
     summaryText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
     },
     markdownText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
     },
     section: {
         gap: 8,
     },
     sectionTitle: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         fontWeight: '600',
     },
@@ -549,29 +549,29 @@ const styles = StyleSheet.create((theme) => ({
         gap: 8,
     },
     questionText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
     },
     assumptionText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
     findingRow: {
         paddingVertical: 6,
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
         gap: 6,
     },
     findingHeader: {
         gap: 2,
     },
     findingTitleText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         fontWeight: '600',
     },
     findingLocationText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontFamily: 'Menlo',
     },
@@ -579,19 +579,19 @@ const styles = StyleSheet.create((theme) => ({
         gap: 6,
     },
     findingSummaryText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
     },
     findingDetailText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 12,
     },
     findingDetailMutedText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
     findingSuggestionText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
     triageRow: {
@@ -604,27 +604,27 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: 4,
         borderRadius: 8,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     triageChipSelected: {
-        borderColor: theme.colors.textLink,
+        borderColor: theme.colors.text.link,
     },
     triageChipText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontFamily: 'Menlo',
     },
     triageChipTextSelected: {
-        color: theme.colors.textLink,
+        color: theme.colors.text.link,
         fontWeight: '600',
     },
     refinementInput: {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 10,
         padding: 10,
         minHeight: 44,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     followUpComposer: {
         gap: 8,
@@ -634,17 +634,17 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: 8,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         alignItems: 'center',
         alignSelf: 'flex-start',
     },
     secondaryButtonText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 12,
         fontWeight: '600',
     },
     errorText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
     applyButton: {
@@ -652,14 +652,14 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: 8,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         alignItems: 'center',
     },
     applyButtonDisabled: {
         opacity: 0.5,
     },
     applyButtonText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         fontWeight: '600',
     },

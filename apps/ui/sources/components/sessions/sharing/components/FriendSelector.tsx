@@ -270,11 +270,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     searchInput: {
         height: 40,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         paddingHorizontal: 12,
         marginBottom: 16,
         fontSize: 16,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     friendList: {
         marginBottom: 16,
@@ -288,7 +288,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         top: 0,
         bottom: 0,
         width: 4,
-        backgroundColor: theme.colors.textLink,
+        backgroundColor: theme.colors.text.link,
     },
     emptyState: {
         padding: 32,
@@ -296,7 +296,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     emptyText: {
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     accessLevelSection: {
@@ -304,7 +304,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sectionTitle: {
         fontSize: 17,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 12,
         paddingHorizontal: 4,
         ...Typography.default('semiBold'),

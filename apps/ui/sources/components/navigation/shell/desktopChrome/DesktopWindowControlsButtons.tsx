@@ -25,7 +25,7 @@ export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowCont
                 accessibilityRole="button"
                 style={styles.windowControlsButton}
             >
-                <Ionicons name="remove" size={16} color={theme.colors.header.tint} />
+                <Ionicons name="remove" size={16} color={theme.colors.chrome.header.foreground} />
             </Pressable>
             <Pressable
                 testID="desktop-window-controls-toggle-maximize"
@@ -36,7 +36,7 @@ export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowCont
                 <Ionicons
                     name={props.isMaximized ? 'contract-outline' : 'expand-outline'}
                     size={14}
-                    color={theme.colors.header.tint}
+                    color={theme.colors.chrome.header.foreground}
                 />
             </Pressable>
             <Pressable
@@ -45,7 +45,7 @@ export const DesktopWindowControlsButtons = React.memo((props: DesktopWindowCont
                 accessibilityRole="button"
                 style={styles.windowControlsButton}
             >
-                <Ionicons name="close" size={16} color={theme.colors.header.tint} />
+                <Ionicons name="close" size={16} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         </View>
     );

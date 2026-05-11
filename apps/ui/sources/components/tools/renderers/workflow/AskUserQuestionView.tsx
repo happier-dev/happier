@@ -58,7 +58,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     headerChip: {
         alignSelf: 'flex-start',
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         paddingHorizontal: 8,
         paddingVertical: 4,
         borderRadius: 4,
@@ -67,13 +67,13 @@ const styles = StyleSheet.create((theme) => ({
     headerText: {
         fontSize: 12,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textTransform: 'uppercase',
     },
     questionText: {
         fontSize: 15,
         fontWeight: '500',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 8,
     },
     optionsContainer: {
@@ -87,12 +87,12 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 8,
         backgroundColor: 'transparent',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         gap: 10,
         minHeight: 44, // Minimum touch target for mobile
     },
     optionButtonSelected: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderColor: theme.colors.radio.active,
     },
     optionButtonDisabled: {
@@ -103,7 +103,7 @@ const styles = StyleSheet.create((theme) => ({
         height: 20,
         borderRadius: 10,
         borderWidth: 2,
-        borderColor: theme.colors.textSecondary,
+        borderColor: theme.colors.text.secondary,
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: 2,
@@ -122,7 +122,7 @@ const styles = StyleSheet.create((theme) => ({
         height: 20,
         borderRadius: 4,
         borderWidth: 2,
-        borderColor: theme.colors.textSecondary,
+        borderColor: theme.colors.text.secondary,
         alignItems: 'center',
         justifyContent: 'center',
         marginTop: 2,
@@ -137,27 +137,27 @@ const styles = StyleSheet.create((theme) => ({
     optionLabel: {
         fontSize: 14,
         fontWeight: '500',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     optionDescription: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 2,
     },
     freeformInput: {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 8,
         paddingHorizontal: 12,
         paddingVertical: 12,
         fontSize: 14,
-        color: theme.colors.text,
-        backgroundColor: theme.colors.surface,
+        color: theme.colors.text.primary,
+        backgroundColor: theme.colors.surface.base,
         minHeight: 44,
     },
     freeformDescription: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 6,
         marginLeft: 2,
     },
@@ -196,11 +196,11 @@ const styles = StyleSheet.create((theme) => ({
     submittedHeader: {
         fontSize: 13,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     submittedValue: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         flex: 1,
     },
 }));
@@ -393,7 +393,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
         <ToolSectionView>
             <View testID="ask-user-question" style={styles.container}>
                 {!canApprovePermissions && isRunning ? (
-                    <Text style={{ color: theme.colors.textSecondary }}>
+                    <Text style={{ color: theme.colors.text.secondary }}>
                         {disabledMessage}
                     </Text>
                 ) : null}
@@ -431,7 +431,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                                                 }
                                             }}
                                             placeholder={question.freeform?.placeholder ?? t('tools.askUserQuestion.otherPlaceholder')}
-                                            placeholderTextColor={theme.colors.textSecondary}
+                                            placeholderTextColor={theme.colors.text.secondary}
                                             editable={canInteract}
                                             autoCapitalize="none"
                                             autoCorrect={false}

@@ -116,7 +116,7 @@ export const McpDetectedServersTab = React.memo(function McpDetectedServersTab(p
                         key={`${warning.provider}:${warning.code}:${index}`}
                         title={t('settings.mcpServersDetectedWarningsTitle')}
                         subtitle={formatDetectedWarning(warning)}
-                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                     />
                     ))}
@@ -143,7 +143,7 @@ export const McpDetectedServersTab = React.memo(function McpDetectedServersTab(p
                         testID="settings.mcpServers.detect.empty"
                         title={t('settings.mcpServersDetectedEmptyTitle')}
                         subtitle={t('settings.mcpServersDetectedEmptySubtitle')}
-                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -165,7 +165,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.input.background,
         color: theme.colors.input.text,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         paddingHorizontal: 12,
         paddingVertical: 8,
         fontSize: 14,

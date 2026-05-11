@@ -26,7 +26,7 @@ export function PluginDiagnosticsSection(props: Readonly<{
                     testID={`${props.testIDPrefix}.${diagnostic.code}.${index}`}
                     title={diagnostic.code}
                     subtitle={diagnostic.message}
-                    icon={<Ionicons name="bug-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="bug-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />

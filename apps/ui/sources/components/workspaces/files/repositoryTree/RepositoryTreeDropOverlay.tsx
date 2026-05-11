@@ -12,7 +12,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     overlay: {
         ...StyleSheet.absoluteFillObject,
         borderRadius: 12,
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
         justifyContent: 'center',
         alignItems: 'center',
         padding: 16,
@@ -25,17 +25,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 10,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
     },
     text: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     target: {
         fontSize: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
 }));
@@ -62,14 +62,14 @@ export function RepositoryTreeDropOverlay(props: Readonly<{ visible: boolean; de
                 style={[
                     styles.content,
                     Platform.OS === 'web' && !uiBackdropBlurEnabled
-                        ? ({ backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surfaceHigh } as ViewStyle)
+                        ? ({ backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.inset } as ViewStyle)
                         : null,
                     Platform.OS === 'web' && uiBackdropBlurEnabled
                         ? ({ backdropFilter: 'blur(6px)' } as unknown as ViewStyle)
                         : null,
                 ]}
             >
-                <SafeIonicons name="cloud-upload-outline" size={18} color={theme.colors.textSecondary} />
+                <SafeIonicons name="cloud-upload-outline" size={18} color={theme.colors.text.secondary} />
                 <View style={{ gap: 2 }}>
                     <Text style={styles.text}>{t('files.repositoryTree.dropToUpload')}</Text>
                     {props.destinationLabel ? (

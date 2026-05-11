@@ -33,12 +33,12 @@ export const ScmChangesSelectionHeaderRow = React.memo((props: ScmChangesSelecti
                 paddingVertical: 6,
                 borderRadius: 999,
                 borderWidth: 1,
-                borderColor: props.theme.colors.divider,
-                backgroundColor: props.theme.colors.surfaceHigh,
+                borderColor: props.theme.colors.border.default,
+                backgroundColor: props.theme.colors.surface.inset,
                 opacity: p.disabled ? 0.45 : pressed ? 0.78 : 1,
             })}
         >
-            <Text style={{ fontSize: 12, color: props.theme.colors.textLink, ...Typography.default('semiBold') }}>
+            <Text style={{ fontSize: 12, color: props.theme.colors.text.link, ...Typography.default('semiBold') }}>
                 {p.label}
             </Text>
         </Pressable>
@@ -55,17 +55,17 @@ export const ScmChangesSelectionHeaderRow = React.memo((props: ScmChangesSelecti
                 paddingTop: 10,
                 paddingBottom: 8,
                 borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                borderBottomColor: props.theme.colors.divider,
-                backgroundColor: props.theme.colors.surfaceHigh,
+                borderBottomColor: props.theme.colors.border.default,
+                backgroundColor: props.theme.colors.surface.inset,
             }}
         >
             <View style={{ flex: 1 }}>
                 {props.selectedCount > 0 ? (
-                    <Text style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                    <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                         {t('files.sourceControlOperations.selection', { count: props.selectedCount })}
                     </Text>
                 ) : null}
-                <Text style={{ marginTop: props.selectedCount > 0 ? 2 : 0, fontSize: 11, color: props.theme.colors.textSecondary, ...Typography.default() }}>
+                <Text style={{ marginTop: props.selectedCount > 0 ? 2 : 0, fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                     {t('files.repositoryChangedFiles', { count: props.totalCount })}
                 </Text>
             </View>

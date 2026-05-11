@@ -34,7 +34,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 6,
     },
     glyph: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     glyphMuted: {

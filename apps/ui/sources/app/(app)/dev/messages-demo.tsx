@@ -40,6 +40,6 @@ export default React.memo(function MessagesDemoScreen() {
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
 }));

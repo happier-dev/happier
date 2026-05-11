@@ -17,7 +17,7 @@ export function ExistingSessionAutomationUnavailableNotice(props: Readonly<{
                 title={t('automations.create.cannotCreateForSession')}
                 subtitle={props.reason}
                 subtitleLines={0}
-                icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.warningCritical} />}
+                icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
                 showChevron={false}
             />
         </ItemGroup>

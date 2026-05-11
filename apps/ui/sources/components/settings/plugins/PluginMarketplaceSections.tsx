@@ -38,7 +38,7 @@ export function InstalledPluginsSection(props: Readonly<{
                     title={entry.title}
                     subtitle={formatInstalledSubtitle(entry)}
                     detail={entry.version}
-                    icon={<Ionicons name="archive-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="archive-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onNavigateToPlugin(entry.pluginId)}
                     rightElement={(
                         <ItemRowActions
@@ -89,7 +89,7 @@ export function InstalledPluginsSection(props: Readonly<{
                     testID="settings.plugins.marketplace.installed.empty"
                     title={t('deps.ui.notInstalled')}
                     subtitle={t('settingsPlugins.emptySubtitle')}
-                    icon={<Ionicons name="archive-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="archive-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -132,7 +132,7 @@ export function CatalogEntriesSection(props: Readonly<{
                     testID={`settings.plugins.marketplace.action.install.${catalogEntry.id}`}
                     title={t('common.install')}
                     subtitle={catalogEntry.description ?? t('deps.ui.notInstalled')}
-                    icon={<Ionicons name="download-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="download-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onAction({
                         method: 'install',
                         pluginId: catalogEntry.id,
@@ -152,7 +152,7 @@ export function CatalogEntriesSection(props: Readonly<{
                     testID={`settings.plugins.marketplace.action.update.${catalogEntry.id}`}
                     title={t('common.update')}
                     subtitle={catalogEntry.description ?? t('deps.ui.installed')}
-                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={() => props.onAction({
                         method: 'update',
                         pluginId: catalogEntry.id,
@@ -170,7 +170,7 @@ export function CatalogEntriesSection(props: Readonly<{
                 testID={`settings.plugins.marketplace.action.${installed.enabled ? 'disable' : 'enable'}.${catalogEntry.id}`}
                 title={installed.enabled ? t('common.disable') : t('common.enable')}
                 subtitle={installed.enabled ? t('common.enabled') : t('common.disabled')}
-                icon={<Ionicons name={installed.enabled ? 'close-circle-outline' : 'checkmark-circle-outline'} size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name={installed.enabled ? 'close-circle-outline' : 'checkmark-circle-outline'} size={29} color={theme.colors.text.secondary} />}
                 onPress={() => props.onAction({
                     method: installed.enabled ? 'disable' : 'enable',
                     pluginId: catalogEntry.id,
@@ -190,7 +190,7 @@ export function CatalogEntriesSection(props: Readonly<{
                     testID="settings.plugins.marketplace.catalog.loading"
                     title={t('common.loading')}
                     subtitle={props.resolvedCatalogUrl || t('settingsPlugins.emptySubtitle')}
-                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             ) : null}
@@ -204,7 +204,7 @@ export function CatalogEntriesSection(props: Readonly<{
                                 title={entry.title}
                                 subtitle={formatCatalogSubtitle({ catalog: props.catalog as PluginMarketplaceCatalog, installed })}
                                 detail={formatCatalogEntryVersion(entry.version)}
-                                icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name="albums-outline" size={29} color={theme.colors.text.secondary} />}
                                 showChevron={false}
                                 mode="info"
                             />
@@ -216,7 +216,7 @@ export function CatalogEntriesSection(props: Readonly<{
                         testID="settings.plugins.marketplace.catalog.empty"
                         title={t('settingsPlugins.emptySubtitle')}
                         subtitle={props.catalog.description ?? props.catalog.sourceUrl ?? null}
-                        icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="albums-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         mode="info"
                     />
@@ -226,7 +226,7 @@ export function CatalogEntriesSection(props: Readonly<{
                     testID="settings.plugins.marketplace.catalog.unavailable"
                     title={t('common.unavailable')}
                     subtitle={props.resolvedCatalogUrl || t('settingsPlugins.emptySubtitle')}
-                    icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="albums-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />

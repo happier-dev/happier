@@ -178,6 +178,41 @@ vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
 const routerPushSpy = vi.fn();
 
 describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
+    it('renders session_media.v1 inline images from the dedicated media metadata slot', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-media-1',
+            text: 'Generated image',
+            meta: {
+                happierMedia: {
+                    kind: 'session_media.v1',
+                    payload: {
+                        media: [{
+                            id: 'media-1',
+                            role: 'output',
+                            category: 'generated',
+                            mediaKind: 'image',
+                            mimeType: 'image/png',
+                            name: 'generated.png',
+                            path: '.happier/uploads/generated/session-1/message-1/generated.png',
+                            sizeBytes: 42,
+                            width: 1600,
+                            height: 900,
+                            origin: { source: 'provider-generated' },
+                        }],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('message-session-media-inline-images')).toBeTruthy();
+        expect(screen.findByTestId('message-session-media-inline-image:.happier/uploads/generated/session-1/message-1/generated.png')).toBeTruthy();
+    });
+
     it('renders a structured review-comments card when meta.happier.kind is review_comments.v1', async () => {
         const { MessageView } = await import('./MessageView');
         const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');

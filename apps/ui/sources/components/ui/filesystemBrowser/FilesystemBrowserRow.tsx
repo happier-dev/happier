@@ -41,7 +41,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
             <Item
                 title={props.errorTitle ?? t('common.error')}
                 subtitle={props.errorSubtitle}
-                icon={<Ionicons name="alert-circle-outline" size={18} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="alert-circle-outline" size={18} color={theme.colors.text.secondary} />}
                 density={props.density}
                 showChevron={false}
                 onPress={() => {
@@ -62,7 +62,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                     testID={props.testID}
                     title={props.title}
                     subtitle={props.subtitle}
-                    icon={<Ionicons name="information-circle-outline" size={18} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="information-circle-outline" size={18} color={theme.colors.text.secondary} />}
                     density={props.density}
                     showChevron={false}
                     showDivider={showDivider}

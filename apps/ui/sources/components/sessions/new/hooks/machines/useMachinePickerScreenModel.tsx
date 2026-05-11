@@ -27,7 +27,7 @@ function useMachinePickerScreenOptions(params: Readonly<{
     onBack: () => void;
     onRefresh: () => void;
     isRefreshing: boolean;
-    theme: { colors: { header: { tint: string }; textSecondary: string } };
+    theme: { colors: { chrome: { header: { foreground: string } }; text: { secondary: string } } };
 }>) {
     const headerLeft = React.useCallback(() => (
         <Pressable
@@ -37,22 +37,22 @@ function useMachinePickerScreenOptions(params: Readonly<{
             accessibilityRole="button"
             accessibilityLabel={t('common.back')}
         >
-            <Ionicons name="chevron-back" size={22} color={params.theme.colors.header.tint} />
+            <Ionicons name="chevron-back" size={22} color={params.theme.colors.chrome.header.foreground} />
         </Pressable>
-    ), [params.onBack, params.theme.colors.header.tint]);
+    ), [params.onBack, params.theme.colors.chrome.header.foreground]);
 
     const headerTitle = React.useCallback(({ tintColor }: { children: string; tintColor?: string }) => (
         <HeaderTitleWithAction
             title={params.title}
-            tintColor={tintColor ?? params.theme.colors.header.tint}
+            tintColor={tintColor ?? params.theme.colors.chrome.header.foreground}
             actionLabel={t('common.refresh')}
             actionIconName="refresh-outline"
-            actionColor={params.theme.colors.textSecondary}
+            actionColor={params.theme.colors.text.secondary}
             actionDisabled={params.isRefreshing}
             actionLoading={params.isRefreshing}
             onActionPress={params.onRefresh}
         />
-    ), [params.isRefreshing, params.onRefresh, params.theme.colors.header.tint, params.theme.colors.textSecondary, params.title]);
+    ), [params.isRefreshing, params.onRefresh, params.theme.colors.chrome.header.foreground, params.theme.colors.text.secondary, params.title]);
 
     return React.useMemo(() => ({
         headerShown: true,

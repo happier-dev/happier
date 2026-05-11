@@ -1,4 +1,4 @@
-import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { type ExternalSessionsSource, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
 
 import { getAgentBehavior, writeAgentVendorResumeIdToMetadata, type AgentId } from '@/agents/catalog/catalog';
@@ -63,11 +63,13 @@ export function buildSessionHandoffMetadataPatch(input: Readonly<{
         Object.assign(next, providerPatch.metadataPatch);
     }
 
-    next = applySessionStateFieldMetadataPatch(
+    next = applyRuntimeDescriptorSessionMetadata(
         next,
-        'identity.runtimeDescriptor',
         providerPatch?.runtimeDescriptor ?? null,
-    ) as MetadataRecord;
+    );
+    if (!providerPatch?.runtimeDescriptor) {
+        delete next.agentRuntimeDescriptorV1;
+    }
 
     if (input.sessionStorageAfter === 'direct') {
         delete next.externalHistoryImportV1;

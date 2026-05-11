@@ -1,1 +1,1 @@
-export { darkTheme, lightTheme } from './theme.ts';
+export { darkTheme, lightTheme } from './theme/index.ts';

@@ -24,15 +24,15 @@ function StatusIndicator({ tool, theme }: { tool: ToolCall; theme: Theme }) {
     const kind = resolveToolStatusIndicatorKind(tool);
     switch (kind) {
         case 'permission_pending':
-            return <Ionicons name="lock-closed-outline" size={22} color={theme.colors.warning} />;
+            return <Ionicons name="lock-closed-outline" size={22} color={theme.colors.state.neutral.foreground} />;
         case 'permission_blocked':
-            return <Ionicons name="remove-circle-outline" size={22} color={theme.colors.textSecondary} />;
+            return <Ionicons name="remove-circle-outline" size={22} color={theme.colors.text.secondary} />;
         case 'running':
             return <ActivityIndicator size="small" color={theme.colors.accent.blue} />;
         case 'completed':
-            return <Ionicons name="checkmark-circle" size={22} color={theme.colors.success} />;
+            return <Ionicons name="checkmark-circle" size={22} color={theme.colors.state.success.foreground} />;
         case 'error':
-            return <Ionicons name="close-circle" size={22} color={theme.colors.warningCritical} />;
+            return <Ionicons name="close-circle" size={22} color={theme.colors.state.danger.foreground} />;
         case 'none':
         default:
             return null;

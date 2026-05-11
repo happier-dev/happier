@@ -25,7 +25,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     content: {
         flex: 1,
@@ -33,19 +33,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 22,
         lineHeight: 28,
     },
     subtitle: {
         ...Typography.default(),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 14,
         lineHeight: 20,
     },
     meta: {
         ...Typography.default(),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         lineHeight: 18,
     },

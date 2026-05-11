@@ -77,6 +77,7 @@ export {
     sessionScmRemoteSetUrl,
     sessionScmHostingRepositoryDescribePublishTargets,
     sessionScmHostingRepositoryPublish,
+    sessionScmPullRequestOpenCompose,
     sessionScmPullRequestOpenOrReuse,
     sessionScmRepositoryInit,
     sessionScmRepositoryRemoveIndexLock,

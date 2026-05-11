@@ -55,7 +55,7 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
         expect(base.backgroundColor).toBe("transparent");
 
         const hovered = flattenStyleFromCallback(row.props.style, { pressed: false, hovered: true });
-        const expected = Color(lightTheme.colors.surface).alpha(0.8).rgb().string();
+        const expected = Color(lightTheme.colors.surface.base).alpha(0.8).rgb().string();
         expect(hovered.backgroundColor).toBe(expected);
     });
 });

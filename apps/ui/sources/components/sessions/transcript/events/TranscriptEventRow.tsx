@@ -38,7 +38,7 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
         <View style={styles.container}>
             <View style={styles.row}>
                 <View style={styles.iconContainer}>
-                    <Ionicons name={iconName} size={18} color={theme.colors.textSecondary} />
+                    <Ionicons name={iconName} size={18} color={theme.colors.text.secondary} />
                 </View>
                 <Text selectable style={styles.text}>
                     {text}
@@ -67,7 +67,7 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 0,
     },
     text: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 14,
         lineHeight: 20,
         fontWeight: '500',

@@ -55,14 +55,14 @@ export function CommandPaletteInput({ value, onChangeText, onKeyPress, inputRef,
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderBottomColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
     },
     input: {
         paddingHorizontal: 32,
         paddingVertical: 24,
         fontSize: 20,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         letterSpacing: -0.3,
         // Remove outline on web
         ...(Platform.OS === 'web' ? {

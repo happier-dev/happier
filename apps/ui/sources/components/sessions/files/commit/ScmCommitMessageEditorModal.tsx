@@ -18,17 +18,17 @@ const stylesheet = StyleSheet.create((theme) => ({
     input: {
         minHeight: 140,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 10,
         paddingHorizontal: 12,
         paddingVertical: 10,
         textAlignVertical: 'top' as any,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         backgroundColor: theme.colors.input.background,
     },
     error: {
         fontSize: 12,
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
     },
     footer: {
         paddingHorizontal: 12,
@@ -43,22 +43,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 10,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset ?? theme.colors.input.background,
         opacity: 1,
     },
     buttonDisabled: {
         opacity: 0.55,
     },
     primaryButton: {
-        borderColor: theme.colors.textLink,
+        borderColor: theme.colors.text.link,
     },
     buttonText: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     buttonTextPrimary: {
-        color: theme.colors.textLink,
+        color: theme.colors.text.link,
     },
 }));
 

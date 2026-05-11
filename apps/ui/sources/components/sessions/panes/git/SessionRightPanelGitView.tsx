@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ActivityIndicator, Platform, View } from 'react-native';
+import { router } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -17,6 +18,7 @@ import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useScmAdaptivePolling } from '@/scm/refresh/useScmAdaptivePolling';
 import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { SCM_COMMIT_STRATEGIES, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { useLastNonNullValue } from '@/hooks/ui/useLastNonNullValue';
 import { resolveCommitAdjacentPushActionState } from '@/scm/operations/commitAdjacentPushAction';
@@ -68,6 +70,7 @@ import {
     sessionScmBranchRebase,
     sessionScmHostingRepositoryDescribePublishTargets,
     sessionScmHostingRepositoryPublish,
+    sessionScmPullRequestOpenCompose,
     sessionScmPullRequestOpenOrReuse,
     sessionScmRepositoryInit,
     sessionScmRepositoryRemoveIndexLock,
@@ -92,6 +95,11 @@ type ScmUpdateMutationResponse = Readonly<{
     error?: string;
     errorCode?: ScmOperationErrorCode;
 }>;
+
+function normalizeOptionalRouteSegment(value: string | null | undefined): string | null {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : null;
+}
 
 export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitViewProps) => {
     const { theme } = useUnistyles();
@@ -124,6 +132,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
     const autoRefreshIntervalSetting = useSetting('scmFilesAutoRefreshIntervalMs');
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
+    const activeServerSnapshot = useActiveServerSnapshot();
     const project = useProjectForSession(props.sessionId);
     const projectSessionIds = useProjectSessions(project?.id ?? null);
     const hasGlobalOperationInFlight = Boolean(inFlightScmOperation);
@@ -542,7 +551,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const addRemote = React.useCallback(
         (request: Parameters<typeof sessionScmRemoteAdd>[1]) => runSessionUpdateMutation({
             operation: 'remote_add',
-            fallbackError: 'Failed to add remote.',
+            fallbackError: t('files.sourceControlOperations.update.remotes.errors.addFailed'),
             run: () => sessionScmRemoteAdd(props.sessionId, request),
         }),
         [props.sessionId, runSessionUpdateMutation],
@@ -550,7 +559,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const setRemoteUrl = React.useCallback(
         (request: Parameters<typeof sessionScmRemoteSetUrl>[1]) => runSessionUpdateMutation({
             operation: 'remote_set_url',
-            fallbackError: 'Failed to update remote.',
+            fallbackError: t('files.sourceControlOperations.update.remotes.errors.saveFailed'),
             run: () => sessionScmRemoteSetUrl(props.sessionId, request),
         }),
         [props.sessionId, runSessionUpdateMutation],
@@ -558,7 +567,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const removeRemote = React.useCallback(
         (name: string) => runSessionUpdateMutation({
             operation: 'remote_remove',
-            fallbackError: 'Failed to remove remote.',
+            fallbackError: t('files.sourceControlOperations.update.remotes.errors.removeFailed'),
             run: () => sessionScmRemoteRemove(props.sessionId, { name }),
         }),
         [props.sessionId, runSessionUpdateMutation],
@@ -566,7 +575,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const mergeBranch = React.useCallback(
         (sourceRef: string) => runSessionUpdateMutation({
             operation: 'branch_merge',
-            fallbackError: 'Failed to merge branch.',
+            fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.mergeFailed'),
             run: () => sessionScmBranchMerge(props.sessionId, { sourceRef }),
         }),
         [props.sessionId, runSessionUpdateMutation],
@@ -574,7 +583,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const rebaseBranch = React.useCallback(
         (sourceRef: string) => runSessionUpdateMutation({
             operation: 'branch_rebase',
-            fallbackError: 'Failed to rebase branch.',
+            fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.rebaseFailed'),
             run: () => sessionScmBranchRebase(props.sessionId, { sourceRef }),
         }),
         [props.sessionId, runSessionUpdateMutation],
@@ -582,7 +591,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const continueBranchOperation = React.useCallback(
         (operation: 'merge' | 'rebase') => runSessionUpdateMutation({
             operation: 'branch_operation_continue',
-            fallbackError: 'Failed to continue operation.',
+            fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.continueFailed'),
             run: () => sessionScmBranchOperationContinue(props.sessionId, { operation }),
         }),
         [props.sessionId, runSessionUpdateMutation],
@@ -590,7 +599,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const abortBranchOperation = React.useCallback(
         (operation: 'merge' | 'rebase') => runSessionUpdateMutation({
             operation: 'branch_operation_abort',
-            fallbackError: 'Failed to abort operation.',
+            fallbackError: t('files.sourceControlOperations.update.branchIntegration.errors.abortFailed'),
             run: () => sessionScmBranchOperationAbort(props.sessionId, { operation }),
         }),
         [props.sessionId, runSessionUpdateMutation],
@@ -601,6 +610,10 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     );
     const openOrReusePullRequest = React.useCallback(
         (request: { base: string; head: string }) => sessionScmPullRequestOpenOrReuse(props.sessionId, request),
+        [props.sessionId],
+    );
+    const openComposePullRequest = React.useCallback(
+        (request: { base: string; head: string }) => sessionScmPullRequestOpenCompose(props.sessionId, request),
         [props.sessionId],
     );
     const createFeatureBranch = React.useCallback(
@@ -615,6 +628,16 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         (request: Parameters<typeof sessionScmHostingRepositoryPublish>[1]) => sessionScmHostingRepositoryPublish(props.sessionId, request),
         [props.sessionId],
     );
+    const publishRemediationMachineId = normalizeOptionalRouteSegment(project?.key.machineId ?? session?.metadata?.machineId ?? null);
+    const publishRemediationServerId = normalizeOptionalRouteSegment(project?.key.serverId ?? session?.serverId ?? activeServerSnapshot.serverId);
+    const openGitHubConnectedService = React.useCallback(() => {
+        router.push({ pathname: '/(app)/settings/connected-services/[serviceId]', params: { serviceId: 'github' } });
+    }, []);
+    const openMachineInstallables = React.useCallback(() => {
+        if (!publishRemediationMachineId) return;
+        const serverQuery = publishRemediationServerId ? `?serverId=${encodeURIComponent(publishRemediationServerId)}` : '';
+        router.push(`/machine/${encodeURIComponent(publishRemediationMachineId)}/installables${serverQuery}` as never);
+    }, [publishRemediationMachineId, publishRemediationServerId]);
 
     if (!effectiveScmSnapshot && scmSnapshotError) {
         if (isSessionInactive && !machineRpcTargetAvailable) {
@@ -641,8 +664,8 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     if (!effectiveScmSnapshot) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 40 }}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                <Text style={{ marginTop: 12, fontSize: 12, color: theme.colors.textSecondary }}>
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <Text style={{ marginTop: 12, fontSize: 12, color: theme.colors.text.secondary }}>
                     {t('common.loading')}
                 </Text>
             </View>
@@ -741,6 +764,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 snapshot={effectiveScmSnapshot}
                 disabled={scmOperationBusy || publishBusy || hasGlobalOperationInFlight || isLockedByOtherSession}
                 onOpenOrReuse={openOrReusePullRequest}
+                onOpenCompose={openComposePullRequest}
                 onCreateFeatureBranch={createFeatureBranch}
                 onRefresh={refreshScmDataFromMutation}
             />
@@ -753,6 +777,10 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
                 onDescribePublishTargets={describePublishTargets}
                 onPublishRepository={publishRepository}
                 onRefresh={refreshScmDataFromMutation}
+                onConnectGitHub={openGitHubConnectedService}
+                onInstallGh={publishRemediationMachineId ? openMachineInstallables : undefined}
+                onUseManagedGh={publishRemediationMachineId ? openMachineInstallables : undefined}
+                onAuthenticateGh={publishRemediationMachineId ? openMachineInstallables : undefined}
             />
             <SourceControlRemotesSection
                 theme={theme}

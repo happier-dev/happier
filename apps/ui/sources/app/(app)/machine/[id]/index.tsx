@@ -78,9 +78,9 @@ const styles = StyleSheet.create((theme) => ({
     pathInput: {
         flex: 1,
         borderRadius: 8,
-        backgroundColor: theme.colors.input?.background ?? theme.colors.groupped.background,
+        backgroundColor: theme.colors.input?.background ?? theme.colors.background.canvas,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         minHeight: 44,
         position: 'relative',
         paddingHorizontal: 12,
@@ -102,9 +102,9 @@ const styles = StyleSheet.create((theme) => ({
     inlineSendInactive: {
         // Use a darker neutral in light theme to avoid blending into input
         backgroundColor: Platform.select({
-            ios: theme.colors.permissionButton?.inactive?.background ?? theme.colors.surfaceHigh,
-            android: theme.colors.permissionButton?.inactive?.background ?? theme.colors.surfaceHigh,
-            default: theme.colors.permissionButton?.inactive?.background ?? theme.colors.surfaceHigh,
+            ios: theme.colors.permissionButton?.inactive?.background ?? theme.colors.surface.inset,
+            android: theme.colors.permissionButton?.inactive?.background ?? theme.colors.surface.inset,
+            default: theme.colors.permissionButton?.inactive?.background ?? theme.colors.surface.inset,
         }) as any,
     },
     tmuxInputContainer: {
@@ -114,7 +114,7 @@ const styles = StyleSheet.create((theme) => ({
     tmuxFieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         marginBottom: 4,
     },
     tmuxTextInput: {
@@ -596,7 +596,7 @@ export default function MachineDetailScreen() {
         const headerTextStyle = [
             Typography.default('regular'),
             {
-                color: theme.colors.groupped.sectionTitle,
+                color: theme.colors.text.secondary,
                 fontSize: Platform.select({ ios: 13, default: 14 }),
                 lineHeight: Platform.select({ ios: 18, default: 20 }),
                 letterSpacing: Platform.select({ ios: -0.08, default: 0.1 }),
@@ -614,7 +614,7 @@ export default function MachineDetailScreen() {
                 action={{
                     accessibilityLabel: t('common.refresh'),
                     iconName: 'refresh',
-                    iconColor: isOnline ? theme.colors.textSecondary : theme.colors.divider,
+                    iconColor: isOnline ? theme.colors.text.secondary : theme.colors.border.default,
                     disabled: !canRefresh,
                     loading: detectedCapabilities.status === 'loading',
                     onPress: () => void refreshCapabilities(),
@@ -626,9 +626,9 @@ export default function MachineDetailScreen() {
         isOnline,
         machine,
         refreshCapabilities,
-        theme.colors.divider,
-        theme.colors.groupped.sectionTitle,
-        theme.colors.textSecondary,
+        theme.colors.border.default,
+        theme.colors.text.secondary,
+        theme.colors.text.secondary,
     ]);
 
     const handleRenameMachine = async () => {
@@ -812,10 +812,10 @@ export default function MachineDetailScreen() {
                     <Ionicons
                         name="desktop-outline"
                         size={18}
-                        color={theme.colors.header.tint}
+                        color={theme.colors.chrome.header.foreground}
                         style={{ marginRight: 6 }}
                     />
-                    <Text style={[Typography.default('semiBold'), { fontSize: 17, color: theme.colors.header.tint }]}>
+                    <Text style={[Typography.default('semiBold'), { fontSize: 17, color: theme.colors.chrome.header.foreground }]}>
                         {machineName}
                     </Text>
                 </View>
@@ -836,7 +836,7 @@ export default function MachineDetailScreen() {
                 </View>
             </View>
         );
-    }, [machineIsOnline, machine, machineName, theme.colors.header.tint]);
+    }, [machineIsOnline, machine, machineName, theme.colors.chrome.header.foreground]);
 
     const headerRight = React.useCallback(() => {
         if (!machine) return null;
@@ -852,11 +852,11 @@ export default function MachineDetailScreen() {
                 <Octicons
                     name="pencil"
                     size={20}
-                    color={theme.colors.text}
+                    color={theme.colors.text.primary}
                 />
             </Pressable>
         );
-    }, [handleRenameMachine, isRenamingMachine, machine, theme.colors.text]);
+    }, [handleRenameMachine, isRenamingMachine, machine, theme.colors.text.primary]);
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -875,8 +875,8 @@ export default function MachineDetailScreen() {
                         options={notFoundScreenOptions}
                     />
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                        <ActivityIndicator size="large" color={theme.colors.textSecondary} />
-                        <Text style={[Typography.default(), { fontSize: 16, color: theme.colors.textSecondary, marginTop: 12 }]}>
+                        <ActivityIndicator size="large" color={theme.colors.text.secondary} />
+                        <Text style={[Typography.default(), { fontSize: 16, color: theme.colors.text.secondary, marginTop: 12 }]}>
                             {t('common.loading')}
                         </Text>
                     </View>
@@ -889,7 +889,7 @@ export default function MachineDetailScreen() {
                     options={notFoundScreenOptions}
                 />
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <Text style={[Typography.default(), { fontSize: 16, color: theme.colors.textSecondary }]}>
+                    <Text style={[Typography.default(), { fontSize: 16, color: theme.colors.text.secondary }]}>
                         {t('machine.notFound')}
                     </Text>
                 </View>
@@ -955,7 +955,7 @@ export default function MachineDetailScreen() {
                                         <Ionicons
                                             name="play"
                                             size={16}
-                                            color={spawnButtonDisabled ? theme.colors.textSecondary : theme.colors.button.primary.tint}
+                                            color={spawnButtonDisabled ? theme.colors.text.secondary : theme.colors.button.primary.tint}
                                             style={{ marginLeft: 1 }}
                                         />
                                     </Pressable>
@@ -971,7 +971,7 @@ export default function MachineDetailScreen() {
                                     <Item
                                         key={path}
                                         title={display}
-                                        leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.textSecondary} />}
+                                        leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.text.secondary} />}
                                         onPress={isMachineOnline(machine) ? () => {
                                             setCustomPath(display);
                                             setTimeout(() => inputRef.current?.focus(), 50);
@@ -1169,7 +1169,7 @@ export default function MachineDetailScreen() {
                             disabled={isStoppingDaemon || daemonStatus === 'stopped'}
                             rightElement={
                                 isStoppingDaemon ? (
-                                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                                 ) : (
                                     <Ionicons 
                                         name="stop-circle" 
@@ -1248,20 +1248,20 @@ export default function MachineDetailScreen() {
                             <Item
                                 title={t('common.loading')}
                                 showChevron={false}
-                                rightElement={<ActivityIndicator size="small" color={theme.colors.textSecondary} />}
+                                rightElement={<ActivityIndicator size="small" color={theme.colors.text.secondary} />}
                             />
                         ) : executionRunsState.status === 'error' ? (
                             <Item
                                 title={t('common.error')}
                                 subtitle={executionRunsState.error}
-                                subtitleStyle={{ color: theme.colors.textSecondary }}
+                                subtitleStyle={{ color: theme.colors.text.secondary }}
                                 showChevron={false}
                             />
                         ) : (showFinishedRuns ? executionRunsState.runs : executionRunsState.runs.filter((r) => r.status === 'running')).length === 0 ? (
                             <Item
                                 title={t('runs.empty')}
                                 subtitle={t('runs.empty')}
-                                subtitleStyle={{ color: theme.colors.textSecondary }}
+                                subtitleStyle={{ color: theme.colors.text.secondary }}
                                 showChevron={false}
                             />
                         ) : (
@@ -1288,9 +1288,9 @@ export default function MachineDetailScreen() {
                                             key={`sess-${sessionId}`}
                                             title={t('runs.sessionTitle', { sessionId })}
                                             subtitle={t('runs.openSession')}
-                                            subtitleStyle={{ color: theme.colors.textSecondary }}
+                                            subtitleStyle={{ color: theme.colors.text.secondary }}
                                             onPress={() => navigateToSession(sessionId)}
-                                            rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.groupped.chevron} />}
+                                            rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.text.secondary} />}
                                         />
                                     );
 
@@ -1385,7 +1385,7 @@ export default function MachineDetailScreen() {
                                                         })}
                                                     >
                                                         {stoppingRunId === run.runId ? (
-                                                            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                                            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                                                         ) : (
                                                             <Ionicons name="stop-circle-outline" size={20} color={theme.colors.accent.orange} />
                                                         )}
@@ -1411,7 +1411,7 @@ export default function MachineDetailScreen() {
                                 title={getSessionName(session)}
                                 subtitle={getSessionSubtitle(session)}
                                 onPress={() => navigateToSession(session.id)}
-                                rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.groupped.chevron} />}
+                                rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.text.secondary} />}
                             />
                         ))}
                     </ItemGroup>

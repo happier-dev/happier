@@ -95,7 +95,7 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
                     minWidth: 0,
                     minHeight: 0,
                     borderRadius: props.quietChrome ? 0 : 12,
-                    ...(props.quietChrome ? null : { backgroundColor: theme.colors.surface }),
+                    ...(props.quietChrome ? null : { backgroundColor: theme.colors.surface.base }),
                     overflow: 'hidden',
                 }}
             >
@@ -117,8 +117,8 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
                                 padding: 4,
                                 borderRadius: 999,
                                 borderWidth: 1,
-                                borderColor: theme.colors.divider,
-                                backgroundColor: theme.colors.surfaceHigh,
+                                borderColor: theme.colors.border.default,
+                                backgroundColor: theme.colors.surface.inset,
                             }}
                         >
                             <Pressable
@@ -137,7 +137,7 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
                                 <SafeIonicons
                                     name={props.isMaximized ? 'contract-outline' : 'expand-outline'}
                                     size={16}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             </Pressable>
                             <Pressable
@@ -156,7 +156,7 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
                                 <SafeIonicons
                                     name="close"
                                     size={16}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             </Pressable>
                         </View>

@@ -34,6 +34,8 @@ import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/struc
 import { AttachmentsMessageMetaV1Schema } from '@/sync/domains/attachments/attachmentsMessageMeta';
 import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
 import { AttachmentsInlineImages } from '@/components/sessions/attachments/messages/AttachmentsInlineImages';
+import { parseSessionMediaMessageMeta } from '@/sync/domains/session/media/sessionMediaMessageMeta';
+import { SessionMediaInlineImages } from '@/components/sessions/media/SessionMediaInlineImages';
 import { forkSession } from '@/sync/ops';
 import { canForkFromMessage } from '@/sync/domains/sessionFork/forkUiSupport';
 import { resolveForkFromMessageSemantics } from '@/sync/domains/sessionFork/forkFromMessageSemantics';
@@ -243,6 +245,16 @@ function UserTextBlock(props: {
 	      });
 	    },
 	  });
+  const sessionMediaMeta = React.useMemo(() => {
+    const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
+    const envelope = primaryEnvelope?.kind === 'session_media.v1'
+      ? primaryEnvelope
+      : parseHappierMetaEnvelope(props.message.meta, 'happierMedia');
+    return parseSessionMediaMessageMeta(envelope);
+  }, [props.message.meta]);
+  const handleOpenSessionMediaPath = React.useCallback((filePath: string) => {
+    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
+  }, [pathname, props.sessionId, router]);
   const isStructuredOnly = structuredNode != null;
 
   const attachmentsMeta = React.useMemo(() => {
@@ -510,6 +522,13 @@ function UserTextBlock(props: {
                 onOpenPath={handleOpenAttachmentPath}
               />
             ) : null}
+            {sessionMediaMeta ? (
+              <SessionMediaInlineImages
+                sessionId={props.sessionId}
+                media={sessionMediaMeta.inlineImages}
+                onOpenPath={handleOpenAttachmentPath}
+              />
+            ) : null}
             {nonImageAttachments.length > 0 ? (
               <AttachmentsMessageRow
                 attachments={nonImageAttachments}
@@ -617,6 +636,13 @@ function UserTextBlock(props: {
               <AttachmentsInlineImages
                 sessionId={props.sessionId}
                 attachments={attachmentsMeta.attachments}
+                onOpenPath={handleOpenAttachmentPath}
+              />
+            ) : null}
+            {sessionMediaMeta ? (
+              <SessionMediaInlineImages
+                sessionId={props.sessionId}
+                media={sessionMediaMeta.inlineImages}
                 onOpenPath={handleOpenAttachmentPath}
               />
             ) : null}
@@ -1019,6 +1045,16 @@ function AgentTextBlock(props: {
       if (shouldRenderStreamingPlain) return [];
       return extractWorkspaceFileMentions(markdown);
   }, [markdown, shouldRenderStreamingPlain]);
+  const handleOpenAgentSessionMediaPath = React.useCallback((filePath: string) => {
+    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
+  }, [pathname, props.sessionId, router]);
+  const agentSessionMediaMeta = React.useMemo(() => {
+    const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
+    const envelope = primaryEnvelope?.kind === 'session_media.v1'
+      ? primaryEnvelope
+      : parseHappierMetaEnvelope(props.message.meta, 'happierMedia');
+    return parseSessionMediaMessageMeta(envelope);
+  }, [props.message.meta]);
 
   return (
     <Pressable
@@ -1118,6 +1154,13 @@ function AgentTextBlock(props: {
         )}
         {linkedWorkspaceFilesDeferred.length > 0 && !isStructuredOnly ? (
           <LinkedWorkspaceFilesRow sessionId={props.sessionId} paths={linkedWorkspaceFilesDeferred} />
+        ) : null}
+        {agentSessionMediaMeta ? (
+          <SessionMediaInlineImages
+            sessionId={props.sessionId}
+            media={agentSessionMediaMeta.inlineImages}
+            onOpenPath={handleOpenAgentSessionMediaPath}
+          />
         ) : null}
         {!usesLongPressMessageContextMenu ? (
           <View
@@ -1272,12 +1315,12 @@ function ForkMessageButton(props: {
       ]}
     >
       {isForking ? (
-        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+        <ActivityIndicator size="small" color={theme.colors.text.secondary} />
       ) : (
         <Ionicons
           name="git-branch-outline"
           size={12}
-          color={theme.colors.textSecondary}
+          color={theme.colors.text.secondary}
         />
       )}
     </Pressable>
@@ -1345,7 +1388,7 @@ function CopyMessageButton(props: { markdown: string; testID?: string; onHoverIn
       <Ionicons
         name={copied ? "checkmark-outline" : "copy-outline"}
         size={12}
-        color={copied ? theme.colors.success : theme.colors.textSecondary}
+        color={copied ? theme.colors.state.success.foreground : theme.colors.text.secondary}
       />
     </Pressable>
   );
@@ -1411,6 +1454,16 @@ function ToolCallBlock(props: {
         messagesById,
         reducerState,
       });
+  const handleOpenToolSessionMediaPath = React.useCallback((filePath: string) => {
+    pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
+  }, [pathname, props.sessionId, router]);
+  const toolSessionMediaMeta = React.useMemo(() => {
+    const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
+    const envelope = primaryEnvelope?.kind === 'session_media.v1'
+      ? primaryEnvelope
+      : parseHappierMetaEnvelope(props.message.meta, 'happierMedia');
+    return parseSessionMediaMessageMeta(envelope);
+  }, [props.message.meta]);
   return (
     <View
       style={[
@@ -1443,6 +1496,13 @@ function ToolCallBlock(props: {
           interaction={props.interaction}
         />
       )) : null}
+      {toolSessionMediaMeta ? (
+        <SessionMediaInlineImages
+          sessionId={props.sessionId}
+          media={toolSessionMediaMeta.inlineImages}
+          onOpenPath={handleOpenToolSessionMediaPath}
+        />
+      ) : null}
     </View>
   );
 }
@@ -1484,7 +1544,7 @@ const styles = StyleSheet.create((theme) => ({
       paddingBottom: 22,
     },
     userMessageBubble: {
-      backgroundColor: theme.colors.userMessageBackground,
+      backgroundColor: theme.colors.message.user.background,
       paddingHorizontal: 14,
       paddingVertical: 8,
       borderRadius: 12,
@@ -1502,7 +1562,7 @@ const styles = StyleSheet.create((theme) => ({
   discardedCommittedMessageLabel: {
     marginTop: 6,
     fontSize: 12,
-    color: theme.colors.agentEventText,
+    color: theme.colors.message.event.foreground,
   },
   agentMessageContainer: {
     marginHorizontal: 16,
@@ -1571,25 +1631,25 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 1,
   },
   debugText: {
-    color: theme.colors.agentEventText,
+    color: theme.colors.message.event.foreground,
     fontSize: 12,
   },
   transcriptMarkdownText: {
     ...transcriptMarkdownTextStyle,
   },
   streamingPlainText: {
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
   },
     thinkingLabel: {
       marginBottom: 6,
       marginLeft: 2,
-      color: theme.colors.agentEventText,
+      color: theme.colors.message.event.foreground,
       fontSize: 12,
       fontStyle: 'italic',
       opacity: 0.78,
     },
       thinkingMarkdownText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontStyle: 'italic',
         opacity: 0.9,
             fontSize: 14,
@@ -1598,14 +1658,14 @@ const styles = StyleSheet.create((theme) => ({
             marginBottom: 0,
       },
       thinkingPlainText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontStyle: 'italic',
         opacity: 0.9,
         fontSize: 14,
         lineHeight: 20,
       },
       thinkingMarkdownTextCard: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontStyle: 'italic',
         opacity: 0.95,
             fontSize: 14,
@@ -1614,7 +1674,7 @@ const styles = StyleSheet.create((theme) => ({
             marginBottom: 0,
       },
       thinkingPlainTextCard: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontStyle: 'italic',
         opacity: 0.95,
         fontSize: 14,

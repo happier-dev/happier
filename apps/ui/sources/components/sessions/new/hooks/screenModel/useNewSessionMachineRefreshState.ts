@@ -7,7 +7,7 @@ import { sync } from '@/sync/sync';
 import { prefetchMachineCapabilities, prefetchMachineCapabilitiesIfStale } from '@/hooks/server/useMachineCapabilitiesCache';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
-import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
+import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { resolveDaemonCapabilitiesCacheKeySalt } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 
 type RecentMachinePath = Readonly<{
@@ -79,14 +79,12 @@ export function useNewSessionMachineRefreshState(params: Readonly<{
         prefetchMachineCapabilitiesIfStale,
     });
 
-    const recentPaths = React.useMemo(() => {
-        if (!params.selectedMachineId) return [];
-        return getRecentPathsForMachine({
-            machineId: params.selectedMachineId,
-            recentMachinePaths: params.recentMachinePaths,
-            sessions: params.sessions,
-        });
-    }, [params.recentMachinePaths, params.selectedMachineId, params.sessions]);
+    const recentPaths = useStableRecentPathsForMachine({
+        machineId: params.selectedMachineId,
+        recentMachinePaths: params.recentMachinePaths,
+        sessions: params.sessions,
+        cacheScopeKey: params.capabilityServerId,
+    });
 
     return {
         refreshMachineData,

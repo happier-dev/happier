@@ -35,8 +35,8 @@ export function CliNotDetectedBanner(props: {
             style={{ marginBottom: 12 }}
             headerStyle={{ paddingTop: 0, paddingBottom: 0 }}
             containerStyle={{
-                backgroundColor: props.theme.colors.box.warning.background,
-                borderColor: props.theme.colors.box.warning.border,
+                backgroundColor: props.theme.colors.state.warning.background,
+                borderColor: props.theme.colors.state.warning.border,
                 borderWidth: 1,
             }}
         >
@@ -44,21 +44,21 @@ export function CliNotDetectedBanner(props: {
                 title={t('newSession.cliBanners.cliNotDetectedTitle', { cli: cliLabel })}
                 subtitle={(
                     <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
-                        <Text style={{ fontSize: 11, color: props.theme.colors.textSecondary, ...Typography.default() }}>
+                        <Text style={{ fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                             {core.cli.installBanner.installKind === 'command'
                                 ? t('newSession.cliBanners.installCommand', { command: core.cli.installBanner.installCommand ?? '' })
                                 : t('newSession.cliBanners.installCliIfAvailable', { cli: cliLabel })}
                         </Text>
                         {guideUrl ? (
                             <Pressable onPress={openGuide}>
-                                <Text style={{ fontSize: 11, color: props.theme.colors.textLink, ...Typography.default() }}>
+                                <Text style={{ fontSize: 11, color: props.theme.colors.text.link, ...Typography.default() }}>
                                     {t('newSession.cliBanners.viewInstallationGuide')}
                                 </Text>
                             </Pressable>
                         ) : null}
                     </View>
                 )}
-                icon={<Ionicons name="warning" size={16} color={props.theme.colors.warning} />}
+                icon={<Ionicons name="warning" size={16} color={props.theme.colors.state.neutral.foreground} />}
                 showChevron={false}
                 rightElement={(
                     <View
@@ -71,7 +71,7 @@ export function CliNotDetectedBanner(props: {
                             maxWidth: 420,
                         }}
                     >
-                        <Text style={{ fontSize: 10, color: props.theme.colors.textSecondary, ...Typography.default() }}>
+                        <Text style={{ fontSize: 10, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                             {t('newSession.cliBanners.dontShowFor')}
                         </Text>
                         <Pressable
@@ -79,12 +79,12 @@ export function CliNotDetectedBanner(props: {
                             style={{
                                 borderRadius: 8,
                                 borderWidth: 1,
-                                borderColor: props.theme.colors.textSecondary,
+                                borderColor: props.theme.colors.text.secondary,
                                 paddingHorizontal: 10,
                                 paddingVertical: 6,
                             }}
                         >
-                            <Text style={{ fontSize: 10, color: props.theme.colors.textSecondary, ...Typography.default() }}>
+                            <Text style={{ fontSize: 10, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                                 {t('newSession.cliBanners.thisMachine')}
                             </Text>
                         </Pressable>
@@ -93,12 +93,12 @@ export function CliNotDetectedBanner(props: {
                             style={{
                                 borderRadius: 8,
                                 borderWidth: 1,
-                                borderColor: props.theme.colors.textSecondary,
+                                borderColor: props.theme.colors.text.secondary,
                                 paddingHorizontal: 10,
                                 paddingVertical: 6,
                             }}
                         >
-                            <Text style={{ fontSize: 10, color: props.theme.colors.textSecondary, ...Typography.default() }}>
+                            <Text style={{ fontSize: 10, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                                 {t('newSession.cliBanners.anyMachine')}
                             </Text>
                         </Pressable>
@@ -106,7 +106,7 @@ export function CliNotDetectedBanner(props: {
                             onPress={() => props.onDismiss('temporary')}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
-                            <Ionicons name="close" size={18} color={props.theme.colors.textSecondary} />
+                            <Ionicons name="close" size={18} color={props.theme.colors.text.secondary} />
                         </Pressable>
                     </View>
                 )}

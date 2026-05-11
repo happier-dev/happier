@@ -199,7 +199,7 @@ export const ToolCallsGroupView = React.memo((props: {
                 ]}
             >
                 <View style={styles.headerGutter}>
-                    <Ionicons name="layers-outline" size={16} color={theme.colors.textSecondary} />
+                    <Ionicons name="layers-outline" size={16} color={theme.colors.text.secondary} />
                 </View>
                 <Text style={styles.title}>
                     {t('session.toolCalls')}
@@ -210,15 +210,15 @@ export const ToolCallsGroupView = React.memo((props: {
                         {props.status === 'running' ? (
                             <ActivityIndicator size="small" />
                         ) : props.status === 'error' ? (
-                            <Ionicons name="alert-circle" size={16} color={theme.colors.textDestructive} />
+                            <Ionicons name="alert-circle" size={16} color={theme.colors.state.danger.foreground} />
                         ) : (
-                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.success} />
+                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.state.success.foreground} />
                         )}
                     </View>
                     <Ionicons
                         name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'}
                         size={16}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                     />
                 </View>
             </Pressable>
@@ -304,7 +304,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     containerCards: {
         borderRadius: 14,
-        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
+        backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
         overflow: 'hidden',
     },
     containerFeed: {
@@ -323,7 +323,7 @@ const styles = StyleSheet.create((theme) => ({
         opacity: 0.92,
     },
     headerFeedPressed: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
     headerGutter: {
         width: 18,
@@ -332,12 +332,12 @@ const styles = StyleSheet.create((theme) => ({
     },
     title: {
         flexGrow: 1,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         ...Typography.default('semiBold'),
     },
     subtitle: {
-        color: theme.colors.agentEventText,
+        color: theme.colors.message.event.foreground,
         fontSize: 13,
     },
     headerRight: {
@@ -366,7 +366,7 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         width: 2,
         borderRadius: 2,
-        backgroundColor: theme.colors.agentEventText,
+        backgroundColor: theme.colors.message.event.foreground,
         opacity: 0.1,
         marginBottom: 7
     },
@@ -402,7 +402,7 @@ const styles = StyleSheet.create((theme) => ({
         opacity: 0.9,
     },
     previewMoreText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('regular'),
         fontSize: 13,
     },

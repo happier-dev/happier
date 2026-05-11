@@ -33,7 +33,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 16,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
     },
 }));
 
@@ -129,11 +129,11 @@ export const AutomationListGroup = React.memo((props: Props) => {
                                     accessibilityLabel={t('automations.detail.runNowTitle')}
                                 >
                                     {runState === 'running' ? (
-                                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                        <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                                     ) : runState === 'queued' ? (
-                                        <Ionicons name="checkmark" size={18} color={theme.colors.textSecondary} />
+                                        <Ionicons name="checkmark" size={18} color={theme.colors.text.secondary} />
                                     ) : (
-                                        <Ionicons name="play" size={18} color={theme.colors.textSecondary} />
+                                        <Ionicons name="play" size={18} color={theme.colors.text.secondary} />
                                     )}
                                 </Pressable>
                                 <Switch

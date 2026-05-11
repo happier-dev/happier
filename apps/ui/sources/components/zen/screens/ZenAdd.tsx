@@ -37,12 +37,12 @@ export const ZenAdd = React.memo(() => {
                     style={[
                         styles.input,
                         {
-                            color: theme.colors.text,
-                            borderBottomColor: theme.colors.divider,
+                            color: theme.colors.text.primary,
+                            borderBottomColor: theme.colors.border.default,
                         }
                     ]}
                     placeholder={t('zen.add.placeholder')}
-                    placeholderTextColor={theme.colors.textSecondary}
+                    placeholderTextColor={theme.colors.text.secondary}
                     value={text}
                     onChangeText={setText}
                     onSubmitEditing={handleSubmit}
@@ -59,7 +59,7 @@ export const ZenAdd = React.memo(() => {
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     content: {
         flex: 1,

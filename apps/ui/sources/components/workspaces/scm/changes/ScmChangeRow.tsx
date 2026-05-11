@@ -14,15 +14,23 @@ const CHANGE_STATS_COLUMN_EXTRA_WIDTH = 4;
 
 type Theme = Readonly<{
     colors: Readonly<{
-        surface?: string;
-        surfaceHigh?: string;
-        divider?: string;
-        text?: string;
-        textSecondary: string;
-        textLink?: string;
-        success?: string;
-        warning?: string;
-        textDestructive?: string;
+        surface?: Readonly<{
+            base?: string;
+            inset?: string;
+        }>;
+        border?: Readonly<{
+            default?: string;
+        }>;
+        text: Readonly<{
+            primary?: string;
+            secondary: string;
+            link?: string;
+        }>;
+        state: Readonly<{
+            success: Readonly<{ foreground?: string }>;
+            neutral: Readonly<{ foreground?: string }>;
+            danger: Readonly<{ foreground?: string }>;
+        }>;
     }>;
 }>;
 
@@ -66,10 +74,10 @@ export function resolveScmChangeStatsColumnWidth(files: readonly ScmChangeStatsL
 }
 
 function describeChange(file: ScmFileStatus, theme: Theme): ChangeDescriptor {
-    const info = theme.colors.textLink ?? theme.colors.textSecondary;
-    const success = theme.colors.success ?? theme.colors.textSecondary;
-    const warning = theme.colors.warning ?? theme.colors.textSecondary;
-    const danger = theme.colors.textDestructive ?? theme.colors.textSecondary;
+    const info = theme.colors.text.link ?? theme.colors.text.secondary;
+    const success = theme.colors.state.success.foreground ?? theme.colors.text.secondary;
+    const warning = theme.colors.state.neutral.foreground ?? theme.colors.text.secondary;
+    const danger = theme.colors.state.danger.foreground ?? theme.colors.text.secondary;
 
     switch (file.status) {
         case 'untracked':
@@ -116,8 +124,8 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
 
     const containerStyle = React.useMemo(() => {
         const bg = props.highlighted
-            ? (theme.colors.surfaceHigh ?? theme.colors.surface ?? theme.colors.textSecondary)
-            : (theme.colors.surface ?? theme.colors.textSecondary);
+            ? (theme.colors.surface.inset ?? theme.colors.surface.base ?? theme.colors.text.secondary)
+            : (theme.colors.surface.base ?? theme.colors.text.secondary);
         return {
             paddingHorizontal: 12,
             paddingVertical,
@@ -126,9 +134,9 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
             gap: 10,
             backgroundColor: bg,
             borderBottomWidth: props.showDivider ? Platform.select({ ios: 0.33, default: 1 }) : 0,
-            borderBottomColor: theme.colors.divider ?? theme.colors.textSecondary,
+            borderBottomColor: theme.colors.border.default ?? theme.colors.text.secondary,
         } as const;
-    }, [paddingVertical, props.highlighted, props.showDivider, theme.colors.divider, theme.colors.surface, theme.colors.surfaceHigh, theme.colors.textSecondary]);
+    }, [paddingVertical, props.highlighted, props.showDivider, theme.colors.border.default, theme.colors.surface.base, theme.colors.surface.inset, theme.colors.text.secondary]);
 
     const onKeyDown = React.useCallback((event: any) => {
         if (!isWeb) return;
@@ -184,12 +192,12 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                 nameMaxWidth="70%"
                 pathTextStyle={{
                     fontSize: 13,
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     ...Typography.default(),
                 }}
                 nameTextStyle={{
                     fontSize: 13,
-                    color: theme.colors.text ?? theme.colors.textSecondary,
+                    color: theme.colors.text.primary ?? theme.colors.text.secondary,
                     ...Typography.default('semiBold'),
                 }}
             />
@@ -205,13 +213,13 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                     gap: 2,
                 }}
             >
-                <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.success ?? theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.state.success.foreground ?? theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                     {`+${file.linesAdded}`}
                 </Text>
-                <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.textSecondary, ...Typography.default() }}>
+                <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.text.secondary, ...Typography.default() }}>
                     {PATH_SEPARATOR}
                 </Text>
-                <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.textDestructive ?? theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                <Text style={{ fontSize: 11, fontVariant: ['tabular-nums'], color: theme.colors.state.danger.foreground ?? theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                     {`-${file.linesRemoved}`}
                 </Text>
             </View>

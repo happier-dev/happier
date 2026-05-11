@@ -45,7 +45,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 14,
         lineHeight: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     sectionBody: {
         gap: 6,
@@ -54,12 +54,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 14,
         lineHeight: 20,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     securityBlock: {
         paddingTop: 6,
         borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
         gap: 8,
     },
     securityRow: {
@@ -75,13 +75,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 14,
         lineHeight: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     securitySubtitle: {
         ...Typography.default(),
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     message: {
         alignItems: 'center',
@@ -115,7 +115,7 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
                         <Ionicons
                             name={props.state.tone === 'critical' ? 'warning-outline' : 'terminal-outline'}
                             size={34}
-                            color={props.state.tone === 'critical' ? theme.colors.textDestructive : theme.colors.radio.active}
+                            color={props.state.tone === 'critical' ? theme.colors.state.danger.foreground : theme.colors.radio.active}
                         />
                     )}
                 </View>
@@ -167,7 +167,7 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
             <View style={styles.securityBlock}>
                 <Text style={styles.sectionTitle}>{t('terminal.security')}</Text>
                 <View style={styles.securityRow}>
-                    <Ionicons name="shield-checkmark-outline" size={20} color={theme.colors.success} />
+                    <Ionicons name="shield-checkmark-outline" size={20} color={theme.colors.state.success.foreground} />
                     <View style={styles.securityCopy}>
                         <Text style={styles.securityTitle}>{t('terminal.clientSideProcessing')}</Text>
                         <Text style={styles.securitySubtitle}>{t('terminal.linkProcessedOnDevice')}</Text>

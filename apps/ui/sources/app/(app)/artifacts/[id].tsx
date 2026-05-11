@@ -16,7 +16,7 @@ import { MarkdownView } from '@/components/markdown/MarkdownView';
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     scrollView: {
         flex: 1,
@@ -38,11 +38,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     errorIcon: {
         marginBottom: 16,
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
     },
     errorText: {
         fontSize: 16,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         textAlign: 'center',
     },
     titleContainer: {
@@ -51,23 +51,23 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         fontSize: 24,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 8,
     },
     untitledTitle: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontStyle: 'italic',
     },
     meta: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     bodyContainer: {
         minHeight: 200,
     },
     emptyBody: {
         fontSize: 15,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontStyle: 'italic',
         lineHeight: 22,
     },

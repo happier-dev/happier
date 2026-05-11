@@ -53,7 +53,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
 
     const renderServerLoading = () => (
         <View style={styles.serverLoadingBlock}>
-            <ActivityIndicator color={theme.colors.text} />
+            <ActivityIndicator color={theme.colors.text.primary} />
             <Text testID="welcome-server-loading" style={styles.serverLoadingText}>{t('common.loading')}</Text>
         </View>
     );
@@ -269,8 +269,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignSelf: 'center',
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 14,
         paddingVertical: 10,
         marginBottom: 20,
@@ -278,12 +278,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     serverUnavailableTitle: {
         ...Typography.default('semiBold'),
         fontSize: 16,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     serverUnavailableBody: {
         ...Typography.default(),
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 2,
         lineHeight: 20,
     },
@@ -296,7 +296,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     serverLoadingText: {
         ...Typography.default(),
         fontSize: 15,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     actionStack: {
         width: '100%',

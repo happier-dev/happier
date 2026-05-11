@@ -23,14 +23,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 10,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHigh,
-        color: theme.colors.text,
+        backgroundColor: theme.colors.surface.inset,
+        color: theme.colors.text.primary,
         fontSize: 13,
     },
     helperText: {
         paddingHorizontal: 16,
         paddingVertical: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         ...Typography.default(),
     },
@@ -69,7 +69,7 @@ export const WorkspaceWorktreeListSection = React.memo((props: Readonly<{
                     value={searchQuery}
                     onChangeText={setSearchQuery}
                     placeholder={t('files.branchMenu.searchPlaceholder')}
-                    placeholderTextColor={theme.colors.textSecondary}
+                    placeholderTextColor={theme.colors.text.secondary}
                     style={styles.searchInput}
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -97,7 +97,7 @@ export const WorkspaceWorktreeListSection = React.memo((props: Readonly<{
                         selected={props.selectedRootPath === worktree.path}
                         onPress={() => props.onSelectRootPath(worktree.path)}
                         rightElement={worktree.isCurrent ? (
-                            <Octicons name="check" size={14} color={theme.colors.textSecondary} />
+                            <Octicons name="check" size={14} color={theme.colors.text.secondary} />
                         ) : null}
                     />
                 ))

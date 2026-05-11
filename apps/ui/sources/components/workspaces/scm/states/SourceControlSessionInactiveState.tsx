@@ -27,12 +27,12 @@ export function SourceControlSessionInactiveState(props: {
                 gap: 14,
             }}
         >
-            <Octicons name="alert" size={42} color={theme.colors.textSecondary} />
+            <Octicons name="alert" size={42} color={theme.colors.text.secondary} />
 
             <Text
                 style={{
                     fontSize: 16,
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     textAlign: 'center',
                     ...Typography.default(),
                 }}
@@ -43,7 +43,7 @@ export function SourceControlSessionInactiveState(props: {
             <Text
                 style={{
                     fontSize: 14,
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     textAlign: 'center',
                     ...Typography.default(),
                 }}

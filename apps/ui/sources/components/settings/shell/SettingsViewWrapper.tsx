@@ -6,7 +6,7 @@ import { SettingsView } from '@/components/settings/SettingsView';
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
 }));
 

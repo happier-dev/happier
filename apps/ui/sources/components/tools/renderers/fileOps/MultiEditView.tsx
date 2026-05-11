@@ -114,7 +114,7 @@ const styles = StyleSheet.create((theme) => ({
     more: {
         marginTop: 8,
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
 }));

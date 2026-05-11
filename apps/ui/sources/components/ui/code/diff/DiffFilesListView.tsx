@@ -398,8 +398,8 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'stretch',
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
         marginBottom: 8,
         overflow: 'hidden',
         ...Platform.select({
@@ -416,13 +416,13 @@ const styles = StyleSheet.create((theme) => ({
         gap: 8,
     },
     fileRowHovered: {
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.inset,
     },
     fileRowPressed: {
         opacity: 0.9,
     },
     fileRowFocused: {
-        borderColor: theme.colors.textLink ?? theme.colors.divider,
+        borderColor: theme.colors.text.link ?? theme.colors.border.default,
     },
     fileRowMain: {
         flex: 1,
@@ -433,14 +433,14 @@ const styles = StyleSheet.create((theme) => ({
     },
     filePath: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontFamily: 'monospace',
         flexShrink: 1,
         minWidth: 0,
     },
     statsText: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'monospace',
     },
     openFileButton: {
@@ -451,35 +451,35 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.base,
         ...Platform.select({
             web: { cursor: 'pointer' } as any,
             default: null,
         }),
     },
     openFileButtonHovered: {
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.inset,
     },
     openFileButtonPressed: {
         opacity: 0.85,
     },
     openFileIcon: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     kindBadge: {
         paddingHorizontal: 8,
         paddingVertical: 3,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.base,
     },
     kindBadgeNew: {
-        borderColor: theme.colors.success,
+        borderColor: theme.colors.state.success.foreground,
     },
     kindBadgeDeleted: {
-        borderColor: theme.colors.warningCritical ?? theme.colors.warning,
+        borderColor: theme.colors.state.danger.foreground ?? theme.colors.state.neutral.foreground,
     },
     kindBadgeRenamed: {
         borderColor: theme.colors.accent.indigo,
@@ -490,10 +490,10 @@ const styles = StyleSheet.create((theme) => ({
         fontFamily: 'monospace',
     },
     kindTextNew: {
-        color: theme.colors.success,
+        color: theme.colors.state.success.foreground,
     },
     kindTextDeleted: {
-        color: theme.colors.warningCritical ?? theme.colors.warning,
+        color: theme.colors.state.danger.foreground ?? theme.colors.state.neutral.foreground,
     },
     kindTextRenamed: {
         color: theme.colors.accent.indigo,

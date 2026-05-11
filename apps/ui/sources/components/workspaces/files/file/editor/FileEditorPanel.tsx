@@ -35,7 +35,7 @@ function FileEditorPanelImpl(props: Readonly<{
                 changeDebounceMs={props.changeDebounceMs}
                 bridgeMaxChunkBytes={props.bridgeMaxChunkBytes}
             />
-            <Text style={{ marginTop: 8, color: props.theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+            <Text style={{ marginTop: 8, color: props.theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
                 {t('files.fileEditor.experimentalHint')}
             </Text>
         </View>

@@ -46,7 +46,7 @@ export const UserActionPromptCard = React.memo(function UserActionPromptCard(pro
         <View testID="user-action-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
             <View style={styles.header}>
                 <View style={styles.icon}>
-                    <Ionicons name="chatbubble-ellipses-outline" size={16} color={theme.colors.warning} />
+                    <Ionicons name="chatbubble-ellipses-outline" size={16} color={theme.colors.state.neutral.foreground} />
                 </View>
                 <View style={styles.headerText}>
                     <Text style={styles.title} numberOfLines={1}>
@@ -67,7 +67,7 @@ export const UserActionPromptCard = React.memo(function UserActionPromptCard(pro
                         accessibilityLabel={t('toolView.open')}
                         style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
                     >
-                        <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
+                        <Ionicons name="open-outline" size={18} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
             </View>
@@ -97,8 +97,8 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated,
         overflow: 'hidden',
     },
     containerInline: {
@@ -129,18 +129,18 @@ const styles = StyleSheet.create((theme) => ({
     title: {
         fontSize: 13,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     subtitle: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     viewButton: {
         padding: 6,
         borderRadius: 8,
     },
     viewButtonPressed: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
     headerActions: {
         flexDirection: 'row',

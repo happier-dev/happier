@@ -28,10 +28,10 @@ export function NotificationDesktopPermissionSection(): React.ReactElement {
     }, [permission.status]);
 
     const permissionIconColor = permission.status === 'granted'
-        ? theme.colors.success
+        ? theme.colors.state.success.foreground
         : permission.status === 'checking'
-            ? theme.colors.textSecondary
-            : theme.colors.warning;
+            ? theme.colors.text.secondary
+            : theme.colors.state.neutral.foreground;
 
     return (
         <ItemGroup

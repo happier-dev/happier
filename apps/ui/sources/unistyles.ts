@@ -61,8 +61,8 @@ function isDesktopActivityOverlayWindow(): boolean {
 
 const applyRootBackgroundColor = (themeName: 'light' | 'dark') => {
     const color = themeName === 'dark'
-        ? appThemes.dark.colors.groupped.background
-        : appThemes.light.colors.groupped.background;
+        ? appThemes.dark.colors.background.canvas
+        : appThemes.light.colors.background.canvas;
     UnistylesRuntime.setRootViewBackgroundColor(color);
     fireAndForget(SystemUI.setBackgroundColorAsync(color), { tag: 'unistyles.setRootBackgroundColor' });
 };

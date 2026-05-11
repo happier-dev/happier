@@ -123,7 +123,7 @@ export default React.memo(function ProviderSettingsIndexScreen() {
                             key={entry.providerId}
                             title={entry.title}
                             subtitle={`${state} • ${channel}`}
-                            icon={<Ionicons name={resolveProviderRowIconName(entry) as any} size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name={resolveProviderRowIconName(entry) as any} size={29} color={theme.colors.text.secondary} />}
                             onPress={() => router.push(`/(app)/settings/providers/${entry.providerId}` as any)}
                         />
                     );

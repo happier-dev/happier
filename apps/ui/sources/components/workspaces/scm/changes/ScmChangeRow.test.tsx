@@ -282,7 +282,7 @@ describe('ScmChangeRow', () => {
     const backgroundColor = Array.isArray(style)
       ? (style.find((s) => s && typeof s === 'object' && 'backgroundColor' in s)?.backgroundColor ?? null)
       : style?.backgroundColor ?? null;
-    expect(backgroundColor).toBe(theme.colors.surfaceHigh);
+    expect(backgroundColor).toBe(theme.colors.surface.inset);
   });
 
   it('supports Enter (open) and Space (toggle selection) on web', async () => {

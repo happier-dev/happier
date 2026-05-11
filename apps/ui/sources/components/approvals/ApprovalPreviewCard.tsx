@@ -27,14 +27,14 @@ const styles = StyleSheet.create((theme) => ({
     card: {
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHighest,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated,
         padding: 16,
         gap: 4,
     },
     summary: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 20,
     },
 }));

@@ -169,8 +169,8 @@ export const ZenView = React.memo(() => {
                             style={[
                                 styles.checkbox,
                                 {
-                                    borderColor: todo.done ? theme.colors.success : theme.colors.textSecondary,
-                                    backgroundColor: todo.done ? theme.colors.success : 'transparent',
+                                    borderColor: todo.done ? theme.colors.state.success.foreground : theme.colors.text.secondary,
+                                    backgroundColor: todo.done ? theme.colors.state.success.foreground : 'transparent',
                                 }
                             ]}
                         >
@@ -185,8 +185,8 @@ export const ZenView = React.memo(() => {
                                     style={[
                                         styles.input,
                                         {
-                                            color: theme.colors.text,
-                                            borderBottomColor: theme.colors.divider,
+                                            color: theme.colors.text.primary,
+                                            borderBottomColor: theme.colors.border.default,
                                         }
                                     ]}
                                     value={editedText}
@@ -202,7 +202,7 @@ export const ZenView = React.memo(() => {
                                     <Text style={[
                                         styles.taskText,
                                         {
-                                            color: todo.done ? theme.colors.textSecondary : theme.colors.text,
+                                            color: todo.done ? theme.colors.text.secondary : theme.colors.text.primary,
                                             textDecorationLine: todo.done ? 'line-through' : 'none',
                                             opacity: todo.done ? 0.6 : 1,
                                         }
@@ -226,15 +226,15 @@ export const ZenView = React.memo(() => {
 
                         <Pressable
                             onPress={handleClarifyWithAI}
-                            style={[styles.actionButton, { backgroundColor: theme.colors.surfaceHighest }]}
+                            style={[styles.actionButton, { backgroundColor: theme.colors.surface.elevated }]}
                         >
-                            <Ionicons name="sparkles" size={20} color={theme.colors.text} />
-                            <Text style={[styles.actionButtonText, { color: theme.colors.text }]}>{t('zen.view.clarify')}</Text>
+                            <Ionicons name="sparkles" size={20} color={theme.colors.text.primary} />
+                            <Text style={[styles.actionButtonText, { color: theme.colors.text.primary }]}>{t('zen.view.clarify')}</Text>
                         </Pressable>
 
                         <Pressable
                             onPress={handleDelete}
-                            style={[styles.actionButton, { backgroundColor: theme.colors.textDestructive }]}
+                            style={[styles.actionButton, { backgroundColor: theme.colors.state.danger.foreground }]}
                         >
                             <Ionicons name="trash-outline" size={20} color={theme.colors.button.primary.tint} />
                             <Text style={styles.actionButtonText}>{t('zen.view.delete')}</Text>
@@ -244,20 +244,20 @@ export const ZenView = React.memo(() => {
                     {/* Linked Sessions */}
                     {linkedSessions.length > 0 && (
                         <View style={styles.linkedSessionsSection}>
-                            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+                            <Text style={[styles.sectionTitle, { color: theme.colors.text.primary }]}>
                                 {t('zen.view.linkedSessions')}
                             </Text>
                             {linkedSessions.map((link, index) => (
                                 <Pressable
                                     key={link.sessionId}
                                     onPress={() => { router.dismissAll(); router.push(`/session/${link.sessionId}`); }}
-                                    style={[styles.linkedSession, { backgroundColor: theme.colors.surfaceHighest }]}
+                                    style={[styles.linkedSession, { backgroundColor: theme.colors.surface.elevated }]}
                                 >
-                                    <Ionicons name="chatbubble-outline" size={16} color={theme.colors.textSecondary} />
-                                    <Text style={[styles.linkedSessionText, { color: theme.colors.text }]}>
+                                    <Ionicons name="chatbubble-outline" size={16} color={theme.colors.text.secondary} />
+                                    <Text style={[styles.linkedSessionText, { color: theme.colors.text.primary }]}>
                                         {link.title}
                                     </Text>
-                                    <Ionicons name="chevron-forward" size={16} color={theme.colors.textSecondary} />
+                                    <Ionicons name="chevron-forward" size={16} color={theme.colors.text.secondary} />
                                 </Pressable>
                             ))}
                         </View>
@@ -265,7 +265,7 @@ export const ZenView = React.memo(() => {
 
                     {/* Helper Text */}
                     <View style={styles.helperSection}>
-                        <Text style={[styles.helperText, { color: theme.colors.textSecondary }]}>
+                        <Text style={[styles.helperText, { color: theme.colors.text.secondary }]}>
                             {t('zen.view.tapTaskTextToEdit')}
                         </Text>
                     </View>
@@ -278,7 +278,7 @@ export const ZenView = React.memo(() => {
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     content: {
         flex: 1,
@@ -337,7 +337,7 @@ const styles = StyleSheet.create((theme) => ({
         marginTop: 32,
         paddingTop: 16,
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     helperText: {
         fontSize: 14,
@@ -347,7 +347,7 @@ const styles = StyleSheet.create((theme) => ({
         marginTop: 24,
         paddingTop: 16,
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     sectionTitle: {
         fontSize: 14,

@@ -66,10 +66,10 @@ export const ToolTimelineRow = React.memo((props: {
             tool: toolForSession,
             metadata: props.metadata,
             iconSize: 18,
-            iconColorPrimary: theme.colors.text,
-            iconColorSecondary: theme.colors.textSecondary,
+            iconColorPrimary: theme.colors.text.primary,
+            iconColorSecondary: theme.colors.text.secondary,
         });
-    }, [props.metadata, theme.colors.text, theme.colors.textSecondary, toolForSession]);
+    }, [props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
     const toolForRendering = headerModel.toolForRendering;
 
     const toolViewDetailLevelDefault = useSetting('toolViewDetailLevelDefault');
@@ -206,10 +206,10 @@ export const ToolTimelineRow = React.memo((props: {
             tool: toolForSession,
             metadata: props.metadata,
             iconSize,
-            iconColorPrimary: theme.colors.text,
-            iconColorSecondary: theme.colors.textSecondary,
+            iconColorPrimary: theme.colors.text.primary,
+            iconColorSecondary: theme.colors.text.secondary,
         }).icon;
-    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text, theme.colors.textSecondary, toolForSession]);
+    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const showTaskRunningIndicator = isSubAgentTranscriptToolName(normalizedToolName);
@@ -219,7 +219,7 @@ export const ToolTimelineRow = React.memo((props: {
         statusKind === 'error'
             ? (
                 <View style={styles.headerError}>
-                    <Ionicons testID="tool-timeline-row-error" name="alert-circle" size={18} color={theme.colors.textDestructive} />
+                    <Ionicons testID="tool-timeline-row-error" name="alert-circle" size={18} color={theme.colors.state.danger.foreground} />
                     <Text style={styles.headerErrorText} numberOfLines={1}>
                         {errorSummary}
                     </Text>
@@ -349,7 +349,7 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     headerErrorText: {
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
         fontSize: 12,
         fontWeight: '600',
         maxWidth: 220,

@@ -153,10 +153,10 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
                 const iconName = option.icon ?? (selected ? 'checkmark-circle' : 'ellipse-outline');
                 const borderColor = selected
                     ? theme.colors.button.primary.background
-                    : theme.colors.divider;
+                    : theme.colors.border.default;
                 const iconColor = selected
                     ? theme.colors.button.primary.background
-                    : theme.colors.textSecondary;
+                    : theme.colors.text.secondary;
                 const hasSubtitle = typeof option.subtitle === 'string' && option.subtitle.trim().length > 0;
                 const footer = props.renderOptionFooter?.({ option, selected, disabled });
 
@@ -231,7 +231,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignSelf: 'stretch',
     },
     tile: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: 12,
         borderWidth: 2,
         overflow: 'hidden',
@@ -299,7 +299,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         ...Typography.default('regular'),
         fontSize: ITEM_TITLE_TEXT_METRICS.comfortable.fontSize,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     titleCompact: {
         fontSize: ITEM_TITLE_TEXT_METRICS.compact.fontSize,
@@ -307,7 +307,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     subtitle: {
         ...Typography.default(),
         fontSize: ITEM_SUBTITLE_TEXT_METRICS.comfortable.fontSize,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     subtitleCompact: {
         fontSize: ITEM_SUBTITLE_TEXT_METRICS.compact.fontSize,
@@ -316,7 +316,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     badge: {
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         paddingHorizontal: 8,
         paddingVertical: 4,
     },
@@ -324,6 +324,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('regular'),
         fontSize: Platform.select({ ios: 12, default: 12 }),
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));

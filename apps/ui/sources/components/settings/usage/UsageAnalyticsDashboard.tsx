@@ -60,7 +60,7 @@ interface UsageAnalyticsDashboardProps {
 const styles = StyleSheet.create((theme) => ({
     screen: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     content: {
         paddingBottom: 24,
@@ -94,7 +94,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     chipRow: {
@@ -127,7 +127,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 2,
     },
     chartWrap: {
@@ -142,7 +142,7 @@ const styles = StyleSheet.create((theme) => ({
         marginBottom: 12,
         padding: 14,
         borderRadius: 18,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         gap: 10,
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
@@ -154,7 +154,7 @@ const styles = StyleSheet.create((theme) => ({
     errorText: {
         flex: 1,
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     retryButton: {
         alignSelf: 'flex-start',
@@ -164,7 +164,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.status.error,
     },
     retryText: {
-        color: theme.colors.surface,
+        color: theme.colors.surface.base,
         fontSize: 13,
         fontWeight: '700',
     },
@@ -172,7 +172,7 @@ const styles = StyleSheet.create((theme) => ({
         marginHorizontal: 16,
         padding: 18,
         borderRadius: 18,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         alignItems: 'center',
         gap: 8,
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
@@ -180,16 +180,16 @@ const styles = StyleSheet.create((theme) => ({
     emptyTitle: {
         fontSize: 16,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     emptySubtitle: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     sectionMiniLabel: {
         fontSize: 11,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         fontWeight: '600',
         textTransform: 'uppercase',
         letterSpacing: 0.3,
@@ -213,7 +213,7 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 24,
         lineHeight: 30,
         letterSpacing: -0.5,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));
 

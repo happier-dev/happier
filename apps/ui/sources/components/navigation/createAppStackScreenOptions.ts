@@ -16,14 +16,14 @@ export function createAppStackScreenOptions(args: Readonly<{
         headerBackTitle: args.headerBackTitle,
         headerShadowVisible: false,
         contentStyle: args.contentStyle ?? {
-            backgroundColor: args.theme.colors.surface,
+            backgroundColor: args.theme.colors.surface.base,
         },
         headerStyle: {
-            backgroundColor: args.theme.colors.header.background,
+            backgroundColor: args.theme.colors.chrome.header.background,
         },
-        headerTintColor: args.theme.colors.header.tint,
+        headerTintColor: args.theme.colors.chrome.header.foreground,
         headerTitleStyle: {
-            color: args.theme.colors.header.tint,
+            color: args.theme.colors.chrome.header.foreground,
             ...Typography.default('semiBold'),
         },
     };

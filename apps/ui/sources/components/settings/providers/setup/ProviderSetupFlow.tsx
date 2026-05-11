@@ -148,7 +148,7 @@ const ProviderSetupFlowWizardWebHandoff = React.memo(function ProviderSetupFlowW
                     selectedProviderIds={selectedProviderIds}
                     onToggleProvider={toggleProvider}
                 />
-                <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                <Text style={{ color: theme.colors.text.secondary, textAlign: 'center' }}>
                     {t('settingsProviders.setup.selectionFooter')}
                 </Text>
             </View>
@@ -388,7 +388,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                         selectedProviderIds={selectedProviderIds}
                         onToggleProvider={toggleProvider}
                     />
-                    <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                    <Text style={{ color: theme.colors.text.secondary, textAlign: 'center' }}>
                         {t('settingsProviders.setup.selectionFooter')}
                     </Text>
                 </View>
@@ -418,17 +418,17 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                                 selected={selected}
                                 showChevron={false}
                                 disabled={installQueue.state.hasStarted ? (installQueue.state.isRunning || !canRetryInstall) : Boolean(queueState)}
-                                icon={<Ionicons name={iconName as any} size={24} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name={iconName as any} size={24} color={theme.colors.text.secondary} />}
                                 rightElement={
                                     installQueue.state.hasStarted
                                         ? installStatus === 'installing'
-                                            ? <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                            ? <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                                             : installStatus === 'installed'
                                                 ? <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent.blue} />
                                                 : installStatus === 'failed'
-                                                    ? <Ionicons name="alert-circle" size={20} color={theme.colors.textSecondary} />
+                                                    ? <Ionicons name="alert-circle" size={20} color={theme.colors.text.secondary} />
                                                     : installStatus === 'queued'
-                                                        ? <Ionicons name="time-outline" size={20} color={theme.colors.textSecondary} />
+                                                        ? <Ionicons name="time-outline" size={20} color={theme.colors.text.secondary} />
                                                         : undefined
                                         : selected
                                             ? <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent.blue} />
@@ -490,7 +490,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                             <Ionicons name={activeIconName as any} size={24} color={theme.colors.accent.blue} />
                             <View style={{ flex: 1, gap: 2 }}>
                                 <Text>{activeEntry.title}</Text>
-                                <Text style={{ color: theme.colors.textSecondary }}>
+                                <Text style={{ color: theme.colors.text.secondary }}>
                                     {t('settingsProviders.setup.activeDescription')}
                                 </Text>
                             </View>
@@ -588,21 +588,21 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                         const iconName = entry.iconAgentId ? getAgentCore(entry.iconAgentId).ui.agentPickerIconName : entry.iconName;
                         return (
                             <View key={entry.providerId} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                <Ionicons name={iconName as any} size={22} color={theme.colors.textSecondary} />
+                                <Ionicons name={iconName as any} size={22} color={theme.colors.text.secondary} />
                                 <View style={{ flex: 1, gap: 2 }}>
                                     <Text>{entry.title}</Text>
-                                    <Text style={{ color: theme.colors.textSecondary }}>
+                                    <Text style={{ color: theme.colors.text.secondary }}>
                                         {buildInstallStepDetail(status) ?? t('settingsNotifications.badges.queuedTitle')}
                                     </Text>
                                 </View>
                                 {status === 'installing' ? (
-                                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                                 ) : status === 'installed' ? (
                                     <Ionicons name="checkmark-circle" size={20} color={theme.colors.accent.blue} />
                                 ) : status === 'failed' ? (
-                                    <Ionicons name="alert-circle" size={20} color={theme.colors.textSecondary} />
+                                    <Ionicons name="alert-circle" size={20} color={theme.colors.text.secondary} />
                                 ) : status === 'queued' ? (
-                                    <Ionicons name="time-outline" size={20} color={theme.colors.textSecondary} />
+                                    <Ionicons name="time-outline" size={20} color={theme.colors.text.secondary} />
                                 ) : null}
                             </View>
                         );
@@ -611,7 +611,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
             ) : null}
 
             {isWizardPresentation && isFinished ? (
-                <Text testID="provider-setup-wizard-complete" style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+                <Text testID="provider-setup-wizard-complete" style={{ color: theme.colors.text.secondary, textAlign: 'center' }}>
                     {t('settingsProviders.setup.completedDescription')}
                 </Text>
             ) : null}

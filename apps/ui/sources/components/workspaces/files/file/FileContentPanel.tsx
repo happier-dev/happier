@@ -322,7 +322,7 @@ export function FileContentPanel({
                     <Text
                         style={{
                             fontSize: 16,
-                            color: theme.colors.textSecondary,
+                            color: theme.colors.text.secondary,
                             fontStyle: 'italic',
                             padding: 16,
                             ...Typography.default(),
@@ -347,7 +347,7 @@ export function FileContentPanel({
                     <Text
                         style={{
                             fontSize: 16,
-                            color: theme.colors.textSecondary,
+                            color: theme.colors.text.secondary,
                             fontStyle: 'italic',
                             padding: 16,
                             ...Typography.default(),
@@ -360,7 +360,7 @@ export function FileContentPanel({
                 <Text
                     style={{
                         fontSize: 16,
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                         fontStyle: 'italic',
                         padding: 16,
                         ...Typography.default(),

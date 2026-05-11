@@ -46,7 +46,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     message: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
         flex: 1,
     },
@@ -66,8 +66,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         height: 10,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     timelineDotDone: {
         borderColor: theme.colors.accent.blue,
@@ -75,16 +75,16 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     timelineDotCurrent: {
         borderColor: theme.colors.accent.blue,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     timelineLabel: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
         flex: 1,
     },
     timelineLabelCurrent: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     summaryRow: {
@@ -97,12 +97,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 4,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     summaryChipText: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     stats: {
@@ -116,19 +116,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     statLabel: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     statValue: {
         fontSize: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default(),
         textAlign: 'right',
     },
     progressTrack: {
         height: 8,
         borderRadius: 999,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
         overflow: 'hidden',
     },
     progressFill: {
@@ -145,12 +145,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     progressMetaText: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     currentPath: {
         fontSize: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
         flex: 1,
         textAlign: 'right',
@@ -449,7 +449,7 @@ export function SessionHandoffProgressModal({ setChrome, title, message, status 
                     <Octicons
                         name={isFailureState ? 'alert' : 'check'}
                         size={18}
-                        color={isFailureState ? theme.colors.textDestructive : theme.colors.accent.blue}
+                        color={isFailureState ? theme.colors.state.danger.foreground : theme.colors.accent.blue}
                     />
                 )}
                 <Text style={styles.message}>{resolvedMessage}</Text>

@@ -28,11 +28,11 @@ export function ChangedFilesReviewDiffAreaSelector(props: Readonly<{
                         paddingHorizontal: 10,
                         borderRadius: 10,
                         borderWidth: 1,
-                        borderColor: theme.colors.divider,
-                        backgroundColor: diffArea === mode ? theme.colors.surfaceHigh : theme.colors.surface,
+                        borderColor: theme.colors.border.default,
+                        backgroundColor: diffArea === mode ? theme.colors.surface.inset : theme.colors.surface.base,
                     }}
                 >
-                    <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                    <Text style={{ fontSize: 12, color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                         {labels[mode]}
                     </Text>
                 </Pressable>

@@ -21,10 +21,10 @@ export const McpSegmentedHeader = React.memo(function McpSegmentedHeader(props: 
         <View style={styles.wrapper}>
             <View style={styles.container}>
                 <View style={styles.copyBlock}>
-                    <Text style={[styles.title, { color: theme.colors.groupped.sectionTitle }]}>
+                    <Text style={[styles.title, { color: theme.colors.text.secondary }]}>
                         {props.title}
                     </Text>
-                    <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+                    <Text style={[styles.subtitle, { color: theme.colors.text.secondary }]}>
                         {props.subtitle}
                     </Text>
                 </View>

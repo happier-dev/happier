@@ -26,7 +26,7 @@ export const SplitActionButtons = React.memo(function SplitActionButtons(props: 
                     accessibilityRole="button"
                     accessibilityLabel={props.secondaryLabel}
                     style={({ pressed }) => ({
-                        backgroundColor: theme.colors.surface,
+                        backgroundColor: theme.colors.surface.base,
                         borderRadius: 10,
                         paddingVertical: 12,
                         alignItems: 'center',
@@ -35,7 +35,7 @@ export const SplitActionButtons = React.memo(function SplitActionButtons(props: 
                 >
                     <Text
                         style={{
-                            color: props.secondaryDestructive ? theme.colors.textDestructive : theme.colors.text,
+                            color: props.secondaryDestructive ? theme.colors.state.danger.foreground : theme.colors.text.primary,
                             ...Typography.default('semiBold'),
                         }}
                     >

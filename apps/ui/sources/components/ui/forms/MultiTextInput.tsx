@@ -3,6 +3,7 @@ import { Platform, View, NativeSyntheticEvent, TextInputKeyPressEventData, TextI
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { TextInput } from '@/components/ui/text/Text';
+import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from './multiTextInputTypography';
 
 
 export type SupportedKey = 'Enter' | 'Escape' | 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'Tab';
@@ -193,9 +194,8 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                 ref={inputRef}
                 testID={props.testID}
                 style={{
-                    ...props.textStyle,
                     width: '100%',
-                    fontSize: 14,
+                    fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE,
                     maxHeight,
                     color: theme.colors.input.text,
                     textAlignVertical: 'top',
@@ -205,6 +205,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
                     paddingLeft: props.paddingLeft,
                     paddingRight: props.paddingRight,
                     ...Typography.default(),
+                    ...props.textStyle,
                 }}
                 placeholder={placeholder}
                 placeholderTextColor={theme.colors.input.placeholder}

@@ -111,9 +111,9 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
             id: m.id,
             title: m.metadata?.displayName || m.metadata?.host || m.id,
             subtitle: m.metadata?.host || undefined,
-            icon: <Ionicons name="desktop-outline" size={20} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="desktop-outline" size={20} color={theme.colors.text.secondary} />,
         }));
-    }, [machines, theme.colors.textSecondary]);
+    }, [machines, theme.colors.text.secondary]);
 
     const indexModeItems = [
         { id: 'hints', title: t('memorySearchSettings.indexMode.options.lightTitle'), subtitle: t('memorySearchSettings.indexMode.options.lightSubtitle') },
@@ -183,7 +183,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     <Item
                         title={t('memorySearchSettings.disabled.title')}
                         subtitle={t('memorySearchSettings.disabled.subtitle')}
-                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.success} />}
+                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => { void Modal.alert(t('memorySearchSettings.disabled.alertTitle'), t('memorySearchSettings.disabled.alertBody')); }}
                     />
                 </ItemGroup>
@@ -224,7 +224,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                 <Item
                     title={t('memorySearchSettings.enabled.title')}
                     subtitle={showReadOnlySettings ? t('common.unavailable') : t('memorySearchSettings.enabled.subtitle')}
-                    icon={<Ionicons name="search-outline" size={29} color={theme.colors.success} />}
+                    icon={<Ionicons name="search-outline" size={29} color={theme.colors.state.success.foreground} />}
                     rightElement={showReadOnlySettings ? null : (
                         <Switch
                             value={settings.enabled}
@@ -391,7 +391,7 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                     }}
                     itemTrigger={{
                         title: t('memorySearchSettings.hints.permissions.triggerTitle'),
-                        icon: <Ionicons name="lock-closed-outline" size={29} color={theme.colors.warningCritical} />,
+                        icon: <Ionicons name="lock-closed-outline" size={29} color={theme.colors.state.danger.foreground} />,
                     }}
                 />
             </ItemGroup>

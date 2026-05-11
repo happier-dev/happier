@@ -115,8 +115,8 @@ export default function SessionLogScreen() {
     if (!isDataReady || !sessionHydrated) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="hourglass-outline" size={48} color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 17, marginTop: 16, ...Typography.default('semiBold') }}>
+                <Ionicons name="hourglass-outline" size={48} color={theme.colors.text.secondary} />
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 17, marginTop: 16, ...Typography.default('semiBold') }}>
                     {t('common.loading')}
                 </Text>
             </View>
@@ -126,11 +126,11 @@ export default function SessionLogScreen() {
     if (!session) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="trash-outline" size={48} color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.text, fontSize: 20, marginTop: 16, ...Typography.default('semiBold') }}>
+                <Ionicons name="trash-outline" size={48} color={theme.colors.text.secondary} />
+                <Text style={{ color: theme.colors.text.primary, fontSize: 20, marginTop: 16, ...Typography.default('semiBold') }}>
                     {t('errors.sessionDeleted')}
                 </Text>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32, ...Typography.default() }}>
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32, ...Typography.default() }}>
                     {t('errors.sessionDeletedDescription')}
                 </Text>
             </View>
@@ -173,7 +173,7 @@ export default function SessionLogScreen() {
                     <Item
                         title={t('sessionLog.readErrorTitle')}
                         subtitle={error}
-                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.warningCritical} />}
+                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
                         showChevron={false}
                     />
                 </ItemGroup>

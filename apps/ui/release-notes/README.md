@@ -22,7 +22,11 @@ Distinct from `CHANGELOG.md`, which remains the long-form history view.
    Release workflows upload those files to
    `happier-dev/happier-assets@release-notes`; bundled image/poster assets are
    not uploaded and are not included in the remote asset index.
-6. Run `npx tsx sources/scripts/parseReleaseNotes.ts` to validate and regenerate
+6. Optionally provide `media.mobile` or `media.desktop` overrides when a card
+   needs different artwork or video per surface. Base media remains the fallback;
+   tablet and desktop widths use the `desktop` override, phone-width sheets use
+   `mobile`.
+7. Run `npx tsx sources/scripts/parseReleaseNotes.ts` to validate and regenerate
    `sources/changelog/releaseNotes/manifest.generated.json`.
 
 ## Card kinds
@@ -37,6 +41,31 @@ Distinct from `CHANGELOG.md`, which remains the long-form history view.
   remote; prefer `localPosterAssetKey` for the poster. Unsupported playback,
   reduced-motion/data-friendly modes, or media failures fall back to the poster
   instead of blocking the story.
+
+## Surface-specific media
+
+Image and video card `media` can include optional `mobile` and `desktop`
+overrides. Use this when a phone crop and a wide modal/tablet crop should be
+different:
+
+```json
+{
+  "kind": "image",
+  "titleKey": "releaseNotes.v0_2_7.cards.hero.title",
+  "bodyKey": "releaseNotes.v0_2_7.cards.hero.body",
+  "media": {
+    "localAssetKey": "v0_2_7.hero",
+    "altKey": "releaseNotes.v0_2_7.cards.hero.alt",
+    "desktop": {
+      "localAssetKey": "v0_2_7.heroWide"
+    }
+  }
+}
+```
+
+Overrides replace only the source group they provide. For example, a video
+`desktop.key` keeps the base poster unless `desktop.posterKey`,
+`desktop.posterUrl`, or `desktop.localPosterAssetKey` is also provided.
 
 ## Local preview
 

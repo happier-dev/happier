@@ -67,7 +67,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 6,
     },
     todoItem: {
@@ -75,22 +75,22 @@ const styles = StyleSheet.create((theme) => ({
     },
     todoText: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         flex: 1,
     },
     completedText: {
-        color: theme.colors.success,
+        color: theme.colors.state.success.foreground,
         textDecorationLine: 'line-through',
     },
     inProgressText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     pendingText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     more: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
 }));

@@ -324,7 +324,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     titleText: {
         ...Typography.default('regular'),
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 13, default: 14 }),
         lineHeight: Platform.select({ ios: 18, default: 20 }),
         letterSpacing: Platform.select({ ios: -0.08, default: 0.1 }),
@@ -336,7 +336,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         // and provides its own consistent horizontal margins.
     },
     addContainer: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         marginHorizontal: Platform.select({ ios: 16, default: 12 }),
         borderRadius: Platform.select({ ios: 10, default: 16 }),
         overflow: 'hidden',
@@ -345,7 +345,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         marginBottom: 8,
     },
     addInputRow: {

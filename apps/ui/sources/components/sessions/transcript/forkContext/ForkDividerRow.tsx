@@ -43,7 +43,7 @@ export function ForkDividerRow(props: Readonly<{
           hitSlop={12}
           style={({ pressed }) => [styles.openButton, pressed ? { opacity: 0.65 } : null]}
         >
-          <Text style={[styles.openButtonText, { color: theme.colors.textLink }]}>{t('session.forking.openParent')}</Text>
+          <Text style={[styles.openButtonText, { color: theme.colors.text.link }]}>{t('session.forking.openParent')}</Text>
         </Pressable>
       )}
     />
@@ -56,7 +56,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: 6,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: theme.colors.divider,
+    borderColor: theme.colors.border.default,
   },
   openButtonText: {
     fontSize: 12,

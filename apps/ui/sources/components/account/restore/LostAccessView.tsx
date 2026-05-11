@@ -30,13 +30,13 @@ export type LostAccessViewProps = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     loading: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     container: {
         flex: 1,
@@ -50,15 +50,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     noticeCard: {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 14,
         paddingHorizontal: 16,
         paddingVertical: 14,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     noticeBody: {
         fontSize: 15,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         lineHeight: 21,
         ...Typography.default(),
     },

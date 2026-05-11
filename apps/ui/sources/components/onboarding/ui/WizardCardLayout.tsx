@@ -40,7 +40,7 @@ const stylesheet = StyleSheet.create((theme, _runtime) => ({
     },
     rootFullscreen: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         width: '100%',
         alignSelf: 'stretch',
     },
@@ -51,7 +51,7 @@ const stylesheet = StyleSheet.create((theme, _runtime) => ({
     },
     rootOuterScrollFullscreen: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         minHeight: '100%',
         width: '100%',
         alignSelf: 'stretch',
@@ -104,12 +104,12 @@ const stylesheet = StyleSheet.create((theme, _runtime) => ({
     },
     card: {
         borderRadius: theme.borderRadius.modalCard,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
     cardFullscreen: {
         borderRadius: 0,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     cardFullscreenOuterScroll: {
         flex: 1,

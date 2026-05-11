@@ -69,11 +69,8 @@ vi.mock('@/components/tools/renderers/core/_registry', () => ({
 }));
 
 vi.mock('@/components/tools/shell/presentation/ToolSectionView', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/components/tools/shell/presentation/ToolSectionView')>();
-    return {
-        ...actual,
-        ToolSectionView: ({ children }: any) => React.createElement('ToolSectionView', null, children),
-    };
+    const { installToolSectionViewModuleMock } = await import('@/dev/testkit/mocks/toolSectionView');
+    return installToolSectionViewModuleMock('host')(importOriginal);
 });
 
 vi.mock('@/components/ui/media/CodeView', () => ({

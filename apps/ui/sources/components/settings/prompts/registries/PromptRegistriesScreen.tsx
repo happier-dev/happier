@@ -40,7 +40,7 @@ import { buildPromptRegistryItemDetailsHref } from './promptRegistryItemDetailsH
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.groupped.background,
+    backgroundColor: theme.colors.background.canvas,
   },
   content: {
     paddingVertical: 12,
@@ -62,7 +62,7 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: 12,
   },
   fieldLabel: {
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     fontSize: 14,
     marginHorizontal: 12,
     marginBottom: 8,
@@ -141,9 +141,9 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
       id: machine.id,
       title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
       subtitle: machine.id,
-      icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.textSecondary} />,
+      icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
     }));
-  }, [machines, theme.colors.textSecondary]);
+  }, [machines, theme.colors.text.secondary]);
 
   const persistConfiguredSources = React.useCallback((nextSources: PromptRegistryConfiguredSourceV1[]) => {
     setConfiguredSources(nextSources);
@@ -370,7 +370,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                 title={source.title}
                 subtitle={source.subtitle || source.id}
                 selected={source.id === selectedSourceId}
-                icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.text.secondary} />}
                 onPress={() => void scanSource(source.id)}
                 rightElement={source.origin === 'user' ? (
                   <ItemRowActions
@@ -393,7 +393,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                 testID="promptRegistries.sources.empty"
                 title={t('promptLibrary.registriesNoSources')}
                 subtitle={t('promptLibrary.registriesNoSourcesSubtitle')}
-                icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="albums-outline" size={29} color={theme.colors.text.secondary} />}
                 showChevron={false}
               />
             )}
@@ -488,7 +488,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
                 testID="promptRegistries.items.empty"
                 title={t('promptLibrary.registriesNoItems')}
                 subtitle={t('promptLibrary.registriesNoItemsSubtitle')}
-                icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.text.secondary} />}
                 showChevron={false}
               />
             )}

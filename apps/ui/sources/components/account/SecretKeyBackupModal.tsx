@@ -27,17 +27,17 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     description: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 20,
         ...Typography.default(),
     },
     keyContainer: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: 12,
         paddingHorizontal: 14,
         paddingVertical: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         marginBottom: 12,
     },
     keyLabelRow: {
@@ -48,7 +48,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     keyLabel: {
         fontSize: 11,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         letterSpacing: 0.5,
         textTransform: 'uppercase',
         ...Typography.default('semiBold'),
@@ -57,7 +57,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 13,
         letterSpacing: 0.5,
         lineHeight: 20,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.mono(),
     },
     row: {
@@ -68,7 +68,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     link: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
 }));
@@ -123,7 +123,7 @@ export function SecretKeyBackupModal(props: Props) {
                     <Ionicons
                         name={revealed ? 'eye-off-outline' : 'eye-outline'}
                         size={18}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                     />
                 </View>
                 <Text style={styles.keyText}>{revealed ? formattedSecret : maskedSecret}</Text>

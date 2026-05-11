@@ -31,7 +31,7 @@ function HeaderTitleTablet() {
     return (
         <Text style={{
             fontSize: 17,
-            color: theme.colors.header.tint,
+            color: theme.colors.chrome.header.foreground,
             fontWeight: '600',
             ...Typography.default('semiBold'),
         }}>
@@ -48,7 +48,7 @@ function HeaderTitle() {
         <View style={{ flex: 1, alignItems: 'center' }}>
             <Text style={{
                 fontSize: 17,
-                color: theme.colors.header.tint,
+                color: theme.colors.chrome.header.foreground,
                 fontWeight: '600',
                 ...Typography.default('semiBold'),
             }}>
@@ -94,7 +94,7 @@ function HeaderLeft() {
                 source={require('@/assets/images/logo-black.png')}
                 contentFit="contain"
                 style={[{ width: 24, height: 24 }]}
-                tintColor={theme.colors.header.tint}
+                tintColor={theme.colors.chrome.header.foreground}
             />
         </View>
     );
@@ -114,7 +114,7 @@ function HeaderRight() {
                 justifyContent: 'center',
             }}
         >
-            <Ionicons name="add-outline" size={28} color={theme.colors.header.tint} />
+            <Ionicons name="add-outline" size={28} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 }   

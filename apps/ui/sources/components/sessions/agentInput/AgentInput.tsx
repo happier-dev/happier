@@ -3,6 +3,7 @@ import * as React from 'react';
 import { View, Platform, useWindowDimensions, ViewStyle, ActivityIndicator, Pressable, ScrollView } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
 import { MultiTextInput, KeyPressEvent, type MultiTextInputSubmitBehavior } from '@/components/ui/forms/MultiTextInput';
+import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from '@/components/ui/forms/multiTextInputTypography';
 import { Typography } from '@/constants/Typography';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { getModelOptionsForSession, supportsFreeformModelSelectionForSession, type ModelOption } from '@/sync/domains/models/modelOptions';
@@ -285,7 +286,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     overlaySectionTitle: {
         fontSize: 12,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         paddingHorizontal: 16,
         paddingBottom: 4,
         ...Typography.default('semiBold'),
@@ -297,11 +298,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         backgroundColor: 'transparent',
     },
     overlayInlineRefreshButtonPressed: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     overlayInlineRefreshButtonDisabled: {
         opacity: 0.6,
@@ -321,7 +322,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         backgroundColor: 'transparent',
     },
     selectionItemPressed: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     radioButton: {
         width: 16,
@@ -352,7 +353,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         color: theme.colors.radio.active,
     },
     selectionLabelInactive: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 
     // Status styles
@@ -500,7 +501,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('semiBold'),
     },
     actionChipCountText: {
-        color: theme.colors.textTertiary,
+        color: theme.colors.text.tertiary,
     },
     overlayOptionRow: {
         flexDirection: 'row',
@@ -509,7 +510,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingVertical: 8,
     },
     overlayOptionRowPressed: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     overlayRadioOuter: {
         width: 16,
@@ -534,23 +535,23 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     overlayOptionLabel: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default(),
     },
     overlayOptionLabelSelected: {
         color: theme.colors.radio.active,
     },
     overlayOptionLabelUnselected: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     overlayOptionDescription: {
         fontSize: 11,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     overlayEmptyText: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         paddingHorizontal: 16,
         paddingVertical: 8,
         ...Typography.default(),
@@ -583,7 +584,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
         backgroundColor: theme.colors.overlay.scrim,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: Platform.select({ default: 16, android: 20 }),
     },
     fileDropOverlayContent: {
@@ -593,20 +594,20 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: 14,
         paddingVertical: 10,
         borderRadius: 999,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     fileDropOverlayText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         ...Typography.default('semiBold'),
     },
     sessionInputText: {
-        fontSize: 14,
+        fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE,
     },
     newSessionInputText: {
-        fontSize: 16,
+        fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE,
     },
 }));
 
@@ -1879,7 +1880,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                         effectivePermissionPolicy.effectiveMode === 'read-only' ? theme.colors.permission.readOnly :
                                                             effectivePermissionPolicy.effectiveMode === 'safe-yolo' ? theme.colors.permission.safeYolo :
                                                                 effectivePermissionPolicy.effectiveMode === 'yolo' ? theme.colors.permission.yolo :
-                                                                    theme.colors.textSecondary, // Use secondary text color for default
+                                                                    theme.colors.text.secondary, // Use secondary text color for default
                                         },
                                     ]}
                                 >
@@ -1917,7 +1918,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             ]}
                         >
                             <View style={styles.fileDropOverlayContent}>
-                                {renderIoniconNode('attach-outline', 18, theme.colors.text)}
+                                {renderIoniconNode('attach-outline', 18, theme.colors.text.primary)}
                                 <Text style={styles.fileDropOverlayText}>{t('agentInput.dropToAttach')}</Text>
                             </View>
                         </View>

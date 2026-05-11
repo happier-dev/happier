@@ -63,7 +63,7 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
     if (props.surface === 'browse') {
         return (
             <View testID="project-files-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-                <React.Suspense fallback={<ProjectCockpitLoadingFallback color={theme.colors.textSecondary} />}>
+                <React.Suspense fallback={<ProjectCockpitLoadingFallback color={theme.colors.text.secondary} />}>
                     <ProjectBrowseFilesSurface
                         workspaceCacheKey={workspaceCacheKey}
                         serverId={props.workspaceRef.serverId}
@@ -80,7 +80,7 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
     if (props.surface === 'git') {
         return (
             <View testID="project-git-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-                <React.Suspense fallback={<ProjectCockpitLoadingFallback color={theme.colors.textSecondary} />}>
+                <React.Suspense fallback={<ProjectCockpitLoadingFallback color={theme.colors.text.secondary} />}>
                     <ProjectGitSurface
                         serverId={props.workspaceRef.serverId}
                         machineId={props.workspaceRef.machineId}
@@ -102,7 +102,7 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
     if (props.surface === 'terminal') {
         return (
             <View testID="project-terminal-screen" style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-                <React.Suspense fallback={<ProjectCockpitLoadingFallback color={theme.colors.textSecondary} />}>
+                <React.Suspense fallback={<ProjectCockpitLoadingFallback color={theme.colors.text.secondary} />}>
                     <ProjectTerminalSurface
                         scopeId={props.scopeId}
                         workspaceRefId={props.workspaceRef.id}

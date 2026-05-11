@@ -62,7 +62,7 @@ export const McpInputMappingEditor = React.memo(function McpInputMappingEditor(p
                                         <Ionicons
                                             name="checkmark-circle"
                                             size={22}
-                                            color={theme.colors.text}
+                                            color={theme.colors.text.primary}
                                             style={{ opacity: selected ? 1 : 0 }}
                                         />
                                     )}
@@ -140,13 +140,13 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 13,
         lineHeight: 16,
         fontWeight: '600',
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
     },
     textInput: {
         borderRadius: 12,
         backgroundColor: theme.colors.input.background,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         color: theme.colors.input.text,
         paddingHorizontal: 12,
         paddingVertical: 10,

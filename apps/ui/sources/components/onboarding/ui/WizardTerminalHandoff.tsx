@@ -35,14 +35,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sectionTitle: {
         textAlign: 'center',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 16,
         marginTop: 10,
         ...Typography.default('semiBold'),
     },
     sectionSubtitle: {
         textAlign: 'center',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         marginBottom: 10,
         maxWidth: HANDOFF_TEXT_MAX_WIDTH,
@@ -61,16 +61,16 @@ const stylesheet = StyleSheet.create((theme) => ({
     platformDivider: {
         width: 1,
         height: 16,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
         opacity: 0.8,
     },
     platformLabel: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         lineHeight: 16,
     },
     platformLabelSelected: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
 }));

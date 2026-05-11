@@ -38,8 +38,8 @@ export const McpServerBadgePills = React.memo(function McpServerBadgePills(props
                             styles.badgeText,
                             props.size === 'compact' ? styles.badgeTextCompact : null,
                             badge.tone === 'accent' ? { color: theme.colors.accent.blue } : null,
-                            badge.tone === 'success' ? { color: theme.colors.success } : null,
-                            badge.tone === 'warning' ? { color: theme.colors.accent.purple ?? theme.colors.textSecondary } : null,
+                            badge.tone === 'success' ? { color: theme.colors.state.success.foreground } : null,
+                            badge.tone === 'warning' ? { color: theme.colors.accent.purple ?? theme.colors.text.secondary } : null,
                         ]}
                     >
                         {badge.label}
@@ -72,27 +72,27 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 8,
         paddingVertical: 3,
         borderRadius: 999,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     badgeCompact: {
         paddingHorizontal: 6,
         paddingVertical: 1,
     },
     badgeAccent: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     badgeSuccess: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     badgeWarning: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     badgeText: {
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     badgeTextCompact: {
         fontSize: 11,

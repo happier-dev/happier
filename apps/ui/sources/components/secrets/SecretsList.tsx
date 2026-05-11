@@ -160,7 +160,7 @@ export function SecretsList(props: SecretsListProps) {
                     <Item
                         title={t('secrets.noneTitle')}
                         subtitle={props.noneSubtitle ?? t('secrets.noneSubtitle')}
-                        icon={<Ionicons name="close-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="close-circle-outline" size={29} color={theme.colors.text.secondary} />}
                         onPress={() => props.onSelectId?.('')}
                         showChevron={false}
                         selected={props.selectedId === ''}
@@ -172,7 +172,7 @@ export function SecretsList(props: SecretsListProps) {
                     <Item
                         title={t('secrets.emptyTitle')}
                         subtitle={t('secrets.emptySubtitle')}
-                        icon={<Ionicons name="key-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="key-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                     />
                 ) : (
@@ -201,7 +201,7 @@ export function SecretsList(props: SecretsListProps) {
                                                         id: 'default',
                                                         title: isDefault ? t('secrets.actions.unsetDefault') : t('secrets.actions.setDefault'),
                                                         icon: isDefault ? 'star' : 'star-outline',
-                                                        color: isDefault ? theme.colors.button.primary.background : theme.colors.textSecondary,
+                                                        color: isDefault ? theme.colors.button.primary.background : theme.colors.text.secondary,
                                                         onPress: () => props.onSetDefaultId?.(isDefault ? null : secret.id),
                                                     },
                                                 ]}
@@ -225,7 +225,7 @@ export function SecretsList(props: SecretsListProps) {
                                                 <Ionicons
                                                     name="checkmark-circle"
                                                     size={24}
-                                                    color={theme.colors.text}
+                                                    color={theme.colors.text.primary}
                                                     style={{ opacity: isSelected ? 1 : 0 }}
                                                 />
                                             </View>
@@ -299,7 +299,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         marginBottom: 8,
     },
     textInput: {

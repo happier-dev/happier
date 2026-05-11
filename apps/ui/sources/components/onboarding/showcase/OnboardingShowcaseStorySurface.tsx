@@ -17,6 +17,7 @@ export function OnboardingShowcaseStorySurface(props: OnboardingShowcaseStorySur
                 cards={props.manifest.cards}
                 onComplete={props.onComplete}
                 onDismiss={props.onDismiss}
+                slideAnimation="softBlur"
                 testID="onboarding-showcase"
             />
         </StorySheetFrame>

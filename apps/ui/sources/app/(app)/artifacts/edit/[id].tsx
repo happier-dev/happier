@@ -14,7 +14,7 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     scrollView: {
         flex: 1,
@@ -36,7 +36,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     errorText: {
         fontSize: 16,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         textAlign: 'center',
     },
     inputGroup: {
@@ -45,20 +45,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     label: {
         fontSize: 13,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 8,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
     },
     input: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: 12,
         paddingHorizontal: 16,
         paddingVertical: 14,
         fontSize: 16,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     } as any,
     inputFocused: {
         borderColor: theme.colors.button.primary.background,
@@ -76,7 +76,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     headerButtonText: {
         fontSize: 17,
         fontWeight: '600',
-        color: theme.colors.header.tint,
+        color: theme.colors.chrome.header.foreground,
     },
     headerButtonDisabled: {
         opacity: 0.5,
@@ -184,7 +184,7 @@ export default function EditArtifactScreen() {
             disabled={!hasChanges || isSaving}
         >
             {isSaving ? (
-                <ActivityIndicator size="small" color={theme.colors.header.tint} />
+                <ActivityIndicator size="small" color={theme.colors.chrome.header.foreground} />
             ) : (
                 <Text style={styles.headerButtonText}>
                     {t('common.save')}

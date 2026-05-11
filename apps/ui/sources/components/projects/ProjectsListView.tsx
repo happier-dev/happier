@@ -223,7 +223,7 @@ export const ProjectsListView = React.memo(() => {
                         <Ionicons
                             name="folder-open-outline"
                             size={48}
-                            color={theme.colors.textSecondary}
+                            color={theme.colors.text.secondary}
                             style={{ marginBottom: 12 }}
                         />
                     )}
@@ -241,7 +241,7 @@ export const ProjectsListView = React.memo(() => {
                             title={resolveWorkspaceRefDisplayName(workspaceRef)}
                             subtitle={workspaceRef.rootPath}
                             subtitleLines={1}
-                            icon={<Ionicons name="folder-outline" size={22} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="folder-outline" size={22} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <ProjectsListItemMenu
                                     theme={theme}
@@ -272,7 +272,7 @@ export const ProjectsListView = React.memo(() => {
                                     testID: `projects-add-machine:${group.machineId}`,
                                     accessibilityLabel: t('projects.actions.addProjectToMachine'),
                                     iconName: 'add-outline',
-                                    iconColor: theme.colors.groupped.sectionTitle,
+                                    iconColor: theme.colors.text.secondary,
                                     disabled: false,
                                     onPress: () => { void handleAddProjectToMachine(group.machineId); },
                                 }}
@@ -286,7 +286,7 @@ export const ProjectsListView = React.memo(() => {
                                 title={resolveWorkspaceRefDisplayName(workspaceRef)}
                                 subtitle={workspaceRef.rootPath}
                                 subtitleLines={1}
-                                icon={<Ionicons name="folder-outline" size={22} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name="folder-outline" size={22} color={theme.colors.text.secondary} />}
                                 rightElement={(
                                     <ProjectsListItemMenu
                                         theme={theme}
@@ -315,7 +315,7 @@ export const ProjectsListView = React.memo(() => {
                                 machine: getMachineDisplayName(machine) ?? machine.metadata?.host ?? machine.id,
                             })}
                             subtitle={t('projects.actions.chooseProjectFolderSubtitle')}
-                            icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="desktop-outline" size={22} color={theme.colors.text.secondary} />}
                             onPress={() => { void handleAddProjectToMachine(machine.id); }}
                         />
                     ))}

@@ -16,11 +16,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         fontSize: 18,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     body: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
 }));
@@ -31,7 +31,7 @@ export function AutomationsEmptyState(props: Readonly<{ title: string; body: str
 
     return (
         <View style={styles.container}>
-            <Ionicons name="timer-outline" size={56} color={theme.colors.textSecondary} />
+            <Ionicons name="timer-outline" size={56} color={theme.colors.text.secondary} />
             <Text style={styles.title}>{props.title}</Text>
             <Text style={styles.body}>{props.body}</Text>
         </View>

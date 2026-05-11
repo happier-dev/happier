@@ -32,11 +32,11 @@ export function DesktopActivityOverlayCardFrame(props: Readonly<{
             <View style={styles.header}>
                 <View style={styles.titleWrap}>
                     {props.eyebrow ? (
-                        <Text style={[styles.eyebrow, { color: theme.colors.overlay.textSecondary }]}>
+                        <Text style={[styles.eyebrow, { color: theme.colors.overlay.secondaryForeground }]}>
                             {props.eyebrow}
                         </Text>
                     ) : null}
-                    <Text style={[styles.title, { color: theme.colors.overlay.text }]}>
+                    <Text style={[styles.title, { color: theme.colors.overlay.foreground }]}>
                         {props.title}
                     </Text>
                 </View>
@@ -50,14 +50,14 @@ export function DesktopActivityOverlayCardFrame(props: Readonly<{
                             }),
                         ]}
                     >
-                        <Text style={[styles.badgeText, { color: theme.colors.overlay.text }]}>
+                        <Text style={[styles.badgeText, { color: theme.colors.overlay.foreground }]}>
                             {props.badgeText}
                         </Text>
                     </View>
                 ) : null}
             </View>
             {props.body ? (
-                <Text style={[styles.body, { color: theme.colors.overlay.textSecondary }]}>
+                <Text style={[styles.body, { color: theme.colors.overlay.secondaryForeground }]}>
                     {props.body}
                 </Text>
             ) : null}

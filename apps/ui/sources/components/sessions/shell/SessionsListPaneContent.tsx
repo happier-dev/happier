@@ -24,7 +24,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         flexBasis: 0,
         flexGrow: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     loadingContainer: {
         flex: 1,
@@ -37,7 +37,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexBasis: 0,
         flexGrow: 1,
         flexDirection: 'column',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     emptyStateContentContainer: {
         flex: 1,
@@ -56,7 +56,7 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
         return (
             <View style={styles.loadingContainerWrapper}>
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                 </View>
             </View>
         );

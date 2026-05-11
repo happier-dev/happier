@@ -27,7 +27,7 @@ import { buildPromptAssetExportHref } from '@/components/settings/prompts/shared
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     content: {
         paddingVertical: 12,
@@ -82,9 +82,9 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
             id: machine.id,
             title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
             subtitle: machine.id,
-            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
         }));
-    }, [machines, theme.colors.textSecondary]);
+    }, [machines, theme.colors.text.secondary]);
 
     const scopeItems = React.useMemo((): DropdownMenuItem[] => ([
         {
@@ -344,7 +344,7 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
                                                     testID={`promptAssets.item.${scope}.${entry.id}.${index}`}
                                                     title={item.title}
                                                     subtitle={subtitle}
-                                                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.textSecondary} />}
+                                                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.text.secondary} />}
                                                     onPress={() => {
                                                         if (linkedArtifact) {
                                                             router.push(item.libraryKind === 'bundle'
@@ -406,7 +406,7 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
                                         testID={`promptAssets.empty.${scope}.${entry.id}`}
                                         title={t('promptLibrary.externalAssetsNoItems')}
                                         subtitle={t('promptLibrary.externalAssetsNoItemsSubtitle')}
-                                        icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.textSecondary} />}
+                                        icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.text.secondary} />}
                                         showChevron={false}
                                     />
                                 )}

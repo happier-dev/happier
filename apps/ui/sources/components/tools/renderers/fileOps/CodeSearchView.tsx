@@ -66,7 +66,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 10,
     },
     row: {
@@ -74,17 +74,17 @@ const styles = StyleSheet.create((theme) => ({
     },
     label: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
     text: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontFamily: 'Menlo',
     },
     more: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
 }));

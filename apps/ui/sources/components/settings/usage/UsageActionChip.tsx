@@ -20,7 +20,7 @@ const styles = StyleSheet.create((theme) => ({
     chip: {
         minHeight: 34,
         borderRadius: 999,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 14,
         paddingVertical: 7,
         flexDirection: 'row',
@@ -32,7 +32,7 @@ const styles = StyleSheet.create((theme) => ({
     chipText: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         letterSpacing: -0.04,
     },
 }));
@@ -49,7 +49,7 @@ export const UsageActionChip = React.memo(function UsageActionChip(props: UsageA
             onPress={onPress}
         >
             {iconName ? (
-                <Ionicons name={iconName} size={14} color={theme.colors.textSecondary} />
+                <Ionicons name={iconName} size={14} color={theme.colors.text.secondary} />
             ) : null}
             <View>
                 <Text style={styles.chipText}>{label}</Text>

@@ -134,7 +134,7 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
         <ToolSectionView>
             <View style={styles.container}>
                 {typeof streams?.exitCode === 'number' && (
-                    <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
+                    <Text style={[styles.meta, { color: theme.colors.text.secondary }]}>
                         {t('tools.structuredResult.exit')} {streams.exitCode}
                     </Text>
                 )}
@@ -188,7 +188,7 @@ export const StructuredResultView = React.memo<ToolViewProps>(({ tool }) => {
                             </Text>
                         ))}
                         {paths.length > 8 && (
-                            <Text style={[styles.meta, { color: theme.colors.textSecondary }]}>
+                            <Text style={[styles.meta, { color: theme.colors.text.secondary }]}>
                                 {t('tools.structuredResult.more', { count: paths.length - 8 })}
                             </Text>
                         )}
@@ -203,7 +203,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 10,
     },
     block: {
@@ -211,12 +211,12 @@ const styles = StyleSheet.create((theme) => ({
     },
     label: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
     path: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontFamily: 'Menlo',
     },
     meta: {

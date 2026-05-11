@@ -24,7 +24,7 @@ export function DesktopActivityOverlayLeadingIndicator(props: Readonly<{
                     isCollapsed
                         ? (isNotchIntegrated ? styles.barCollapsedNotch : styles.barCollapsedFloating)
                         : (isNotchIntegrated ? styles.barNotch : styles.barFloating),
-                    { backgroundColor: theme.colors.overlay.textSecondary },
+                    { backgroundColor: theme.colors.overlay.secondaryForeground },
                 ]}
             />
             <View

@@ -55,7 +55,7 @@ export const DiffPresentationStyleToggleButton = React.memo<DiffPresentationStyl
                 <Ionicons
                     name={effectiveStyle === 'unified' ? 'swap-vertical-outline' : 'grid-outline'}
                     size={iconSize}
-                    color={theme.colors.textSecondary}
+                    color={theme.colors.text.secondary}
                 />
             </View>
         </Pressable>
@@ -67,12 +67,12 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         paddingVertical: 6,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     rootHovered: {
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.inset,
     },
     rootPressed: {
         opacity: 0.9,

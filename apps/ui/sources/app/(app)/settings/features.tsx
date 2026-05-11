@@ -54,7 +54,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                 return theme.colors.accent.blue;
             case '#34C759':
             case '#32D74B':
-                return theme.colors.success;
+                return theme.colors.state.success.foreground;
             case '#FF9500':
             case '#FF9F0A':
                 return theme.colors.accent.orange;
@@ -66,7 +66,7 @@ export default React.memo(function FeaturesSettingsScreen() {
                 return theme.colors.accent.indigo;
             case '#FF3B30':
             case '#FF453A':
-                return theme.colors.warningCritical;
+                return theme.colors.state.danger.foreground;
             case '#FFCC00':
             case '#FFD60A':
                 return theme.colors.accent.yellow;
@@ -79,8 +79,8 @@ export default React.memo(function FeaturesSettingsScreen() {
         theme.colors.accent.orange,
         theme.colors.accent.purple,
         theme.colors.accent.yellow,
-        theme.colors.success,
-        theme.colors.warningCritical,
+        theme.colors.state.success.foreground,
+        theme.colors.state.danger.foreground,
     ]);
 
     const shouldProbeServerForToggleVisibility = React.useMemo(() => {
@@ -426,9 +426,9 @@ export default React.memo(function FeaturesSettingsScreen() {
                                 itemProps: { testID: 'settings-embedded-terminal-dock-location' },
                             }}
                             items={[
-                                { id: 'sidebar', title: t('terminalEmbedded.location.sidebar'), icon: <Ionicons name="albums-outline" size={18} color={theme.colors.textSecondary} /> },
-                                { id: 'details', title: t('terminalEmbedded.location.details'), icon: <Ionicons name="information-circle-outline" size={18} color={theme.colors.textSecondary} /> },
-                                { id: 'bottom', title: t('terminalEmbedded.location.bottom'), icon: <Ionicons name="reorder-four-outline" size={18} color={theme.colors.textSecondary} /> },
+                                { id: 'sidebar', title: t('terminalEmbedded.location.sidebar'), icon: <Ionicons name="albums-outline" size={18} color={theme.colors.text.secondary} /> },
+                                { id: 'details', title: t('terminalEmbedded.location.details'), icon: <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.secondary} /> },
+                                { id: 'bottom', title: t('terminalEmbedded.location.bottom'), icon: <Ionicons name="reorder-four-outline" size={18} color={theme.colors.text.secondary} /> },
                             ]}
                             onSelect={(id) => {
                                 if (id === 'sidebar' || id === 'details' || id === 'bottom') {

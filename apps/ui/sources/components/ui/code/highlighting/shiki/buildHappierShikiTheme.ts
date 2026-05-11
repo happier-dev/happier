@@ -16,8 +16,11 @@ export function buildHappierShikiTheme(params: Readonly<{
     colors: HappierThemeColorsLike;
 }>): ThemeRegistration {
     const colors: any = params.colors as any;
-    const bg = toHex6(colors?.surfaceHigh ?? colors?.surface, params.type === 'dark' ? '#000000' : '#ffffff');
-    const fg = toHex6(colors?.syntaxDefault ?? colors?.text, params.type === 'dark' ? '#ffffff' : '#000000');
+    const surface = colors?.surface as { base?: unknown; inset?: unknown } | undefined;
+    const text = colors?.text as { primary?: unknown; secondary?: unknown } | undefined;
+    const syntax = colors?.syntax as Record<string, unknown> | undefined;
+    const bg = toHex6(surface?.inset ?? surface?.base, params.type === 'dark' ? '#000000' : '#ffffff');
+    const fg = toHex6(syntax?.default ?? text?.primary, params.type === 'dark' ? '#ffffff' : '#000000');
 
     return {
         name: params.id,
@@ -29,27 +32,27 @@ export function buildHappierShikiTheme(params: Readonly<{
         tokenColors: [
             {
                 scope: ['comment', 'punctuation.definition.comment'],
-                settings: { foreground: toHex6(colors?.syntaxComment ?? colors?.textSecondary, fg) },
+                settings: { foreground: toHex6(syntax?.comment ?? text?.secondary, fg) },
             },
             {
                 scope: ['string', 'punctuation.definition.string', 'string.quoted', 'constant.other.symbol'],
-                settings: { foreground: toHex6(colors?.syntaxString, fg) },
+                settings: { foreground: toHex6(syntax?.string, fg) },
             },
             {
                 scope: ['constant.numeric', 'constant.language.boolean'],
-                settings: { foreground: toHex6(colors?.syntaxNumber, fg) },
+                settings: { foreground: toHex6(syntax?.number, fg) },
             },
             {
                 scope: ['keyword', 'storage', 'storage.type'],
-                settings: { foreground: toHex6(colors?.syntaxKeyword, fg) },
+                settings: { foreground: toHex6(syntax?.keyword, fg) },
             },
             {
                 scope: ['entity.name.function', 'support.function', 'variable.function'],
-                settings: { foreground: toHex6(colors?.syntaxFunction, fg) },
+                settings: { foreground: toHex6(syntax?.function, fg) },
             },
             {
                 scope: ['entity.name.type', 'support.type', 'support.class', 'storage.type.class', 'storage.type.interface'],
-                settings: { foreground: toHex6(colors?.syntaxFunction ?? colors?.syntaxKeyword, fg) },
+                settings: { foreground: toHex6(syntax?.function ?? syntax?.keyword, fg) },
             },
         ],
     };

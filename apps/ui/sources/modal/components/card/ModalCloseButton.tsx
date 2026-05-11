@@ -36,7 +36,7 @@ export function ModalCloseButton(props: ModalCloseButtonProps) {
                 { opacity: pressed ? 0.7 : 1 },
             ]}
         >
-            <Ionicons name="close" size={size} color={theme.colors.textSecondary} />
+            <Ionicons name="close" size={size} color={theme.colors.text.secondary} />
         </Pressable>
     );
 }

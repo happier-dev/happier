@@ -77,7 +77,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
         <View testID={testId('root')} style={styles.container}>
             <View style={styles.toolbar}>
                 <View style={styles.toolbarLeft}>
-                    <Ionicons name="terminal-outline" size={18} color={theme.colors.textSecondary} />
+                    <Ionicons name="terminal-outline" size={18} color={theme.colors.text.secondary} />
                     <Text style={styles.toolbarTitle} numberOfLines={1}>
                         {props.title}
                     </Text>
@@ -127,7 +127,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                             accessibilityLabel={t('common.copy')}
                             onPress={onCopyUrl}
                         >
-                            <Ionicons name="copy-outline" size={18} color={theme.colors.text} />
+                            <Ionicons name="copy-outline" size={18} color={theme.colors.text.primary} />
                         </PrimaryCircleIconButton>
                         <PrimaryCircleIconButton
                             active={false}
@@ -135,7 +135,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                             accessibilityLabel={t('common.open')}
                             onPress={onOpenUrl}
                         >
-                            <Ionicons name="open-outline" size={18} color={theme.colors.text} />
+                            <Ionicons name="open-outline" size={18} color={theme.colors.text.primary} />
                         </PrimaryCircleIconButton>
                         <PrimaryCircleIconButton
                             active={false}
@@ -143,7 +143,7 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
                             accessibilityLabel={t('common.close')}
                             onPress={props.controller.dismissDetectedUrl}
                         >
-                            <Ionicons name="close-outline" size={18} color={theme.colors.text} />
+                            <Ionicons name="close-outline" size={18} color={theme.colors.text.primary} />
                         </PrimaryCircleIconButton>
                     </View>
                 </View>

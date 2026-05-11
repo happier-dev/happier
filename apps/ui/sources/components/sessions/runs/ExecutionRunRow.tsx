@@ -36,15 +36,15 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
             style={({ pressed }) => ({
                 padding: 12,
                 borderRadius: 12,
-                backgroundColor: theme.colors.surfaceHigh,
+                backgroundColor: theme.colors.surface.inset,
                 borderWidth: 1,
-                borderColor: theme.colors.divider,
+                borderColor: theme.colors.border.default,
                 gap: 8,
                 opacity: pressed ? 0.8 : 1,
             })}
         >
             <View style={styles.row}>
-                <Text style={[styles.title, { color: theme.colors.text }]} numberOfLines={1}>
+                <Text style={[styles.title, { color: theme.colors.text.primary }]} numberOfLines={1}>
                     {title}
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -52,7 +52,7 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
                     {props.rightAccessory ?? null}
                 </View>
             </View>
-            <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+            <Text style={[styles.subtitle, { color: theme.colors.text.secondary }]} numberOfLines={1}>
                 {subtitle}
             </Text>
         </Pressable>

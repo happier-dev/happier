@@ -42,28 +42,28 @@ export function DesktopActivityOverlaySessionRow(props: Readonly<{
                     tone="row"
                 />
                 <View style={styles.textWrap}>
-                    <Text numberOfLines={1} style={[styles.title, { color: theme.colors.overlay.text }]}>
+                    <Text numberOfLines={1} style={[styles.title, { color: theme.colors.overlay.foreground }]}>
                         {props.title}
                     </Text>
                     {props.subtitle ? (
-                        <Text numberOfLines={1} style={[styles.subtitle, { color: theme.colors.overlay.textSecondary }]}>
+                        <Text numberOfLines={1} style={[styles.subtitle, { color: theme.colors.overlay.secondaryForeground }]}>
                             {props.subtitle}
                         </Text>
                     ) : null}
                     {props.statusText ? (
-                        <Text numberOfLines={1} style={[styles.status, { color: theme.colors.overlay.textSecondary }]}>
+                        <Text numberOfLines={1} style={[styles.status, { color: theme.colors.overlay.secondaryForeground }]}>
                             {props.statusText}
                         </Text>
                     ) : null}
                     {props.previewText ? (
-                        <Text numberOfLines={1} style={[styles.previewText, { color: theme.colors.overlay.textSecondary }]}>
+                        <Text numberOfLines={1} style={[styles.previewText, { color: theme.colors.overlay.secondaryForeground }]}>
                             {props.previewText}
                         </Text>
                     ) : null}
                 </View>
             </View>
             {!props.isLast ? (
-                <View style={[styles.separator, { backgroundColor: theme.colors.overlay.text }]} />
+                <View style={[styles.separator, { backgroundColor: theme.colors.overlay.foreground }]} />
             ) : null}
         </Pressable>
     );

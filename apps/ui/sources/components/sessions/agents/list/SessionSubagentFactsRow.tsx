@@ -21,14 +21,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 4,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     actionPill: {
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surface,
+        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.base,
     },
     pillText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 11,
         fontWeight: '600',
     },

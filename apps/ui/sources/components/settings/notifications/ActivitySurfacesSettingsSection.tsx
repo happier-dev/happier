@@ -191,7 +191,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
             >
                 <Item
                     title={t('settingsNotifications.activitySurfaces.tapTargetTitle')}
-                    icon={<Ionicons name="arrow-forward-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="arrow-forward-outline" size={29} color={theme.colors.text.secondary} />}
                     disabled={!activitySurfacesEnabled}
                     showChevron={false}
                 />
@@ -203,7 +203,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                 })}
                 <Item
                     title={t('settingsNotifications.activitySurfaces.privacyTitle')}
-                    icon={<Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.text.secondary} />}
                     disabled={!activitySurfacesEnabled}
                     showChevron={false}
                 />
@@ -238,7 +238,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.strategyTitle')}
                             subtitle={t('settingsNotifications.activitySurfaces.liveActivities.strategySubtitle')}
-                            icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.text.secondary} />}
                             disabled={!activitySurfacesEnabled || !liveActivitiesEnabled}
                             showChevron={false}
                         />
@@ -251,7 +251,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.presentationTitle')}
                             subtitle={t('settingsNotifications.activitySurfaces.liveActivities.presentationSubtitle')}
-                            icon={<Ionicons name="eye-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="eye-outline" size={29} color={theme.colors.text.secondary} />}
                             disabled={!activitySurfacesEnabled || !liveActivitiesEnabled}
                             showChevron={false}
                         />
@@ -263,7 +263,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         })}
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.maxConcurrentTitle')}
-                            icon={<Ionicons name="layers-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="layers-outline" size={29} color={theme.colors.text.secondary} />}
                             disabled={!liveActivitiesConcurrencyEnabled}
                             showChevron={false}
                         />
@@ -275,7 +275,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         })}
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.previewTextTitle')}
-                            icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.liveActivitiesShowPreviewText !== false}
@@ -287,7 +287,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         />
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.actionButtonsTitle')}
-                            icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.liveActivitiesAllowActionButtons !== false}
@@ -299,7 +299,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         />
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.includeReadyTitle')}
-                            icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.liveActivitiesIncludeReady !== false}
@@ -311,7 +311,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         />
                         <Item
                             title={t('settingsNotifications.activitySurfaces.liveActivities.includeThinkingTitle')}
-                            icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.liveActivitiesIncludeThinking !== false}
@@ -349,7 +349,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         })}
                         <Item
                             title={t('settingsNotifications.activitySurfaces.widgets.previewTextTitle')}
-                            icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.widgetsShowPreviewText !== false}
@@ -361,7 +361,7 @@ export const ActivitySurfacesSettingsSection = React.memo(function ActivitySurfa
                         />
                         <Item
                             title={t('settingsNotifications.activitySurfaces.widgets.machinePathTitle')}
-                            icon={<Ionicons name="folder-open-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="folder-open-outline" size={29} color={theme.colors.text.secondary} />}
                             rightElement={(
                                 <Switch
                                     value={localSettings.widgetsShowMachinePath !== false}

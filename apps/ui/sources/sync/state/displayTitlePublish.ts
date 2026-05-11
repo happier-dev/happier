@@ -1,16 +1,41 @@
-import type { TimestampedFieldStaleBehavior } from '@happier-dev/agents';
+import type {
+    SessionStateFieldWriteValue,
+    TimestampedFieldStaleBehavior,
+} from '@happier-dev/agents';
+import { applyDisplayTitleSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { writeUiSessionStateField } from './engine';
+
+type DisplayTitleWriteValue = SessionStateFieldWriteValue<'display.title'>;
+
+type UpdateSessionMetadataWithRetry = (
+    sessionId: string,
+    updater: (metadata: Metadata) => Metadata,
+    opts?: Readonly<{ maxAttempts?: number }>,
+) => Promise<unknown>;
+
+function applyResolvedDisplayTitleMetadata(params: Readonly<{
+    title: string;
+    updatedAt?: number;
+    staleBehavior?: TimestampedFieldStaleBehavior;
+    resolveTitle?: (metadata: Metadata) => string;
+}>, metadata: Metadata): Metadata {
+    if (!params.resolveTitle) return metadata;
+    const resolvedTitle = params.resolveTitle(metadata).trim();
+    return applyDisplayTitleSessionMetadata(metadata, {
+        title: resolvedTitle || params.title,
+        ...(typeof params.updatedAt === 'number' ? { updatedAt: params.updatedAt } : {}),
+        staleBehavior: params.staleBehavior ?? 'drop',
+        ...(resolvedTitle ? {} : { preserveExistingValue: true }),
+    });
+}
 
 export async function publishDisplayTitleToMetadata(params: Readonly<{
     sessionId: string;
     title: string;
     updatedAt?: number;
-    updateSessionMetadataWithRetry: (
-        sessionId: string,
-        updater: (metadata: Metadata) => Metadata,
-    ) => Promise<unknown>;
+    updateSessionMetadataWithRetry: UpdateSessionMetadataWithRetry;
 }>): Promise<void> {
     await publishDisplayTitleMetadataMutation(params);
 }
@@ -22,41 +47,25 @@ export async function publishDisplayTitleMetadataMutation(params: Readonly<{
     staleBehavior?: TimestampedFieldStaleBehavior;
     resolveTitle?: (metadata: Metadata) => string;
     transformAfterTitle?: (metadata: Metadata) => Metadata;
-    updateSessionMetadataWithRetry: (
-        sessionId: string,
-        updater: (metadata: Metadata) => Metadata,
-    ) => Promise<unknown>;
+    updateSessionMetadataWithRetry: UpdateSessionMetadataWithRetry;
 }>): Promise<void> {
-    const metadataPreprocess = params.resolveTitle
-        ? (metadata: Metadata): Metadata => {
-            const resolvedTitle = params.resolveTitle?.(metadata).trim() ?? '';
-            if (!resolvedTitle) {
-                return metadata;
+    const value: DisplayTitleWriteValue = {
+        title: params.title,
+        ...(typeof params.updatedAt === 'number' ? { updatedAt: params.updatedAt } : {}),
+        staleBehavior: params.staleBehavior ?? 'drop',
+        ...(params.resolveTitle
+            ? {
+                preserveExistingValue: true,
             }
-            return {
-                ...metadata,
-                summary: {
-                    ...metadata.summary,
-                    text: resolvedTitle,
-                    updatedAt: typeof metadata.summary?.updatedAt === 'number'
-                        ? metadata.summary.updatedAt
-                        : Date.now(),
-                },
-            };
-        }
-        : undefined;
+            : {}),
+    };
     const result = await writeUiSessionStateField({
         sessionId: params.sessionId,
         fieldId: 'display.title',
-        value: {
-            title: params.title,
-            ...(typeof params.updatedAt === 'number' ? { updatedAt: params.updatedAt } : {}),
-            staleBehavior: params.staleBehavior ?? 'drop',
-            ...(params.resolveTitle ? { preserveExistingValue: true } : {}),
-        },
+        value,
         metadataReason: 'ui-display-title',
         updateSessionMetadataWithRetry: params.updateSessionMetadataWithRetry,
-        ...(metadataPreprocess ? { metadataPreprocess } : {}),
+        ...(params.resolveTitle ? { metadataPreprocess: (metadata: Metadata) => applyResolvedDisplayTitleMetadata(params, metadata) } : {}),
         ...(params.transformAfterTitle ? { metadataPostprocess: params.transformAfterTitle } : {}),
     });
     if (!result.ok) {

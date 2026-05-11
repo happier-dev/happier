@@ -208,7 +208,7 @@ export const RemoteHostsScreen = React.memo(function RemoteHostsScreen() {
             nativeSshTransportAllowed={nativeSshTransportAllowed}
             secretMaterialAllowed={secretMaterialAllowed}
             supportsWholeRowPress={supportsWholeRowPress}
-            themeTextSecondary={theme.colors.textSecondary}
+            themeTextSecondary={theme.colors.text.secondary}
         />
     );
 });

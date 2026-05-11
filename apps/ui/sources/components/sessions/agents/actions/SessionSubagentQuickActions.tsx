@@ -89,7 +89,7 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                     }}
                     style={({ pressed }) => [props.style.iconButton, { opacity: pressed ? 0.7 : 1 }]}
                 >
-                    <Ionicons name="paper-plane-outline" size={16} color={theme.colors.textSecondary} />
+                    <Ionicons name="paper-plane-outline" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
 
@@ -105,7 +105,7 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                     disabled={pendingAction !== null}
                     style={({ pressed }) => [props.style.iconButton, { opacity: pendingAction !== null ? 0.6 : pressed ? 0.7 : 1 }]}
                 >
-                    <Ionicons name="stop-circle-outline" size={16} color={theme.colors.textSecondary} />
+                    <Ionicons name="stop-circle-outline" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
 
@@ -121,7 +121,7 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                     disabled={pendingAction !== null}
                     style={({ pressed }) => [props.style.iconButton, { opacity: pendingAction !== null ? 0.6 : pressed ? 0.7 : 1 }]}
                 >
-                    <Ionicons name="trash-outline" size={16} color={theme.colors.textSecondary} />
+                    <Ionicons name="trash-outline" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
 
@@ -136,7 +136,7 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                     }}
                     style={({ pressed }) => [props.style.iconButton, { opacity: pressed ? 0.7 : 1 }]}
                 >
-                    <Ionicons name="open-outline" size={16} color={theme.colors.textSecondary} />
+                    <Ionicons name="open-outline" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
         </View>

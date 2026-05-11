@@ -142,7 +142,7 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
                                     onPress={() => deleteDraft(draft.id)}
                                     testID={`review-comment-draft-delete:${draft.id}`}
                                 >
-                                    <Ionicons name="trash-outline" size={16} color={theme.colors.textDestructive ?? theme.colors.textSecondary} />
+                                    <Ionicons name="trash-outline" size={16} color={theme.colors.state.danger.foreground ?? theme.colors.text.secondary} />
                                 </Pressable>
                             </View>
 
@@ -164,7 +164,7 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
                                     value={draft.body}
                                     onChangeText={(body) => updateDraft(draft.id, (current) => ({ ...current, body }))}
                                     placeholder={t('files.reviewComments.placeholder')}
-                                    placeholderTextColor={theme.colors.textSecondary}
+                                    placeholderTextColor={theme.colors.text.secondary}
                                     style={styles.commentInput}
                                     testID={`review-comment-draft-body:${draft.id}`}
                                 />
@@ -199,7 +199,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingBottom: 10,
     },
     summaryText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         ...Typography.default(),
     },
@@ -216,8 +216,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         padding: 12,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
     },
     cardHeader: {
         flexDirection: 'row',
@@ -237,20 +237,20 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: theme.colors.button.primary.background,
     },
     includeToggleOff: {
-        backgroundColor: theme.colors.surface,
-        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surface.base,
+        borderColor: theme.colors.border.default,
     },
     titleColumn: {
         flex: 1,
         minWidth: 0,
     },
     filePathText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         ...Typography.default('semiBold'),
     },
     anchorText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 11,
         ...Typography.default(),
     },
@@ -258,15 +258,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 3,
         padding: 10,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surface,
+        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.base,
     },
     snippetText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         ...Typography.mono(),
     },
     snippetSelectedText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 12,
         ...Typography.mono(),
     },
@@ -276,9 +276,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         padding: 10,
         borderRadius: 8,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        color: theme.colors.text,
-        backgroundColor: theme.colors.surfaceHighest ?? theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        color: theme.colors.text.primary,
+        backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.base,
         fontSize: 13,
         ...Typography.default(),
         ...(Platform.select({
@@ -300,7 +300,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 8,
     },
     jumpButtonText: {
-        color: theme.colors.textLink ?? theme.colors.text,
+        color: theme.colors.text.link ?? theme.colors.text.primary,
         fontSize: 12,
         ...Typography.default('semiBold'),
     },
@@ -308,7 +308,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         padding: 12,
         alignItems: 'flex-end',
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     doneButton: {
         paddingHorizontal: 14,

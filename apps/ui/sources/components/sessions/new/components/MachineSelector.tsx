@@ -138,11 +138,11 @@ export function MachineSelector({
                 <Ionicons
                     name={isFavorite ? 'star' : 'star-outline'}
                     size={22}
-                    color={isFavorite ? selectedColor : theme.colors.textSecondary}
+                    color={isFavorite ? selectedColor : theme.colors.text.secondary}
                 />
             </Pressable>
         );
-    }, [onToggleFavorite, showFavorites, theme.colors.button.primary.background, theme.colors.textSecondary]);
+    }, [onToggleFavorite, showFavorites, theme.colors.button.primary.background, theme.colors.text.secondary]);
 
     const toDropdownItem = React.useCallback((
         machine: Machine,
@@ -161,12 +161,12 @@ export function MachineSelector({
                 <Ionicons
                     name={iconName}
                     size={20}
-                    color={theme.colors.textSecondary}
+                    color={theme.colors.text.secondary}
                 />
             ),
             rightElement: renderFavoriteToggle(machine, isFavorite),
         };
-    }, [disableOfflineMachines, renderFavoriteToggle, theme.colors.textSecondary]);
+    }, [disableOfflineMachines, renderFavoriteToggle, theme.colors.text.secondary]);
 
     const dropdownItems = React.useMemo(() => {
         const favoriteItems = showFavorites
@@ -240,7 +240,7 @@ export function MachineSelector({
                             <Ionicons
                                 name="desktop-outline"
                                 size={24}
-                                color={theme.colors.textSecondary}
+                                color={theme.colors.text.secondary}
                             />
                         ),
                         itemProps: { testID: dropdownTestID },
@@ -260,14 +260,14 @@ export function MachineSelector({
                     <Ionicons
                         name="desktop-outline"
                         size={24}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                     />
                 ),
                 getRecentItemIcon: () => (
                     <Ionicons
                         name="time-outline"
                         size={24}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                     />
                 ),
                 getItemStatus: (machine) => {

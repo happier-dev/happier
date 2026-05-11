@@ -15,6 +15,10 @@ describe('clampMediaSize', () => {
         expect(clampMediaSize(2000, 440)).toBe(440 - 60);
     });
 
+    it('supports unpadded media sizing for wide story cards', () => {
+        expect(clampMediaSize(370, 370, 0)).toBe(370);
+    });
+
     it('uses the container width when within range', () => {
         expect(clampMediaSize(360)).toBe(360 - 60);
     });

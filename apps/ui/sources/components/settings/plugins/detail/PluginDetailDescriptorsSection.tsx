@@ -24,13 +24,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     fieldLabel: {
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 14,
         marginBottom: 4,
     },
     fieldValue: {
         ...Typography.default(),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         lineHeight: 18,
     },
@@ -40,7 +40,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sectionHeaderText: {
         ...Typography.default('regular'),
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 13, default: 14 }),
         lineHeight: Platform.select({ ios: 18, default: 20 }),
         letterSpacing: -0.08,
@@ -86,13 +86,13 @@ function resolveToneColor(params: Readonly<{
         case 'info':
             return params.theme.colors.accent.blue;
         case 'success':
-            return params.theme.colors.success;
+            return params.theme.colors.state.success.foreground;
         case 'warning':
             return params.theme.colors.accent.orange;
         case 'danger':
-            return params.theme.colors.warningCritical;
+            return params.theme.colors.state.danger.foreground;
         case 'neutral':
-            return params.theme.colors.textSecondary;
+            return params.theme.colors.text.secondary;
         default:
             return null;
     }
@@ -131,7 +131,7 @@ function PluginDescriptorFieldRow(props: Readonly<{
                 testID={testID}
                 title={props.field.title}
                 subtitle={t('settingsPlugins.unsupportedDescriptorField')}
-                icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.text.secondary} />}
                 showChevron={false}
                 mode="info"
             />
@@ -144,7 +144,7 @@ function PluginDescriptorFieldRow(props: Readonly<{
                 testID={testID}
                 title={props.field.title}
                 subtitle={props.field.subtitle ?? undefined}
-                icon={<Ionicons name="options-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="options-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={<Switch value={props.field.value === true} disabled={true} />}
                 showChevron={false}
                 mode="info"
@@ -168,7 +168,7 @@ function PluginDescriptorFieldRow(props: Readonly<{
             title={props.field.title}
             subtitle={props.field.subtitle ?? undefined}
             detail={formatFieldValue(props.field)}
-            icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
+            icon={<Ionicons name="list-outline" size={29} color={theme.colors.text.secondary} />}
             showChevron={false}
             mode="info"
         />
@@ -212,7 +212,7 @@ function PluginDescriptorSectionTitle(props: Readonly<{
                     hitSlop={10}
                     style={styles.sectionHeaderHelpButton}
                 >
-                    <Ionicons name="help-circle-outline" size={18} color={theme.colors.textLink} />
+                    <Ionicons name="help-circle-outline" size={18} color={theme.colors.text.link} />
                 </Pressable>
             ) : null}
         </View>
@@ -266,7 +266,7 @@ function PluginDescriptorSurfaceSection(props: Readonly<{
                             testID={`settings.plugins.detail.${props.pluginId}.descriptor.${props.surface}.${section.id}.empty`}
                             title={t('common.unavailable')}
                             subtitle={t('settingsPlugins.noDescriptors')}
-                            icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                             mode="info"
                         />

@@ -87,7 +87,7 @@ export function buildExternalSessionBrowseCandidateSubtitle(
                     style={[
                         subtitleTextStyle,
                         {
-                            color: theme.colors.textSecondary,
+                            color: theme.colors.text.secondary,
                         },
                     ]}
                 >
@@ -99,7 +99,7 @@ export function buildExternalSessionBrowseCandidateSubtitle(
                     style={[
                         subtitleTextStyle,
                         {
-                            color: theme.colors.textSecondary,
+                            color: theme.colors.text.secondary,
                         },
                     ]}
                 >
@@ -111,7 +111,7 @@ export function buildExternalSessionBrowseCandidateSubtitle(
                     style={[
                         subtitleTextStyle,
                         {
-                            color: theme.colors.textTertiary,
+                            color: theme.colors.text.tertiary,
                         },
                     ]}
                 >
@@ -144,7 +144,7 @@ export function buildExternalSessionBrowseCandidateRightElement(
         switch (candidate.activity) {
             case 'running':
                 return {
-                    color: theme.colors.success,
+                    color: theme.colors.state.success.foreground,
                     label: t('externalSessions.browseActivityRunning'),
                     pulsing: true,
                 };
@@ -156,13 +156,13 @@ export function buildExternalSessionBrowseCandidateRightElement(
                 };
             case 'idle':
                 return {
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     label: t('externalSessions.browseActivityIdle'),
                     pulsing: false,
                 };
             case 'unknown':
                 return {
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     label: t('externalSessions.browseActivityUnknown'),
                     pulsing: false,
                 };
@@ -179,7 +179,7 @@ export function buildExternalSessionBrowseCandidateRightElement(
                 alignItems: 'center',
                 gap: 6,
                 borderRadius: 999,
-                backgroundColor: theme.colors.surfaceHigh,
+                backgroundColor: theme.colors.surface.inset,
                 paddingHorizontal: 7,
                 paddingVertical: 3,
             }}

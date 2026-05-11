@@ -71,7 +71,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       <ItemList>
         <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ color: theme.colors.textSecondary }}>
+            <Text style={{ color: theme.colors.text.secondary }}>
               {t('settings.connectedAccountsDisabled')}
             </Text>
           </View>
@@ -92,7 +92,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
       <ItemGroup title={t('connectedServices.title')}>
         {services.length === 0 ? (
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.list.empty')}</Text>
+            <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.list.empty')}</Text>
           </View>
         ) : null}
 

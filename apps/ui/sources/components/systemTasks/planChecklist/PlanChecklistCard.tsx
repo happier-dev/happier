@@ -15,20 +15,20 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         borderRadius: theme.borderRadius.modalCard,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         overflow: 'hidden',
     },
     footer: {
         borderTopWidth: 1,
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
         paddingHorizontal: 16,
         paddingVertical: 14,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     rowSeparator: {
         height: 1,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
     },
 }));
 

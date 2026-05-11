@@ -28,7 +28,7 @@ export const ScmCommitSelectionToggleButton = React.memo((props: ScmCommitSelect
     const [busy, setBusy] = React.useState(false);
 
     const iconName = props.selectedForCommit ? 'check' : 'plus';
-    const iconColor = props.selectedForCommit ? theme.colors.success : theme.colors.textSecondary;
+    const iconColor = props.selectedForCommit ? theme.colors.state.success.foreground : theme.colors.text.secondary;
 
     return (
         <Pressable
@@ -64,15 +64,15 @@ export const ScmCommitSelectionToggleButton = React.memo((props: ScmCommitSelect
                 height: 28,
                 borderRadius: 10,
                 borderWidth: 1,
-                borderColor: theme.colors.divider,
-                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border.default,
+                backgroundColor: theme.colors.surface.base,
                 alignItems: 'center',
                 justifyContent: 'center',
                 opacity: (!props.scmWriteEnabled || busy) ? 0.55 : 1,
             }}
         >
             {busy ? (
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             ) : (
                 <Octicons name={iconName as any} size={14} color={iconColor} />
             )}

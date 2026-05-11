@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 
 const workspaceReadFileSpy = vi.hoisted(() => vi.fn());
+const createSessionFilePreviewSourceSpy = vi.hoisted(() => vi.fn());
 
 const sessionState = vi.hoisted(() => ({
     current: null as null | {
@@ -60,6 +61,10 @@ vi.mock('@/text', async () => {
 
 vi.mock('@/sync/ops/workspaceFileSystem', () => ({
     workspaceReadFile: (...args: unknown[]) => workspaceReadFileSpy(...args),
+}));
+
+vi.mock('@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource', () => ({
+    createSessionFilePreviewSource: (...args: unknown[]) => createSessionFilePreviewSourceSpy(...args),
 }));
 
 vi.mock('@/sync/store/hooks', async (importOriginal) => {
@@ -186,6 +191,17 @@ describe('useSessionImagePreview', () => {
     beforeEach(() => {
         workspaceReadFileSpy.mockReset();
         workspaceReadFileSpy.mockResolvedValue({ success: true, content: 'YWJj' });
+        createSessionFilePreviewSourceSpy.mockReset();
+        createSessionFilePreviewSourceSpy.mockResolvedValue({
+            ok: true,
+            source: {
+                kind: 'object-url',
+                uri: 'blob:session-preview',
+                byteLength: 3,
+                mimeType: 'image/png',
+                revoke: vi.fn(),
+            },
+        });
         setSessionWorkspaceUnavailable();
     });
 
@@ -218,15 +234,58 @@ describe('useSessionImagePreview', () => {
         await hook.rerender();
         await flushHookEffects({ cycles: 1, turns: 2 });
 
-        expect(workspaceReadFileSpy).toHaveBeenCalledWith({
-            machineId: 'm1',
-            rootPath: '/repo',
-            serverId: 'server-1',
-        }, '.happier/uploads/messages/m1/file.png', { maxBytes: 3 });
+        expect(workspaceReadFileSpy).not.toHaveBeenCalled();
+        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledWith(expect.objectContaining({
+            scope: expect.objectContaining({
+                machineId: 'm1',
+                rootPath: '/repo',
+                serverId: 'server-1',
+            }),
+            filePath: '.happier/uploads/messages/m1/file.png',
+            mimeType: 'image/png',
+            maxBytes: 1_000_000,
+            expectedSizeBytes: 3,
+            cacheIdentity: 'sha-1',
+        }));
         expect(hook.getCurrent()).toMatchObject({
             status: 'loaded',
-            uri: 'data:image/png;base64,YWJj',
+            uri: 'blob:session-preview',
             error: null,
         });
+        expect(hook.getCurrent().uri?.startsWith('data:')).toBe(false);
+    });
+
+    it('cleans up a preview source that resolves after unmount', async () => {
+        setSessionWorkspaceAvailable();
+        const revoke = vi.fn();
+        let resolvePreview!: (value: unknown) => void;
+        createSessionFilePreviewSourceSpy.mockReturnValue(new Promise((resolve) => {
+            resolvePreview = resolve;
+        }));
+
+        const { useSessionImagePreview } = await import('./useSessionImagePreview');
+        const hook = await renderHook(() => useSessionImagePreview({
+            sessionId: 's1',
+            filePath: '.happier/uploads/messages/m1/file.png',
+            enabled: true,
+            cacheKey: null,
+            mimeType: 'image/png',
+            sizeBytes: 3,
+        }));
+
+        await hook.unmount();
+        resolvePreview({
+            ok: true,
+            source: {
+                kind: 'object-url',
+                uri: 'blob:late-preview',
+                byteLength: 3,
+                mimeType: 'image/png',
+                revoke,
+            },
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(revoke).toHaveBeenCalledTimes(1);
     });
 });

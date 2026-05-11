@@ -12,7 +12,7 @@ const styles = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         backgroundColor: theme.colors.input.background,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
 }));
 
@@ -43,7 +43,7 @@ export function InputBrowseButton(props: Readonly<{
             <Ionicons
                 name={props.iconName ?? 'folder-open-outline'}
                 size={18}
-                color={theme.colors.textSecondary}
+                color={theme.colors.text.secondary}
             />
         </Pressable>
     );

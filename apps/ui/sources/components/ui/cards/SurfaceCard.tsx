@@ -21,11 +21,11 @@ const styles = StyleSheet.create((theme) => ({
         width: '100%',
         minWidth: 0,
         borderRadius: Platform.select({ ios: 10, default: 16 }),
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     toneMuted: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     paddingSm: {
         paddingHorizontal: 14,

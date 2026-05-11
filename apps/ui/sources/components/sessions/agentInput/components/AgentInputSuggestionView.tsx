@@ -74,14 +74,14 @@ const styles = StyleSheet.create((theme) => ({
     },
     commandText: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontWeight: '600',
         ...Typography.default('semiBold'),
     },
     descriptionText: {
         flex: 1,
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     leadingIcon: {
@@ -92,16 +92,16 @@ const styles = StyleSheet.create((theme) => ({
         marginRight: 8,
     },
     iconColor: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     fileTitleText: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     filePathText: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
 }));

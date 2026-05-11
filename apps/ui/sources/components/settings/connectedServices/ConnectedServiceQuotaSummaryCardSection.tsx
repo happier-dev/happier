@@ -35,18 +35,18 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     meterValue: {
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontWeight: '600',
     },
     meterTrack: {
         height: 6,
         borderRadius: 999,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         overflow: 'hidden',
     },
     meterFill: {
@@ -62,7 +62,7 @@ const styles = StyleSheet.create((theme) => ({
     statusText: {
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));
 
@@ -74,17 +74,17 @@ function resolveQuotaMeterColor(params: Readonly<{
     const { remainingPct, status, theme } = params;
 
     if (status === 'unavailable') {
-        return theme.colors.textSecondary;
+        return theme.colors.text.secondary;
     }
     if (status === 'estimated') {
-        return theme.colors.warning;
+        return theme.colors.state.neutral.foreground;
     }
     if (typeof remainingPct === 'number') {
         if (remainingPct <= 10) {
             return theme.colors.status.error;
         }
         if (remainingPct <= 25) {
-            return theme.colors.warning;
+            return theme.colors.state.neutral.foreground;
         }
     }
 

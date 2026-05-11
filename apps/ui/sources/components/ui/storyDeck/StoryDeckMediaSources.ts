@@ -1,6 +1,7 @@
 import type { ImageProps } from 'expo-image';
 
 import { resolveAssetUrl } from '@/changelog/releaseNotes/assetUrlResolver';
+import type { StoryDeckMediaSurface } from '@/changelog/releaseNotes/types';
 
 import { resolveStoryDeckBundledImageAsset } from './storyDeckBundledAssetRegistry';
 
@@ -32,6 +33,11 @@ export type StoryDeckResolvedImageSources = Readonly<{
 
 type ResolveImageSourceOptions = Readonly<{
     resolveBundledImageAsset?: (key: string) => StoryDeckImageSourceValue | null;
+    surface?: StoryDeckMediaSurface;
+}>;
+
+type ResolveMediaSourceOptions = Readonly<{
+    surface?: StoryDeckMediaSurface;
 }>;
 
 type ResolvedAsset = NonNullable<ReturnType<typeof resolveAssetUrl>>;
@@ -80,10 +86,73 @@ function resolveAssetFromKey(key: string | null): ResolvedAsset | null {
     return key ? resolveAssetUrl(key) : null;
 }
 
-export function resolveStoryDeckMediaSources(media: unknown): StoryDeckResolvedMediaSources {
-    const explicitPrimaryUrl = readStringField(media, 'primaryUrl') ?? readStringField(media, 'url');
-    const explicitFallbackUrl = readStringField(media, 'fallbackUrl');
-    const resolved = explicitPrimaryUrl ? null : resolveAssetFromKey(readStringField(media, 'key'));
+function hasStringField(source: unknown, key: string): boolean {
+    return readStringField(source, key) != null;
+}
+
+function getSurfaceOverride(media: unknown, surface?: StoryDeckMediaSurface): Readonly<Record<string, unknown>> | null {
+    if (!surface || !isRecord(media)) return null;
+    const override = media[surface];
+    return isRecord(override) ? override : null;
+}
+
+function omitFields(source: Readonly<Record<string, unknown>>, fields: readonly string[]): Record<string, unknown> {
+    const result: Record<string, unknown> = { ...source };
+    for (const field of fields) {
+        delete result[field];
+    }
+    return result;
+}
+
+const IMAGE_SOURCE_FIELDS = ['localAssetKey', 'key', 'primaryUrl', 'fallbackUrl', 'url'] as const;
+const VIDEO_SOURCE_FIELDS = ['key', 'primaryUrl', 'fallbackUrl', 'url'] as const;
+const VIDEO_POSTER_FIELDS = ['localPosterAssetKey', 'posterKey', 'posterUrl', 'posterFallbackUrl'] as const;
+
+function hasAnyStringField(source: unknown, fields: readonly string[]): boolean {
+    return fields.some((field) => hasStringField(source, field));
+}
+
+function mergeImageMediaForSurface(media: unknown, surface?: StoryDeckMediaSurface): unknown {
+    if (!isRecord(media)) return media;
+    const override = getSurfaceOverride(media, surface);
+    if (!override) return media;
+    const base = hasAnyStringField(override, IMAGE_SOURCE_FIELDS)
+        ? omitFields(media, IMAGE_SOURCE_FIELDS)
+        : { ...media };
+    return { ...base, ...override };
+}
+
+function mergeVideoMediaForSurface(media: unknown, surface?: StoryDeckMediaSurface): unknown {
+    if (!isRecord(media)) return media;
+    const override = getSurfaceOverride(media, surface);
+    if (!override) return media;
+
+    let base: Record<string, unknown> = { ...media };
+    if (hasAnyStringField(override, VIDEO_SOURCE_FIELDS)) {
+        base = omitFields(base, VIDEO_SOURCE_FIELDS);
+    }
+    if (hasAnyStringField(override, VIDEO_POSTER_FIELDS)) {
+        base = omitFields(base, VIDEO_POSTER_FIELDS);
+    }
+    return { ...base, ...override };
+}
+
+export function resolveStoryDeckImageMediaForSurface<T>(media: T, surface?: StoryDeckMediaSurface): T {
+    return mergeImageMediaForSurface(media, surface) as T;
+}
+
+export function resolveStoryDeckVideoMediaForSurface<T>(media: T, surface?: StoryDeckMediaSurface): T {
+    return mergeVideoMediaForSurface(media, surface) as T;
+}
+
+export function resolveStoryDeckMediaSources(
+    media: unknown,
+    options?: ResolveMediaSourceOptions,
+): StoryDeckResolvedMediaSources {
+    const resolvedMedia = mergeVideoMediaForSurface(media, options?.surface);
+    const explicitPrimaryUrl = readStringField(resolvedMedia, 'primaryUrl') ?? readStringField(resolvedMedia, 'url');
+    const explicitFallbackUrl = readStringField(resolvedMedia, 'fallbackUrl');
+    const resolved = explicitPrimaryUrl ? null : resolveAssetFromKey(readStringField(resolvedMedia, 'key'));
 
     const primaryUrl = explicitPrimaryUrl ?? resolved?.url ?? null;
     const fallbackUrl = explicitFallbackUrl ?? resolved?.fallbackUrl ?? null;
@@ -128,13 +197,18 @@ export function resolveStoryDeckImageSources(
     media: unknown,
     options?: ResolveImageSourceOptions,
 ): StoryDeckResolvedImageSources {
-    return buildImageSources(media, 'localAssetKey', resolveStoryDeckMediaSources(media), options);
+    const resolvedMedia = mergeImageMediaForSurface(media, options?.surface);
+    return buildImageSources(resolvedMedia, 'localAssetKey', resolveStoryDeckMediaSources(resolvedMedia), options);
 }
 
-export function resolveStoryDeckPosterSources(media: unknown): StoryDeckResolvedMediaSources {
-    const explicitPrimaryUrl = readStringField(media, 'posterUrl');
-    const explicitFallbackUrl = readStringField(media, 'posterFallbackUrl');
-    const resolved = explicitPrimaryUrl ? null : resolveAssetFromKey(readStringField(media, 'posterKey'));
+export function resolveStoryDeckPosterSources(
+    media: unknown,
+    options?: ResolveMediaSourceOptions,
+): StoryDeckResolvedMediaSources {
+    const resolvedMedia = mergeVideoMediaForSurface(media, options?.surface);
+    const explicitPrimaryUrl = readStringField(resolvedMedia, 'posterUrl');
+    const explicitFallbackUrl = readStringField(resolvedMedia, 'posterFallbackUrl');
+    const resolved = explicitPrimaryUrl ? null : resolveAssetFromKey(readStringField(resolvedMedia, 'posterKey'));
 
     const primaryUrl = explicitPrimaryUrl ?? resolved?.url ?? null;
     const fallbackUrl = explicitFallbackUrl ?? resolved?.fallbackUrl ?? null;
@@ -152,5 +226,6 @@ export function resolveStoryDeckPosterImageSources(
     media: unknown,
     options?: ResolveImageSourceOptions,
 ): StoryDeckResolvedImageSources {
-    return buildImageSources(media, 'localPosterAssetKey', resolveStoryDeckPosterSources(media), options);
+    const resolvedMedia = mergeVideoMediaForSurface(media, options?.surface);
+    return buildImageSources(resolvedMedia, 'localPosterAssetKey', resolveStoryDeckPosterSources(resolvedMedia), options);
 }

@@ -88,7 +88,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.coalesceWindowTitle')}
                     subtitle={t('settingsSession.transcript.advanced.coalesceWindowSubtitle', { value: String(transcriptStreamingCoalesceWindowMs ?? 0) })}
-                    icon={<Ionicons name="timer-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="timer-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={async () => {
                         const raw = await Modal.prompt(
                             t('settingsSession.transcript.advanced.coalesceWindowPromptTitle'),
@@ -104,7 +104,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.coalesceMaxBatchTitle')}
                     subtitle={t('settingsSession.transcript.advanced.coalesceMaxBatchSubtitle', { value: String(transcriptStreamingCoalesceMaxBatchSize ?? 0) })}
-                    icon={<Ionicons name="funnel-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="funnel-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={async () => {
                         const raw = await Modal.prompt(
                             t('settingsSession.transcript.advanced.coalesceMaxBatchPromptTitle'),
@@ -120,7 +120,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.streamingPartialOutputTitle')}
                     subtitle={t('settingsSession.transcript.advanced.streamingPartialOutputSubtitle')}
-                    icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.text.secondary} />}
                     rightElement={
                         <Switch
                             value={transcriptStreamingPartialOutputEnabled !== false}
@@ -134,7 +134,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.thinkingPulseStaleTitle')}
                     subtitle={t('settingsSession.transcript.advanced.thinkingPulseStaleSubtitle', { value: String(transcriptThinkingPulseStaleMs ?? 0) })}
-                    icon={<Ionicons name="hourglass-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="hourglass-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={async () => {
                         const raw = await Modal.prompt(
                             t('settingsSession.transcript.advanced.thinkingPulseStalePromptTitle'),
@@ -160,7 +160,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                     popoverBoundaryRef={popoverBoundaryRef}
                     itemTrigger={{
                         title: t('settingsSession.transcript.advanced.listImplementationTitle'),
-                        icon: <Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />,
+                        icon: <Ionicons name="list-outline" size={29} color={theme.colors.text.secondary} />,
                         subtitle: t('settingsSession.transcript.advanced.listImplementationSubtitle'),
                     }}
                     items={listImplementationOptions.map((opt) => ({
@@ -169,7 +169,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                         subtitle: opt.subtitle,
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
+                                <Ionicons name="list-outline" size={22} color={theme.colors.text.secondary} />
                             </View>
                         ),
                     }))}
@@ -187,7 +187,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.freshnessTitle')}
                     subtitle={t('settingsSession.transcript.advanced.freshnessSubtitle', { value: String(transcriptMotionFreshnessMs ?? 0) })}
-                    icon={<Ionicons name="timer-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="timer-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={async () => {
                         if (!canAdjustMotion) return;
                         const raw = await Modal.prompt(
@@ -222,7 +222,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.animateToolExpandCollapseTitle')}
                     subtitle={t('settingsSession.transcript.advanced.animateToolExpandCollapseSubtitle')}
-                    icon={<Ionicons name="chevron-expand-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="chevron-expand-outline" size={29} color={theme.colors.text.secondary} />}
                     rightElement={
                         <Switch
                             value={transcriptAnimateToolExpandCollapseEnabled === true}
@@ -240,7 +240,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.animateToolExpandCollapseFreshOnlyTitle')}
                     subtitle={t('settingsSession.transcript.advanced.animateToolExpandCollapseFreshOnlySubtitle')}
-                    icon={<Ionicons name="leaf-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="leaf-outline" size={29} color={theme.colors.text.secondary} />}
                     rightElement={
                         <Switch
                             value={transcriptAnimateToolExpandCollapseFreshOnly === true}
@@ -259,7 +259,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.animateThinkingTitle')}
                     subtitle={t('settingsSession.transcript.advanced.animateThinkingSubtitle')}
-                    icon={<Ionicons name="bulb-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="bulb-outline" size={29} color={theme.colors.text.secondary} />}
                     rightElement={
                         <Switch
                             value={transcriptAnimateThinkingEnabled === true}
@@ -282,7 +282,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.pinOffsetTitle')}
                     subtitle={t('settingsSession.transcript.advanced.pinOffsetSubtitle', { value: String(transcriptScrollPinOffsetThresholdPx ?? 0) })}
-                    icon={<Ionicons name="navigate-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="navigate-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={async () => {
                         const raw = await Modal.prompt(
                             t('settingsSession.transcript.advanced.pinOffsetPromptTitle'),
@@ -298,7 +298,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.autoFollowTitle')}
                     subtitle={t('settingsSession.transcript.advanced.autoFollowSubtitle')}
-                    icon={<Ionicons name="arrow-down-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="arrow-down-circle-outline" size={29} color={theme.colors.text.secondary} />}
                     rightElement={
                         <Switch
                             value={transcriptScrollAutoFollowWhenPinned === true}
@@ -312,7 +312,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.jumpMinNewCountTitle')}
                     subtitle={t('settingsSession.transcript.advanced.jumpMinNewCountSubtitle', { value: String(transcriptScrollJumpToBottomMinNewCount ?? 0) })}
-                    icon={<Ionicons name="chevron-down-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="chevron-down-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={async () => {
                         const raw = await Modal.prompt(
                             t('settingsSession.transcript.advanced.jumpMinNewCountPromptTitle'),
@@ -328,7 +328,7 @@ export const TranscriptRenderingAdvancedSettingsView = React.memo(function Trans
                 <Item
                     title={t('settingsSession.transcript.advanced.jumpAnimateScrollTitle')}
                     subtitle={t('settingsSession.transcript.advanced.jumpAnimateScrollSubtitle')}
-                    icon={<Ionicons name="swap-vertical-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="swap-vertical-outline" size={29} color={theme.colors.text.secondary} />}
                     rightElement={
                         <Switch
                             value={transcriptScrollJumpToBottomAnimateScroll === true}

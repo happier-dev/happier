@@ -26,7 +26,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         fontSize: 12,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         paddingHorizontal: 16,
         paddingBottom: 4,
         ...Typography.default('semiBold'),
@@ -34,7 +34,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     label: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default(),
     },
 }));

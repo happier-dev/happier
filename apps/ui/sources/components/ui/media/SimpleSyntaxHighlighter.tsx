@@ -2,9 +2,9 @@ import React from 'react';
 import { Platform, View, type TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { Typography } from '@/constants/Typography';
 import { tokenizeSimpleSyntaxText } from '@/components/ui/code/tokenization/simpleSyntaxTokenizer';
 import { Text } from '@/components/ui/text/Text';
-import { resolveCodeMonoFontFamily } from '@/components/ui/code/codeTypography';
 
 
 interface SimpleSyntaxHighlighterProps {
@@ -14,11 +14,11 @@ interface SimpleSyntaxHighlighterProps {
 }
 
 function resolveTokenColor(theme: any, tokenType: string, fallback: string): string {
-  if (tokenType === 'keyword') return theme.colors.syntaxKeyword ?? fallback;
-  if (tokenType === 'string') return theme.colors.syntaxString ?? fallback;
-  if (tokenType === 'number') return theme.colors.syntaxNumber ?? fallback;
-  if (tokenType === 'comment') return theme.colors.syntaxComment ?? fallback;
-  return theme.colors.syntaxDefault ?? fallback;
+  if (tokenType === 'keyword') return theme.colors.syntax.keyword ?? fallback;
+  if (tokenType === 'string') return theme.colors.syntax.string ?? fallback;
+  if (tokenType === 'number') return theme.colors.syntax.number ?? fallback;
+  if (tokenType === 'comment') return theme.colors.syntax.comment ?? fallback;
+  return theme.colors.syntax.default ?? fallback;
 }
 
 export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = ({
@@ -27,7 +27,7 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
   selectable,
 }) => {
   const { theme } = useUnistyles();
-  const fallback = theme.colors.text ?? '#111';
+  const fallback = theme.colors.text.primary ?? '#111';
   const webTextWrapStyle: TextStyle | null = Platform.OS === 'web'
     ? ({ whiteSpace: 'pre', display: 'inline-block' } as unknown as TextStyle)
     : null;
@@ -36,11 +36,11 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
 
   return (
     <View style={{ flexShrink: 0, alignSelf: 'flex-start' }}>
-        <Text
+      <Text
         selectable={selectable}
         style={[
           {
-            fontFamily: resolveCodeMonoFontFamily(),
+            fontFamily: Typography.mono().fontFamily,
             fontSize: 14,
             lineHeight: 20,
             flexShrink: 0,
@@ -54,7 +54,7 @@ export const SimpleSyntaxHighlighter: React.FC<SimpleSyntaxHighlighterProps> = (
             selectable={selectable}
             style={{
               color: resolveTokenColor(theme, token.type, fallback),
-              fontFamily: resolveCodeMonoFontFamily(),
+              fontFamily: Typography.mono().fontFamily,
               fontWeight: token.type === 'keyword' ? '600' : '400',
             }}
           >

@@ -19,7 +19,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         paddingTop: 10,
     },
     searchContainer: {
@@ -32,9 +32,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 10,
         paddingHorizontal: 12,
         paddingVertical: 8,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     searchIcon: {
         marginRight: 8,
@@ -44,7 +44,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         padding: 0,
         margin: 0,
         minHeight: 20,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...(Platform.select({
             web: {
                 outline: 'none',
@@ -59,7 +59,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         }) as object),
     },
     settingsPagesContainer: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
 }));
 
@@ -181,7 +181,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
             <Ionicons
                 name="ellipse-outline"
                 size={14}
-                color={theme.colors.textSecondary}
+                color={theme.colors.text.secondary}
             />
         );
 
@@ -204,7 +204,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
             <Ionicons
                 name={expanded ? 'chevron-down' : 'chevron-forward'}
                 size={14}
-                color={theme.colors.textSecondary}
+                color={theme.colors.text.secondary}
             />
         ) : undefined;
 
@@ -254,7 +254,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
             <View style={styles.searchContainer}>
                 <View style={styles.searchBar}>
                     <View style={styles.searchIcon}>
-                        <Ionicons name="search-outline" size={14} color={theme.colors.textSecondary} />
+                        <Ionicons name="search-outline" size={14} color={theme.colors.text.secondary} />
                     </View>
                     <TextInput
                         testID="settings-sidebar.searchInput"
@@ -279,7 +279,7 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                                     key={result.id}
                                     testID={`settings-sidebar.searchResult.${result.id}`}
                                     title={node ? String(t(node.titleKey)) : String(result.id)}
-                                    icon={<Ionicons name="search-outline" size={14} color={theme.colors.textSecondary} />}
+                                    icon={<Ionicons name="search-outline" size={14} color={theme.colors.text.secondary} />}
                                     density="compact"
                                     showChevron={false}
                                     onPress={() => {

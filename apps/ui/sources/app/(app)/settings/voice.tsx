@@ -69,7 +69,7 @@ export default function VoiceSettingsScreen() {
                     subtitle: t('settingsVoice.language.autoDetectSubtitle'),
                     icon: (
                       <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                        <Ionicons name="sparkles-outline" size={20} color={theme.colors.textSecondary} />
+                        <Ionicons name="sparkles-outline" size={20} color={theme.colors.text.secondary} />
                       </View>
                 ),
               },
@@ -83,7 +83,7 @@ export default function VoiceSettingsScreen() {
                     subtitle: code,
                     icon: (
                       <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                        <Ionicons name="language-outline" size={20} color={theme.colors.textSecondary} />
+                        <Ionicons name="language-outline" size={20} color={theme.colors.text.secondary} />
                       </View>
                     ),
                   },

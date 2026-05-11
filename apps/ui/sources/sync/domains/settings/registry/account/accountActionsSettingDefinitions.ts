@@ -10,6 +10,7 @@ type ActionSettingsOverrideLike = Readonly<{
     enabledPlacements?: ReadonlyArray<unknown>;
     disabledSurfaces?: ReadonlyArray<unknown>;
     disabledPlacements?: ReadonlyArray<unknown>;
+    approvalRequiredSurfaces?: ReadonlyArray<unknown>;
 }>;
 
 type NormalizedActionSettingsOverride = Readonly<{
@@ -17,6 +18,7 @@ type NormalizedActionSettingsOverride = Readonly<{
     enabledPlacements: ReadonlyArray<string>;
     disabledSurfaces: ReadonlyArray<string>;
     disabledPlacements: ReadonlyArray<string>;
+    approvalRequiredSurfaces: ReadonlyArray<string>;
 }>;
 
 function normalizeStringSet(raw: ReadonlyArray<unknown> | undefined): ReadonlyArray<string> {
@@ -39,6 +41,7 @@ function normalizeOverride(raw: unknown): NormalizedActionSettingsOverride {
         enabledPlacements: normalizeStringSet(value?.enabledPlacements),
         disabledSurfaces: normalizeStringSet(value?.disabledSurfaces),
         disabledPlacements: normalizeStringSet(value?.disabledPlacements),
+        approvalRequiredSurfaces: normalizeStringSet(value?.approvalRequiredSurfaces),
     };
 }
 
@@ -47,6 +50,7 @@ function areOverridesEqual(a: NormalizedActionSettingsOverride, b: NormalizedAct
     if (a.enabledPlacements.length !== b.enabledPlacements.length) return false;
     if (a.disabledSurfaces.length !== b.disabledSurfaces.length) return false;
     if (a.disabledPlacements.length !== b.disabledPlacements.length) return false;
+    if (a.approvalRequiredSurfaces.length !== b.approvalRequiredSurfaces.length) return false;
     for (let i = 0; i < a.enabledPlacements.length; i += 1) {
         if (a.enabledPlacements[i] !== b.enabledPlacements[i]) return false;
     }
@@ -55,6 +59,9 @@ function areOverridesEqual(a: NormalizedActionSettingsOverride, b: NormalizedAct
     }
     for (let i = 0; i < a.disabledPlacements.length; i += 1) {
         if (a.disabledPlacements[i] !== b.disabledPlacements[i]) return false;
+    }
+    for (let i = 0; i < a.approvalRequiredSurfaces.length; i += 1) {
+        if (a.approvalRequiredSurfaces[i] !== b.approvalRequiredSurfaces[i]) return false;
     }
     return true;
 }
@@ -78,6 +85,7 @@ function buildActionsSettingsSummaryProperties(value: unknown): Record<string, n
                 enabledPlacements?: ReadonlyArray<unknown>;
                 disabledSurfaces?: ReadonlyArray<unknown>;
                 disabledPlacements?: ReadonlyArray<unknown>;
+                approvalRequiredSurfaces?: ReadonlyArray<unknown>;
             }> }).actions ?? {}
             : {};
 
@@ -87,6 +95,7 @@ function buildActionsSettingsSummaryProperties(value: unknown): Record<string, n
     let enabledPlacementCount = 0;
     let disabledSurfaceCount = 0;
     let disabledPlacementCount = 0;
+    let approvalRequiredSurfaceCount = 0;
     let overrideCount = 0;
 
     for (const [actionId, rawOverride] of Object.entries(actions)) {
@@ -103,6 +112,7 @@ function buildActionsSettingsSummaryProperties(value: unknown): Record<string, n
         enabledPlacementCount += countAddedStrings(normalized.enabledPlacements, normalizedDefault.enabledPlacements);
         disabledSurfaceCount += countAddedStrings(normalized.disabledSurfaces, normalizedDefault.disabledSurfaces);
         disabledPlacementCount += countAddedStrings(normalized.disabledPlacements, normalizedDefault.disabledPlacements);
+        approvalRequiredSurfaceCount += countAddedStrings(normalized.approvalRequiredSurfaces, normalizedDefault.approvalRequiredSurfaces);
     }
 
     return {
@@ -111,6 +121,7 @@ function buildActionsSettingsSummaryProperties(value: unknown): Record<string, n
         enabledPlacementCount,
         disabledSurfaceCount,
         disabledPlacementCount,
+        approvalRequiredSurfaceCount,
     };
 }
 

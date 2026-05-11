@@ -5,7 +5,7 @@ import { useOptionalModal } from '@/modal';
 import { useOnboardingShowcaseState } from '@/onboarding/showcase';
 import { getPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 
-import { isReleaseNotesFeatureEnabled } from './featureGate';
+import { isReleaseNotesStoryCardsEnabled } from './featureGate';
 import { runReleaseNotesMigrationSeeding } from './migration';
 import { revalidateRemoteManifest } from './remoteManifest';
 import { useReleaseNotesLauncher } from './useReleaseNotesLauncher';
@@ -36,7 +36,7 @@ export function ReleaseNotesAutoShowMount(): null {
     const modal = useOptionalModal();
     const setupIntentActive = hasActiveSetupIntent();
     const modalStackActive = (modal?.state.modals.length ?? 0) > 0;
-    const releaseNotesEnabled = isReleaseNotesFeatureEnabled();
+    const releaseNotesEnabled = isReleaseNotesStoryCardsEnabled();
     const ranRef = React.useRef(false);
 
     React.useEffect(() => {

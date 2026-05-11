@@ -51,11 +51,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     dividerLine: {
         flex: 1,
         height: 1,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
         opacity: 0.8,
     },
     dividerText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
     noteBlock: {
@@ -65,13 +65,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     noteTitle: {
         textAlign: 'center',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 16,
         lineHeight: 22,
     },
     noteSubtitle: {
         textAlign: 'center',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         lineHeight: 18,
     },

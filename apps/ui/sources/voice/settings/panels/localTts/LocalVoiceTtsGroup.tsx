@@ -49,7 +49,7 @@ export function LocalVoiceTtsGroup(props: {
           id: spec.id,
           title: spec.title,
           subtitle: spec.subtitle,
-          icon: <Ionicons name={spec.iconName as any} size={22} color={theme.colors.textSecondary} />,
+          icon: <Ionicons name={spec.iconName as any} size={22} color={theme.colors.text.secondary} />,
         }))}
         onSelect={(id) => {
           setCfg({ provider: id as any });

@@ -24,42 +24,36 @@ const setThemeSpy = vi.fn();
 const darkEditorTheme = {
     dark: true,
     colors: {
-        divider: '#303030',
-        text: '#f8f8f2',
-        textSecondary: '#cfcfcf',
-        textTertiary: '#8a8a8a',
-        surface: '#151515',
-        surfaceHigh: '#1f1f1f',
-        surfaceHighest: '#101010',
-        surfaceSelected: '#2a2a2a',
+        border: { default: '#303030' },
+        text: { primary: '#f8f8f2', secondary: '#cfcfcf', tertiary: '#8a8a8a' },
+        surface: { base: '#151515', inset: '#1f1f1f', elevated: '#101010', selected: '#2a2a2a' },
         accent: { blue: '#58a6ff' },
-        syntaxDefault: '#f8f8f2',
-        syntaxKeyword: '#ff79c6',
-        syntaxString: '#50fa7b',
-        syntaxComment: '#6272a4',
-        syntaxNumber: '#bd93f9',
-        syntaxFunction: '#8be9fd',
+        syntax: {
+            default: '#f8f8f2',
+            keyword: '#ff79c6',
+            string: '#50fa7b',
+            comment: '#6272a4',
+            number: '#bd93f9',
+            function: '#8be9fd',
+        },
     },
 };
 
 const lightEditorTheme = {
     dark: false,
     colors: {
-        divider: '#d0d7de',
-        text: '#24292f',
-        textSecondary: '#57606a',
-        textTertiary: '#6e7781',
-        surface: '#ffffff',
-        surfaceHigh: '#f6f8fa',
-        surfaceHighest: '#ffffff',
-        surfaceSelected: '#ddf4ff',
+        border: { default: '#d0d7de' },
+        text: { primary: '#24292f', secondary: '#57606a', tertiary: '#6e7781' },
+        surface: { base: '#ffffff', inset: '#f6f8fa', elevated: '#ffffff', selected: '#ddf4ff' },
         accent: { blue: '#0969da' },
-        syntaxDefault: '#24292f',
-        syntaxKeyword: '#cf222e',
-        syntaxString: '#0a3069',
-        syntaxComment: '#6e7781',
-        syntaxNumber: '#0550ae',
-        syntaxFunction: '#8250df',
+        syntax: {
+            default: '#24292f',
+            keyword: '#cf222e',
+            string: '#0a3069',
+            comment: '#6e7781',
+            number: '#0550ae',
+            function: '#8250df',
+        },
     },
 };
 
@@ -169,7 +163,7 @@ describe('MonacoEditorSurface (web)', () => {
                 base: 'vs-dark',
                 inherit: true,
                 colors: expect.objectContaining({
-                    'editor.background': '#101010',
+                    'editor.background': '#1f1f1f',
                     'editor.foreground': '#f8f8f2',
                     'editorLineNumber.foreground': '#8a8a8a',
                 }),
@@ -217,7 +211,7 @@ describe('MonacoEditorSurface (web)', () => {
             expect.objectContaining({
                 base: 'vs',
                 colors: expect.objectContaining({
-                    'editor.background': '#ffffff',
+                    'editor.background': '#f6f8fa',
                     'editor.foreground': '#24292f',
                 }),
             }),

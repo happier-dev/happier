@@ -38,17 +38,17 @@ export const ShimmerView = React.memo<ShimmerViewProps>(({
     const resolvedShimmerColors = React.useMemo<readonly [string, string, ...string[]]>(() => {
         if (shimmerColors && shimmerColors.length >= 2) return shimmerColors as readonly [string, string, ...string[]];
         return [
-            theme.colors.surfacePressed,
-            theme.colors.surfaceHigh,
-            theme.colors.surfaceHighest,
-            theme.colors.surfaceHigh,
-            theme.colors.surfacePressed,
+            theme.colors.surface.base,
+            theme.colors.surface.inset,
+            theme.colors.surface.elevated,
+            theme.colors.surface.inset,
+            theme.colors.surface.base,
         ] as const;
     }, [
         shimmerColors,
-        theme.colors.surfaceHigh,
-        theme.colors.surfaceHighest,
-        theme.colors.surfacePressed,
+        theme.colors.surface.base,
+        theme.colors.surface.inset,
+        theme.colors.surface.elevated,
     ]);
 
     React.useEffect(() => {

@@ -319,7 +319,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                     constrainWidth ? { maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' } : null,
                 ]}
             >
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }
@@ -333,16 +333,16 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                 ]}
             >
                 <View style={{ width: '100%', ...(constrainWidth ? { maxWidth: layout.maxWidth } : null), paddingHorizontal: 16 }}>
-                    <Text style={{ color: theme.colors.text, fontSize: 16, ...Typography.default('semiBold') }}>
+                    <Text style={{ color: theme.colors.text.primary, fontSize: 16, ...Typography.default('semiBold') }}>
                         {t('files.commitDetails.diffUnavailableTitle')}
                     </Text>
                     <Text
                         testID="scm-commit-details-error-message"
-                        style={{ marginTop: 6, color: theme.colors.textDestructive, ...Typography.default('semiBold') }}
+                        style={{ marginTop: 6, color: theme.colors.state.danger.foreground, ...Typography.default('semiBold') }}
                     >
                         {error}
                     </Text>
-                    <Text style={{ marginTop: 10, color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                    <Text style={{ marginTop: 10, color: theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
                         {t('files.commitDetails.diffUnavailableHint')}
                     </Text>
                     <Pressable
@@ -355,11 +355,11 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                             paddingVertical: 8,
                             borderRadius: 10,
                             borderWidth: 1,
-                            borderColor: theme.colors.divider,
-                            backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
+                            borderColor: theme.colors.border.default,
+                            backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
                         }}
                     >
-                        <Text style={{ color: theme.colors.text, fontSize: 12, ...Typography.default('semiBold') }}>
+                        <Text style={{ color: theme.colors.text.primary, fontSize: 12, ...Typography.default('semiBold') }}>
                             {t('common.back')}
                         </Text>
                     </Pressable>
@@ -369,21 +369,21 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
     }
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.surface, position: 'relative' }]}>
+        <View style={[styles.container, { backgroundColor: theme.colors.surface.base, position: 'relative' }]}>
             <View
                 style={{
                     padding: 16,
                     borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                    borderBottomColor: theme.colors.divider,
-                    backgroundColor: theme.colors.surfaceHigh,
+                    borderBottomColor: theme.colors.border.default,
+                    backgroundColor: theme.colors.surface.inset,
                 }}
             >
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default('semiBold') }}>
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 12, ...Typography.default('semiBold') }}>
                     {t('files.commitDetails.commitLabel')}
                 </Text>
-                <Text style={{ color: theme.colors.text, fontSize: 14, ...Typography.mono() }}>{sha}</Text>
+                <Text style={{ color: theme.colors.text.primary, fontSize: 14, ...Typography.mono() }}>{sha}</Text>
                 {inFlightScmOperation && (
-                    <Text style={{ marginTop: 6, color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                    <Text style={{ marginTop: 6, color: theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
                         {t('files.commitDetails.running', { operation: inFlightScmOperation.operation })}
                     </Text>
                 )}
@@ -400,14 +400,14 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                                 paddingHorizontal: 12,
                                 paddingVertical: 7,
                                 borderRadius: 8,
-                                backgroundColor: theme.colors.warning,
+                                backgroundColor: theme.colors.state.neutral.foreground,
                                 opacity: isReverting || !canRevert || Boolean(inFlightScmOperation) ? 0.6 : 1,
                             }}
                         >
                             <Text style={{ color: 'white', fontSize: 12, ...Typography.default('semiBold') }}>{t('files.commitDetails.revert.button')}</Text>
                         </Pressable>
                         {!canRevert && (
-                            <Text style={{ marginTop: 6, color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                            <Text style={{ marginTop: 6, color: theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
                                 {t('files.commitRevertUnavailable')}
                             </Text>
                         )}
@@ -441,13 +441,13 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
             />
 
             <ScrollEdgeFades
-                color={theme.colors.surface}
+                color={theme.colors.surface.base}
                 size={18}
                 edges={scrollFades.visibility}
             />
             <ScrollEdgeIndicators
                 edges={scrollFades.visibility}
-                color={theme.colors.textSecondary}
+                color={theme.colors.text.secondary}
                 size={14}
                 opacity={0.35}
             />
@@ -458,7 +458,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     centered: {
         flex: 1,

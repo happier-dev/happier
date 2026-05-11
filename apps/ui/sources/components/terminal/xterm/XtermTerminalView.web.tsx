@@ -229,10 +229,10 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             scrollback: 5000,
             screenReaderMode: false,
             theme: {
-                background: theme.colors.surface,
-                foreground: theme.colors.text,
-                cursor: theme.colors.text,
-                selectionBackground: theme.colors.surfaceSelected,
+                background: theme.colors.surface.base,
+                foreground: theme.colors.text.primary,
+                cursor: theme.colors.text.primary,
+                selectionBackground: theme.colors.surface.selected,
             },
         });
         terminalRef.current = term;
@@ -346,7 +346,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             lastReportedSizeRef.current = null;
             resetWriteState();
         };
-    }, [fitTerminal, props.fontSize, resetWriteState, scheduleFlushWrites, theme.colors.surface, theme.colors.surfaceSelected, theme.colors.text]);
+    }, [fitTerminal, props.fontSize, resetWriteState, scheduleFlushWrites, theme.colors.surface.base, theme.colors.surface.selected, theme.colors.text.primary]);
 
     React.useEffect(() => {
         const term = terminalRef.current;
@@ -357,17 +357,17 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         try {
             term.options.fontSize = Math.max(8, Math.round(props.fontSize));
             term.options.theme = {
-                background: theme.colors.surface,
-                foreground: theme.colors.text,
-                cursor: theme.colors.text,
-                selectionBackground: theme.colors.surfaceSelected,
+                background: theme.colors.surface.base,
+                foreground: theme.colors.text.primary,
+                cursor: theme.colors.text.primary,
+                selectionBackground: theme.colors.surface.selected,
             };
         } catch {
             // ignored
         }
 
         fitTerminal('resize');
-    }, [fitTerminal, props.fontSize, theme.colors.surface, theme.colors.surfaceSelected, theme.colors.text]);
+    }, [fitTerminal, props.fontSize, theme.colors.surface.base, theme.colors.surface.selected, theme.colors.text.primary]);
 
     return (
         <div

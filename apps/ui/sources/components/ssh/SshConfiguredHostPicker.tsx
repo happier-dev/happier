@@ -42,8 +42,8 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
         id: suggestion.id,
         title: suggestion.alias,
         subtitle: describeSuggestion(suggestion),
-        icon: <Ionicons name="terminal-outline" size={16} color={theme.colors.textSecondary} />,
-    })), [props.suggestions, theme.colors.textSecondary]);
+        icon: <Ionicons name="terminal-outline" size={16} color={theme.colors.text.secondary} />,
+    })), [props.suggestions, theme.colors.text.secondary]);
 
     const handleSelect = React.useCallback((suggestionId: string) => {
         const suggestion = byId.get(suggestionId);
@@ -82,12 +82,12 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
                             variant="selectable"
                             selected={open}
                             onPress={toggle}
-                            left={<Ionicons name="terminal-outline" size={18} color={theme.colors.textSecondary} />}
+                            left={<Ionicons name="terminal-outline" size={18} color={theme.colors.text.secondary} />}
                             title={t('settings.sshConfiguredHostPickerTitle')}
                             subtitle={props.refreshing
                                 ? t('settings.sshConfiguredHostPickerRefreshingSubtitle')
                                 : t('settings.sshConfiguredHostPickerSubtitle')}
-                            right={<Ionicons name="chevron-down" size={18} color={theme.colors.textSecondary} />}
+                            right={<Ionicons name="chevron-down" size={18} color={theme.colors.text.secondary} />}
                         />
                     )}
                 />

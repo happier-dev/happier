@@ -107,10 +107,10 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                         opacity: disabled ? 0.6 : pressed ? 0.82 : 1,
                     })}
                 >
-                    <Text numberOfLines={1} style={{ fontSize: 14, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                    <Text numberOfLines={1} style={{ fontSize: 14, color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                         {props.currentBranch || t('files.detachedHead')}
                     </Text>
-                    <Octicons name={props.open ? 'chevron-up' : 'chevron-down'} size={14} color={theme.colors.textSecondary} />
+                    <Octicons name={props.open ? 'chevron-up' : 'chevron-down'} size={14} color={theme.colors.text.secondary} />
                 </Pressable>
             </View>
             <Popover
@@ -131,8 +131,8 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                             minWidth: 280,
                             borderRadius: 14,
                             borderWidth: 1,
-                            borderColor: theme.colors.divider,
-                            backgroundColor: theme.colors.surface,
+                            borderColor: theme.colors.border.default,
+                            backgroundColor: theme.colors.surface.base,
                             overflow: 'hidden',
                         }}
                     >
@@ -153,20 +153,20 @@ export function WorkspaceScmBranchPopover(props: WorkspaceScmBranchPopoverProps)
                                 value={searchQuery}
                                 onChangeText={handleSearchChange}
                                 placeholder={t('files.branchMenu.searchPlaceholder')}
-                                placeholderTextColor={theme.colors.textSecondary}
+                                placeholderTextColor={theme.colors.text.secondary}
                                 testID="workspace-scm-branch-popover-search"
                                 onKeyPress={(event) => {
                                     handleKeyPress(String(event.nativeEvent.key ?? ''), handleActivateItem);
                                 }}
                                 style={{
                                     fontSize: 13,
-                                    color: theme.colors.text,
+                                    color: theme.colors.text.primary,
                                     borderWidth: 1,
-                                    borderColor: theme.colors.divider,
+                                    borderColor: theme.colors.border.default,
                                     borderRadius: 10,
                                     paddingHorizontal: 12,
                                     paddingVertical: 8,
-                                    backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
+                                    backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
                                 }}
                             />
                         </View>

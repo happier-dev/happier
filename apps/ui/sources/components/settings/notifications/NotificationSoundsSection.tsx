@@ -67,7 +67,7 @@ export function NotificationSoundsSection({
                 testID="settings-notifications-sounds-account-silent"
                 title={t('settingsNotifications.sounds.accountSilentTitle')}
                 subtitle={t('settingsNotifications.sounds.accountSilentSubtitle')}
-                icon={<Ionicons name="volume-mute-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="volume-mute-outline" size={29} color={theme.colors.text.secondary} />}
                 selected={accountSoundId === PUSH_NOTIFICATION_SOUND_IDS.none}
                 onPress={() => setAccountSoundPreset('silent')}
                 showChevron={false}
@@ -76,7 +76,7 @@ export function NotificationSoundsSection({
                 testID="settings-notifications-sounds-device-enabled"
                 title={t('settingsNotifications.sounds.deviceEnabledTitle')}
                 subtitle={t('settingsNotifications.sounds.deviceEnabledSubtitle')}
-                icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={deviceOverrides.sounds.enabled !== false}

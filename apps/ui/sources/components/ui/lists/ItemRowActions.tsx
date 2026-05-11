@@ -72,8 +72,8 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     const overflowAnchorRef = React.useRef<View>(null);
 
     const blurTintOnWeb = React.useMemo(() => {
-        return resolveWebBlurTintColor({ surfaceColor: theme.colors.surface, dark: theme.dark });
-    }, [theme.colors.surface, theme.dark]);
+        return resolveWebBlurTintColor({ surfaceColor: theme.colors.surface.base, dark: theme.dark });
+    }, [theme.colors.surface.base, theme.dark]);
 
     const compactIds = React.useMemo(() => new Set(props.compactActionIds ?? []), [props.compactActionIds]);
     const pinnedIds = React.useMemo(() => new Set(props.pinnedActionIds ?? []), [props.pinnedActionIds]);
@@ -122,7 +122,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
 
     const overflowActionItems = React.useMemo((): ActionListItem[] => {
         return overflowActions.map((action) => {
-            const color = action.color ?? (action.destructive ? theme.colors.deleteAction : theme.colors.button.secondary.tint);
+            const color = action.color ?? (action.destructive ? theme.colors.state.danger.foreground : theme.colors.button.secondary.tint);
             const iconNode =
                 typeof action.icon === 'string'
                     ? <Ionicons name={action.icon} size={18} color={color} />
@@ -137,7 +137,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 disabled: action.disabled,
             };
         });
-    }, [closeThen, overflowActions, theme.colors.button.secondary.tint, theme.colors.deleteAction]);
+    }, [closeThen, overflowActions, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const iconSize = props.iconSize ?? 20;
     const gap = props.gap ?? 16;
@@ -163,7 +163,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
     }, [iconSize, props, theme.colors.button.secondary.tint]);
 
     const renderInlineAction = React.useCallback((action: ItemAction) => {
-        const color = action.color ?? (action.destructive ? theme.colors.deleteAction : theme.colors.button.secondary.tint);
+        const color = action.color ?? (action.destructive ? theme.colors.state.danger.foreground : theme.colors.button.secondary.tint);
         const iconNode =
             typeof action.icon === 'string'
                 ? (
@@ -193,7 +193,7 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 )}
             </Pressable>
         );
-    }, [iconSize, props, theme.colors.button.secondary.tint, theme.colors.deleteAction]);
+    }, [iconSize, props, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const renderOverflow = React.useCallback(() => {
         const accessibilityLabel = t('common.moreActions');

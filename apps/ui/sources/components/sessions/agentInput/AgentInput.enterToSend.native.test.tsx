@@ -215,12 +215,60 @@ function findNativeTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
     return nodes[0]!;
 }
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((merged, entry) => ({
+            ...merged,
+            ...flattenStyle(entry),
+        }), {});
+    }
+    if (typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
 describe('AgentInput (enter to send on native)', () => {
     afterEach(() => {
         settingState.webEnterToSend = true;
         settingState.nativeEnterToSend = false;
         hardwareShiftEnterState.listener = null;
         vi.clearAllMocks();
+    });
+
+    it('uses a 16 point input text base for existing sessions and new sessions', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const existingSessionScreen = await renderScreen(
+            <AgentInput
+                sessionId="session-1"
+                value=""
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={[]}
+                autocompleteSuggestions={async () => []}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />,
+        );
+        const newSessionScreen = await renderScreen(
+            <AgentInput
+                value=""
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={[]}
+                autocompleteSuggestions={async () => []}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />,
+        );
+
+        expect(flattenStyle(findNativeTextInput(existingSessionScreen).props.style).fontSize).toBe(16);
+        expect(flattenStyle(findNativeTextInput(newSessionScreen).props.style).fontSize).toBe(16);
     });
 
     it('does not submit from the native composer when only the web enter-to-send setting is enabled', async () => {

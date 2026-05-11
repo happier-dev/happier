@@ -97,7 +97,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
                     itemTrigger={{
                         title: t('memorySearchSettings.embeddings.mode.title'),
                         subtitle: modeSubtitle,
-                        icon: <Ionicons name="sparkles-outline" size={29} color={theme.colors.success} />,
+                        icon: <Ionicons name="sparkles-outline" size={29} color={theme.colors.state.success.foreground} />,
                         itemProps: {
                             testID: 'memory-settings-embeddings-mode',
                         },
@@ -255,7 +255,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
                         testID="memory-settings-embeddings-local-query-prefix"
                         title={t('memorySearchSettings.embeddings.queryPrefixTitle')}
                         subtitle={customProvider.queryPrefix ?? t('memorySearchSettings.embeddings.notSet')}
-                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.text.secondary} />}
                         onPress={async () => {
                             const next = await Modal.prompt(
                                 t('memorySearchSettings.embeddings.queryPrefixTitle'),
@@ -274,7 +274,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
                         testID="memory-settings-embeddings-local-document-prefix"
                         title={t('memorySearchSettings.embeddings.documentPrefixTitle')}
                         subtitle={customProvider.documentPrefix ?? t('memorySearchSettings.embeddings.notSet')}
-                        icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.text.secondary} />}
                         onPress={async () => {
                             const next = await Modal.prompt(
                                 t('memorySearchSettings.embeddings.documentPrefixTitle'),
@@ -337,7 +337,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
                         testID="memory-settings-embeddings-openai-api-key"
                         title={t('memorySearchSettings.embeddings.openAi.apiKeyTitle')}
                         subtitle={customProvider.apiKey ? t('memorySearchSettings.embeddings.secretSet') : t('memorySearchSettings.embeddings.secretNotSet')}
-                        icon={<Ionicons name="key-outline" size={29} color={theme.colors.warning} />}
+                        icon={<Ionicons name="key-outline" size={29} color={theme.colors.state.neutral.foreground} />}
                         onPress={async () => {
                             const next = await Modal.prompt(
                                 t('memorySearchSettings.embeddings.openAi.apiKeyTitle'),
@@ -358,7 +358,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
                         subtitle={customProvider.dimensions == null
                             ? t('memorySearchSettings.embeddings.notSet')
                             : String(customProvider.dimensions)}
-                        icon={<Ionicons name="resize-outline" size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name="resize-outline" size={29} color={theme.colors.text.secondary} />}
                         onPress={async () => {
                             const next = await Modal.prompt(
                                 t('memorySearchSettings.embeddings.openAi.dimensionsTitle'),
@@ -380,7 +380,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
                 testID="memory-settings-embeddings-fts-weight"
                 title={t('memorySearchSettings.embeddings.advanced.ftsWeightTitle')}
                 subtitle={String(embeddings.blend.ftsWeight)}
-                icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.text.secondary} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
                         t('memorySearchSettings.embeddings.advanced.ftsWeightTitle'),
@@ -401,7 +401,7 @@ export const MemorySettingsEmbeddingsSection = React.memo(function MemorySetting
                 testID="memory-settings-embeddings-embedding-weight"
                 title={t('memorySearchSettings.embeddings.advanced.embeddingWeightTitle')}
                 subtitle={String(embeddings.blend.embeddingWeight)}
-                icon={<Ionicons name="git-network-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="git-network-outline" size={29} color={theme.colors.text.secondary} />}
                 onPress={async () => {
                     const next = await Modal.prompt(
                         t('memorySearchSettings.embeddings.advanced.embeddingWeightTitle'),

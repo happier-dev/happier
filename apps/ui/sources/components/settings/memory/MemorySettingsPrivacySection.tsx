@@ -25,7 +25,7 @@ export const MemorySettingsPrivacySection = React.memo(function MemorySettingsPr
                 testID="memory-settings-delete-on-disable-item"
                 title={t('memorySearchSettings.privacy.deleteOnDisableTitle')}
                 subtitle={t('memorySearchSettings.privacy.deleteOnDisableSubtitle')}
-                icon={<Ionicons name="trash-outline" size={29} color={theme.colors.warningCritical} />}
+                icon={<Ionicons name="trash-outline" size={29} color={theme.colors.state.danger.foreground} />}
                 rightElement={(
                     <Switch
                         testID="memory-settings-delete-on-disable"

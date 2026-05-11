@@ -46,6 +46,19 @@ const ListCardSchema = z.object({
     })).min(1).max(STORY_DECK_LIST_CARD_MAX_ROWS),
 });
 
+const ImageMediaOverrideSchema = z.object({
+    localAssetKey: z.string().min(1).optional(),
+    key: z.string().min(1).optional(),
+    altKey: z.string().min(1).optional(),
+}).superRefine((media, ctx) => {
+    if (media.localAssetKey || media.key) return;
+    ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Image media override must include localAssetKey or key.',
+        path: ['key'],
+    });
+});
+
 const ImageCardSchema = z.object({
     kind: z.literal('image'),
     titleKey: z.string().min(1),
@@ -54,6 +67,8 @@ const ImageCardSchema = z.object({
         localAssetKey: z.string().min(1).optional(),
         key: z.string().min(1).optional(),
         altKey: z.string().min(1),
+        mobile: ImageMediaOverrideSchema.optional(),
+        desktop: ImageMediaOverrideSchema.optional(),
     }).superRefine((media, ctx) => {
         if (media.localAssetKey || media.key) return;
         ctx.addIssue({
@@ -62,6 +77,22 @@ const ImageCardSchema = z.object({
             path: ['key'],
         });
     }),
+});
+
+const VideoMediaOverrideSchema = z.object({
+    key: z.string().min(1).optional(),
+    localPosterAssetKey: z.string().min(1).optional(),
+    posterKey: z.string().min(1).optional(),
+    accessibilityLabelKey: z.string().min(1).optional(),
+    loop: z.boolean().optional(),
+    muted: z.boolean().optional(),
+}).superRefine((media, ctx) => {
+    if (media.key || media.localPosterAssetKey || media.posterKey) return;
+    ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Video media override must include key, localPosterAssetKey, or posterKey.',
+        path: ['key'],
+    });
 });
 
 const VideoCardSchema = z.object({
@@ -75,6 +106,8 @@ const VideoCardSchema = z.object({
         accessibilityLabelKey: z.string().min(1),
         loop: z.boolean().optional(),
         muted: z.boolean().optional(),
+        mobile: VideoMediaOverrideSchema.optional(),
+        desktop: VideoMediaOverrideSchema.optional(),
     }).superRefine((media, ctx) => {
         if (media.localPosterAssetKey || media.posterKey) return;
         ctx.addIssue({
@@ -154,8 +187,12 @@ function collectTranslationKeyRefs(card: AuthoredCard): string[] {
         }
     } else if (card.kind === 'image') {
         keys.push(card.bodyKey, card.media.altKey);
+        if (card.media.mobile?.altKey) keys.push(card.media.mobile.altKey);
+        if (card.media.desktop?.altKey) keys.push(card.media.desktop.altKey);
     } else {
         keys.push(card.bodyKey, card.media.accessibilityLabelKey);
+        if (card.media.mobile?.accessibilityLabelKey) keys.push(card.media.mobile.accessibilityLabelKey);
+        if (card.media.desktop?.accessibilityLabelKey) keys.push(card.media.desktop.accessibilityLabelKey);
     }
     return keys;
 }
@@ -245,9 +282,15 @@ function collectMediaKeyRefs(release: AuthoredRelease): string[] {
     for (const card of release.cards) {
         if (card.kind === 'image') {
             if (card.media.key) keys.push(card.media.key);
+            if (card.media.mobile?.key) keys.push(card.media.mobile.key);
+            if (card.media.desktop?.key) keys.push(card.media.desktop.key);
         } else if (card.kind === 'video') {
             keys.push(card.media.key);
             if (card.media.posterKey) keys.push(card.media.posterKey);
+            if (card.media.mobile?.key) keys.push(card.media.mobile.key);
+            if (card.media.mobile?.posterKey) keys.push(card.media.mobile.posterKey);
+            if (card.media.desktop?.key) keys.push(card.media.desktop.key);
+            if (card.media.desktop?.posterKey) keys.push(card.media.desktop.posterKey);
         }
     }
     return keys;
@@ -258,8 +301,12 @@ function collectBundledImageAssetKeyRefs(release: AuthoredRelease): string[] {
     for (const card of release.cards) {
         if (card.kind === 'image') {
             if (card.media.localAssetKey) keys.push(card.media.localAssetKey);
-        } else if (card.kind === 'video' && card.media.localPosterAssetKey) {
-            keys.push(card.media.localPosterAssetKey);
+            if (card.media.mobile?.localAssetKey) keys.push(card.media.mobile.localAssetKey);
+            if (card.media.desktop?.localAssetKey) keys.push(card.media.desktop.localAssetKey);
+        } else if (card.kind === 'video') {
+            if (card.media.localPosterAssetKey) keys.push(card.media.localPosterAssetKey);
+            if (card.media.mobile?.localPosterAssetKey) keys.push(card.media.mobile.localPosterAssetKey);
+            if (card.media.desktop?.localPosterAssetKey) keys.push(card.media.desktop.localPosterAssetKey);
         }
     }
     return keys;

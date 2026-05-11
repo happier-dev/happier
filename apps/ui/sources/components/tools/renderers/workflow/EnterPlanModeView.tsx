@@ -32,11 +32,11 @@ const styles = StyleSheet.create((theme) => ({
     title: {
         fontSize: 14,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     body: {
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));

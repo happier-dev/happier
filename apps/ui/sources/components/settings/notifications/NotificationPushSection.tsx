@@ -43,7 +43,7 @@ export function NotificationPushSection({
                 testID="settings-notifications-push-troubleshoot"
                 title={t('settingsNotifications.push.troubleshootTitle')}
                 subtitle={t('settingsNotifications.push.troubleshootSubtitle')}
-                icon={<Ionicons name="help-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="help-circle-outline" size={29} color={theme.colors.text.secondary} />}
                 onPress={openPushTroubleshooting}
             />
         </ItemGroup>

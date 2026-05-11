@@ -62,7 +62,7 @@ export const ApprovalInboxCard = React.memo((props: Readonly<{
           <Text style={styles.title}>{title}</Text>
           {actionTitle ? <Text style={styles.subtitle}>{actionTitle}</Text> : null}
         </View>
-        <Ionicons name="chevron-forward" size={16} color={theme.colors.textSecondary} />
+        <Ionicons name="chevron-forward" size={16} color={theme.colors.text.secondary} />
       </View>
 
       {sessionTitle ? <Text style={styles.meta}>{sessionTitle}</Text> : null}
@@ -78,13 +78,13 @@ const styles = StyleSheet.create((theme) => ({
   card: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: theme.colors.divider,
-    backgroundColor: theme.colors.surfaceHighest,
+    borderColor: theme.colors.border.default,
+    backgroundColor: theme.colors.surface.elevated,
     padding: 14,
     gap: 6,
   },
   cardPressed: {
-    backgroundColor: theme.colors.surfacePressedOverlay,
+    backgroundColor: theme.colors.surface.pressedOverlay,
   },
   headerRow: {
     flexDirection: 'row',
@@ -99,14 +99,14 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     fontSize: 14,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
   },
   subtitle: {
     fontSize: 12,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
   meta: {
     fontSize: 12,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
 }));

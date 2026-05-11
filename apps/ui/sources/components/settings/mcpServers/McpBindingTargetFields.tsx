@@ -35,31 +35,31 @@ export const McpBindingTargetFields = React.memo(function McpBindingTargetFields
                 id: 'allMachines',
                 title: t('settings.mcpServersBindingTargetAllMachines'),
                 subtitle: t('settings.mcpServersBindingTargetAllMachinesSubtitle'),
-                icon: <Ionicons name="globe-outline" size={22} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="globe-outline" size={22} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'machine',
                 title: t('settings.mcpServersBindingTargetMachineTitle'),
                 subtitle: t('settings.mcpServersBindingTargetMachineSubtitle'),
-                icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'workspace',
                 title: t('settings.mcpServersBindingTargetWorkspaceTitle'),
                 subtitle: t('settings.mcpServersBindingTargetWorkspaceSubtitle'),
-                icon: <Ionicons name="folder-outline" size={22} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="folder-outline" size={22} color={theme.colors.text.secondary} />,
             },
         ];
-    }, [theme.colors.textSecondary]);
+    }, [theme.colors.text.secondary]);
 
     const machineItems = React.useMemo((): DropdownMenuItem[] => {
         return props.machines.map((machine) => ({
             id: machine.id,
             title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
             subtitle: machine.id,
-            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
         }));
-    }, [props.machines, theme.colors.textSecondary]);
+    }, [props.machines, theme.colors.text.secondary]);
 
     const selectedMachineId = props.target.t === 'allMachines'
         ? null

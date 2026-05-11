@@ -346,12 +346,35 @@ export function resolvePierreTypographyStyle(): React.CSSProperties {
     };
 }
 
+export function resolvePierreSelectionStyle(theme: { colors?: Record<string, any> } | null | undefined): React.CSSProperties {
+    const colors = theme?.colors ?? {};
+    const surfaceColors = colors.surface && typeof colors.surface === 'object' ? colors.surface : {};
+    const surface = typeof surfaceColors.base === 'string' ? surfaceColors.base : undefined;
+    const surfaceInset = typeof surfaceColors.inset === 'string' ? surfaceColors.inset : undefined;
+    const stateColors = colors.state && typeof colors.state === 'object' ? colors.state : {};
+    const successColors = stateColors.success && typeof stateColors.success === 'object' ? stateColors.success as Record<string, unknown> : {};
+    const textColors = colors.text && typeof colors.text === 'object' ? colors.text as Record<string, unknown> : {};
+    const selectionBase = typeof successColors.foreground === 'string'
+        ? successColors.foreground
+        : typeof textColors.link === 'string'
+            ? textColors.link
+            : surfaceInset;
+
+    return {
+        ['--diffs-bg-selection' as any]: surfaceInset,
+        ['--diffs-selection-number-fg' as any]: surface,
+        ['--diffs-bg-selection-number' as any]: selectionBase,
+        ['--diffs-selection-base' as any]: selectionBase,
+    };
+}
+
 export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     const { theme } = useUnistyles();
     const isDark = theme.dark === true;
     const sharedVirtualizer = useVirtualizer();
     const containerRef = React.useRef<HTMLDivElement | null>(null);
     const typographyStyle = React.useMemo(() => resolvePierreTypographyStyle(), []);
+    const selectionStyle = React.useMemo(() => resolvePierreSelectionStyle(theme), [theme]);
 
     const tokenizeMaxLineLengthSetting = useSetting('filesDiffTokenizationMaxLineLength');
     const intraLineDiffEnabledSetting = useSetting('filesDiffIntraLineWordDiffEnabled');
@@ -677,7 +700,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         return (
             <PierreReviewCommentHoverAffordance
                 active={active}
-                color={theme.colors.textSecondary}
+                color={theme.colors.text.secondary}
                 onPress={(event) => {
                     const eventTarget = resolvePierreDiffLineFromPressEvent(event);
                     const currentHovered = getHoveredLine?.();
@@ -735,7 +758,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
                 className="happier-pierre-diff-wrapper"
                 style={{
                     padding: 16,
-                    color: (theme as any)?.colors?.textSecondary ?? (isDark ? '#b0b0b0' : '#6a6a6a'),
+                    color: (theme as any)?.colors?.text?.secondary ?? (isDark ? '#b0b0b0' : '#6a6a6a'),
                     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace',
                     fontSize: 'var(--diffs-font-size, 12px)',
                     lineHeight: 'var(--diffs-line-height, 20px)',
@@ -757,7 +780,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
                 className="happier-pierre-diff-wrapper"
                 style={{
                     padding: 16,
-                    color: (theme as any)?.colors?.textSecondary ?? (isDark ? '#b0b0b0' : '#6a6a6a'),
+                    color: (theme as any)?.colors?.text?.secondary ?? (isDark ? '#b0b0b0' : '#6a6a6a'),
                     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace',
                     fontSize: 'var(--diffs-font-size, 12px)',
                     lineHeight: 'var(--diffs-line-height, 20px)',
@@ -795,8 +818,8 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     );
 
     const wrapperStyle = props.virtualized
-        ? ({ ...typographyStyle, maxHeight: 'inherit' } as React.CSSProperties)
-        : typographyStyle;
+        ? ({ ...typographyStyle, ...selectionStyle, maxHeight: 'inherit' } as React.CSSProperties)
+        : ({ ...typographyStyle, ...selectionStyle } as React.CSSProperties);
 
     return (
         <div

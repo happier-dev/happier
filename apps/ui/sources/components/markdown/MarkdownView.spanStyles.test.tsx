@@ -24,6 +24,8 @@ describe('MarkdownView (span styles)', () => {
             fontSize: 14,
             lineHeight: 20,
             color: 'rgb(120, 120, 120)',
+            marginTop: 0,
+            marginBottom: 0,
         };
 
         const screen = await renderScreen(<MarkdownView markdown={markdown} textStyle={textStyle} />);
@@ -43,6 +45,12 @@ describe('MarkdownView (span styles)', () => {
         expect(markdownStyle.math.backgroundColor).toBe('transparent');
         expect(markdownStyle.list.marginLeft).toBeGreaterThan(0);
         expect(markdownStyle.paragraph.marginTop).toBe(0);
+        expect(markdownStyle.paragraph.marginBottom).toBe(8);
         expect(markdownStyle.paragraph.lineHeight).toBe(20);
+        expect(markdownStyle.h2.fontSize).toBeGreaterThan(markdownStyle.paragraph.fontSize);
+        expect(markdownStyle.h2.marginTop).toBe(16);
+        expect(markdownStyle.h2.marginBottom).toBe(8);
+        expect(markdownStyle.math.marginTop).toBe(8);
+        expect(markdownStyle.math.marginBottom).toBe(8);
     }, 60_000);
 });

@@ -1,11 +1,11 @@
 import * as React from 'react';
 
-import { workspaceReadFile } from '@/sync/ops/workspaceFileSystem';
 import { getImageMimeTypeFromPath } from '@/scm/utils/filePresentation';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
-import { decodeBase64 } from '@/encryption/base64';
 import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTarget';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { createSessionFilePreviewSource, type SessionFilePreviewSource } from '@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource';
 
 import { ImagePreviewCache } from '@/components/workspaces/files/imagePreview/imagePreviewCache';
 
@@ -16,26 +16,32 @@ export type SessionImagePreviewState =
     | Readonly<{ status: 'error'; uri: null; error: string }>;
 
 const imagePreviewCache = new ImagePreviewCache({
-    maxEntries: 20,
-    maxTotalBytes: 10 * 1024 * 1024,
+    maxEntries: 32,
+    maxTotalBytes: 96 * 1024 * 1024,
     now: () => Date.now(),
 });
 
 function resolveImageMimeType(input: Readonly<{ filePath: string; mimeType?: string | null }>): string | null {
     const raw = typeof input.mimeType === 'string' && input.mimeType.trim().length > 0 ? input.mimeType.trim() : null;
-    const resolved = raw ?? getImageMimeTypeFromPath(input.filePath);
-    if (!resolved || !resolved.startsWith('image/')) return null;
+    const resolved = (raw ?? getImageMimeTypeFromPath(input.filePath))?.toLowerCase();
+    if (
+        resolved !== 'image/png'
+        && resolved !== 'image/jpeg'
+        && resolved !== 'image/webp'
+        && resolved !== 'image/gif'
+    ) {
+        return null;
+    }
     return resolved;
 }
 
-function decodeSvgXmlIfNeeded(input: Readonly<{ mime: string; base64: string }>): string | null {
-    if (input.mime !== 'image/svg+xml') return null;
-    try {
-        const bytes = decodeBase64(input.base64, 'base64');
-        return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-    } catch {
-        return null;
+function cleanupPreviewSource(source: SessionFilePreviewSource): () => void | Promise<void> {
+    if (source.kind === 'object-url') {
+        return () => source.revoke();
     }
+    return async () => {
+        await source.delete();
+    };
 }
 
 export function useSessionImagePreview(input: Readonly<{
@@ -45,6 +51,8 @@ export function useSessionImagePreview(input: Readonly<{
     cacheKey?: string | null;
     mimeType?: string | null;
     sizeBytes?: number | null;
+    workspaceScope?: WorkspaceScopeBase | null;
+    cacheScopeId?: string | null;
 }>): SessionImagePreviewState {
     const sessionId = input.sessionId;
     const filePath = input.filePath;
@@ -57,8 +65,15 @@ export function useSessionImagePreview(input: Readonly<{
         typeof input.sizeBytes === 'number' && Number.isFinite(input.sizeBytes)
             ? Math.max(0, input.sizeBytes)
             : null;
-    const resolvedScope = useSessionWorkspaceTarget(enabled ? sessionId : null);
-    const cacheScopeId = resolvedScope?.workspaceCacheKey ?? sessionId;
+    const providedScope = input.workspaceScope ?? null;
+    const resolvedSessionScope = useSessionWorkspaceTarget(enabled && !providedScope ? sessionId : null);
+    const resolvedScope = providedScope ?? resolvedSessionScope;
+    const cacheScopeId = (() => {
+        const explicit = typeof input.cacheScopeId === 'string' && input.cacheScopeId.trim().length > 0
+            ? input.cacheScopeId.trim()
+            : null;
+        return explicit ?? (resolvedSessionScope?.workspaceCacheKey ?? sessionId);
+    })();
 
     const mime = React.useMemo(() => resolveImageMimeType({ filePath, mimeType: input.mimeType }), [filePath, input.mimeType]);
     const canCache = Boolean(cacheKey);
@@ -81,17 +96,12 @@ export function useSessionImagePreview(input: Readonly<{
         const raw = typeof maxPreviewBytesSetting === 'number' && Number.isFinite(maxPreviewBytesSetting) ? maxPreviewBytesSetting : 0;
         return Math.max(0, raw);
     }, [maxPreviewBytesSetting]);
-    const requestedPreviewReadBytes = React.useMemo(() => {
-        if (sizeBytes != null) {
-            return Math.max(0, sizeBytes);
-        }
-        if (maxPreviewBytes > 0) {
-            return maxPreviewBytes;
-        }
-        return undefined;
-    }, [maxPreviewBytes, sizeBytes]);
-
     const lastAppliedLimitsRef = React.useRef<typeof cacheLimits | null>(null);
+    const lastLoadedRef = React.useRef<Readonly<{
+        identity: string;
+        uri: string;
+        svgXml: string | null;
+    }> | null>(null);
     React.useEffect(() => {
         const last = lastAppliedLimitsRef.current;
         if (last && last.maxEntries === cacheLimits.maxEntries && last.maxTotalBytes === cacheLimits.maxTotalBytes) {
@@ -121,6 +131,7 @@ export function useSessionImagePreview(input: Readonly<{
             setState({ status: 'loading', uri: null, error: null });
             return;
         }
+        const previewIdentity = `${cacheScopeId}\u0000${filePath}`;
 
         const tooLarge =
             maxPreviewBytes > 0 &&
@@ -141,6 +152,11 @@ export function useSessionImagePreview(input: Readonly<{
         if (canCache) {
             const cached = imagePreviewCache.get({ sessionId: cacheScopeId, signature: cacheKey!, filePath });
             if (cached?.status === 'loaded') {
+                lastLoadedRef.current = {
+                    identity: previewIdentity,
+                    uri: cached.uri,
+                    svgXml: cached.svgXml ?? null,
+                };
                 setState({ status: 'loaded', uri: cached.uri, svgXml: cached.svgXml ?? null, error: null });
                 return;
             }
@@ -151,69 +167,86 @@ export function useSessionImagePreview(input: Readonly<{
         }
 
         let cancelled = false;
-        setState({ status: 'loading', uri: null, error: null });
+        let uncachedCleanup: (() => void | Promise<void>) | null = null;
+        const previousLoaded = lastLoadedRef.current?.identity === previewIdentity ? lastLoadedRef.current : null;
+        if (!previousLoaded) {
+            setState({ status: 'loading', uri: null, error: null });
+        }
 
         void (async () => {
             try {
-                const res = await workspaceReadFile({
-                    machineId: resolvedScope.machineId,
-                    rootPath: resolvedScope.rootPath,
-                    serverId: resolvedScope.serverId,
-                }, filePath, {
-                    maxBytes: requestedPreviewReadBytes,
+                const res = await createSessionFilePreviewSource({
+                    scope: resolvedScope,
+                    filePath,
+                    mimeType: mime,
+                    maxBytes: maxPreviewBytes,
+                    expectedSizeBytes: sizeBytes,
+                    cacheIdentity: cacheKey,
                 });
-                if (cancelled) return;
-                if (!res.success || typeof res.content !== 'string' || res.content.trim().length === 0) {
-                    const err = (res as any)?.error;
-                    const errorMessage = typeof err === 'string' && err.trim().length > 0 ? err : t('files.fileReadFailed');
-                    if (canCache) {
+                if (!res.ok) {
+                    if (cancelled) return;
+                    const errorMessage = res.error || t('files.fileReadFailed');
+                    if (canCache && !previousLoaded) {
                         imagePreviewCache.set(
                             { sessionId: cacheScopeId, signature: cacheKey!, filePath },
                             { status: 'error', error: errorMessage },
                         );
                     }
-                    setState({ status: 'error', uri: null, error: errorMessage });
-                    return;
-                }
-                const uri = `data:${mime};base64,${res.content}`;
-                const svgXml = decodeSvgXmlIfNeeded({ mime, base64: res.content });
-                const estimatedBytes = uri.length * 2;
-                if (maxPreviewBytes > 0 && estimatedBytes > maxPreviewBytes) {
-                    const errorMessage = t('files.imagePreviewTooLarge');
-                    if (canCache) {
-                        imagePreviewCache.set(
-                            { sessionId: cacheScopeId, signature: cacheKey!, filePath },
-                            { status: 'error', error: errorMessage },
-                        );
+                    if (previousLoaded) {
+                        setState({ status: 'loaded', uri: previousLoaded.uri, svgXml: previousLoaded.svgXml, error: null });
+                    } else {
+                        setState({ status: 'error', uri: null, error: errorMessage });
                     }
-                    setState({ status: 'error', uri: null, error: errorMessage });
                     return;
                 }
+
+                const source = res.source;
+                if (cancelled) {
+                    await cleanupPreviewSource(source)();
+                    return;
+                }
+                const cleanup = cleanupPreviewSource(source);
 
                 if (canCache) {
                     imagePreviewCache.set(
                         { sessionId: cacheScopeId, signature: cacheKey!, filePath },
-                        { status: 'loaded', uri, svgXml },
+                        { status: 'loaded', uri: source.uri, svgXml: null, cleanup, byteLength: source.byteLength },
                     );
+                } else {
+                    uncachedCleanup = cleanup;
                 }
-                setState({ status: 'loaded', uri, svgXml, error: null });
+                lastLoadedRef.current = {
+                    identity: previewIdentity,
+                    uri: source.uri,
+                    svgXml: null,
+                };
+                setState({ status: 'loaded', uri: source.uri, svgXml: null, error: null });
             } catch (err) {
                 if (cancelled) return;
                 const errorMessage = err instanceof Error ? err.message : t('files.fileReadFailed');
-                if (canCache) {
+                if (canCache && !previousLoaded) {
                     imagePreviewCache.set(
                         { sessionId: cacheScopeId, signature: cacheKey!, filePath },
                         { status: 'error', error: errorMessage },
-                    );
+                        );
+                    }
+                if (previousLoaded) {
+                    setState({ status: 'loaded', uri: previousLoaded.uri, svgXml: previousLoaded.svgXml, error: null });
+                } else {
+                    setState({ status: 'error', uri: null, error: errorMessage });
                 }
-                setState({ status: 'error', uri: null, error: errorMessage });
             }
         })();
 
         return () => {
             cancelled = true;
+            if (uncachedCleanup) {
+                try {
+                    void Promise.resolve(uncachedCleanup()).catch(() => undefined);
+                } catch {}
+            }
         };
-    }, [cacheKey, cacheScopeId, canCache, enabled, filePath, maxPreviewBytes, mime, requestedPreviewReadBytes, resolvedScope, sizeBytes]);
+    }, [cacheKey, cacheScopeId, canCache, enabled, filePath, maxPreviewBytes, mime, resolvedScope, sizeBytes]);
 
     return state;
 }

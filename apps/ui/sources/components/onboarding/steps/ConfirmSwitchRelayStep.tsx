@@ -18,22 +18,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 14,
         paddingVertical: 12,
         gap: 6,
     },
     selectedRelayLabel: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     selectedRelayUrl: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         textAlign: 'center',
     },
     confirmWarning: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
 }));

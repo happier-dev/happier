@@ -35,7 +35,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     barValue: {
         fontSize: 10,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 4,
         fontWeight: '600',
     },
@@ -43,7 +43,7 @@ const styles = StyleSheet.create((theme) => ({
         position: 'absolute',
         bottom: -24,
         fontSize: 10,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         transform: [{ rotate: '-45deg' }],
         width: 60,
         textAlign: 'center',
@@ -55,7 +55,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     emptyText: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     }
 }));
 

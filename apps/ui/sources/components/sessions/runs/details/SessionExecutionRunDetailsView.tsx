@@ -203,9 +203,9 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
         ? { flex: 1, paddingHorizontal: 16, paddingVertical: 16, gap: 12 as const }
         : { flex: 1 };
     const content = state.status === 'loading' ? (
-        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+        <ActivityIndicator size="small" color={theme.colors.text.secondary} />
     ) : state.status === 'error' ? (
-        <Text style={{ color: theme.colors.textSecondary }}>{state.error}</Text>
+        <Text style={{ color: theme.colors.text.secondary }}>{state.error}</Text>
     ) : (
         <View style={{ gap: 10 }}>
             <View style={{ gap: 4 }}>
@@ -227,12 +227,12 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                             paddingVertical: 8,
                             paddingHorizontal: 10,
                             borderRadius: 10,
-                            backgroundColor: theme.colors.surfaceHigh,
+                            backgroundColor: theme.colors.surface.inset,
                             borderWidth: 1,
-                            borderColor: theme.colors.divider,
+                            borderColor: theme.colors.border.default,
                         }}
                     >
-                        <Text style={{ color: theme.colors.text, fontWeight: '600' }}>{t('toolView.open')}</Text>
+                        <Text style={{ color: theme.colors.text.primary, fontWeight: '600' }}>{t('toolView.open')}</Text>
                     </Pressable>
                 ) : null}
             </View>
@@ -245,7 +245,7 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
 
             {state.run.status === 'running' && canMutateRunViaSessionRpc ? (
                 <View style={{ gap: 8 }}>
-                    {stopError ? <Text style={{ color: theme.colors.textSecondary }}>{stopError}</Text> : null}
+                    {stopError ? <Text style={{ color: theme.colors.text.secondary }}>{stopError}</Text> : null}
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={t('runs.stop.stopRunA11y')}
@@ -273,13 +273,13 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                             paddingVertical: 10,
                             paddingHorizontal: 12,
                             borderRadius: 10,
-                            backgroundColor: theme.colors.surfaceHigh,
+                            backgroundColor: theme.colors.surface.inset,
                             borderWidth: 1,
-                            borderColor: theme.colors.divider,
+                            borderColor: theme.colors.border.default,
                             opacity: isStopping ? 0.6 : 1,
                         }}
                     >
-                        <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
+                        <Text style={{ color: theme.colors.text.primary, fontWeight: '600' }}>
                             {isStopping ? t('runs.stop.stoppingLabel') : t('runs.stop.stopLabel')}
                         </Text>
                     </Pressable>
@@ -288,23 +288,23 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
 
             {canShowSendComposer ? (
                 <View style={{ gap: 8 }}>
-                    {sendError ? <Text style={{ color: theme.colors.textSecondary }}>{sendError}</Text> : null}
+                    {sendError ? <Text style={{ color: theme.colors.text.secondary }}>{sendError}</Text> : null}
                     <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                         <TextInput
                             testID="session-run-details-send-input"
                             value={sendText}
                             onChangeText={setSendText}
                             placeholder={t('runs.send.placeholder')}
-                            placeholderTextColor={theme.colors.textSecondary}
+                            placeholderTextColor={theme.colors.text.secondary}
                             style={{
                                 flex: 1,
                                 paddingVertical: 10,
                                 paddingHorizontal: 12,
                                 borderRadius: 10,
-                                backgroundColor: theme.colors.surfaceHigh,
+                                backgroundColor: theme.colors.surface.inset,
                                 borderWidth: 1,
-                                borderColor: theme.colors.divider,
-                                color: theme.colors.text,
+                                borderColor: theme.colors.border.default,
+                                color: theme.colors.text.primary,
                             }}
                         />
                         <Pressable
@@ -341,13 +341,13 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                                 paddingVertical: 10,
                                 paddingHorizontal: 12,
                                 borderRadius: 10,
-                                backgroundColor: theme.colors.surfaceHigh,
+                                backgroundColor: theme.colors.surface.inset,
                                 borderWidth: 1,
-                                borderColor: theme.colors.divider,
+                                borderColor: theme.colors.border.default,
                                 opacity: isSending || sendText.trim().length === 0 ? 0.6 : 1,
                             }}
                         >
-                            <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
+                            <Text style={{ color: theme.colors.text.primary, fontWeight: '600' }}>
                                 {isSending ? t('runs.send.sendingLabel') : t('runs.send.sendLabel')}
                             </Text>
                         </Pressable>
@@ -359,13 +359,13 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                 <View style={{
                     padding: 12,
                     borderRadius: 12,
-                    backgroundColor: theme.colors.surfaceHigh,
+                    backgroundColor: theme.colors.surface.inset,
                     borderWidth: 1,
-                    borderColor: theme.colors.divider,
+                    borderColor: theme.colors.border.default,
                     gap: 6,
                 }}>
-                    <Text style={{ color: theme.colors.text, fontWeight: '600' }}>{t('runs.runDetails.latestToolResultTitle')}</Text>
-                    <Text style={{ color: theme.colors.textSecondary, fontFamily: 'Menlo' }}>
+                    <Text style={{ color: theme.colors.text.primary, fontWeight: '600' }}>{t('runs.runDetails.latestToolResultTitle')}</Text>
+                    <Text style={{ color: theme.colors.text.secondary, fontFamily: 'Menlo' }}>
                         {JSON.stringify(state.latestToolResult, null, 2)}
                     </Text>
                 </View>

@@ -33,7 +33,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 8,
     },
     emptyRunsText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
     },
 }));
@@ -206,7 +206,7 @@ export function AutomationDetailScreen() {
         return (
             <ItemList>
                 <View style={styles.loading}>
-                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                 </View>
             </ItemList>
         );
@@ -217,7 +217,7 @@ export function AutomationDetailScreen() {
             <ItemList>
                 <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                     <View style={styles.emptyRuns}>
-                        <Ionicons name="alert-circle-outline" size={32} color={theme.colors.textSecondary} />
+                        <Ionicons name="alert-circle-outline" size={32} color={theme.colors.text.secondary} />
                         <Text style={styles.emptyRunsText}>{t('automations.detail.notFound')}</Text>
                     </View>
                 </View>
@@ -252,9 +252,9 @@ export function AutomationDetailScreen() {
                         subtitleLines={0}
                         onPress={() => void handleRunNow()}
                         rightElement={runNowState === 'running'
-                            ? <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                            ? <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                             : runNowState === 'queued'
-                                ? <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' }}>{t('automations.detail.runNowQueuedBadge')}</Text>
+                                ? <Text style={{ color: theme.colors.text.secondary, fontSize: 13, fontWeight: '600' }}>{t('automations.detail.runNowQueuedBadge')}</Text>
                                 : undefined}
                         showChevron={false}
                     />

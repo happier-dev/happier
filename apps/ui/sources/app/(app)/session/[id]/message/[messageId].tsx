@@ -21,7 +21,9 @@ import {
 
 type SessionMessageRouteTheme = Readonly<{
     colors: Readonly<{
-        text: string;
+        text: Readonly<{
+            primary: string;
+        }>;
     }>;
 }>;
 
@@ -97,12 +99,12 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
             headerTitle: toolHeaderTitle,
             headerRight: toolHeaderRight,
             headerStyle: {
-                backgroundColor: theme.colors.header.background,
+                backgroundColor: theme.colors.chrome.header.background,
             },
-            headerTintColor: theme.colors.header.tint,
+            headerTintColor: theme.colors.chrome.header.foreground,
             headerShadowVisible: false,
         } as const;
-    }, [theme.colors.header.background, theme.colors.header.tint, toolHeaderRight, toolHeaderTitle]);
+    }, [theme.colors.chrome.header.background, theme.colors.chrome.header.foreground, toolHeaderRight, toolHeaderTitle]);
 
     // Trigger session visibility when component mounts
     React.useEffect(() => {
@@ -190,7 +192,7 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
     if (!session || !messagesLoaded) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }
@@ -200,7 +202,7 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
     if (!message) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }

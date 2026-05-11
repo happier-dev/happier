@@ -209,7 +209,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
             id: '',
             title: t('settingsVoice.local.googleCloudTts.language.allTitle'),
             subtitle: t('settingsVoice.local.googleCloudTts.language.allSubtitle'),
-            icon: <Ionicons name="sparkles-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="sparkles-outline" size={22} color={theme.colors.text.secondary} />,
           },
           ...availableLanguageCodes.map((code) => {
             const lang = findLanguageByCode(code);
@@ -217,7 +217,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
               id: code,
               title: lang ? getLanguageDisplayName(lang) : code,
               subtitle: code,
-              icon: <Ionicons name="language-outline" size={22} color={theme.colors.textSecondary} />,
+              icon: <Ionicons name="language-outline" size={22} color={theme.colors.text.secondary} />,
             };
           }),
           ...LANGUAGES.flatMap((lang) => {
@@ -229,7 +229,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
                 id: code,
                 title: getLanguageDisplayName(lang),
                 subtitle: code,
-                icon: <Ionicons name="language-outline" size={22} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="language-outline" size={22} color={theme.colors.text.secondary} />,
               },
             ];
           }),
@@ -328,7 +328,7 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
               <Ionicons
                 name={previewingGoogleVoiceName === v.name ? 'stop-circle-outline' : 'play-circle-outline'}
                 size={22}
-                color={theme.colors.textSecondary}
+                color={theme.colors.text.secondary}
               />
             </Pressable>
           ) : null,
@@ -360,13 +360,13 @@ const GoogleCloudTtsSettings: LocalTtsProviderSpec['Settings'] = (props) => {
             id: 'mp3',
             title: AUDIO_FORMAT_TITLES.mp3,
             subtitle: t('settingsVoice.local.googleCloudTts.format.mp3Subtitle'),
-            icon: <Ionicons name="musical-notes-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="musical-notes-outline" size={22} color={theme.colors.text.secondary} />,
           },
           {
             id: 'wav',
             title: AUDIO_FORMAT_TITLES.wav,
             subtitle: t('settingsVoice.local.googleCloudTts.format.wavSubtitle'),
-            icon: <Ionicons name="pulse-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="pulse-outline" size={22} color={theme.colors.text.secondary} />,
           },
         ]}
         onSelect={(id) => {

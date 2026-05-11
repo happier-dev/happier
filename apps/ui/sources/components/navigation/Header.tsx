@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, Platform, StatusBar, Pressable } from 'react-native';
 import type { NativeStackHeaderProps } from '@react-navigation/native-stack';
-import { layout } from '../ui/layout/layout';
+import { useLayoutMaxWidth } from '../ui/layout/layout';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
@@ -29,6 +29,7 @@ interface HeaderProps {
 
 export const Header = React.memo((props: HeaderProps) => {
     const styles = stylesheet;
+    const maxWidth = useLayoutMaxWidth();
 
     const {
         title,
@@ -81,7 +82,7 @@ export const Header = React.memo((props: HeaderProps) => {
                 <View
                     testID="desktop-route-header-content"
                     pointerEvents="box-none"
-                    style={[styles.content, { height: headerHeight }]}
+                    style={[styles.content, { height: headerHeight, maxWidth }]}
                 >
                     <View pointerEvents="box-none" style={styles.leftContainer}>
                         {headerLeft && headerLeft()}
@@ -208,7 +209,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         backgroundColor: 'transparent',
     },
     containerNormal: {
-        backgroundColor: theme.colors.header.background,
+        backgroundColor: theme.colors.chrome.header.background,
     },
     contentWrapper: {
         width: '100%',
@@ -221,7 +222,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
         paddingHorizontal: Platform.select({ ios: 8, default: 16 }),
         width: '100%',
-        maxWidth: layout.headerMaxWidth,
     },
     leftContainer: {
         flexGrow: 0,
@@ -245,7 +245,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     title: {
         fontSize: 16,
         textAlign: 'center',
-        color: theme.colors.header.tint,
+        color: theme.colors.chrome.header.foreground,
         ...Typography.default('semiBold'),
     },
     subtitle: {
@@ -253,13 +253,13 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         fontWeight: '400',
         textAlign: Platform.OS === 'ios' ? 'center' : 'left',
         marginTop: 2,
-        color: theme.colors.header.tint,
+        color: theme.colors.chrome.header.foreground,
         ...Typography.default('regular'),
     },
     shadow: {
         ...shadowLevelStyle(theme.colors.shadowLevels[3]),
     },
     backButton: {
-        color: theme.colors.header.tint,
+        color: theme.colors.chrome.header.foreground,
     },
 }));

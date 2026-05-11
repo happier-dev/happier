@@ -39,7 +39,7 @@ export function ExistingSessionAutomationAuthoringSurface(props: Readonly<{
     if (props.isWaiting) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             </View>
         );
     }

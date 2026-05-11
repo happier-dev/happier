@@ -16,12 +16,12 @@ const stylesheet = StyleSheet.create((theme: Theme) => ({
     },
     input: {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 10,
         paddingHorizontal: 10,
         paddingVertical: 8,
-        color: theme.colors.text,
-        backgroundColor: theme.colors.surfaceHigh,
+        color: theme.colors.text.primary,
+        backgroundColor: theme.colors.surface.inset,
         minHeight: 40,
     },
     multilineInput: {
@@ -38,16 +38,16 @@ const stylesheet = StyleSheet.create((theme: Theme) => ({
         paddingHorizontal: 10,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
     },
     buttonText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 12,
         fontWeight: '600',
     },
     hint: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
     teamChoices: {
@@ -60,22 +60,22 @@ const stylesheet = StyleSheet.create((theme: Theme) => ({
         paddingVertical: 6,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     teamChoiceButtonSelected: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     teamChoiceText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 11,
         fontWeight: '600',
     },
     teamChoiceTextSelected: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     error: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
 }));

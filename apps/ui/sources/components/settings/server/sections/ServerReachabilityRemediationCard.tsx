@@ -26,9 +26,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginBottom: 12,
         padding: 12,
         borderRadius: 12,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         gap: 10,
     },
     headerRow: {
@@ -42,7 +42,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
     },
     textColumn: {
         flex: 1,
@@ -50,12 +50,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     body: {
         ...Typography.default(),
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 19,
     },
     actionsRow: {
@@ -76,7 +76,7 @@ export function ServerReachabilityRemediationCard(props: ServerReachabilityRemed
         <View testID="server-settings-add-reachability-remediation" style={styles.container}>
             <View style={styles.headerRow}>
                 <View style={styles.iconWrap}>
-                    <Ionicons name="shield-checkmark-outline" size={16} color={theme.colors.textLink} />
+                    <Ionicons name="shield-checkmark-outline" size={16} color={theme.colors.text.link} />
                 </View>
                 <View style={styles.textColumn}>
                     <Text style={styles.title}>{t(props.remediation.titleKey)}</Text>

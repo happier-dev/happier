@@ -38,7 +38,7 @@ import type { WizardStepId } from '../state/wizardTypes';
 import type { RemoteRelayRuntimeCompletion, RemoteSetupIntent, SetupWizardSurfaceStyles } from './SetupWizardSurface';
 
 export function renderSetupStepBody(params: Readonly<{
-    theme: Readonly<{ colors: Readonly<{ textSecondary: string }> }>;
+    theme: Readonly<{ colors: Readonly<{ text: Readonly<{ secondary: string }> }> }>;
     styles: SetupWizardSurfaceStyles;
     stepId: WizardStepId;
     testIDPrefix: string;
@@ -105,7 +105,7 @@ export function renderSetupStepBody(params: Readonly<{
                             <TextInput
                                 testID="setupWizard-relay-url-input"
                                 placeholder={t('common.urlPlaceholder')}
-                                placeholderTextColor={params.theme.colors.textSecondary}
+                                placeholderTextColor={params.theme.colors.text.secondary}
                                 autoCapitalize="none"
                                 autoCorrect={false}
                                 onChangeText={params.onRelayUrlPasteChange}
@@ -134,7 +134,7 @@ export function renderSetupStepBody(params: Readonly<{
                             <TextInput
                                 testID="setupWizard-relay-share-url-input"
                                 placeholder={t('common.urlPlaceholder')}
-                                placeholderTextColor={params.theme.colors.textSecondary}
+                                placeholderTextColor={params.theme.colors.text.secondary}
                                 autoCapitalize="none"
                                 autoCorrect={false}
                                 onChangeText={params.onRelayShareUrlPasteChange}

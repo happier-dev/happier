@@ -736,12 +736,12 @@ export default function OAuthProviderReturn() {
                     paddingVertical: 10,
                     borderRadius: 8,
                     borderWidth: 1,
-                    borderColor: theme.colors.divider,
+                    borderColor: theme.colors.border.default,
                     alignItems: 'center',
                     justifyContent: 'center',
                 }}
             >
-                <Text style={{ color: theme.colors.text }}>
+                <Text style={{ color: theme.colors.text.primary }}>
                     {t('welcome.chooseEncryptionPlain')}
                 </Text>
             </Pressable>
@@ -760,7 +760,7 @@ export default function OAuthProviderReturn() {
                 placeholderTextColor={theme.colors.input.placeholder}
                 style={{
                     borderWidth: 1,
-                    borderColor: theme.colors.divider,
+                    borderColor: theme.colors.border.default,
                     borderRadius: 8,
                     paddingHorizontal: 12,
                     paddingVertical: 10,
@@ -777,12 +777,12 @@ export default function OAuthProviderReturn() {
                         paddingVertical: 10,
                         borderRadius: 8,
                         borderWidth: 1,
-                        borderColor: theme.colors.divider,
+                        borderColor: theme.colors.border.default,
                         alignItems: 'center',
                         justifyContent: 'center',
                     }}
                 >
-                    <Text style={{ color: theme.colors.text }}>{t('common.cancel')}</Text>
+                    <Text style={{ color: theme.colors.text.primary }}>{t('common.cancel')}</Text>
                 </Pressable>
                 <Pressable
                     testID="oauth-username-save"

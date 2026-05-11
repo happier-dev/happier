@@ -1,0 +1,1 @@
+export const MULTI_TEXT_INPUT_BASE_FONT_SIZE = 16;

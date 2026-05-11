@@ -177,7 +177,7 @@ export function SourceControlRemotesSection(props: Readonly<{
             testID="scm-update-remotes-section"
         >
             {remotes.length === 0 ? (
-                <Text style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.default() }}>
+                <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                     {t('files.sourceControlOperations.update.remotes.empty')}
                 </Text>
             ) : (
@@ -188,22 +188,22 @@ export function SourceControlRemotesSection(props: Readonly<{
                             testID="scm-update-remote-row"
                             style={{
                                 borderWidth: 1,
-                                borderColor: props.theme.colors.divider,
+                                borderColor: props.theme.colors.border.default,
                                 borderRadius: 8,
                                 padding: 10,
                                 gap: 8,
-                                backgroundColor: props.theme.colors.surfaceHigh,
+                                backgroundColor: props.theme.colors.surface.inset,
                             }}
                         >
                             <View style={{ gap: 2 }}>
-                                <Text style={{ fontSize: 12, color: props.theme.colors.text, ...Typography.default('semiBold') }}>
+                                <Text style={{ fontSize: 12, color: props.theme.colors.text.primary, ...Typography.default('semiBold') }}>
                                     {remote.name}
                                 </Text>
-                                <Text style={{ fontSize: 11, color: props.theme.colors.textSecondary, ...Typography.mono() }} numberOfLines={1}>
+                                <Text style={{ fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.mono() }} numberOfLines={1}>
                                     {remote.fetchUrl || t('files.sourceControlOperations.update.remotes.noFetchUrl')}
                                 </Text>
                                 {remote.pushUrl && remote.pushUrl !== remote.fetchUrl ? (
-                                    <Text style={{ fontSize: 11, color: props.theme.colors.textSecondary, ...Typography.mono() }} numberOfLines={1}>
+                                    <Text style={{ fontSize: 11, color: props.theme.colors.text.secondary, ...Typography.mono() }} numberOfLines={1}>
                                         {remote.pushUrl}
                                     </Text>
                                 ) : null}
@@ -232,7 +232,7 @@ export function SourceControlRemotesSection(props: Readonly<{
 
             <View style={{ gap: 8 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                    <Text style={{ fontSize: 12, color: props.theme.colors.text, ...Typography.default('semiBold') }}>
+                    <Text style={{ fontSize: 12, color: props.theme.colors.text.primary, ...Typography.default('semiBold') }}>
                         {editing.mode === 'add'
                             ? t('files.sourceControlOperations.update.remotes.addTitle')
                             : t('files.sourceControlOperations.update.remotes.editTitle', { name: editing.remote.name })}

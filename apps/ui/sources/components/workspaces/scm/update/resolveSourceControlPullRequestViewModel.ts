@@ -1,4 +1,5 @@
 import type { ScmFollowupAction } from '@happier-dev/protocol';
+import { resolveScmHostingProviderFollowupAllowedBaseUrl } from '@happier-dev/protocol';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
@@ -45,12 +46,17 @@ export function resolveSourceControlPullRequestViewModel(input: Readonly<{
     const disabled = input.disabled === true;
 
     if (openPullRequest) {
+        const detectedProvider = prStatus?.provider ?? openPullRequest.provider;
+        const allowedBaseUrl = resolveScmHostingProviderFollowupAllowedBaseUrl({
+            provider: detectedProvider,
+            allowedBaseUrl: detectedProvider.baseUrl,
+        }) ?? '';
         const followup = {
             kind: 'openUrl',
             purpose: 'pullRequest',
             url: openPullRequest.url,
-            allowedBaseUrl: openPullRequest.provider.baseUrl,
-            urlSafety: openPullRequest.provider.urlSafety,
+            allowedBaseUrl,
+            urlSafety: detectedProvider.urlSafety,
         } as const;
         const safe = validateScmFollowupOpenUrl(followup);
         return {
@@ -93,7 +99,40 @@ export function resolveSourceControlPullRequestViewModel(input: Readonly<{
             secondaryAction: null,
         };
     }
+    if (areSameScmBranchName(baseBranch, headBranch)) {
+        return {
+            kind: 'unavailable',
+            baseBranch: null,
+            headBranch,
+            title: null,
+            state: null,
+            blockedReason: 'missing-base',
+            primaryAction: null,
+            secondaryAction: null,
+        };
+    }
     if (snapshot.capabilities?.writePullRequestCreate !== true) {
+        const composeFollowup = resolveComposeFollowup(prStatus);
+        if (composeFollowup) {
+            const safe = validateScmFollowupOpenUrl(composeFollowup);
+            return {
+                kind: safe.ok ? 'create' : 'unavailable',
+                baseBranch,
+                headBranch,
+                title: null,
+                state: null,
+                blockedReason: safe.ok ? null : 'unsafe-url',
+                primaryAction: safe.ok
+                    ? {
+                        kind: 'open-compose',
+                        baseBranch,
+                        headBranch,
+                        disabled,
+                    }
+                    : null,
+                secondaryAction: null,
+            };
+        }
         return {
             kind: 'unavailable',
             baseBranch,
@@ -120,5 +159,27 @@ export function resolveSourceControlPullRequestViewModel(input: Readonly<{
             disabled,
         },
         secondaryAction: null,
+    };
+}
+
+function areSameScmBranchName(left: string, right: string): boolean {
+    return left.trim() === right.trim();
+}
+
+function resolveComposeFollowup(
+    status: NonNullable<ScmWorkingSnapshot['pullRequestStatus']> | null,
+): Extract<ScmFollowupAction, { kind: 'openUrl' }> | null {
+    if (!status?.provider || !status.composeUrl) return null;
+    const allowedBaseUrl = resolveScmHostingProviderFollowupAllowedBaseUrl({
+        provider: status.provider,
+        allowedBaseUrl: status.provider.baseUrl,
+    });
+    if (!allowedBaseUrl) return null;
+    return {
+        kind: 'openUrl',
+        purpose: 'compose',
+        url: status.composeUrl,
+        allowedBaseUrl,
+        urlSafety: status.provider.urlSafety,
     };
 }

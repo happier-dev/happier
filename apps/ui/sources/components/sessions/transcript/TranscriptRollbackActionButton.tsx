@@ -70,9 +70,9 @@ export const TranscriptRollbackActionButton = React.memo((props: {
             ]}
         >
             {isRollingBack ? (
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             ) : (
-                <Ionicons name="arrow-undo-outline" size={12} color={theme.colors.textSecondary} />
+                <Ionicons name="arrow-undo-outline" size={12} color={theme.colors.text.secondary} />
             )}
         </Pressable>
         </>

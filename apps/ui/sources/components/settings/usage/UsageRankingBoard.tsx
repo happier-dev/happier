@@ -21,7 +21,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 11,
         lineHeight: 14,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         textTransform: 'uppercase',
     },
     labelWrap: {
@@ -32,25 +32,25 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 42,
         lineHeight: 46,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     labelSecondary: {
         ...Typography.default('semiBold'),
         fontSize: 30,
         lineHeight: 34,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     labelCompact: {
         ...Typography.default('semiBold'),
         fontSize: 24,
         lineHeight: 28,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     count: {
         ...Typography.default(),
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));
 

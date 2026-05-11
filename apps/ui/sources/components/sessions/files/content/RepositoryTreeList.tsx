@@ -79,15 +79,15 @@ function renderEntryIcon(node: { type: 'file' | 'directory' | 'error' | 'info'; 
             <Ionicons
                 name={node.isExpanded ? 'folder-open-outline' : 'folder-outline'}
                 size={16}
-                color={theme.colors.textLink}
+                color={theme.colors.text.link}
             />
         );
     }
     if (node.type === 'error') {
-        return <Ionicons name="alert-circle-outline" size={16} color={theme.colors.textSecondary} />;
+        return <Ionicons name="alert-circle-outline" size={16} color={theme.colors.text.secondary} />;
     }
     if (node.type === 'info') {
-        return <Ionicons name="information-circle-outline" size={16} color={theme.colors.textSecondary} />;
+        return <Ionicons name="information-circle-outline" size={16} color={theme.colors.text.secondary} />;
     }
     return <FileIcon fileName={node.name} size={16} />;
 }
@@ -196,7 +196,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                                         width: 74,
                                         textAlign: 'right',
                                         fontSize: 12,
-                                        color: theme.colors.textSecondary,
+                                        color: theme.colors.text.secondary,
                                         ...Typography.mono(),
                                     }}
                                     numberOfLines={1}
@@ -208,7 +208,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                                         width: 132,
                                         textAlign: 'right',
                                         fontSize: 12,
-                                        color: theme.colors.textSecondary,
+                                        color: theme.colors.text.secondary,
                                         ...Typography.mono(),
                                     }}
                                     numberOfLines={1}
@@ -219,11 +219,11 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                         ) : null}
                         {badge ? (
                             <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                                <Text style={{ fontSize: 12, color: theme.colors.warning, ...Typography.mono('semiBold') }}>
+                                <Text style={{ fontSize: 12, color: theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
                                     {node.type === 'directory' ? `${badge.kindLetter}${badge.changedCount}` : badge.kindLetter}
                                 </Text>
                                 {badge.added > 0 ? (
-                                    <Text style={{ fontSize: 12, color: theme.colors.success, ...Typography.mono('semiBold') }}>
+                                    <Text style={{ fontSize: 12, color: theme.colors.state.success.foreground, ...Typography.mono('semiBold') }}>
                                         {`+${badge.added}`}
                                     </Text>
                                 ) : null}
@@ -231,7 +231,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                                     <Text
                                         style={{
                                             fontSize: 12,
-                                            color: theme.colors.danger ?? theme.colors.textDestructive ?? theme.colors.warning,
+                                            color: theme.colors.state.danger.foreground ?? theme.colors.state.danger.foreground ?? theme.colors.state.neutral.foreground,
                                             ...Typography.mono('semiBold'),
                                         }}
                                     >
@@ -241,7 +241,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                             </View>
                         ) : null}
                         {isDirectoryNode(node) && node.isLoadingChildren ? (
-                            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                         ) : null}
                         {menu}
                     </View>
@@ -298,7 +298,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                         }
                         paddingRight={8}
                         style={{
-                            backgroundColor: props.webDropHoverPath === node.path ? theme.colors.surfacePressed : undefined,
+                            backgroundColor: props.webDropHoverPath === node.path ? theme.colors.surface.pressed : undefined,
                             borderRadius: 10,
                         }}
                         wrapContent={

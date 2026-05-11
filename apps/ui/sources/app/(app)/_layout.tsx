@@ -82,9 +82,9 @@ export default function RootLayout() {
     const activeServerSnapshot = useActiveServerSnapshot();
     const stackContentStyle = React.useMemo(
         () => ({
-            backgroundColor: isDesktopOverlayWindow ? 'transparent' : theme.colors.surface,
+            backgroundColor: isDesktopOverlayWindow ? 'transparent' : theme.colors.surface.base,
         }),
-        [isDesktopOverlayWindow, theme.colors.surface],
+        [isDesktopOverlayWindow, theme.colors.surface.base],
     );
     const sessionRouteAuthRecovery = React.useMemo(
         () => resolveSessionRouteAuthRecoveryState({
@@ -308,8 +308,8 @@ export default function RootLayout() {
         shouldUseCustomHeader,
         stackContentStyle,
         preferredLanguage,
-        theme.colors.header.background,
-        theme.colors.header.tint,
+        theme.colors.chrome.header.background,
+        theme.colors.chrome.header.foreground,
     ]);
     const rootStackScreenOptionsWithTransitions = React.useCallback((input: StackNavigatorScreenOptionsInput) => ({
         ...rootStackScreenOptions,
@@ -487,10 +487,10 @@ export default function RootLayout() {
                 accessibilityRole="button"
                 accessibilityLabel={t('common.cancel')}
             >
-                <Ionicons name="close" size={22} color={theme.colors.header.tint} />
+                <Ionicons name="close" size={22} color={theme.colors.chrome.header.foreground} />
             </TouchableOpacity>
         ),
-    }), [preferredLanguage, theme.colors.header.tint]);
+    }), [preferredLanguage, theme.colors.chrome.header.foreground]);
     const externalSessionBrowseScreenOptions = React.useMemo<StackScreenOptions>(() => ({
         headerTitle: t('externalSessions.browseTitle'),
         headerShown: true,
@@ -508,10 +508,10 @@ export default function RootLayout() {
                 accessibilityRole="button"
                 accessibilityLabel={t('common.cancel')}
             >
-                <Ionicons name="close" size={22} color={theme.colors.header.tint} />
+                <Ionicons name="close" size={22} color={theme.colors.chrome.header.foreground} />
             </TouchableOpacity>
         ),
-    }), [preferredLanguage, theme.colors.header.tint]);
+    }), [preferredLanguage, theme.colors.chrome.header.foreground]);
 
     React.useEffect(() => {
         clearPendingMobileSurfaceTransitionForPathname(pathname);

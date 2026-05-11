@@ -30,7 +30,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     branchText: {
         fontSize: 13,
         fontWeight: '500',
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         flexShrink: 1,
         minWidth: 0,
     },
@@ -43,7 +43,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     filesText: {
         fontSize: 11,
         fontWeight: '500',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginRight: 4,
     },
     lineChanges: {
@@ -54,12 +54,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     addedText: {
         fontSize: 11,
         fontWeight: '600',
-        color: theme.colors.gitAddedText,
+        color: theme.colors.versionControl.added.foreground,
     },
     removedText: {
         fontSize: 11,
         fontWeight: '600',
-        color: theme.colors.gitRemovedText,
+        color: theme.colors.versionControl.removed.foreground,
     },
 }));
 

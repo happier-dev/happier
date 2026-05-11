@@ -23,15 +23,15 @@ export const UnifiedDiffFoldToggleRow = React.memo(function UnifiedDiffFoldToggl
                     paddingVertical: 6,
                     borderRadius: 999,
                     borderWidth: 1,
-                    borderColor: theme.colors.divider,
-                    backgroundColor: theme.colors.surfaceHigh,
+                    borderColor: theme.colors.border.default,
+                    backgroundColor: theme.colors.surface.inset,
                 }}
             >
                 <Text
                     style={{
                         ...Typography.default('semiBold'),
                         fontSize: 12,
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                     }}
                 >
                     {count === 1 ? 'Show 1 hidden line' : `Show ${count} hidden lines`}

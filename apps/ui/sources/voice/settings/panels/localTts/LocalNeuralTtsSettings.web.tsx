@@ -128,7 +128,7 @@ export function LocalNeuralTtsSettings(props: {
                     title: String(speed),
                     icon: (
                         <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                            <Ionicons name="speedometer-outline" size={20} color={theme.colors.textSecondary} />
+                            <Ionicons name="speedometer-outline" size={20} color={theme.colors.text.secondary} />
                         </View>
                     ),
                 }))}

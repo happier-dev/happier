@@ -36,14 +36,14 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 14,
         lineHeight: 20,
         letterSpacing: -0.08,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         textTransform: 'uppercase',
     },
     subtitle: {
         ...Typography.default(),
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));
 

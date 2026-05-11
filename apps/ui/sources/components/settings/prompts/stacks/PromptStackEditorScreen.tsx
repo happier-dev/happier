@@ -17,7 +17,7 @@ import { t } from '@/text';
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.groupped.background,
+    backgroundColor: theme.colors.background.canvas,
   },
   rightControls: {
     flexDirection: 'row',
@@ -142,7 +142,7 @@ export const PromptStackEditorScreen = React.memo((props: Readonly<{
                 testID={`promptStack.entry.${entry.id}`}
                 title={title}
                 subtitle={subtitle}
-                icon={<Ionicons name={entry.ref.kind === 'bundle' ? 'sparkles-outline' : 'document-text-outline'} size={22} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name={entry.ref.kind === 'bundle' ? 'sparkles-outline' : 'document-text-outline'} size={22} color={theme.colors.text.secondary} />}
                 onPress={() => openArtifactEditor(entry)}
                 rightElement={(
                   <View style={styles.rightControls}>
@@ -195,7 +195,7 @@ export const PromptStackEditorScreen = React.memo((props: Readonly<{
               testID="promptStack.empty"
               title={t('promptLibrary.stackEmptyTitle')}
               subtitle={t('promptLibrary.stackEmptySubtitle')}
-              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.textSecondary} />}
+              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           ) : null}

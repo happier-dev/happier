@@ -36,7 +36,7 @@ function FavoriteModelsPickerIcon() {
         <Ionicons
             name="star"
             size={12}
-            color={theme.dark ? theme.colors.text : theme.colors.button.primary.background}
+            color={theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background}
         />
     );
 }

@@ -16,14 +16,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 999,
-    backgroundColor: theme.colors.surfaceHigh,
+    backgroundColor: theme.colors.surface.inset,
     borderWidth: 1,
-    borderColor: theme.colors.divider,
+    borderColor: theme.colors.border.default,
   },
   text: {
     fontSize: 12,
     lineHeight: 16,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
 }));
 

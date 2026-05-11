@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { ScmPullRequestOpenOrReuseResponse } from '@happier-dev/protocol';
+import type { ScmPullRequestOpenComposeResponse, ScmPullRequestOpenOrReuseResponse } from '@happier-dev/protocol';
 
 import { createModalModuleMock, createThemeFixture, renderScreen } from '@/dev/testkit';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
@@ -61,6 +61,19 @@ function createSnapshot(overrides: Partial<ScmWorkingSnapshot> = {}): ScmWorking
             pendingAdded: 0,
             pendingRemoved: 0,
         },
+        ...overrides,
+    };
+}
+
+function createCapabilities(
+    overrides: Partial<NonNullable<ScmWorkingSnapshot['capabilities']>> = {},
+): NonNullable<ScmWorkingSnapshot['capabilities']> {
+    const capabilities = createSnapshot().capabilities;
+    if (!capabilities) {
+        throw new Error('Expected source control capabilities fixture');
+    }
+    return {
+        ...capabilities,
         ...overrides,
     };
 }
@@ -144,6 +157,65 @@ describe('SourceControlPullRequestSection', () => {
             base: 'trunk',
             head: 'feature/trunk-ahead-2',
         });
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes compose fallback through the open-compose operation and validated URL opener', async () => {
+        const openComposeResponse = {
+            success: true as const,
+            nextAction: {
+                kind: 'openUrl' as const,
+                purpose: 'compose' as const,
+                url: 'https://github.com/acme/repo/compare/trunk...feature/pr',
+                allowedBaseUrl: 'https://github.com/acme/repo',
+                urlSafety: { allowedSchemes: ['https:'] },
+            },
+            composeUrl: 'https://github.com/acme/repo/compare/trunk...feature/pr',
+        } satisfies ScmPullRequestOpenComposeResponse;
+        const onOpenCompose = vi.fn(async () => openComposeResponse);
+        const onOpenOrReuse = vi.fn();
+        const openUrl = vi.fn(async () => {});
+        const onRefresh = vi.fn(async () => {});
+        const { SourceControlPullRequestSection } = await import('./SourceControlPullRequestSection');
+        const screen = await renderScreen(
+            <SourceControlPullRequestSection
+                theme={createThemeFixture() as unknown as SourceControlUpdateTheme}
+                snapshot={createSnapshot({
+                    capabilities: createCapabilities({ writePullRequestCreate: false }),
+                    pullRequestStatus: {
+                        provider: {
+                            id: 'scm.github',
+                            kind: 'github',
+                            displayName: 'GitHub',
+                            baseUrl: 'https://github.com/acme/repo',
+                            nameWithOwner: 'acme/repo',
+                            repositoryWebUrl: 'https://github.com/acme/repo',
+                            urlSafety: { allowedSchemes: ['https:'] },
+                        },
+                        headBranch: 'feature/pr',
+                        baseBranch: 'trunk',
+                        openPullRequest: null,
+                        composeUrl: 'https://github.com/acme/repo/compare/trunk...feature/pr',
+                        authState: 'authentication_required',
+                    },
+                })}
+                disabled={false}
+                onOpenOrReuse={onOpenOrReuse}
+                onOpenCompose={onOpenCompose}
+                onRefresh={onRefresh}
+                openUrl={openUrl}
+            />,
+        );
+
+        expect(screen.findByTestId('scm-pull-request-section')).toBeTruthy();
+        await screen.pressByTestIdAsync('scm-pull-request-primary');
+
+        expect(onOpenCompose).toHaveBeenCalledWith({
+            base: 'trunk',
+            head: 'feature/pr',
+        });
+        expect(onOpenOrReuse).not.toHaveBeenCalled();
+        expect(openUrl).toHaveBeenCalledWith('https://github.com/acme/repo/compare/trunk...feature/pr');
         expect(onRefresh).toHaveBeenCalledTimes(1);
     });
 });

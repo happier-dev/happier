@@ -31,6 +31,7 @@ beforeEach(() => {
         preferredLanguage: null,
         themePreference: 'adaptive',
         uiFontScale: 1,
+        uiContentWidthMode: 'compact',
         uiItemDensity: 'comfortable',
         detailsPaneTabsBehavior: 'preview',
     };
@@ -56,6 +57,7 @@ describe('AppearanceSettingsScreen (focused groups after redistribution)', () =>
         expect(titles).toContain('settingsAppearance.showFlavorIcons');
         expect(titles).toContain('settingsAppearance.multiPanePanels');
         expect(dropdownTitles).toContain('settingsAppearance.textSize');
+        expect(dropdownTitles).toContain('settingsAppearance.contentWidth');
         expect(dropdownTitles).toContain('settingsAppearance.itemDensity');
 
         // Session list settings moved to session.tsx — should NOT be here

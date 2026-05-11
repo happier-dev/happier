@@ -24,27 +24,27 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         gap: 8,
     },
     headerText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 14,
         fontWeight: '600',
     },
     targetText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontWeight: '600',
     },
     detailText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
     bodyText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
     },
 }));

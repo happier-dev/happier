@@ -69,12 +69,12 @@ function ActionFieldChip(props: Readonly<{
                 paddingHorizontal: 10,
                 borderRadius: 8,
                 borderWidth: 1,
-                borderColor: theme.colors.divider,
+                borderColor: theme.colors.border.default,
                 opacity: props.disabled ? 0.4 : pressed ? 0.7 : 1,
-                backgroundColor: props.selected ? (theme.colors.surfaceHighest ?? theme.colors.surfaceHigh) : 'transparent',
+                backgroundColor: props.selected ? (theme.colors.surface.elevated ?? theme.colors.surface.inset) : 'transparent',
             })}
         >
-            <Text style={{ color: theme.colors.text }}>{props.label}</Text>
+            <Text style={{ color: theme.colors.text.primary }}>{props.label}</Text>
         </Pressable>
     );
 }
@@ -112,7 +112,7 @@ export function ActionInputFields(props: Readonly<{
                     const isRequired = field?.required === true;
                     return (
                         <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
+                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
                             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                                 {options.map((option) => {
                                     const isSelected = selected.includes(option.value);
@@ -145,7 +145,7 @@ export function ActionInputFields(props: Readonly<{
                     const options = props.resolveFieldOptions(field);
                     return (
                         <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
+                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
                             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                                 {options.map((option) => (
                                     <ActionFieldChip
@@ -169,7 +169,7 @@ export function ActionInputFields(props: Readonly<{
                     const selected = value === true;
                     return (
                         <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
+                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
                             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                                 <ActionFieldChip
                                     label={t('common.on')}
@@ -204,7 +204,7 @@ export function ActionInputFields(props: Readonly<{
                     const displayValue = separator === '\n' ? items.join('\n') : items.join(', ');
                     return (
                         <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
+                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
                             <TextInput
                                 testID={fieldTestID}
                                 editable={props.editable && !disabled}
@@ -215,14 +215,14 @@ export function ActionInputFields(props: Readonly<{
                                     props.onPatch(setValueAtTopLevelPatch(props.input, path, next));
                                 }}
                                 multiline={field?.listSeparator === 'newline'}
-                                placeholderTextColor={theme.colors.textSecondary}
+                                placeholderTextColor={theme.colors.text.secondary}
                                 style={{
                                     borderWidth: 1,
-                                    borderColor: theme.colors.divider,
+                                    borderColor: theme.colors.border.default,
                                     borderRadius: 10,
                                     padding: 10,
                                     ...(field?.listSeparator === 'newline' ? { minHeight: 80 } : {}),
-                                    color: theme.colors.text,
+                                    color: theme.colors.text.primary,
                                 }}
                             />
                         </View>
@@ -234,21 +234,21 @@ export function ActionInputFields(props: Readonly<{
                     const multiline = widget === 'textarea';
                     return (
                         <View key={path} style={{ marginTop: 10 }}>
-                            <Text style={{ color: theme.colors.textSecondary, marginBottom: 6 }}>{label}</Text>
+                            <Text style={{ color: theme.colors.text.secondary, marginBottom: 6 }}>{label}</Text>
                             <TextInput
                                 testID={fieldTestID}
                                 editable={props.editable && !disabled}
                                 value={displayValue}
                                 onChangeText={(text) => props.onPatch(setValueAtTopLevelPatch(props.input, path, text))}
                                 multiline={multiline}
-                                placeholderTextColor={theme.colors.textSecondary}
+                                placeholderTextColor={theme.colors.text.secondary}
                                 style={{
                                     borderWidth: 1,
-                                    borderColor: theme.colors.divider,
+                                    borderColor: theme.colors.border.default,
                                     borderRadius: 10,
                                     padding: 10,
                                     ...(multiline ? { minHeight: 80 } : {}),
-                                    color: theme.colors.text,
+                                    color: theme.colors.text.primary,
                                 }}
                             />
                         </View>

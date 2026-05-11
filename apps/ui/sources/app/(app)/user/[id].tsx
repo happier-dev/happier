@@ -143,7 +143,7 @@ export default function UserProfileScreen() {
             case 'friend':
                 return [{
                     title: t('friends.removeFriend'),
-                    icon: <Ionicons name="person-remove-outline" size={29} color={theme.colors.warningCritical} />,
+                    icon: <Ionicons name="person-remove-outline" size={29} color={theme.colors.state.danger.foreground} />,
                     onPress: handleRemoveFriend,
                     loading: removingFriend,
                 }];
@@ -152,13 +152,13 @@ export default function UserProfileScreen() {
                 return [
                     {
                         title: t('friends.acceptRequest'),
-                        icon: <Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />,
+                        icon: <Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />,
                         onPress: addFriend,
                         loading: addingFriend,
                     },
                     {
                         title: t('friends.denyRequest'),
-                        icon: <Ionicons name="close-circle-outline" size={29} color={theme.colors.warningCritical} />,
+                        icon: <Ionicons name="close-circle-outline" size={29} color={theme.colors.state.danger.foreground} />,
                         onPress: handleRemoveFriend,
                         loading: removingFriend,
                     }
@@ -214,7 +214,7 @@ export default function UserProfileScreen() {
                     {/* Friend Status Badge */}
                     {userProfile.status === 'friend' && (
                         <View style={styles.statusBadge}>
-                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.success} />
+                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.state.success.foreground} />
                             <Text style={styles.statusText}>{t('friends.alreadyFriends')}</Text>
                         </View>
                     )}
@@ -251,7 +251,7 @@ export default function UserProfileScreen() {
                     ) : (
                         <Item
                             title={t('friends.noSharedSessions')}
-                            icon={<Ionicons name="chatbubble-outline" size={29} color={theme.colors.textSecondary} />}
+                            icon={<Ionicons name="chatbubble-outline" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                         />
                     )}
@@ -269,7 +269,7 @@ export default function UserProfileScreen() {
                                 key={`${badge.id}:${badge.url}`}
                                 title={title}
                                 detail={badge.label}
-                                icon={<Ionicons name={iconName as any} size={29} color={theme.colors.text} />}
+                                icon={<Ionicons name={iconName as any} size={29} color={theme.colors.text.primary} />}
                                 onPress={async () => {
                                     try {
                                         if (!isSafeBadgeUrl(badge.url)) {
@@ -324,18 +324,18 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     errorContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         padding: 32,
     },
     errorText: {
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     headerContainer: {
@@ -346,7 +346,7 @@ const styles = StyleSheet.create((theme) => ({
     profileCard: {
         alignItems: 'center',
         paddingVertical: 32,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         marginTop: 16,
         borderRadius: 12,
         marginHorizontal: 16,
@@ -354,17 +354,17 @@ const styles = StyleSheet.create((theme) => ({
     displayName: {
         fontSize: 24,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 4,
     },
     username: {
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 12,
     },
     bio: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         paddingHorizontal: 32,
         marginBottom: 16,
@@ -380,7 +380,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     statusText: {
         fontSize: 13,
-        color: theme.colors.success,
+        color: theme.colors.state.success.foreground,
         marginLeft: 4,
         fontWeight: '500',
     },

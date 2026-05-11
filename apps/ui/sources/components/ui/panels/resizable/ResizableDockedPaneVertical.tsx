@@ -58,7 +58,7 @@ export const ResizableDockedPaneVertical = React.memo((props: ResizableDockedPan
                         height: 18,
                         zIndex: 1000,
                     }}
-                    indicatorColor={theme.colors.textSecondary}
+                    indicatorColor={theme.colors.text.secondary}
                     indicatorOpacity={0.5}
                 />
             ) : null}

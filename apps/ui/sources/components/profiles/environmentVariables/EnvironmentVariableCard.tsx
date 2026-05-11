@@ -281,7 +281,7 @@ export function EnvironmentVariableCard({
                         <Text style={[styles.secondaryText, styles.vaultRowValue]}>
                             {defaultSecretNameForSourceVar ?? t('secrets.noneTitle')}
                         </Text>
-                        <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+                        <Ionicons name="chevron-forward" size={18} color={theme.colors.text.secondary} />
                     </View>
                 </View>
             </View>
@@ -379,14 +379,14 @@ export function EnvironmentVariableCard({
                             <Ionicons
                                 name="lock-closed"
                                 size={theme.iconSize.small}
-                                color={theme.colors.textDestructive}
+                                color={theme.colors.state.danger.foreground}
                             />
                         )}
                         <Pressable
                             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                             onPress={() => onDelete(index)}
                         >
-                            <Ionicons name="trash-outline" size={theme.iconSize.large} color={theme.colors.deleteAction} />
+                            <Ionicons name="trash-outline" size={theme.iconSize.large} color={theme.colors.state.danger.foreground} />
                         </Pressable>
                         <Pressable
                             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -553,7 +553,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: 4,
     },
     helperText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     helperTextItalic: {
         fontStyle: 'italic',
@@ -561,7 +561,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         marginTop: 10,
         marginBottom: 6,
     },
@@ -598,7 +598,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'space-between',
     },
     vaultRowLabel: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         flex: 1,
     },
     vaultRowRight: {
@@ -607,27 +607,27 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 8,
     },
     vaultRowValue: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     machineStatusContainer: {
         marginTop: 8,
     },
     machineStatusLoading: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontStyle: 'italic',
     },
     machineStatusWarning: {
-        color: theme.colors.warning,
+        color: theme.colors.state.neutral.foreground,
     },
     machineStatusSuccess: {
-        color: theme.colors.success,
+        color: theme.colors.state.success.foreground,
     },
     machineStatusDiffers: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 2,
     },
     sessionPreview: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 10,
     },
 }));

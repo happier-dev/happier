@@ -22,11 +22,11 @@ type SourceControlOperationsHistoryTimelineRowProps = Readonly<{
 
 export const SourceControlOperationsHistoryTimelineRow = React.memo((props: SourceControlOperationsHistoryTimelineRowProps) => {
     const indicatorColor = props.isHead
-        ? props.theme.colors.textLink
-        : props.theme.colors.textSecondary;
-    const pressedBackground = props.theme.colors.surfaceHigh ?? props.theme.colors.input.background;
-    const surfaceColor = props.theme.colors.surface ?? props.theme.colors.input.background;
-    const timelineLineColor = props.theme.colors.divider;
+        ? props.theme.colors.text.link
+        : props.theme.colors.text.secondary;
+    const pressedBackground = props.theme.colors.surface.inset ?? props.theme.colors.input.background;
+    const surfaceColor = props.theme.colors.surface.base ?? props.theme.colors.input.background;
+    const timelineLineColor = props.theme.colors.border.default;
     const metaText = formatScmHistoryTimestamp(props.entry.timestamp);
     const metaAccessibilityLabel = formatScmHistoryTimestampAccessibilityLabel(props.entry.timestamp);
     const authorText = props.entry.authorName?.trim() || props.entry.authorEmail?.trim() || '';
@@ -112,14 +112,14 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
             <View style={{ flex: 1, paddingTop: 10, paddingBottom: 10, justifyContent: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                     <Text
-                        style={{ flex: 1, color: props.theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}
+                        style={{ flex: 1, color: props.theme.colors.text.primary, fontSize: 13, ...Typography.default('semiBold') }}
                         numberOfLines={1}
                     >
                         {props.entry.subject}
                     </Text>
                     {metaText ? (
                         <Text
-                            style={{ color: props.theme.colors.textSecondary, fontSize: 11, ...Typography.default() }}
+                            style={{ color: props.theme.colors.text.secondary, fontSize: 11, ...Typography.default() }}
                             numberOfLines={1}
                         >
                             {metaText}
@@ -134,16 +134,16 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
                             borderRadius: 999,
                             backgroundColor: pressedBackground,
                             borderWidth: 1,
-                            borderColor: props.isHead ? indicatorColor : props.theme.colors.divider,
+                            borderColor: props.isHead ? indicatorColor : props.theme.colors.border.default,
                         }}
                     >
-                        <Text style={{ color: props.isHead ? indicatorColor : props.theme.colors.textSecondary, fontSize: 11, ...Typography.mono('semiBold') }}>
+                        <Text style={{ color: props.isHead ? indicatorColor : props.theme.colors.text.secondary, fontSize: 11, ...Typography.mono('semiBold') }}>
                             {props.entry.shortSha}
                         </Text>
                     </View>
                     {authorText.length > 0 ? (
                         <Text
-                            style={{ flex: 1, color: props.theme.colors.textSecondary, fontSize: 11, ...Typography.default() }}
+                            style={{ flex: 1, color: props.theme.colors.text.secondary, fontSize: 11, ...Typography.default() }}
                             numberOfLines={1}
                         >
                             {authorText}
@@ -153,7 +153,7 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
             </View>
 
             <View style={{ justifyContent: 'center', paddingHorizontal: 6 }}>
-                <Octicons name="chevron-right" size={14} color={props.theme.colors.textSecondary} />
+                <Octicons name="chevron-right" size={14} color={props.theme.colors.text.secondary} />
             </View>
         </Pressable>
     );

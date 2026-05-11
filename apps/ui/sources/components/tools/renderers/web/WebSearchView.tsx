@@ -79,7 +79,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 12,
     },
     row: {
@@ -87,22 +87,22 @@ const styles = StyleSheet.create((theme) => ({
     },
     title: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontWeight: '500',
     },
     url: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
     snippet: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         opacity: 0.9,
     },
     more: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
 }));

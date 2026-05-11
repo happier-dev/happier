@@ -43,21 +43,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingRight: 52,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         maxWidth: 220,
     },
     tabActive: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     tabLabel: {
         flexShrink: 1,
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     tabLabelActive: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     tabCopy: {
         flex: 1,
@@ -66,7 +66,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     tabSubtitle: {
         fontSize: 10,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     tabActions: {
@@ -134,7 +134,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                 <Octicons
                                     name={iconName as React.ComponentProps<typeof Octicons>['name']}
                                     size={14}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             )}
                             <View style={styles.tabCopy}>
@@ -170,7 +170,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                     accessibilityLabel={t('session.detailsPanel.pinTabA11y')}
                                     hitSlop={10}
                                 >
-                                    <PinIcon size={14} color={theme.colors.textSecondary} />
+                                    <PinIcon size={14} color={theme.colors.text.secondary} />
                                 </Pressable>
                             ) : tab.isPinned ? (
                                 <Pressable
@@ -185,7 +185,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                     accessibilityLabel={t('session.detailsPanel.unpinTabA11y')}
                                     hitSlop={10}
                                 >
-                                    <PinSlashIcon size={14} color={theme.colors.textSecondary} />
+                                    <PinSlashIcon size={14} color={theme.colors.text.secondary} />
                                 </Pressable>
                             ) : null}
                             <Pressable
@@ -200,7 +200,7 @@ export const DetailsTabStrip = React.memo((props: DetailsTabStripProps) => {
                                 accessibilityLabel={t('session.detailsPanel.closeTabA11y')}
                                 hitSlop={10}
                             >
-                                <Octicons name="x" size={13} color={theme.colors.textSecondary} />
+                                <Octicons name="x" size={13} color={theme.colors.text.secondary} />
                             </Pressable>
                         </View>
                     </View>

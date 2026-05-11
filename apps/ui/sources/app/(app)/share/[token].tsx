@@ -274,16 +274,16 @@ export default memo(function PublicShareViewerScreen() {
 
     if (isLoading) {
         return (
-            <View style={[styles.center, { backgroundColor: theme.colors.groupped.background }]}>
-                <ActivityIndicator size="large" color={theme.colors.textLink} />
+            <View style={[styles.center, { backgroundColor: theme.colors.background.canvas }]}>
+                <ActivityIndicator size="large" color={theme.colors.text.link} />
             </View>
         );
     }
 
     if (error) {
         return (
-            <View style={[styles.center, { backgroundColor: theme.colors.groupped.background }]}>
-                <Ionicons name="alert-circle-outline" size={64} color={theme.colors.textDestructive} />
+            <View style={[styles.center, { backgroundColor: theme.colors.background.canvas }]}>
+                <Ionicons name="alert-circle-outline" size={64} color={theme.colors.state.danger.foreground} />
                 <ItemList>
                     <ItemGroup>
                         <Item title={t('common.error')} subtitle={error} showChevron={false} />
@@ -311,12 +311,12 @@ export default memo(function PublicShareViewerScreen() {
                 <ItemGroup>
                     <Item
                         title={t('session.sharing.acceptAndView')}
-                        icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
+                        icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => load(true)}
                     />
                     <Item
                         title={t('common.cancel')}
-                        icon={<Ionicons name="close-circle-outline" size={29} color={theme.colors.warningCritical} />}
+                        icon={<Ionicons name="close-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
                         onPress={() => router.back()}
                     />
                 </ItemGroup>
@@ -335,7 +335,7 @@ export default memo(function PublicShareViewerScreen() {
     return (
         <>
             <Stack.Screen options={SHARE_SCREEN_OPTIONS} />
-            <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
+            <View style={{ flex: 1, backgroundColor: theme.colors.surface.base }}>
                 <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 }}>
                     <ChatHeaderView
                         title={sessionName}

@@ -20,7 +20,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 8,
     },
     title: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 14,
         fontWeight: '700',
         textTransform: 'uppercase',
@@ -31,18 +31,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 8,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         alignItems: 'center',
         justifyContent: 'center',
     },
     countText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontWeight: '700',
     },
     empty: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
 }));

@@ -75,13 +75,13 @@ export const MachinePathBrowserListRow = React.memo(function MachinePathBrowserL
                 <Ionicons
                     name={props.node.isExpanded ? 'folder-open-outline' : 'folder-outline'}
                     size={16}
-                    color={theme.colors.textLink}
+                    color={theme.colors.text.link}
                 />
             </View>
         )
         : props.node.type === 'file'
-            ? <Ionicons name="document-outline" size={18} color={theme.colors.textLink} />
-            : <Ionicons name="folder-outline" size={18} color={theme.colors.textLink} />;
+            ? <Ionicons name="document-outline" size={18} color={theme.colors.text.link} />
+            : <Ionicons name="folder-outline" size={18} color={theme.colors.text.link} />;
 
     return (
         <FilesystemBrowserRow
@@ -169,7 +169,7 @@ export const MachinePathBrowserListRow = React.memo(function MachinePathBrowserL
                                 <Ionicons
                                     name={props.node.isExpanded ? 'chevron-down' : 'chevron-forward'}
                                     size={16}
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                 />
                             </Pressable>
                         </View>

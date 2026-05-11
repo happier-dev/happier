@@ -299,10 +299,10 @@ export default React.memo(function ProfileEditScreen() {
                     padding: 4,
                 })}
             >
-                <Ionicons name="close" size={24} color={theme.colors.header.tint} />
+                <Ionicons name="close" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
-    }, [handleCancel, theme.colors.header.tint]);
+    }, [handleCancel, theme.colors.chrome.header.foreground]);
 
     const handleSavePress = React.useCallback(() => {
         saveRef.current?.();
@@ -321,10 +321,10 @@ export default React.memo(function ProfileEditScreen() {
                     padding: 4,
                 })}
             >
-                <Ionicons name="checkmark" size={24} color={theme.colors.header.tint} />
+                <Ionicons name="checkmark" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
-    }, [handleSavePress, isDirty, theme.colors.header.tint]);
+    }, [handleSavePress, isDirty, theme.colors.chrome.header.foreground]);
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -369,7 +369,7 @@ export default React.memo(function ProfileEditScreen() {
 const profileEditScreenStyles = StyleSheet.create((theme, rt) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         paddingBottom: rt.insets.bottom,
     },
 }));

@@ -8,7 +8,7 @@ import { Typography } from '@/constants/Typography';
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         padding: 20,
     },
     section: {
@@ -17,7 +17,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     sectionTitle: {
         fontSize: 18,
         fontWeight: 'bold',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 15,
         ...Typography.default(),
     },
@@ -33,12 +33,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         marginVertical: 15,
         padding: 15,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderRadius: 12,
     },
     qrLabel: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 10,
         textAlign: 'center',
         ...Typography.default(),

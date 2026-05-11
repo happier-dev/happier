@@ -62,8 +62,8 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
     if (loading) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, gap: 10 }}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.textSecondary, ...Typography.default() }}>
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <Text style={{ color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.loading')}
                 </Text>
             </View>
@@ -73,7 +73,7 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
     if (error) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-                <Text style={{ color: theme.colors.textSecondary, ...Typography.default(), textAlign: 'center' }}>
+                <Text style={{ color: theme.colors.text.secondary, ...Typography.default(), textAlign: 'center' }}>
                     {error}
                 </Text>
             </View>
@@ -86,7 +86,7 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
     const expandedKeys = new Set(allKeys);
 
     return (
-        <View style={{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface }}>
+        <View style={{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base }}>
             <DiffFilesListView
                 files={files}
                 expandedKeys={expandedKeys}

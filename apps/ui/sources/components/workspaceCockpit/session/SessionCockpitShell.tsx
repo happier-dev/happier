@@ -205,7 +205,7 @@ export const SessionCockpitShell = React.memo((props: SessionCockpitShellProps) 
     if (props.surface === 'browse') {
         return renderSessionChrome(
             <SessionCockpitFullscreenSurface screenTestID="session-files-screen" safeAreaPadding={false}>
-                <React.Suspense fallback={<SessionCockpitLoadingFallback color={theme.colors.textSecondary} />}>
+                <React.Suspense fallback={<SessionCockpitLoadingFallback color={theme.colors.text.secondary} />}>
                     <SessionBrowseFilesSurface
                         sessionId={props.sessionId}
                         onOpenFile={openFileInDetails}
@@ -219,7 +219,7 @@ export const SessionCockpitShell = React.memo((props: SessionCockpitShellProps) 
     if (props.surface === 'git') {
         return renderSessionChrome(
             <SessionCockpitFullscreenSurface screenTestID="session-git-screen" safeAreaPadding={false}>
-                <React.Suspense fallback={<SessionCockpitLoadingFallback color={theme.colors.textSecondary} />}>
+                <React.Suspense fallback={<SessionCockpitLoadingFallback color={theme.colors.text.secondary} />}>
                     <SessionGitSurface
                         sessionId={props.sessionId}
                         scopeId={props.scopeId}
@@ -237,7 +237,7 @@ export const SessionCockpitShell = React.memo((props: SessionCockpitShellProps) 
     if (props.surface === 'terminal' && terminalTabAvailable) {
         return renderSessionChrome(
             <SessionCockpitFullscreenSurface screenTestID="session-terminal-screen" safeAreaPadding={false}>
-                <React.Suspense fallback={<SessionCockpitLoadingFallback color={theme.colors.textSecondary} />}>
+                <React.Suspense fallback={<SessionCockpitLoadingFallback color={theme.colors.text.secondary} />}>
                     <SessionTerminalSurface
                         sessionId={props.sessionId}
                         scopeId={props.scopeId}
@@ -280,7 +280,7 @@ const SessionCockpitFullscreenSurface = React.memo((props: Readonly<{
                 flex: 1,
                 minHeight: 0,
                 minWidth: 0,
-                backgroundColor: theme.colors.surface,
+                backgroundColor: theme.colors.surface.base,
                 paddingTop: safeAreaPaddingEnabled ? safeArea.top : 0,
                 paddingBottom: safeAreaPaddingEnabled ? safeArea.bottom : 0,
             }}

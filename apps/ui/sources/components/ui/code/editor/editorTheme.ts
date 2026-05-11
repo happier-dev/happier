@@ -33,19 +33,10 @@ type CodeEditorThemeSource = Readonly<{
     colors: Pick<
         Theme['colors'],
         | 'accent'
-        | 'divider'
+        | 'border'
         | 'surface'
-        | 'surfaceHigh'
-        | 'surfaceHighest'
-        | 'surfaceSelected'
-        | 'syntaxComment'
-        | 'syntaxDefault'
-        | 'syntaxFunction'
-        | 'syntaxKeyword'
-        | 'syntaxNumber'
-        | 'syntaxString'
+        | 'syntax'
         | 'text'
-        | 'textTertiary'
     >;
 }>;
 
@@ -58,19 +49,19 @@ export function resolveCodeEditorTheme(theme: CodeEditorThemeSource): CodeEditor
     return {
         monacoThemeName: theme.dark ? 'happier-editor-dark' : 'happier-editor-light',
         isDark: Boolean(theme.dark),
-        backgroundColor: colors.surfaceHighest,
-        textColor: colors.text,
-        dividerColor: colors.divider,
-        lineNumberColor: colors.textTertiary,
-        activeLineColor: colors.surfaceHigh,
+        backgroundColor: colors.surface.inset,
+        textColor: colors.text.primary,
+        dividerColor: colors.border.default,
+        lineNumberColor: colors.text.tertiary,
+        activeLineColor: colors.surface.elevated,
         selectionColor: colors.accent.blue,
         syntax: {
-            defaultColor: colors.syntaxDefault,
-            keywordColor: colors.syntaxKeyword,
-            stringColor: colors.syntaxString,
-            commentColor: colors.syntaxComment,
-            numberColor: colors.syntaxNumber,
-            functionColor: colors.syntaxFunction,
+            defaultColor: colors.syntax.default,
+            keywordColor: colors.syntax.keyword,
+            stringColor: colors.syntax.string,
+            commentColor: colors.syntax.comment,
+            numberColor: colors.syntax.number,
+            functionColor: colors.syntax.function,
         },
     };
 }

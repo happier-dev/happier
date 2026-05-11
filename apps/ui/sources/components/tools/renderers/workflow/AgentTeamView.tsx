@@ -171,7 +171,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 10,
     },
     section: {
@@ -183,15 +183,15 @@ const styles = StyleSheet.create((theme) => ({
     title: {
         fontSize: 12,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     label: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
     },
     value: {
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));

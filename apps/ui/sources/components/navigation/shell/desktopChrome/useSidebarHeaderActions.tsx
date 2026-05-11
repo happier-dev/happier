@@ -47,7 +47,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
                 inlineTestID: 'sidebar-inbox-button',
                 icon: (
                     <View style={[styles.iconButton, styles.notificationButton]}>
-                        <Octicons name="inbox" size={20} color={theme.colors.header.tint} />
+                        <Octicons name="inbox" size={20} color={theme.colors.chrome.header.foreground} />
                         {inboxHasContent ? <View style={styles.indicatorDot} /> : null}
                     </View>
                 ),
@@ -61,7 +61,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
                 title: t('tabs.friends'),
                 icon: (
                     <View style={[styles.iconButton, styles.notificationButton]}>
-                        <Ionicons name="people-outline" size={24} color={theme.colors.header.tint} />
+                        <Ionicons name="people-outline" size={24} color={theme.colors.chrome.header.foreground} />
                         {friendRequestCount > 0 ? (
                             <View style={styles.badge}>
                                 <Text style={styles.badgeText}>
@@ -81,7 +81,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
             inlineTestID: 'nav-projects',
             icon: (
                 <View style={styles.iconButton}>
-                    <Ionicons name="folder-outline" size={24} color={theme.colors.header.tint} />
+                    <Ionicons name="folder-outline" size={24} color={theme.colors.chrome.header.foreground} />
                 </View>
             ),
             onPress: () => navigate('/projects', 'SidebarView.nav.projects'),
@@ -93,7 +93,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
             inlineTestID: 'nav-settings',
             icon: (
                 <View style={styles.iconButton}>
-                    <Ionicons name="cog-outline" size={24} color={theme.colors.header.tint} />
+                    <Ionicons name="cog-outline" size={24} color={theme.colors.chrome.header.foreground} />
                 </View>
             ),
             onPress: () => navigate('/settings', 'SidebarView.nav.settings'),
@@ -105,7 +105,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
             inlineTestID: 'nav-new-session',
             icon: (
                 <View style={styles.trailingIconButton}>
-                    <Ionicons name="add-outline" size={24} color={theme.colors.header.tint} />
+                    <Ionicons name="add-outline" size={24} color={theme.colors.chrome.header.foreground} />
                 </View>
             ),
             onPress: () => navigate('/new', 'SidebarView.nav.newSession'),
@@ -124,7 +124,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
         styles.indicatorDot,
         styles.notificationButton,
         styles.trailingIconButton,
-        theme.colors.header.tint,
+        theme.colors.chrome.header.foreground,
     ]);
 
     const topUtilityActions = React.useMemo((): ItemAction[] => {
@@ -137,7 +137,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
                 inlineTestID: 'sidebar-inbox-button',
                 icon: (
                     <View style={styles.topNotificationButton}>
-                        <Octicons name="inbox" size={15} color={theme.colors.header.tint} />
+                        <Octicons name="inbox" size={15} color={theme.colors.chrome.header.foreground} />
                         {inboxHasContent ? <View style={styles.topIndicatorDot} /> : null}
                     </View>
                 ),
@@ -160,7 +160,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
         navigate,
         styles.topIndicatorDot,
         styles.topNotificationButton,
-        theme.colors.header.tint,
+        theme.colors.chrome.header.foreground,
     ]);
 
     const renderHeaderOverflowVisual = React.useCallback(() => {
@@ -169,7 +169,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
 
         return (
             <View style={[styles.iconButton, styles.notificationButton]}>
-                <Ionicons name="ellipsis-horizontal" size={14} color={theme.colors.header.tint} />
+                <Ionicons name="ellipsis-horizontal" size={14} color={theme.colors.chrome.header.foreground} />
                 {shouldShowBadge ? (
                     <View style={styles.badge}>
                         <Text style={styles.badgeText}>
@@ -189,7 +189,7 @@ export function useSidebarHeaderActions(): SidebarHeaderActionsResult {
         styles.iconButton,
         styles.indicatorDot,
         styles.notificationButton,
-        theme.colors.header.tint,
+        theme.colors.chrome.header.foreground,
     ]);
 
     return {

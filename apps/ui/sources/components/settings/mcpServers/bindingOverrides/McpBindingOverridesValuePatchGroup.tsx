@@ -64,7 +64,7 @@ export const McpBindingOverridesValuePatchGroup = React.memo(function McpBinding
                 <Item
                     title={emptyTitle}
                     subtitle={emptySubtitle}
-                    icon={<Ionicons name={iconName} size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name={iconName} size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             ) : null}
@@ -74,7 +74,7 @@ export const McpBindingOverridesValuePatchGroup = React.memo(function McpBinding
                     key={key}
                     title={key}
                     subtitle={describePatchedValue(value)}
-                    icon={<Ionicons name={iconName} size={29} color={value === null ? theme.colors.textDestructive : theme.colors.accent.indigo} />}
+                    icon={<Ionicons name={iconName} size={29} color={value === null ? theme.colors.state.danger.foreground : theme.colors.accent.indigo} />}
                     onPress={() => {
                         if (value === null) {
                             props.setPatch((prev) => {
@@ -112,7 +112,7 @@ export const McpBindingOverridesValuePatchGroup = React.memo(function McpBinding
             <Item
                 title={addTitle}
                 subtitle={addSubtitle}
-                icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.success} />}
+                icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
                 onPress={() => {
                     props.openValueRefModal({
                         kind: props.kind,
@@ -128,7 +128,7 @@ export const McpBindingOverridesValuePatchGroup = React.memo(function McpBinding
             <Item
                 title={deleteTitle}
                 subtitle={deleteSubtitle}
-                icon={<Ionicons name="remove-circle-outline" size={29} color={theme.colors.textDestructive} />}
+                icon={<Ionicons name="remove-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
                 onPress={props.onPressDeleteKey}
                 destructive
             />

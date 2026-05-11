@@ -31,19 +31,19 @@ export type ProjectRightPanelProps = Readonly<{
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         minHeight: 0,
         minWidth: 0,
         borderTopWidth: Platform.select({ ios: 0.33, default: 1 }),
-        borderTopColor: theme.colors.divider,
+        borderTopColor: theme.colors.border.default,
     },
     header: {
         paddingHorizontal: 12,
         paddingTop: 10,
         paddingBottom: 8,
         borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-        borderBottomColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderBottomColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
@@ -58,8 +58,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     body: {
         flex: 1,
@@ -135,14 +135,14 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
                         accessibilityRole="button"
                         accessibilityLabel={t('common.close')}
                     >
-                        <Octicons name="x" size={18} color={theme.colors.textSecondary} />
+                        <Octicons name="x" size={18} color={theme.colors.text.secondary} />
                     </Pressable>
                 ) : null}
             </View>
             <View style={styles.body}>
                 <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
                     <RetainedPanelSurface isActive={activeTab === 'git'} testID="project-rightpanel-surface-git">
-                        <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.textSecondary} />}>
+                        <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.text.secondary} />}>
                             <ProjectGitSurface
                                 serverId={props.workspaceRef.serverId}
                                 machineId={props.workspaceRef.machineId}
@@ -159,7 +159,7 @@ export const ProjectRightPanel = React.memo((props: ProjectRightPanelProps) => {
                         </React.Suspense>
                     </RetainedPanelSurface>
                     <RetainedPanelSurface isActive={activeTab === 'files'} testID="project-rightpanel-surface-files">
-                        <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.textSecondary} />}>
+                        <React.Suspense fallback={<PaneLoadingFallback color={theme.colors.text.secondary} />}>
                             <ProjectBrowseFilesSurface
                                 workspaceCacheKey={workspaceCacheKey}
                                 serverId={props.workspaceRef.serverId}

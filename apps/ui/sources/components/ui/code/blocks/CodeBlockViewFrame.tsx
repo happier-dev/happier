@@ -74,7 +74,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
             style={[
                 styles.copyButton,
                 shouldOverlayCopyButton ? styles.copyButtonOverlay : null,
-                shouldOverlayCopyButton ? { backgroundColor: theme.colors.surfaceHighest, borderColor: theme.colors.divider } : null,
+                shouldOverlayCopyButton ? { backgroundColor: theme.colors.surface.elevated, borderColor: theme.colors.border.default } : null,
                 (isWeb && isHovered) ? styles.copyButtonHovered : null,
             ]}
             onPress={onCopy}
@@ -86,7 +86,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
             <Ionicons
                 name={copied ? 'checkmark-outline' : 'copy-outline'}
                 size={12}
-                color={copied ? (theme.colors.success ?? theme.colors.textSecondary) : theme.colors.textSecondary}
+                color={copied ? (theme.colors.state.success.foreground ?? theme.colors.text.secondary) : theme.colors.text.secondary}
             />
         </Pressable>
     ) : null;
@@ -97,7 +97,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
                 {headerLeft ? (
                     headerLeft
                 ) : language ? (
-                    <Text selectable={selectable} style={[styles.headerText, { color: theme.colors.textSecondary }]}>
+                    <Text selectable={selectable} style={[styles.headerText, { color: theme.colors.text.secondary }]}>
                         {language}
                     </Text>
                 ) : (
@@ -115,7 +115,7 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
         <View
             style={[
                 styles.container,
-                { backgroundColor: theme.colors.surfaceHigh, borderColor: theme.colors.divider },
+                { backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default },
             ]}
         >
             {header}

@@ -49,7 +49,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
       <ItemList>
         <ItemGroup title={t('settings.connectedAccounts')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ color: theme.colors.textSecondary }}>{t('settings.connectedAccountsDisabled')}</Text>
+            <Text style={{ color: theme.colors.text.secondary }}>{t('settings.connectedAccountsDisabled')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -61,7 +61,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
       <ItemList>
         <ItemGroup title={t('connectedServices.title')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ color: theme.colors.textSecondary }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
+            <Text style={{ color: theme.colors.text.secondary }}>{t('connectedServices.oauthPaste.invalidConfig')}</Text>
           </View>
         </ItemGroup>
       </ItemList>
@@ -77,7 +77,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
       <ItemList>
         <ItemGroup title={t('connectedServices.detail.alerts.unknownProfileTitle')}>
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ color: theme.colors.textSecondary }}>
+            <Text style={{ color: theme.colors.text.secondary }}>
               {t('connectedServices.detail.alerts.unknownProfileBody', { profileId, service: serviceLabel })}
             </Text>
           </View>
@@ -221,7 +221,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
           <Item
             title={t('modals.disconnect')}
             subtitle={t('connectedServices.profile.disconnectSubtitle')}
-            icon={<Ionicons name="trash-outline" size={22} color={theme.colors.deleteAction} />}
+            icon={<Ionicons name="trash-outline" size={22} color={theme.colors.state.danger.foreground} />}
             onPress={() => void handleDisconnect()}
           />
         ) : (

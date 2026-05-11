@@ -14,9 +14,9 @@ import { SessionSubagentFactsRow } from './SessionSubagentFactsRow';
 const stylesheet = StyleSheet.create((theme) => ({
     row: {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 16,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 14,
         paddingVertical: 14,
         gap: 12,
@@ -32,9 +32,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 999,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     copy: {
         flex: 1,
@@ -59,7 +59,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     title: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         flex: 1,
         minWidth: 0,
         fontSize: 14,
@@ -70,8 +70,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 4,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     statusText: {
         fontSize: 11,
@@ -83,7 +83,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 999,
         borderWidth: 1,
         borderColor: theme.colors.accent.yellow,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     permissionText: {
         fontSize: 11,
@@ -91,11 +91,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.accent.yellow,
     },
     subtitle: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
     activity: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 12,
     },
     footer: {
@@ -114,8 +114,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
     },
 }));
 
@@ -141,7 +141,7 @@ function resolveStatusColor(status: SessionSubagent['status'], theme: ReturnType
     if (status === 'succeeded') return theme.colors.accent.green;
     if (status === 'failed') return theme.colors.accent.red;
     if (status === 'cancelled' || status === 'terminated') return theme.colors.accent.orange;
-    return theme.colors.textSecondary;
+    return theme.colors.text.secondary;
 }
 
 export const SessionSubagentRow = React.memo((props: Readonly<{
@@ -195,7 +195,7 @@ export const SessionSubagentRow = React.memo((props: Readonly<{
                             accentColor ? { borderColor: accentColor } : null,
                         ]}
                     >
-                        <Ionicons name={kindIconName} size={16} color={accentColor ?? theme.colors.textSecondary} />
+                        <Ionicons name={kindIconName} size={16} color={accentColor ?? theme.colors.text.secondary} />
                     </View>
                     <View style={styles.copy}>
                         <View style={styles.headerRow}>
@@ -268,7 +268,7 @@ export const SessionSubagentRow = React.memo((props: Readonly<{
                         accentColor ? { borderColor: accentColor } : null,
                     ]}
                 >
-                    <Ionicons name={kindIconName} size={16} color={accentColor ?? theme.colors.textSecondary} />
+                    <Ionicons name={kindIconName} size={16} color={accentColor ?? theme.colors.text.secondary} />
                 </View>
                 <View style={styles.copy}>
                     <View style={styles.headerRow}>

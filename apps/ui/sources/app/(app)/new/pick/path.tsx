@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
+import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { Text } from '@/components/ui/text/Text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -102,14 +102,12 @@ export default React.memo(function PathPickerScreen() {
     const machineHomeDir = machine?.metadata?.homeDir || '/home';
 
     // Get recent paths for this machine - prioritize from settings, then fall back to sessions
-    const recentPaths = useMemo(() => {
-        if (!params.machineId) return [];
-        return getRecentPathsForMachine({
-            machineId: params.machineId,
-            recentMachinePaths,
-            sessions,
-        });
-    }, [params.machineId, recentMachinePaths, sessions]);
+    const recentPaths = useStableRecentPathsForMachine({
+        machineId: params.machineId,
+        recentMachinePaths,
+        sessions,
+        cacheScopeKey: spawnServerId,
+    });
 
 
     const handleSelectPath = React.useCallback((pathOverride?: string) => {
@@ -184,10 +182,10 @@ export default React.memo(function PathPickerScreen() {
                     padding: 4,
                 })}
             >
-                <Ionicons name="chevron-back" size={22} color={theme.colors.header.tint} />
+                <Ionicons name="chevron-back" size={22} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
-    }, [handleBackPress, theme.colors.header.tint]);
+    }, [handleBackPress, theme.colors.chrome.header.foreground]);
 
     // NOTE: Keep the header actions stable across keystrokes.
     // On iOS containedModal, frequently re-creating `headerRight` as the user types can cause
@@ -206,11 +204,11 @@ export default React.memo(function PathPickerScreen() {
                 <Ionicons
                     name="checkmark"
                     size={24}
-                    color={theme.colors.header.tint}
+                    color={theme.colors.chrome.header.foreground}
                 />
             </Pressable>
         );
-    }, [handleSelectPath, theme.colors.header.tint]);
+    }, [handleSelectPath, theme.colors.chrome.header.foreground]);
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -273,7 +271,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     emptyText: {
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         ...Typography.default(),
     },

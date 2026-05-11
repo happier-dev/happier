@@ -33,7 +33,7 @@ export function AgentInputChipPickerOptionSelector(
 ) {
   const { theme } = useUnistyles();
   const styles = stylesheet;
-  const selectedIndicatorColor = theme.dark ? theme.colors.text : theme.colors.button.primary.background;
+  const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
 
   if (props.variant === "stacked") {
     return (
@@ -151,7 +151,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     width: "100%",
     paddingHorizontal: 12,
     paddingVertical: 12,
-    backgroundColor: theme.colors.groupped.background,
+    backgroundColor: theme.colors.background.canvas,
   },
   sectionBlock: {
     gap: 4,
@@ -160,7 +160,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   sectionTitle: {
     paddingHorizontal: 6,
     fontSize: 12,
-    color: theme.colors.groupped.sectionTitle,
+    color: theme.colors.text.secondary,
     textTransform: "uppercase",
     letterSpacing: 0.5,
     ...Typography.header(),
@@ -185,15 +185,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingVertical: 6,
   },
   optionRowFocused: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.surface.base,
     ...shadowLevelStyle(theme.colors.shadowLevels[1]),
   },
 	  optionRowHovered: {
 	    backgroundColor: (() => {
 	      try {
-	        return Color(theme.colors.surface).alpha(0.8).rgb().string();
+	        return Color(theme.colors.surface.base).alpha(0.8).rgb().string();
 	      } catch {
-	        return theme.colors.surfacePressed;
+	        return theme.colors.surface.pressed;
 	      }
 	    })(),
 	  },
@@ -222,7 +222,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   optionLabel: {
     fontSize: 14,
     lineHeight: 15,
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
   },
   optionLabelFocused: {
     ...Typography.default("semiBold"),
@@ -231,6 +231,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     marginTop: 1,
     fontSize: 12,
     lineHeight: 14,
-    color: theme.colors.textTertiary,
+    color: theme.colors.text.tertiary,
   },
 }));

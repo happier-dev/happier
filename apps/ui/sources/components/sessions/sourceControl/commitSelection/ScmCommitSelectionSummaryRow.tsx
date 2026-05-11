@@ -29,21 +29,21 @@ export const ScmCommitSelectionSummaryRow = React.memo((props: ScmCommitSelectio
                 paddingHorizontal: padX,
                 paddingVertical: padY,
                 borderBottomWidth: density === 'compact' ? Platform.select({ ios: 0.33, default: 1 }) : 0,
-                borderBottomColor: props.theme.colors.divider,
+                borderBottomColor: props.theme.colors.border.default,
                 borderRadius: density === 'compact' ? 0 : 12,
                 borderWidth: density === 'compact' ? 0 : 1,
-                borderColor: props.theme.colors.divider,
+                borderColor: props.theme.colors.border.default,
                 backgroundColor: density === 'compact'
-                    ? props.theme.colors.surface
-                    : (props.theme.colors.surfaceHigh ?? props.theme.colors.input.background),
+                    ? props.theme.colors.surface.base
+                    : (props.theme.colors.surface.inset ?? props.theme.colors.input.background),
             }}
         >
-            <Text style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.default() }}>
+            <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                 {t('files.sourceControlOperations.selection', { count: props.count })}
             </Text>
             {props.onClear ? (
                 <Pressable onPress={props.onClear} accessibilityRole="button">
-                    <Text style={{ fontSize: 12, color: props.theme.colors.textLink, ...Typography.default('semiBold') }}>
+                    <Text style={{ fontSize: 12, color: props.theme.colors.text.link, ...Typography.default('semiBold') }}>
                         {t('files.sourceControlOperations.clear')}
                     </Text>
                 </Pressable>

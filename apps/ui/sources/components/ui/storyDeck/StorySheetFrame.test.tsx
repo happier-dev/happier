@@ -75,7 +75,7 @@ vi.mock('react-native-reanimated', () => ({
         out: () => 'out',
     },
     runOnJS: <T extends (...args: never[]) => unknown>(callback: T) => callback,
-    useAnimatedStyle: () => ({}),
+    useAnimatedStyle: (callback: () => Record<string, unknown>) => callback(),
     useSharedValue: <T,>(value: T) => ({ value }),
     withSpring: <T,>(value: T) => value,
     withTiming: <T,>(value: T, _config?: unknown, callback?: (finished?: boolean) => void) => {
@@ -132,6 +132,24 @@ describe('StorySheetFrame', () => {
 
         expect(screen.findByTestId('story-sheet-handle')).toBeNull();
         expect(gestureState.enabledCalls).toContain(false);
+    });
+
+    it('does not duplicate centered modal motion owned by BaseModal', async () => {
+        runtime.platform = 'web';
+        runtime.width = 900;
+        runtime.height = 740;
+        const { StorySheetFrame } = await import('./StorySheetFrame');
+
+        const screen = await renderScreen(
+            <StorySheetFrame testID="story-sheet" onDismiss={() => {}}>
+                <></>
+            </StorySheetFrame>
+        );
+
+        const sheet = screen.findByType('AnimatedView' as never);
+        const style = flattenStyle(sheet.props.style);
+        expect(style.opacity).toBeUndefined();
+        expect(style.transform).toBeUndefined();
     });
 
     it('uses a standard opaque surface without an inner blur layer', async () => {

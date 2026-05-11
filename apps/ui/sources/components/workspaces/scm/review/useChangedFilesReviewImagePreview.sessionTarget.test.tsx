@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 
-const workspaceReadFileSpy = vi.hoisted(() => vi.fn());
+const createSessionFilePreviewSourceSpy = vi.hoisted(() => vi.fn());
 
 const activeServerState = vi.hoisted(() => ({
     snapshot: { serverId: 'server-1', serverUrl: 'https://server-1.example.test', generation: 1 },
@@ -65,8 +65,8 @@ const storageSnapshotState = vi.hoisted(() => ({
 	    },
 	}));
 
-vi.mock('@/sync/ops/workspaceFileSystem', () => ({
-    workspaceReadFile: (target: unknown, path: string) => workspaceReadFileSpy(target, path),
+vi.mock('@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource', () => ({
+    createSessionFilePreviewSource: (...args: unknown[]) => createSessionFilePreviewSourceSpy(...args),
 }));
 
 vi.mock('@/text', async () => {
@@ -188,8 +188,18 @@ function setSessionWorkspaceAvailable() {
 
 describe('useChangedFilesReviewImagePreview', () => {
     beforeEach(() => {
-        workspaceReadFileSpy.mockReset();
-        workspaceReadFileSpy.mockResolvedValue({ success: true, content: 'YWJj' });
+        createSessionFilePreviewSourceSpy.mockReset();
+        createSessionFilePreviewSourceSpy.mockResolvedValue({
+            ok: true,
+            source: {
+                kind: 'object-url',
+                uri: 'blob:preview',
+                byteLength: 3,
+                mimeType: 'image/png',
+                svgXml: null,
+                revoke: vi.fn(),
+            },
+        });
         setSessionWorkspaceUnavailable();
     });
 
@@ -214,21 +224,25 @@ describe('useChangedFilesReviewImagePreview', () => {
             uri: null,
             error: null,
         });
-        expect(workspaceReadFileSpy).not.toHaveBeenCalled();
+        expect(createSessionFilePreviewSourceSpy).not.toHaveBeenCalled();
 
         setSessionWorkspaceAvailable();
         await hook.rerender();
         await flushHookEffects({ cycles: 1, turns: 2 });
 
-        expect(workspaceReadFileSpy).toHaveBeenCalledWith(expect.objectContaining({
-            workspaceCacheKey: 'server-1:m1:/repo',
-            machineId: 'm1',
-            rootPath: '/repo',
-            serverId: 'server-1',
-        }), 'image.png');
+        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledWith(expect.objectContaining({
+            scope: expect.objectContaining({
+                workspaceCacheKey: 'server-1:m1:/repo',
+                machineId: 'm1',
+                rootPath: '/repo',
+                serverId: 'server-1',
+            }),
+            filePath: 'image.png',
+            mimeType: 'image/png',
+        }));
         expect(hook.getCurrent()).toMatchObject({
             status: 'loaded',
-            uri: 'data:image/png;base64,YWJj',
+            uri: 'blob:preview',
             error: null,
         });
     });

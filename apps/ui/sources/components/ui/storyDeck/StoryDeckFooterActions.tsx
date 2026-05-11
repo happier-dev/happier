@@ -25,7 +25,7 @@ export function StoryDeckFooterActions(props: StoryDeckFooterActionsProps) {
     const styles = stylesheet;
 
     const primaryLabel = props.primaryLabel
-        ?? (props.isLastSlide ? t('common.done') : t('common.next'));
+        ?? (props.isLastSlide ? t('releaseNotes.storyDeck.letsGo') : t('common.next'));
 
     return (
         <View style={styles.container} testID={props.testID}>

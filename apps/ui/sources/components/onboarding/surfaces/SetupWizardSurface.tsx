@@ -70,19 +70,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     urlInput: {
         width: '100%',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: 12,
         paddingHorizontal: 14,
         paddingVertical: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     urlHint: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     branchHint: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     webRelayHostHandoff: {

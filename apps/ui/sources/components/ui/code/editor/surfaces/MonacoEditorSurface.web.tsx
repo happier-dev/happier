@@ -143,19 +143,17 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
         [
             theme.dark,
             theme.colors.accent.blue,
-            theme.colors.divider,
-            theme.colors.surface,
-            theme.colors.surfaceHigh,
-            theme.colors.surfaceHighest,
-            theme.colors.surfaceSelected,
-            theme.colors.syntaxComment,
-            theme.colors.syntaxDefault,
-            theme.colors.syntaxFunction,
-            theme.colors.syntaxKeyword,
-            theme.colors.syntaxNumber,
-            theme.colors.syntaxString,
-            theme.colors.text,
-            theme.colors.textTertiary,
+            theme.colors.border.default,
+            theme.colors.surface.inset,
+            theme.colors.surface.elevated,
+            theme.colors.syntax.comment,
+            theme.colors.syntax.default,
+            theme.colors.syntax.function,
+            theme.colors.syntax.keyword,
+            theme.colors.syntax.number,
+            theme.colors.syntax.string,
+            theme.colors.text.primary,
+            theme.colors.text.tertiary,
         ],
     );
     const containerRef = React.useRef<any>(null);
@@ -172,7 +170,7 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     const latestFontMetricsRef = React.useRef(resolveCodeEditorFontMetrics({ uiFontScale }));
     const latestEditorThemeRef = React.useRef(editorTheme);
     const pendingChangeRef = React.useRef<string | null>(null);
-    const changeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const changeTimerRef = React.useRef<number | null>(null);
     const disposablesRef = React.useRef<Array<{ dispose?: () => void }> | null>(null);
 
     React.useEffect(() => {
@@ -420,6 +418,7 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                         disableUiFontScaling
                         style={{
                             flex: 1,
+                            padding: 10,
                             color: editorTheme.syntax.defaultColor,
                             backgroundColor: editorTheme.backgroundColor,
                             fontFamily:

@@ -75,7 +75,7 @@ export const SplitCanvasDivider = React.memo((props: Readonly<{
                         }),
                     zIndex: 100,
                 }}
-                indicatorColor={vertical ? theme.colors.divider : theme.colors.textSecondary}
+                indicatorColor={vertical ? theme.colors.border.default : theme.colors.text.secondary}
                 indicatorOpacity={vertical ? 0.9 : 0.5}
             />
         </View>

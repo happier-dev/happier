@@ -34,7 +34,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
     },
     textInput: {
         ...Typography.default('regular'),
@@ -45,7 +45,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...SETTINGS_TEXT_INPUT_METRICS,
         color: theme.colors.input.text,
         borderWidth: 0.5,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
 }));
 
@@ -104,16 +104,16 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                 id: 'literal',
                 title: t('settings.mcpServersValueSourceLiteral'),
                 subtitle: t('settings.mcpServersValueSourceLiteralSubtitle'),
-                icon: <Ionicons name="text-outline" size={22} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="text-outline" size={22} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'savedSecret',
                 title: t('settings.mcpServersValueSourceSavedSecret'),
                 subtitle: t('settings.mcpServersValueSourceSavedSecretSubtitle'),
-                icon: <Ionicons name="key-outline" size={22} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="key-outline" size={22} color={theme.colors.text.secondary} />,
             },
         ];
-    }, [theme.colors.textSecondary]);
+    }, [theme.colors.text.secondary]);
 
     const canSave = keyValid && (source === 'literal' || Boolean(secretId));
 
@@ -228,7 +228,7 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                 <Item
                     testID="mcp.valueRefEditor.save"
                     title={t('common.save')}
-                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.success} />}
+                    icon={<Ionicons name="save-outline" size={29} color={theme.colors.state.success.foreground} />}
                     onPress={onSave}
                     disabled={!canSave}
                 />
@@ -237,7 +237,7 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                     <Item
                         testID="mcp.valueRefEditor.delete"
                         title={t('common.delete')}
-                        icon={<Ionicons name="trash-outline" size={29} color={theme.colors.textDestructive} />}
+                        icon={<Ionicons name="trash-outline" size={29} color={theme.colors.state.danger.foreground} />}
                         onPress={() => {
                             props.onDelete?.();
                             props.onClose();

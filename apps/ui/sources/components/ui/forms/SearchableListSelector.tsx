@@ -111,7 +111,7 @@ const ITEM_SPACING_GAP = 16;
 const stylesheet = StyleSheet.create((theme) => ({
     showMoreTitle: {
         textAlign: 'center',
-        color: theme.colors.textLink,
+        color: theme.colors.text.link,
     },
 }));
 
@@ -210,8 +210,8 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
 
         const canRemove = config.canRemoveFavorite?.(item) ?? true;
         const disabled = isFavorite && !canRemove;
-        const selectedColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
-        const color = isFavorite ? selectedColor : theme.colors.textSecondary;
+        const selectedColor = rt.themeName === 'dark' ? theme.colors.text.primary : theme.colors.button.primary.background;
+        const color = isFavorite ? selectedColor : theme.colors.text.secondary;
 
         return (
             <Pressable
@@ -227,7 +227,7 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
                     <Ionicons
                         name={isFavorite ? 'star' : 'star-outline'}
                         size={24}
-                        color={disabled ? theme.colors.textSecondary : color}
+                        color={disabled ? theme.colors.text.secondary : color}
                     />,
                 )}
             </Pressable>
@@ -252,7 +252,7 @@ export function SearchableListSelector<T>(props: SearchableListSelectorProps<T>)
         const status = config.getItemStatus?.(item, theme);
         const statusExtra = config.getItemStatusExtra?.(item);
         const isFavorite = favoriteIds.has(itemId) || forFavorite;
-        const selectedColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
+        const selectedColor = rt.themeName === 'dark' ? theme.colors.text.primary : theme.colors.button.primary.background;
 
         return (
             <Item

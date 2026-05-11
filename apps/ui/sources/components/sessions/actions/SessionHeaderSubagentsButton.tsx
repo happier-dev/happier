@@ -41,7 +41,7 @@ export const SessionHeaderSubagentsButton = React.memo((props: Readonly<{
             accessibilityLabel={t('session.openSubagents', { count: props.activeCount })}
         >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: props.activeCount > 0 ? 6 : 0 }}>
-                <DependabotIcon size={21} color={theme.colors.header.tint} />
+                <DependabotIcon size={21} color={theme.colors.chrome.header.foreground} />
                 {props.activeCount > 0 ? (
                     <View
                         style={{
@@ -56,7 +56,7 @@ export const SessionHeaderSubagentsButton = React.memo((props: Readonly<{
                     >
                         <Text
                             style={{
-                                color: theme.colors.surface,
+                                color: theme.colors.surface.base,
                                 fontSize: 11,
                                 fontWeight: '700',
                             }}

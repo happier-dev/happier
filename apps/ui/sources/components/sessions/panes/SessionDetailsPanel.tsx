@@ -221,12 +221,12 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
 
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 13, ...Typography.default(), textAlign: 'center' }}>
+                <Text style={{ color: theme.colors.text.secondary, fontSize: 13, ...Typography.default(), textAlign: 'center' }}>
                     {t('session.detailsPanel.unsupportedTab')}
                 </Text>
             </View>
         );
-    }, [openFileTab, pane, props.scopeId, props.sessionId, requestClose, sessionScreenTestIdsEnabled, theme.colors.textSecondary]);
+    }, [openFileTab, pane, props.scopeId, props.sessionId, requestClose, sessionScreenTestIdsEnabled, theme.colors.text.secondary]);
 
     const iconButtonStyle = {
         width: 34,
@@ -235,8 +235,8 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     };
 
     const testIds = React.useMemo(() => ({
@@ -260,10 +260,10 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                 <SafeIonicons
                     name={Platform.OS === 'ios' ? 'chevron-back' : 'arrow-back'}
                     size={24}
-                    color={theme.colors.header.tint}
+                    color={theme.colors.chrome.header.foreground}
                 />
             ) : (
-                <Octicons name="chevron-right" size={18} color={theme.colors.textSecondary} />
+                <Octicons name="chevron-right" size={18} color={theme.colors.text.secondary} />
             )}
         </Pressable>
     );
@@ -295,7 +295,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                         <Ionicons
                             name={paneFocusMode.active ? 'contract-outline' : 'expand-outline'}
                             size={18}
-                            color={theme.colors.textSecondary}
+                            color={theme.colors.text.secondary}
                         />
                     </Pressable>
                 ) : null}
@@ -311,7 +311,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         paneFocusMode.toggle,
         sessionScreenTestIdsEnabled,
         showHeaderActions,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
     ]);
 
     return (

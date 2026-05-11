@@ -42,7 +42,7 @@ export function NotificationTypesSection({
             <Item
                 title={t('settingsNotifications.types.ready.title')}
                 subtitle={t('settingsNotifications.types.ready.subtitle')}
-                icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
+                icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
                 rightElement={(
                     <Switch
                         value={readyEnabled}
@@ -55,7 +55,7 @@ export function NotificationTypesSection({
             <Item
                 title={t('settingsNotifications.types.readyPreview.title')}
                 subtitle={t('settingsNotifications.types.readyPreview.subtitle')}
-                icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="chatbubble-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={readyPreviewEnabled}
@@ -68,7 +68,7 @@ export function NotificationTypesSection({
             <Item
                 title={t('settingsNotifications.types.permissionRequests.title')}
                 subtitle={t('settingsNotifications.types.permissionRequests.subtitle')}
-                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={permissionRequestsEnabled}
@@ -81,7 +81,7 @@ export function NotificationTypesSection({
             <Item
                 title={t('settingsNotifications.types.userActions.title')}
                 subtitle={t('settingsNotifications.types.userActions.subtitle')}
-                icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="chatbox-ellipses-outline" size={29} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Switch
                         value={userActionsEnabled}

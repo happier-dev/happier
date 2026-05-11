@@ -179,14 +179,14 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                         <Ionicons
                             name="warning-outline"
                             size={48}
-                            color={theme.colors.textSecondary}
+                            color={theme.colors.text.secondary}
                             style={{ marginBottom: 12 }}
                         />
                         <View style={{ maxWidth: 520 }}>
                             <Text style={{
                                 fontSize: 16,
                                 ...Typography.default('semiBold'),
-                                color: theme.colors.text,
+                                color: theme.colors.text.primary,
                                 textAlign: 'center',
                                 marginBottom: 6,
                             }}>
@@ -195,7 +195,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                             <Text style={{
                                 fontSize: 14,
                                 ...Typography.default(),
-                                color: theme.colors.textSecondary,
+                                color: theme.colors.text.secondary,
                                 textAlign: 'center',
                                 lineHeight: 20,
                             }}>

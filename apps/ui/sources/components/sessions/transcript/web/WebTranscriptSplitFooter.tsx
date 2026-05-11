@@ -6,13 +6,14 @@ function WebTranscriptSplitFooterInner<T extends { id: string }>(props: {
     startIndex: number;
     renderItemAtIndex: (item: T, index: number) => React.ReactNode;
     footer: React.ReactNode;
+    onTailLayout?: () => void;
 }) {
     if (props.hotItems.length === 0) {
         return props.footer;
     }
 
     return (
-        <View testID="transcript-web-hot-tail">
+        <View testID="transcript-web-hot-tail" onLayout={props.onTailLayout}>
             {props.hotItems.map((item, index) => (
                 <View key={item.id} testID={`transcript-web-hot-tail-item-${item.id}`}>
                     {props.renderItemAtIndex(item, props.startIndex + index)}

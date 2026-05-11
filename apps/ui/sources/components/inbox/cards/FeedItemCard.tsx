@@ -46,7 +46,7 @@ export const FeedItemCard = React.memo(({ item }: FeedItemCardProps) => {
                     size={40}
                 />
             ) : (
-                <Ionicons name="person" size={20} color={theme.colors.textSecondary} />
+                <Ionicons name="person" size={20} color={theme.colors.text.secondary} />
             );
             
             return (
@@ -87,7 +87,7 @@ export const FeedItemCard = React.memo(({ item }: FeedItemCardProps) => {
                 <Item
                     title={item.body.text}
                     subtitle={getTimeAgo(item.createdAt)}
-                    icon={<Ionicons name="information-circle" size={20} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="information-circle" size={20} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />
             );

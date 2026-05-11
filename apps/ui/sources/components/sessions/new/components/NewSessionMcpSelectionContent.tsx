@@ -77,10 +77,10 @@ function GroupActionButton(props: GroupActionButtonProps) {
             ]}
         >
             {isLoading ? (
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             ) : (
                 normalizeNodeForView(
-                    <Ionicons name={props.icon} size={18} color={theme.colors.textSecondary} />,
+                    <Ionicons name={props.icon} size={18} color={theme.colors.text.secondary} />,
                 )
             )}
         </Pressable>
@@ -394,7 +394,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         width: '100%',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         flexShrink: 1,
     },
     groupTitleRow: {
@@ -411,7 +411,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     groupTitleText: {
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         textTransform: 'uppercase',
     },
     groupActions: {
@@ -428,8 +428,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
     groupActionButtonPressed: {
         opacity: 0.82,

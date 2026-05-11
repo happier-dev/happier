@@ -48,6 +48,15 @@ describe('sessionListRenderableMetadataComparison', () => {
         });
     });
 
+    it('falls back to legacy summaryText when canonical summary text is absent', () => {
+        const comparison = readSessionListRenderableMetadataComparison({
+            summaryText: 'Cached shell title',
+            path: '/home/u/repo',
+        } as any);
+
+        expect(comparison?.summaryText).toBe('Cached shell title');
+    });
+
     it('reuses the shared normalization helper for equivalent comparison snapshots', () => {
         const previous = normalizeSessionListRenderableMetadataComparison({
             name: 'Repo',

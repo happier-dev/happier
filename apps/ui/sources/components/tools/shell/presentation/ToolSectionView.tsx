@@ -59,7 +59,7 @@ const styles = StyleSheet.create((theme) => ({
     sectionTitle: {
         fontSize: 13,
         fontWeight: '600',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 6,
         marginHorizontal: 12, // Add padding back for title when full width
         textTransform: 'uppercase',

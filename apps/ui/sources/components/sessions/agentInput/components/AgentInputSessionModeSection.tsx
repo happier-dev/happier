@@ -24,7 +24,7 @@ export function AgentInputSessionModeSection(
   props: AgentInputSessionModeSectionProps,
 ) {
   const { theme } = useUnistyles();
-  const selectedIndicatorColor = theme.dark ? theme.colors.text : theme.colors.button.primary.background;
+  const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
 
   if (props.options.length === 0) {
     return null;
@@ -122,7 +122,7 @@ const styles = StyleSheet.create((theme) => ({
   sectionTitle: {
     fontSize: 11,
     fontWeight: "600",
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
   summaryRow: {
     minHeight: 0,
@@ -130,7 +130,7 @@ const styles = StyleSheet.create((theme) => ({
   summaryText: {
     fontSize: 10,
     lineHeight: 13,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
   cardsGrid: {
     flexDirection: "row",
@@ -143,14 +143,14 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 13,
     paddingHorizontal: 9,
     paddingVertical: 7,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.surface.base,
     gap: 2,
   },
   optionCardFullWidth: {
     width: "100%",
   },
   optionCardSelected: {
-    backgroundColor: theme.colors.surfacePressed,
+    backgroundColor: theme.colors.surface.pressed,
   },
   optionCardPressed: {
     opacity: 0.86,
@@ -166,7 +166,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: 11,
     lineHeight: 14,
     fontWeight: "700",
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
   },
   optionCardIndicator: {
     minWidth: 16,
@@ -177,6 +177,6 @@ const styles = StyleSheet.create((theme) => ({
   optionCardDescription: {
     fontSize: 10,
     lineHeight: 12,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
 }));

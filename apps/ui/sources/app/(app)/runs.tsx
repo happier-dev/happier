@@ -59,7 +59,7 @@ export default function RunsScreen() {
   const [showFinished, setShowFinished] = React.useState(false);
   const [stoppingRunId, setStoppingRunId] = React.useState<string | null>(null);
   const [state, setState] = React.useState<MachineRunsState>({ status: 'idle' });
-  const headerTint = theme.colors.header?.tint ?? theme.colors.text;
+  const headerTint = theme.colors.chrome.header.foreground ?? theme.colors.text.primary;
 
   const serverEntries = React.useMemo(() => {
     const entries = Object.entries(machineListByServerId ?? {})
@@ -138,11 +138,11 @@ export default function RunsScreen() {
   }), [headerRight]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.background?.canvas ?? theme.colors.surface.base }}>
       <Stack.Screen options={screenOptions} />
       <ConstrainedScreenContent style={{ flex: 1 }}>
         <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
-          <Text style={{ color: theme.colors.textSecondary }}>
+          <Text style={{ color: theme.colors.text.secondary }}>
             {showFinished ? 'Showing finished runs' : 'Showing running runs'}
           </Text>
         </View>
@@ -152,7 +152,7 @@ export default function RunsScreen() {
             <Item
               title={t('common.loading')}
               showChevron={false}
-              rightElement={<ActivityIndicator size="small" color={theme.colors.textSecondary} />}
+              rightElement={<ActivityIndicator size="small" color={theme.colors.text.secondary} />}
             />
           ) : state.status === 'error' ? (
             <Item title={t('common.error')} subtitle={state.error} showChevron={false} />
@@ -182,8 +182,8 @@ export default function RunsScreen() {
                     <Item
                       title={machineId}
                       subtitle={t('runs.openMachine')}
-                      subtitleStyle={{ color: theme.colors.textSecondary, fontFamily: 'Menlo' as any, fontSize: 12 }}
-                      rightElement={<Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />}
+                      subtitleStyle={{ color: theme.colors.text.secondary, fontFamily: 'Menlo' as any, fontSize: 12 }}
+                      rightElement={<Ionicons name="chevron-forward" size={18} color={theme.colors.text.secondary} />}
                       onPress={() => {
                         const query = serverId ? `?serverId=${encodeURIComponent(serverId)}` : '';
                         router.push(`/machine/${machineId}${query}` as any);
@@ -260,7 +260,7 @@ export default function RunsScreen() {
                                 style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
                               >
                                 {stoppingRunId === run.runId ? (
-                                  <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                                  <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                                 ) : (
                                   <Ionicons name="stop-circle-outline" size={20} color={theme.colors.accent.orange} />
                                 )}

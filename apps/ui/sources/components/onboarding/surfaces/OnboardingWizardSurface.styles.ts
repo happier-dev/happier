@@ -11,15 +11,15 @@ export const onboardingWizardSurfaceStylesheet = StyleSheet.create((theme) => ({
     urlInput: {
         width: '100%',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: 12,
         paddingHorizontal: 14,
         paddingVertical: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     urlHint: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     relayHintBlock: {
         alignItems: 'center',
@@ -28,24 +28,24 @@ export const onboardingWizardSurfaceStylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         paddingHorizontal: 8,
         paddingVertical: 2,
-        backgroundColor: theme.colors.surfaceSelected,
+        backgroundColor: theme.colors.surface.selected,
         borderRadius: 999,
     },
     relayHintLine: {
         ...Typography.default(),
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     relayHintIcon: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     relayGroupTitle: {
         ...Typography.default('semiBold'),
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         marginBottom: 6,
     },
@@ -78,7 +78,7 @@ export const onboardingWizardSurfaceStylesheet = StyleSheet.create((theme) => ({
         fontSize: 16,
         textAlign: 'center',
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));
 

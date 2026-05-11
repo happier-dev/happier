@@ -36,8 +36,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
         paddingHorizontal: 10,
         paddingVertical: 6,
         borderRadius: 999,
@@ -49,12 +49,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     chipText: {
         flexShrink: 1,
         minWidth: 0,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 12,
         ...Typography.default('semiBold'),
     },
     chipSubtle: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         ...Typography.default(),
     },
@@ -118,7 +118,7 @@ export const LinkedWorkspaceFilesRow = React.memo((props: LinkedWorkspaceFilesRo
                     style={({ pressed }) => [styles.chip, pressed ? styles.chipPressed : null]}
                     accessibilityRole="button"
                 >
-                    <Ionicons name="document-text-outline" size={14} color={theme.colors.textSecondary} />
+                    <Ionicons name="document-text-outline" size={14} color={theme.colors.text.secondary} />
                     <Text style={styles.chipSubtle}>{LINKED_FILE_PREFIX}</Text>
                     <Text style={styles.chipText} numberOfLines={1}>
                         {getBasename(path)}

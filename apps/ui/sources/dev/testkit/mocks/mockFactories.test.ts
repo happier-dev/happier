@@ -1,6 +1,44 @@
+import React from 'react';
+import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('UI testkit mock factories', () => {
+    it('creates a ToolSectionView mock that preserves sibling exports', async () => {
+        const { createToolSectionViewModuleMock } = await import('./toolSectionView');
+        const ToolSectionSpacingProvider = ({ children }: { children?: React.ReactNode }) =>
+            React.createElement('ToolSectionSpacingProvider', null, children);
+        const actual = {
+            ToolSectionSpacingProvider,
+            ToolSectionView: () => null,
+        } as typeof import('@/components/tools/shell/presentation/ToolSectionView');
+
+        const moduleMock = await createToolSectionViewModuleMock({
+            importOriginal: async <T,>() => actual as T,
+            mode: 'host',
+        });
+
+        expect(moduleMock.ToolSectionSpacingProvider).toBe(ToolSectionSpacingProvider);
+
+        let screen: ReturnType<typeof renderer.create> | null = null;
+        await act(async () => {
+            screen = renderer.create(
+                React.createElement(moduleMock.ToolSectionView, { title: 'Input', fullWidth: true }, 'Body'),
+            );
+        });
+        if (!screen) {
+            throw new Error('Expected ToolSectionView mock to render');
+        }
+        const section = screen.root.findByType('ToolSectionView');
+
+        expect(section.props.title).toBe('Input');
+        expect(section.props.fullWidth).toBe(true);
+        expect(section.children).toEqual(['Body']);
+
+        await act(async () => {
+            screen?.unmount();
+        });
+    });
+
     it('creates a React Native web mock with merged platform and AppState overrides', async () => {
         const { createReactNativeWebMock } = await import('./reactNative');
 
@@ -90,11 +128,11 @@ describe('UI testkit mock factories', () => {
             rt: { breakpoint: string };
         };
 
-        expect((unistyles.theme as { colors: { text: string } }).colors.text).toBe('#123456');
+        expect((unistyles.theme as { colors: { text: string } }).colors.text.primary).toBe('#123456');
         expect(unistyles.rt.breakpoint).toBe('md');
         expect(
             moduleMock.StyleSheet.create((theme: any, runtime: any) => ({
-                color: theme.colors.text,
+                color: theme.colors.text.primary,
                 breakpoint: runtime.breakpoint,
             })),
         ).toEqual({

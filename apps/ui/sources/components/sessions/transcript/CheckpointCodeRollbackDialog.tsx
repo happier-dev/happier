@@ -32,31 +32,31 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 15,
     },
     choice: {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 12,
         paddingVertical: 10,
         paddingHorizontal: 12,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     choiceSelected: {
-        borderColor: theme.colors.textLink,
+        borderColor: theme.colors.text.link,
     },
     choiceDisabled: {
         opacity: 0.45,
     },
     choiceText: {
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
     },
     hint: {
         ...Typography.default(),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
     footer: {
@@ -70,14 +70,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
     },
     confirmButton: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     confirmDisabled: {
         opacity: 0.45,
     },
     footerText: {
         ...Typography.default('semiBold'),
-        color: theme.colors.textLink,
+        color: theme.colors.text.link,
         fontSize: 13,
     },
     advancedButton: {

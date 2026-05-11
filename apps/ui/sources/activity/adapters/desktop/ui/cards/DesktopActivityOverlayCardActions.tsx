@@ -23,8 +23,8 @@ function resolveActionPalette(
     switch (tone) {
         case 'primary':
             return {
-                backgroundColor: theme.colors.overlay.text,
-                color: theme.colors.text,
+                backgroundColor: theme.colors.overlay.foreground,
+                color: theme.colors.text.primary,
             };
         case 'danger':
             return {
@@ -35,7 +35,7 @@ function resolveActionPalette(
         default:
             return {
                 backgroundColor: 'transparent',
-                color: theme.colors.overlay.text,
+                color: theme.colors.overlay.foreground,
             };
     }
 }
@@ -125,7 +125,7 @@ export function DesktopActivityOverlayCardActions(props: Readonly<{
                                 }}
                                 style={[
                                     styles.inlineInput,
-                                    { color: theme.colors.overlay.text },
+                                    { color: theme.colors.overlay.foreground },
                                     createDesktopActivityOverlayInteriorSurfaceStyle(theme, {
                                         visualMode: props.visualMode,
                                         kind: 'badge',

@@ -58,7 +58,7 @@ export const DeleteView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                     </Text>
                 ))}
                 {more > 0 ? (
-                    <Text style={[styles.entry, { color: theme.colors.textSecondary }]}>
+                    <Text style={[styles.entry, { color: theme.colors.text.secondary }]}>
                         {t('tools.structuredResult.more', { count: more })}
                     </Text>
                 ) : null}
@@ -71,12 +71,12 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 6,
     },
     entry: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontFamily: 'Menlo',
     },
 }));

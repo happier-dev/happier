@@ -34,7 +34,7 @@ export const RelayAccessWizardBusyOverlay = React.memo(function RelayAccessWizar
         return null;
     }
 
-    const overlayScrimColor = theme.colors.overlay?.scrimWizard ?? theme.colors.surface;
+    const overlayScrimColor = theme.colors.overlay?.scrimWizard ?? theme.colors.surface.base;
 
     return (
         <View testID={props.testID} style={styles.overlay}>

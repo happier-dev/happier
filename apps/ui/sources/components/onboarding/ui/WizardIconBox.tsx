@@ -15,13 +15,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderRadius: 8,
-        backgroundColor: theme.colors.surfacePressedOverlay,
+        backgroundColor: theme.colors.surface.pressedOverlay,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     selected: {
         borderColor: theme.colors.accent.blue,
-        backgroundColor: theme.colors.surfaceSelected,
+        backgroundColor: theme.colors.surface.selected,
     },
 }));
 
@@ -46,7 +46,7 @@ export const WizardIconBox = React.memo(function WizardIconBox(props: WizardIcon
             <Ionicons
                 name={props.icon}
                 size={iconSize}
-                color={selected ? theme.colors.accent.blue : theme.colors.textSecondary}
+                color={selected ? theme.colors.accent.blue : theme.colors.text.secondary}
             />
         </View>
     );

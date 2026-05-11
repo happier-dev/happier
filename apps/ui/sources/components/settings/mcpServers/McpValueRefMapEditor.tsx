@@ -99,7 +99,7 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
                         testID={`${props.testIdPrefix}.empty`}
                         title={props.emptyTitle}
                         subtitle={props.emptySubtitle}
-                        icon={<Ionicons name={props.iconName} size={29} color={theme.colors.textSecondary} />}
+                        icon={<Ionicons name={props.iconName} size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                     />
                 ) : null}
@@ -143,7 +143,7 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
                     testID={`${props.testIdPrefix}.add`}
                     title={props.addRowTitle}
                     subtitle={props.addRowSubtitle}
-                    icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.success} />}
+                    icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
                     onPress={handleAdd}
                 />
             </ItemGroup>

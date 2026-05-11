@@ -56,7 +56,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     labelText: {
         ...Typography.default('semiBold'),
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textTransform: 'uppercase',
         letterSpacing: 0.5,
         marginBottom: 8,
@@ -76,7 +76,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     errorText: {
         ...Typography.default(),
         fontSize: 12,
-        color: theme.colors.textDestructive,
+        color: theme.colors.state.danger.foreground,
         marginBottom: 12,
     },
     validatingText: {
@@ -96,7 +96,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     statusText: {
         ...Typography.default(),
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
 }));
@@ -185,12 +185,12 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                 testID="server-settings-add-server-toggle"
                 title={t('server.addServerTitle')}
                 subtitle={t('server.addServerSubtitle')}
-                icon={<Ionicons name="server-outline" size={20} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="server-outline" size={20} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Ionicons
                         name={expanded === 'server' ? 'chevron-up' : 'chevron-down'}
                         size={18}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                     />
                 )}
                 showChevron={false}
@@ -296,12 +296,12 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
             <Item
                 title={t('server.addServerGroupTitle')}
                 subtitle={t('server.addServerGroupSubtitle')}
-                icon={<Ionicons name="albums-outline" size={20} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="albums-outline" size={20} color={theme.colors.text.secondary} />}
                 rightElement={(
                     <Ionicons
                         name={expanded === 'group' ? 'chevron-up' : 'chevron-down'}
                         size={18}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.text.secondary}
                     />
                 )}
                 showChevron={false}
@@ -332,12 +332,12 @@ export function AddTargetsSection(props: AddTargetsSectionProps) {
                                 key={`group-add-${server.id}`}
                                 title={server.name}
                                 subtitle={toServerUrlDisplay(server.serverUrl)}
-                                icon={<Ionicons name="server-outline" size={18} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name="server-outline" size={18} color={theme.colors.text.secondary} />}
                                 rightElement={(
                                     <Ionicons
                                         name={selected ? 'checkmark-circle' : 'ellipse-outline'}
                                         size={18}
-                                        color={selected ? theme.colors.status.connected : theme.colors.textSecondary}
+                                        color={selected ? theme.colors.status.connected : theme.colors.text.secondary}
                                     />
                                 )}
                                 showChevron={false}

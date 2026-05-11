@@ -26,7 +26,7 @@ export function SourceControlUpdateSwitchRow(props: Readonly<{
                 gap: 12,
             }}
         >
-            <Text style={{ fontSize: 12, color: props.theme.colors.text, ...Typography.default('semiBold') }}>
+            <Text style={{ fontSize: 12, color: props.theme.colors.text.primary, ...Typography.default('semiBold') }}>
                 {props.label}
             </Text>
             <Switch

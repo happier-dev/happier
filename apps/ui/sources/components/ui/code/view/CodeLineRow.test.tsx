@@ -87,7 +87,7 @@ describe('CodeLineRow', () => {
         const keywordStyle = keywordNode!.props.style;
         const flattened = Array.isArray(keywordStyle) ? keywordStyle.flat() : [keywordStyle];
         const theme = createThemeFixture() as any;
-        expect(flattened.some((s: any) => s?.color === theme.colors.syntaxKeyword)).toBe(true);
+        expect(flattened.some((s: any) => s?.color === theme.colors.syntax.keyword)).toBe(true);
         expect(flattened.some((s: any) => s?.fontWeight === '600' || s?.fontWeight === 600)).toBe(true);
     });
 
@@ -121,7 +121,7 @@ describe('CodeLineRow', () => {
         const keywordStyle = keywordNode!.props.style;
         const flattened = Array.isArray(keywordStyle) ? keywordStyle.flat() : [keywordStyle];
         const theme = createThemeFixture() as any;
-        expect(flattened.some((s: any) => s?.color === theme.colors.syntaxKeyword)).toBe(true);
+        expect(flattened.some((s: any) => s?.color === theme.colors.syntax.keyword)).toBe(true);
         expect(flattened.some((s: any) => s?.fontWeight === '600' || s?.fontWeight === 600)).toBe(true);
     });
 
@@ -248,6 +248,34 @@ describe('CodeLineRow', () => {
         expect(onPressAddComment).toHaveBeenCalledWith(line);
     });
 
+    it('uses a dedicated selection indicator when a diff line is selected for commit', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+
+        const screen = await renderScreen(<CodeLineRow
+            line={{
+                id: 'selected-line',
+                sourceIndex: 0,
+                kind: 'add',
+                oldLine: null,
+                newLine: 1,
+                renderPrefixText: '+',
+                renderCodeText: 'const selected = true;',
+                renderIsHeaderLine: false,
+                selectable: true,
+            }}
+            selected
+            onPressLine={() => {}}
+        />);
+
+        const row = findTestInstanceByTypeWithProps(screen.tree, 'View' as any, { nativeID: 'selected-line' })!;
+        const theme = createThemeFixture() as any;
+
+        expect(flattenTestStyle(row.props.style)).toMatchObject({
+            borderLeftColor: theme.colors.state.success.foreground,
+            borderLeftWidth: 3,
+        });
+    });
+
     it('keeps the comment affordance inside the hovered row press target', async () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 
@@ -354,14 +382,14 @@ describe('CodeLineRow', () => {
             const style = node.props?.style;
             if (!style) return false;
             const flattened = Array.isArray(style) ? style.flat() : [style];
-            return flattened.some((s: any) => s?.backgroundColor === theme.colors.diff.inlineAddedBg);
+            return flattened.some((s: any) => s?.backgroundColor === theme.colors.diff.inlineAdded.background);
         });
 
         expect(addedNodes.length).toBeGreaterThan(0);
         const addedNode = addedNodes[0]!;
         const flattened = Array.isArray(addedNode.props.style) ? addedNode.props.style.flat() : [addedNode.props.style];
 
-        expect(flattened.some((s: any) => s?.backgroundColor === theme.colors.diff.inlineAddedBg)).toBe(true);
+        expect(flattened.some((s: any) => s?.backgroundColor === theme.colors.diff.inlineAdded.background)).toBe(true);
         expect(JSON.stringify(screen.tree.toJSON())).toContain('x');
     });
 });

@@ -17,7 +17,7 @@ const CHANGELOG_FEATURE_ID = 'app.ui.changelog' as const satisfies FeatureId;
 const styles = StyleSheet.create((theme, runtime) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     content: {
         paddingHorizontal: 16,
@@ -30,18 +30,18 @@ const styles = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('semiBold'),
         fontSize: 20,
         lineHeight: 28,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 8,
     },
     dateText: {
         ...Typography.default('regular'),
         fontSize: 14,
         lineHeight: 20,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 12,
     },
     entryBodyContainer: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderRadius: 12,
         padding: 16,
     },
@@ -49,7 +49,7 @@ const styles = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('regular'),
         fontSize: 16,
         lineHeight: 24,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     emptyState: {
         flex: 1,
@@ -61,7 +61,7 @@ const styles = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('regular'),
         fontSize: 16,
         lineHeight: 24,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     }
 }));

@@ -67,9 +67,9 @@ export function FilesToolbar(props: FilesToolbarProps) {
         paddingVertical: 8,
         paddingHorizontal: 10,
         borderRadius: 12,
-        backgroundColor: active ? theme.colors.surfaceHigh : theme.colors.surface,
+        backgroundColor: active ? theme.colors.surface.inset : theme.colors.surface.base,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     }) as const;
 
     const Chip = (p: {
@@ -83,7 +83,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
             <Pressable onPress={p.onPress} style={chipStyle(p.active)}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
                     {p.icon}
-                    <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                    <Text style={{ fontSize: 12, color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                         {p.label}
                     </Text>
                     {p.badge}
@@ -102,11 +102,11 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     paddingVertical: 2,
                     borderRadius: 999,
                     borderWidth: 1,
-                    borderColor: theme.colors.divider,
-                    backgroundColor: theme.colors.surfaceHigh,
+                    borderColor: theme.colors.border.default,
+                    backgroundColor: theme.colors.surface.inset,
                 }}
             >
-                <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.mono('semiBold') }}>
+                <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
                     {String(count)}
                 </Text>
             </View>
@@ -118,7 +118,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
             style={{
                 padding: 16,
                 borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                borderBottomColor: theme.colors.divider,
+                borderBottomColor: theme.colors.border.default,
             }}
         >
             <View
@@ -130,10 +130,10 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     paddingHorizontal: 12,
                     paddingVertical: 8,
                     borderWidth: 1,
-                    borderColor: theme.colors.divider,
+                    borderColor: theme.colors.border.default,
                 }}
             >
-                <Octicons name="search" size={16} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
+                <Octicons name="search" size={16} color={theme.colors.text.secondary} style={{ marginRight: 8 }} />
                 <TextInput
                     value={searchQuery}
                     onChangeText={onSearchQueryChange}
@@ -153,14 +153,14 @@ export function FilesToolbar(props: FilesToolbarProps) {
                 <Chip
                     active={!showAllRepositoryFiles}
                     label={t('files.toolbar.changedFiles')}
-                    icon={<Octicons name="diff" size={14} color={theme.colors.textSecondary} />}
+                    icon={<Octicons name="diff" size={14} color={theme.colors.text.secondary} />}
                     badge={!showAllRepositoryFiles ? <CountBadge count={changedFilesCount} /> : undefined}
                     onPress={onShowChangedFiles}
                 />
                 <Chip
                     active={showAllRepositoryFiles}
                     label={t('files.toolbar.allRepositoryFiles')}
-                    icon={<Octicons name="repo" size={14} color={theme.colors.textSecondary} />}
+                    icon={<Octicons name="repo" size={14} color={theme.colors.text.secondary} />}
                     onPress={onShowAllRepositoryFiles}
                 />
 
@@ -179,13 +179,13 @@ export function FilesToolbar(props: FilesToolbarProps) {
                         <Chip
                             active={changedFilesPresentation === 'review'}
                             label={t('files.toolbar.review')}
-                            icon={<Octicons name="diff" size={14} color={theme.colors.textSecondary} />}
+                            icon={<Octicons name="diff" size={14} color={theme.colors.text.secondary} />}
                             onPress={() => onChangedFilesPresentationChange('review')}
                         />
                         <Chip
                             active={changedFilesPresentation === 'list'}
                             label={t('files.toolbar.list')}
-                            icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
+                            icon={<Octicons name="list-unordered" size={14} color={theme.colors.text.secondary} />}
                             onPress={() => onChangedFilesPresentationChange('list')}
                         />
                     </>
@@ -195,7 +195,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     <Chip
                         active={scmPanelExpanded}
                         label={t('files.toolbar.scm')}
-                        icon={<Octicons name="git-branch" size={14} color={theme.colors.textSecondary} />}
+                        icon={<Octicons name="git-branch" size={14} color={theme.colors.text.secondary} />}
                         onPress={onToggleScmPanel}
                     />
                 ) : null}
@@ -204,7 +204,7 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     <Chip
                         active={false}
                         label={t('common.refresh')}
-                        icon={<Octicons name="sync" size={14} color={theme.colors.textSecondary} />}
+                        icon={<Octicons name="sync" size={14} color={theme.colors.text.secondary} />}
                         onPress={onRefresh}
                     />
                 ) : null}
@@ -221,14 +221,14 @@ export function FilesToolbar(props: FilesToolbarProps) {
                         paddingVertical: 8,
                         borderRadius: 10,
                         borderWidth: 1,
-                        borderColor: theme.colors.divider,
-                        backgroundColor: theme.colors.surfaceHigh,
+                        borderColor: theme.colors.border.default,
+                        backgroundColor: theme.colors.surface.inset,
                     }}
                 >
                     <Text
                         style={{
                             fontSize: 11,
-                            color: theme.colors.textSecondary,
+                            color: theme.colors.text.secondary,
                             ...Typography.default(),
                         }}
                     >

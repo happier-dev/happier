@@ -46,14 +46,14 @@ export const BadgeGrid = React.memo<BadgeGridProps>(({ items, columns = 3, testI
                         />
                         <View style={styles.badgeText}>
                             <Text
-                                style={[styles.label, { color: theme.colors.text }]}
+                                style={[styles.label, { color: theme.colors.text.primary }]}
                                 numberOfLines={1}
                             >
                                 {item.label}
                             </Text>
                             {item.detail ? (
                                 <Text
-                                    style={[styles.detail, { color: theme.colors.textSecondary }]}
+                                    style={[styles.detail, { color: theme.colors.text.secondary }]}
                                     numberOfLines={1}
                                 >
                                     {item.detail}

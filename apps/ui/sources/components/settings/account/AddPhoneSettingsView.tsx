@@ -24,7 +24,7 @@ import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassifi
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     container: {
         flex: 1,
@@ -38,13 +38,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     title: {
         fontSize: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 8,
         ...Typography.default('semiBold'),
     },
     subtitle: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 20,
         ...Typography.default(),
     },
@@ -59,15 +59,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     linkRow: {
         marginTop: 8,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 12,
         paddingHorizontal: 14,
         paddingVertical: 10,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     linkText: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 16,
         ...Typography.mono(),
     },
@@ -82,28 +82,28 @@ const stylesheet = StyleSheet.create((theme) => ({
     requestCard: {
         marginTop: 18,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 14,
         paddingHorizontal: 16,
         paddingVertical: 14,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     requestTitle: {
         fontSize: 15,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 8,
         ...Typography.default('semiBold'),
     },
     requestBody: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         lineHeight: 20,
         ...Typography.default(),
     },
     confirmCode: {
         marginTop: 10,
         fontSize: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         letterSpacing: 1,
         ...Typography.mono(),
     },
@@ -204,13 +204,13 @@ export const AddPhoneSettingsView = React.memo(function AddPhoneSettingsView() {
                             <View style={styles.qrBlock}>
                                 <View testID="add-phone-qr" style={{ width: 260, height: 260, alignItems: 'center', justifyContent: 'center' }}>
                                 {starting ? (
-                                    <ActivityIndicator size="small" color={theme.colors.text} />
+                                    <ActivityIndicator size="small" color={theme.colors.text.primary} />
                                 ) : deepLink ? (
                                     <QRCode
                                         data={deepLink}
                                         size={260}
-                                        foregroundColor={theme.colors.text}
-                                        backgroundColor={theme.colors.surface}
+                                        foregroundColor={theme.colors.text.primary}
+                                        backgroundColor={theme.colors.surface.base}
                                     />
                                 ) : (
                                     <Text style={styles.requestBody}>

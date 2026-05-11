@@ -41,10 +41,10 @@ export function SessionPaneLazyLoader<TProps extends object>(input: SessionPaneL
                 testID={`${input.testID}-error`}
                 style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16, gap: 10 }}
             >
-                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.error')}
                 </Text>
-                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('errors.tryAgain')}
                 </Text>
                 <Pressable
@@ -58,10 +58,10 @@ export function SessionPaneLazyLoader<TProps extends object>(input: SessionPaneL
                         paddingHorizontal: 12,
                         paddingVertical: 8,
                         borderRadius: 10,
-                        backgroundColor: theme.colors.surface,
+                        backgroundColor: theme.colors.surface.base,
                     }}
                 >
-                    <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                    <Text style={{ fontSize: 12, color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                         {t('common.retry')}
                     </Text>
                 </Pressable>
@@ -75,8 +75,8 @@ export function SessionPaneLazyLoader<TProps extends object>(input: SessionPaneL
                 testID={input.testID}
                 style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16, gap: 10 }}
             >
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default() }}>
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.loading')}
                 </Text>
             </View>

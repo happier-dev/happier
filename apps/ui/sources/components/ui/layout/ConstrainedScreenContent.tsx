@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { type StyleProp, type ViewStyle, View } from 'react-native';
 
-import { layout } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 
 type ConstrainedScreenContentProps = Readonly<{
     children: React.ReactNode;
@@ -9,8 +9,10 @@ type ConstrainedScreenContentProps = Readonly<{
 }>;
 
 export const ConstrainedScreenContent = React.memo((props: ConstrainedScreenContentProps) => {
+    const maxWidth = useLayoutMaxWidth();
+
     return (
-        <View style={[{ width: '100%', maxWidth: layout.maxWidth, alignSelf: 'center' }, props.style]}>
+        <View style={[{ width: '100%', maxWidth, alignSelf: 'center' }, props.style]}>
             {props.children}
         </View>
     );

@@ -11,6 +11,7 @@ const shared = vi.hoisted(() => ({
     settingsState: {
         themePreference: 'adaptive',
         uiFontScale: 1,
+        uiContentWidthMode: 'compact',
         uiItemDensity: 'comfortable',
         uiMultiPanePanelsEnabled: true,
         detailsPaneTabsBehavior: 'preview',
@@ -118,6 +119,7 @@ afterEach(() => {
     resetSessionSettingsEntryState();
     Reflect.deleteProperty(globalThis, 'document');
     shared.settingsState.themePreference = 'adaptive';
+    shared.settingsState.uiContentWidthMode = 'compact';
     shared.settingsState.uiItemDensity = 'comfortable';
     shared.setAdaptiveThemes.mockClear();
     shared.setTheme.mockClear();
@@ -197,6 +199,25 @@ describe('Appearance settings item density', () => {
         });
 
         expect(shared.settingsState.uiItemDensity).toBe('cozy');
+    });
+
+    it('renders the content width dropdown and updates the local setting', async () => {
+        const mod = await import('@/app/(app)/settings/appearance');
+        const screen = await renderSettingsView(React.createElement(mod.default));
+
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
+        const contentWidthDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.contentWidth');
+        expect(contentWidthDropdown).toBeTruthy();
+        expect(contentWidthDropdown?.props?.selectedId).toBe('compact');
+
+        const itemIds = contentWidthDropdown?.props?.items?.map((item: any) => item.id) ?? [];
+        expect(itemIds).toEqual(['compact', 'medium', 'full']);
+
+        await act(async () => {
+            contentWidthDropdown!.props.onSelect('full');
+        });
+
+        expect(shared.settingsState.uiContentWidthMode).toBe('full');
     });
 
     it('renders the settings navigation sidebar toggle and updates the local setting', async () => {

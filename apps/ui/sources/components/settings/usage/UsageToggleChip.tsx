@@ -17,7 +17,7 @@ const styles = StyleSheet.create((theme) => ({
     chip: {
         minHeight: 34,
         borderRadius: 999,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 14,
         paddingVertical: 7,
         alignItems: 'center',
@@ -27,16 +27,16 @@ const styles = StyleSheet.create((theme) => ({
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     chipSelected: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     chipText: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         letterSpacing: -0.04,
     },
     chipTextSelected: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     chipDot: {
         width: 6,

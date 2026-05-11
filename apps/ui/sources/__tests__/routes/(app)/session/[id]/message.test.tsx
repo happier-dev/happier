@@ -39,9 +39,8 @@ const syncLoadOlderMessagesSpy = vi.fn(async (_sessionId: string) => {
 let ensureSessionVisibleDeferred: DeferredPromise<void> | null = null;
 const mockTheme = {
   colors: {
-    textSecondary: '#aaa',
-    header: { background: '#000', tint: '#fff' },
-    text: '#fff',
+    chrome: { header: { background: '#000', foreground: '#fff' } },
+    text: { primary: '#fff', secondary: '#aaa' },
   },
 } as const;
 
@@ -76,7 +75,8 @@ installSessionRouteCommonModuleMocks({
     });
   },
   storageModule: async (importOriginal) => {
-    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleMock, createUseLocalSettingMock, createUseLocalSettingMutableMock } = await import('@/dev/testkit/mocks/storage');
+    const useLocalSetting = createUseLocalSettingMock();
     return createStorageModuleMock({
       importOriginal,
       overrides: {
@@ -92,6 +92,8 @@ installSessionRouteCommonModuleMocks({
         useSessionTranscriptIds: () => ({ ids: [], isLoaded: mockMessagesLoaded }),
         useMessage: (_sessionId: string, messageId: string) => mockMessagesById[messageId] ?? mockMessage,
         useResolvedSessionMessageRouteId: (_sessionId: string, _routeMessageId: string) => mockResolvedRouteMessageId,
+        useLocalSetting,
+        useLocalSettingMutable: createUseLocalSettingMutableMock(useLocalSetting),
       },
     });
   },

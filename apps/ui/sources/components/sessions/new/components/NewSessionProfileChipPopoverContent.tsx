@@ -27,7 +27,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         width: '100%',
         maxWidth: '100%',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     listContainer: {
         flex: 1,

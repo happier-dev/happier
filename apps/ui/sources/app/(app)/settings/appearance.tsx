@@ -10,7 +10,7 @@ import { useRouter } from 'expo-router';
 import * as Localization from 'expo-localization';
 import { useUnistyles, UnistylesRuntime } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Appearance } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { darkTheme, lightTheme } from '@/theme';
@@ -36,6 +36,7 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [showFlavorIcons, setShowFlavorIcons] = useSettingMutable('showFlavorIcons');
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
     const [uiFontScale, setUiFontScale] = useLocalSettingMutable('uiFontScale');
+    const [uiContentWidthMode, setUiContentWidthMode] = useLocalSettingMutable('uiContentWidthMode');
     const [uiItemDensity, setUiItemDensity] = useLocalSettingMutable('uiItemDensity');
     const [uiMultiPanePanelsEnabled, setUiMultiPanePanelsEnabled] = useLocalSettingMutable('uiMultiPanePanelsEnabled');
     const [uiBackdropBlurEnabled, setUiBackdropBlurEnabled] = useLocalSettingMutable('uiBackdropBlurEnabled');
@@ -43,6 +44,7 @@ export default React.memo(function AppearanceSettingsScreen() {
     const [settingsNavSidebarEnabled, setSettingsNavSidebarEnabled] = useLocalSettingMutable('settingsNavSidebarEnabled');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
     const [openTextSizeMenu, setOpenTextSizeMenu] = React.useState(false);
+    const [openContentWidthMenu, setOpenContentWidthMenu] = React.useState(false);
     const [openItemDensityMenu, setOpenItemDensityMenu] = React.useState(false);
     const [openDetailsTabsMenu, setOpenDetailsTabsMenu] = React.useState(false);
     const reduceMotion = useReducedMotionPreference();
@@ -94,6 +96,26 @@ export default React.memo(function AppearanceSettingsScreen() {
                 id: 'compact',
                 title: t('settingsAppearance.itemDensityOptions.compact'),
                 subtitle: t('settingsAppearance.itemDensityOptions.compactDescription'),
+            },
+        ];
+    }, []);
+
+    const contentWidthMenuItems = React.useMemo<ReadonlyArray<DropdownMenuItem>>(() => {
+        return [
+            {
+                id: 'compact',
+                title: t('settingsAppearance.contentWidthOptions.compact'),
+                subtitle: t('settingsAppearance.contentWidthOptions.compactDescription'),
+            },
+            {
+                id: 'medium',
+                title: t('settingsAppearance.contentWidthOptions.medium'),
+                subtitle: t('settingsAppearance.contentWidthOptions.mediumDescription'),
+            },
+            {
+                id: 'full',
+                title: t('settingsAppearance.contentWidthOptions.full'),
+                subtitle: t('settingsAppearance.contentWidthOptions.fullDescription'),
             },
         ];
     }, []);
@@ -158,13 +180,13 @@ export default React.memo(function AppearanceSettingsScreen() {
 
                                 if (nextTheme === 'adaptive') {
                                     UnistylesRuntime.setAdaptiveThemes(true);
-                                    const color = systemTheme === 'dark' ? darkTheme.colors.groupped.background : lightTheme.colors.groupped.background;
+                                    const color = systemTheme === 'dark' ? darkTheme.colors.background.canvas : lightTheme.colors.background.canvas;
                                     UnistylesRuntime.setRootViewBackgroundColor(color);
                                     SystemUI.setBackgroundColorAsync(color);
                                 } else {
                                     UnistylesRuntime.setAdaptiveThemes(false);
                                     UnistylesRuntime.setTheme(nextTheme);
-                                    const color = nextTheme === 'dark' ? darkTheme.colors.groupped.background : lightTheme.colors.groupped.background;
+                                    const color = nextTheme === 'dark' ? darkTheme.colors.background.canvas : lightTheme.colors.background.canvas;
                                     UnistylesRuntime.setRootViewBackgroundColor(color);
                                     SystemUI.setBackgroundColorAsync(color);
                                 }
@@ -256,6 +278,28 @@ export default React.memo(function AppearanceSettingsScreen() {
 
             {/* Layout */}
             <ItemGroup title={t('settingsAppearance.display')} footer={t('settingsAppearance.displayDescription')}>
+                <DropdownMenu
+                    open={openContentWidthMenu}
+                    onOpenChange={setOpenContentWidthMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={uiContentWidthMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    itemTrigger={{
+                        title: t('settingsAppearance.contentWidth'),
+                        subtitle: t('settingsAppearance.contentWidthDescription'),
+                        icon: <Ionicons name="resize-outline" size={29} color={theme.colors.accent.blue} />,
+                        showSelectedSubtitle: false,
+                    }}
+                    items={contentWidthMenuItems}
+                    onSelect={(itemId) => {
+                        if (itemId !== 'compact' && itemId !== 'medium' && itemId !== 'full') return;
+                        setUiContentWidthMode(itemId);
+                    }}
+                />
                 <Item
                     title={t('settingsAppearance.multiPanePanels')}
                     subtitle={t('settingsAppearance.multiPanePanelsDescription')}
@@ -380,7 +424,7 @@ export default React.memo(function AppearanceSettingsScreen() {
                 <Item
                     title="Accent Color"
                     subtitle="Choose your accent color"
-                    icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.warningCritical} />}
+                    icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.state.danger.foreground} />}
                     detail="Blue"
                     onPress={() => { }}
                     disabled

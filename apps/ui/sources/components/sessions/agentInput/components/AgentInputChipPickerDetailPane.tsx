@@ -118,7 +118,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   detailPane: {
     flex: 1,
     gap: 10,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.surface.base,
   },
   detailHeader: {
     gap: 3,
@@ -126,16 +126,16 @@ const stylesheet = StyleSheet.create((theme) => ({
   detailTitle: {
     fontSize: 15,
     ...Typography.header(),
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
   },
   detailSubtitle: {
     fontSize: 12,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
   detailDescription: {
     fontSize: 12,
     lineHeight: 16,
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
   },
   detailCustomContent: {
     gap: 10,
@@ -156,13 +156,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     height: 6,
     marginTop: 7,
     borderRadius: 999,
-    backgroundColor: theme.colors.textSecondary,
+    backgroundColor: theme.colors.text.secondary,
   },
   detailBulletText: {
     flex: 1,
     fontSize: 12,
     lineHeight: 18,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
   detailActionButton: {
     minHeight: 38,
@@ -170,15 +170,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: theme.colors.divider,
-    backgroundColor: theme.colors.surfaceHigh,
+    borderColor: theme.colors.border.default,
+    backgroundColor: theme.colors.surface.inset,
     paddingHorizontal: 12,
   },
   detailActionButtonPressed: {
     opacity: 0.82,
   },
   detailActionButtonText: {
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     ...Typography.header(),
     fontSize: 13,
   },

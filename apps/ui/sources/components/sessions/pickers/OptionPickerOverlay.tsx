@@ -85,7 +85,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     const notes = props.notes ?? [];
     const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
     const refreshTestID = props.refreshTestID ?? 'model-picker-overlay-refresh';
-    const selectedIndicatorColor = theme.dark ? theme.colors.text : theme.colors.button.primary.background;
+    const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
     const selectedValue = props.selectedValue.trim();
     const selectedCustomValue = props.canEnterCustomValue && selectedValue.length > 0 && !optionValues.has(selectedValue)
         ? selectedValue
@@ -281,11 +281,11 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                             hitSlop={6}
                         >
                             {probe.phase === 'idle' ? (
-                                <Ionicons name="refresh-outline" size={18} color={theme.colors.textSecondary} />
+                                <Ionicons name="refresh-outline" size={18} color={theme.colors.text.secondary} />
                             ) : (
                                 <ActivityIndicator
                                     size="small"
-                                    color={theme.colors.textSecondary}
+                                    color={theme.colors.text.secondary}
                                     accessibilityLabel={probe.phase === 'loading'
                                         ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
                                         : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
@@ -296,7 +296,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                         <View style={styles.refreshIconButton}>
                             <ActivityIndicator
                                 size="small"
-                                color={theme.colors.textSecondary}
+                                color={theme.colors.text.secondary}
                                 accessibilityLabel={probe.phase === 'loading'
                                     ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
                                     : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
@@ -364,7 +364,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                                             <Ionicons
                                                                 name="checkmark-outline"
                                                                 size={14}
-                                                                color={theme.colors.text}
+                                                                color={theme.colors.text.primary}
                                                                 style={styles.optionCardIndicatorIcon}
                                                             />
                                                         ) : null}
@@ -388,7 +388,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                                                 <Ionicons
                                                                     name={isFavorite ? 'star' : 'star-outline'}
                                                                     size={15}
-                                                                    color={isFavorite ? selectedIndicatorColor : theme.colors.textSecondary}
+                                                                    color={isFavorite ? selectedIndicatorColor : theme.colors.text.secondary}
                                                                 />
                                                             </Pressable>
                                                         ) : null}
@@ -450,7 +450,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                         <Ionicons
                                             name="checkmark-outline"
                                             size={14}
-                                            color={theme.colors.text}
+                                            color={theme.colors.text.primary}
                                             style={styles.optionCardIndicatorIcon}
                                         />
                                     ) : null}
@@ -463,7 +463,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                                         value={customValue}
                                         onChangeText={handleCustomValueChange}
                                         placeholder={t('agentInput.model.customPlaceholder')}
-                                        placeholderTextColor={theme.colors.input?.placeholder ?? theme.colors.textSecondary}
+                                        placeholderTextColor={theme.colors.input?.placeholder ?? theme.colors.text.secondary}
                                         autoCorrect={false}
                                         autoCapitalize="none"
                                         onSubmitEditing={() => commitCustomValue(customValue)}
@@ -507,7 +507,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         flex: 1,
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textTransform: 'uppercase',
         position: 'relative',
     },
@@ -524,19 +524,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         backgroundColor: 'transparent',
         flexShrink: 0,
     },
     refreshIconButtonPressed: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     refreshIconButtonDisabled: {
         opacity: 0.6,
     },
     noteText: {
         fontSize: 11,
-        color: theme.colors.textTertiary,
+        color: theme.colors.text.tertiary,
     },
     searchContainer: {
         paddingHorizontal: 0,
@@ -556,13 +556,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 12,
         paddingHorizontal: 7,
         paddingVertical: 7,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     optionCardSelected: {
-        backgroundColor: theme.colors.surfaceSelected,
+        backgroundColor: theme.colors.surface.selected,
     },
     optionCardHovered: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     optionCardPressed: {
         opacity: 0.86,
@@ -577,11 +577,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     optionCardTitle: {
         flex: 1,
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     optionCardTitleSelected: {
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     optionCardIndicator: {
         position: 'absolute',
@@ -604,7 +604,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     optionCardDescription: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         paddingRight: 32,
     },
     inlineSelectedControls: {
@@ -629,20 +629,20 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 9,
         ...Typography.default('semiBold'),
         textTransform: 'uppercase',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     selectedControlDescription: {
         fontSize: 9,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     searchInput: {
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         paddingHorizontal: 10,
         paddingVertical: 7,
         fontSize: 12,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     customEditor: {
         paddingHorizontal: 0,
@@ -678,19 +678,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         lineHeight: 15,
         fontWeight: '700',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     customEntryDescription: {
         fontSize: 10,
         lineHeight: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     rowPressed: {
         opacity: 0.85,
     },
     emptyText: {
         fontSize: 11,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         paddingHorizontal: 0,
         paddingVertical: 8,
     },

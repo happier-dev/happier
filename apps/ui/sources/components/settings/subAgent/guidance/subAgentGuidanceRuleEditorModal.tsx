@@ -135,25 +135,25 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
 
     const fieldInputStyle = {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 10,
         paddingHorizontal: 12,
         paddingVertical: Platform.select({ web: 10, ios: 8, default: 10 }) as any,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         backgroundColor: theme.colors.input.background,
     };
 
     const sectionLabelStyle = {
         fontSize: 13,
         fontWeight: '600' as const,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     };
 
     const cardStyle = {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 12,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         overflow: 'hidden' as const,
     };
 
@@ -201,7 +201,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                         size="normal"
                         display="inverted"
                         title={t('common.delete')}
-                        textStyle={{ color: theme.colors.textDestructive }}
+                        textStyle={{ color: theme.colors.state.danger.foreground }}
                         onPress={() => {
                             onResolve({ kind: 'delete' });
                             onClose();
@@ -211,7 +211,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
             </View>
             <RoundButton size="normal" title={t('common.save')} disabled={!canSave} onPress={save} />
         </View>
-    ), [canSave, mode, onClose, onResolve, save, theme.colors.textDestructive]);
+    ), [canSave, mode, onClose, onResolve, save, theme.colors.state.danger.foreground]);
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
@@ -299,8 +299,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                             <Item
                                 title={t('subAgentGuidance.ruleEditor.backendPicker.title')}
                                 subtitle={selectedBackendEntry?.title ?? t('subAgentGuidance.ruleEditor.common.noPreference')}
-                                icon={<Ionicons name="hardware-chip-outline" size={24} color={theme.colors.textSecondary} />}
-                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name="hardware-chip-outline" size={24} color={theme.colors.text.secondary} />}
+                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.text.secondary} />}
                                 onPress={toggle}
                                 showChevron={false}
                                 showDivider={false}
@@ -314,7 +314,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                               subtitle: t('subAgentGuidance.ruleEditor.backendPicker.noPreference.subtitle'),
                             icon: (
                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                    <Ionicons name="remove-circle-outline" size={22} color={theme.colors.textSecondary} />
+                                    <Ionicons name="remove-circle-outline" size={22} color={theme.colors.text.secondary} />
                                 </View>
                               ),
                           },
@@ -324,7 +324,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                               subtitle: entry.subtitle ?? undefined,
                               icon: (
                                   <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                      <Ionicons name="hardware-chip-outline" size={22} color={theme.colors.textSecondary} />
+                                      <Ionicons name="hardware-chip-outline" size={22} color={theme.colors.text.secondary} />
                                   </View>
                               ),
                           })),
@@ -361,8 +361,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                 <Item
                                     title={t('subAgentGuidance.ruleEditor.modelPicker.title')}
                                     subtitle={modelId ?? t('subAgentGuidance.ruleEditor.common.noPreference')}
-                                    icon={<Ionicons name="layers-outline" size={24} color={theme.colors.textSecondary} />}
-                                    rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.textSecondary} />}
+                                    icon={<Ionicons name="layers-outline" size={24} color={theme.colors.text.secondary} />}
+                                    rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.text.secondary} />}
                                     onPress={toggle}
                                     showChevron={false}
                                     showDivider={false}
@@ -376,13 +376,13 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                                   subtitle: t('subAgentGuidance.ruleEditor.modelPicker.noPreference.subtitle'),
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                        <Ionicons name="remove-circle-outline" size={22} color={theme.colors.textSecondary} />
+                                        <Ionicons name="remove-circle-outline" size={22} color={theme.colors.text.secondary} />
                                     </View>
                                   ),
                               },
                               ...getModelDropdownMenuItems({
                                     modelOptions: preflightModels.modelOptions,
-                                    iconColor: theme.colors.textSecondary,
+                                    iconColor: theme.colors.text.secondary,
                                     probe: {
                                         phase: preflightModels.probe.phase,
                                         onRefresh: preflightModels.probe.onRefresh,
@@ -416,8 +416,8 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                             <Item
                                 title={t('subAgentGuidance.ruleEditor.intent.title')}
                                 subtitle={intentSubtitle}
-                                icon={<Ionicons name="navigate-outline" size={24} color={theme.colors.textSecondary} />}
-                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.textSecondary} />}
+                                icon={<Ionicons name="navigate-outline" size={24} color={theme.colors.text.secondary} />}
+                                rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={theme.colors.text.secondary} />}
                                 onPress={toggle}
                                 showChevron={false}
                                 showDivider={false}
@@ -449,7 +449,7 @@ export function SubAgentGuidanceRuleEditorModal(props: Readonly<{
                         ...it,
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                <Ionicons name="navigate-outline" size={22} color={theme.colors.textSecondary} />
+                                <Ionicons name="navigate-outline" size={22} color={theme.colors.text.secondary} />
                             </View>
                         ),
                     }))}

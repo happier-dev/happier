@@ -27,7 +27,7 @@ export function PluginDetailContributionsSection(props: Readonly<{
                     testID={`settings.plugins.detail.${props.pluginId}.contribution.action.${action.id}`}
                     title={action.title}
                     subtitle={action.description ?? action.placement}
-                    icon={<Ionicons name="flash-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="flash-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />
@@ -42,7 +42,7 @@ export function PluginDetailContributionsSection(props: Readonly<{
                         resource.contentType,
                         resource.digest,
                     ].filter((entry): entry is string => Boolean(entry)).join(' | ')}
-                    icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     mode="info"
                 />

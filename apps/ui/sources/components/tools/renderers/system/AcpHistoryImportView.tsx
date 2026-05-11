@@ -90,7 +90,7 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
         </Text>
 
         {isPending && !canApprovePermissions ? (
-          <Text style={[styles.body, { color: theme.colors.textSecondary }]}>
+          <Text style={[styles.body, { color: theme.colors.text.secondary }]}>
             {disabledMessage}
           </Text>
         ) : null}
@@ -140,7 +140,7 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
             disabled={!isPending || loading !== null || !canApprovePermissions}
             onPress={onSkip}
           >
-            {loading === 'skip' ? <ActivityIndicator color={theme.colors.text} /> : <Text style={styles.secondaryText}>{t('tools.acpHistoryImport.actions.skip')}</Text>}
+            {loading === 'skip' ? <ActivityIndicator color={theme.colors.text.primary} /> : <Text style={styles.secondaryText}>{t('tools.acpHistoryImport.actions.skip')}</Text>}
           </TouchableOpacity>
         </View>
       </View>
@@ -156,15 +156,15 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     fontSize: 15,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
   },
   subtitle: {
     fontSize: 12,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
   body: {
     fontSize: 13,
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     lineHeight: 18,
   },
   countRow: {
@@ -173,7 +173,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   countText: {
     fontSize: 12,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
   previewContainer: {
     gap: 10,
@@ -182,17 +182,17 @@ const styles = StyleSheet.create((theme) => ({
     gap: 6,
     padding: 10,
     borderRadius: 8,
-    backgroundColor: theme.colors.surfaceHighest,
+    backgroundColor: theme.colors.surface.elevated,
   },
   previewHeader: {
     fontSize: 12,
     fontWeight: '600',
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     textTransform: 'uppercase',
   },
   previewLine: {
     fontSize: 12,
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
   },
   actions: {
     flexDirection: 'row',
@@ -216,12 +216,12 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: '600',
   },
   secondaryButton: {
-    backgroundColor: theme.colors.surfaceHigh,
+    backgroundColor: theme.colors.surface.inset,
     borderWidth: 1,
-    borderColor: theme.colors.divider,
+    borderColor: theme.colors.border.default,
   },
   secondaryText: {
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     fontSize: 14,
     fontWeight: '600',
   },

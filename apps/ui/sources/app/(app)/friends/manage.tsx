@@ -92,7 +92,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     emptyText: {
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
 }));

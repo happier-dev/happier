@@ -144,7 +144,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
     if (!memorySearchEnabled) {
         return (
             <View style={{ flex: 1, padding: 16, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: theme.colors.textSecondary }}>
+                <Text style={{ color: theme.colors.text.secondary }}>
                     {t('memorySearchSettings.disabled.title')}
                 </Text>
                 <Pressable
@@ -152,7 +152,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                     onPress={() => router.push('/settings/features' as any)}
                     style={{ paddingVertical: 10 }}
                 >
-                    <Text style={{ color: theme.colors.text }}>
+                    <Text style={{ color: theme.colors.text.primary }}>
                         {t('memorySearchSettings.disabled.openFeatureSettings')}
                     </Text>
                 </Pressable>
@@ -162,7 +162,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
 
     return (
         <View style={{ flex: 1, padding: 16 }}>
-            <Text style={{ color: theme.colors.textSecondary, paddingVertical: 8 }}>
+            <Text style={{ color: theme.colors.text.secondary, paddingVertical: 8 }}>
                 {t('memorySearchSettings.screen.machineLabel', { machine: machineTitle })}
             </Text>
             <DropdownMenu
@@ -185,7 +185,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                     },
                 }}
             />
-            <Text style={{ color: theme.colors.textSecondary, marginBottom: 12 }}>
+            <Text style={{ color: theme.colors.text.secondary, marginBottom: 12 }}>
                 {statusText}
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
@@ -201,7 +201,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                         paddingVertical: 10,
                         borderRadius: 10,
                         backgroundColor: theme.colors.input.background,
-                        color: theme.colors.text,
+                        color: theme.colors.text.primary,
                     }}
                 />
                 <Pressable
@@ -221,13 +221,13 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
             </View>
 
             {status === 'loading' ? (
-                <Text style={{ color: theme.colors.textSecondary, marginTop: 16 }}>
+                <Text style={{ color: theme.colors.text.secondary, marginTop: 16 }}>
                     {t('common.loading')}
                 </Text>
             ) : null}
 
             {status === 'ready' && groupedHits.length === 0 ? (
-                <Text style={{ color: theme.colors.textSecondary, marginTop: 16 }}>
+                <Text style={{ color: theme.colors.text.secondary, marginTop: 16 }}>
                     {t('memorySearchSettings.screen.emptyResults')}
                 </Text>
             ) : null}
@@ -236,7 +236,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                 <View style={{ marginTop: 16, gap: 10 }}>
                     {groupedHits.map((group) => (
                         <View key={group.sessionId} style={{ gap: 8 }}>
-                            <Text style={{ color: theme.colors.textSecondary }}>
+                            <Text style={{ color: theme.colors.text.secondary }}>
                                 {group.sessionLabel}
                             </Text>
                             {group.hits.map((hit, idx) => (
@@ -252,10 +252,10 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                                         backgroundColor: theme.colors.input.background,
                                     }}
                                 >
-                                    <Text style={{ color: theme.colors.text, marginBottom: 6 }}>
+                                    <Text style={{ color: theme.colors.text.primary, marginBottom: 6 }}>
                                         {String(hit.summary ?? '')}
                                     </Text>
-                                    <Text style={{ color: theme.colors.textSecondary }}>
+                                    <Text style={{ color: theme.colors.text.secondary }}>
                                         {String(hit.sessionId ?? '') + ' · ' + String(hit.seqFrom ?? '')}
                                     </Text>
                                 </Pressable>
@@ -276,11 +276,11 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                             paddingHorizontal: 12,
                             paddingVertical: 10,
                             borderRadius: 10,
-                            backgroundColor: theme.colors.success,
+                            backgroundColor: theme.colors.state.success.foreground,
                             alignSelf: 'flex-start',
                         }}
                     >
-                        <Text style={{ color: theme.colors.text }}>
+                        <Text style={{ color: theme.colors.text.primary }}>
                             {t('memorySearchSettings.screen.enableLocalSearch')}
                         </Text>
                     </Pressable>

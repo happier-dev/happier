@@ -4,6 +4,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
 
+const createSessionFilePreviewSourceSpy = vi.hoisted(() => vi.fn());
 
 installFilesContentCommonModuleMocks({
     storage: async (importOriginal) => {
@@ -28,8 +29,8 @@ vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
     }),
 }));
 
-vi.mock('@/sync/ops/workspaceFileSystem', () => ({
-    workspaceReadFile: vi.fn(async () => ({ success: true, content: 'YWJj' })), // "abc" base64
+vi.mock('@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource', () => ({
+    createSessionFilePreviewSource: (...args: unknown[]) => createSessionFilePreviewSourceSpy(...args),
 }));
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,7 +42,17 @@ afterEach(() => {
 
 describe('useChangedFilesReviewImagePreview', () => {
     it('caches loaded previews by session+signature+path to avoid redundant reads', async () => {
-        const { workspaceReadFile } = await import('@/sync/ops/workspaceFileSystem');
+        createSessionFilePreviewSourceSpy.mockResolvedValue({
+            ok: true,
+            source: {
+                kind: 'object-url',
+                uri: 'blob:preview',
+                byteLength: 3,
+                mimeType: 'image/png',
+                svgXml: null,
+                revoke: vi.fn(),
+            },
+        });
         const { useChangedFilesReviewImagePreview } = await import('./useChangedFilesReviewImagePreview');
 
         let current: any = null;
@@ -58,14 +69,14 @@ describe('useChangedFilesReviewImagePreview', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<Test enabled={true} />)).tree;
 
-        expect(vi.mocked(workspaceReadFile)).toHaveBeenCalledTimes(1);
+        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(1);
         expect(current.status).toBe('loaded');
 
         act(() => {
             tree!.update(<Test enabled={true} />);
         });
 
-        expect(vi.mocked(workspaceReadFile)).toHaveBeenCalledTimes(1);
+        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(1);
         expect(current.status).toBe('loaded');
         act(() => {
             tree!.unmount();
@@ -73,11 +84,20 @@ describe('useChangedFilesReviewImagePreview', () => {
     });
 
     it('supports svg previews (including decoded svgXml for native rendering)', async () => {
-        const { workspaceReadFile } = await import('@/sync/ops/workspaceFileSystem');
         const { useChangedFilesReviewImagePreview } = await import('./useChangedFilesReviewImagePreview');
 
         const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
-        vi.mocked(workspaceReadFile).mockResolvedValueOnce({ success: true, content: Buffer.from(svg, 'utf-8').toString('base64') } as any);
+        createSessionFilePreviewSourceSpy.mockResolvedValueOnce({
+            ok: true,
+            source: {
+                kind: 'object-url',
+                uri: 'blob:svg-preview',
+                byteLength: svg.length,
+                mimeType: 'image/svg+xml',
+                svgXml: svg,
+                revoke: vi.fn(),
+            },
+        });
 
         let current: any = null;
         function Test(props: { enabled: boolean }) {
@@ -93,10 +113,9 @@ describe('useChangedFilesReviewImagePreview', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<Test enabled={true} />)).tree;
 
-        expect(vi.mocked(workspaceReadFile)).toHaveBeenCalledTimes(1);
+        expect(createSessionFilePreviewSourceSpy).toHaveBeenCalledTimes(1);
         expect(current.status).toBe('loaded');
-        expect(typeof current.uri).toBe('string');
-        expect(current.uri.startsWith('data:image/svg+xml;base64,')).toBe(true);
+        expect(current.uri).toBe('blob:svg-preview');
         expect(current.svgXml).toBe(svg);
 
         act(() => {

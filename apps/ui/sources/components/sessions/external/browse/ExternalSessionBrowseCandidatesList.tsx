@@ -23,7 +23,7 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
     helperText: {
         paddingHorizontal: 16,
         paddingVertical: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 13,
     },
     searchContainer: {
@@ -35,8 +35,8 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
         paddingHorizontal: 12,
         paddingVertical: 10,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHigh,
-        color: theme.colors.text,
+        backgroundColor: theme.colors.surface.inset,
+        color: theme.colors.text.primary,
         fontSize: 13,
     },
     loadingRow: {
@@ -76,14 +76,14 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
                     value={searchQuery}
                     onChangeText={setSearchQuery}
                     placeholder={t('externalSessions.browseSearchPlaceholder')}
-                    placeholderTextColor={theme.colors.textSecondary}
+                    placeholderTextColor={theme.colors.text.secondary}
                     style={styles.searchInput}
                 />
             </View>
 
             {props.loading ? (
                 <View style={styles.loadingRow}>
-                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                    <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                 </View>
             ) : props.error ? (
                 <View>

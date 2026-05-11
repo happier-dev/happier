@@ -174,12 +174,12 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
 export const PICKER_NAV_STATE = { index: 1, routes: [{ key: 'a' }, { key: 'b' }] } as const;
 
 export const PICKER_THEME_COLORS = {
-  divider: '#ddd',
-  groupped: { background: '#ffffff', sectionTitle: '#000' },
-  header: { tint: '#000' },
+  background: { canvas: '#ffffff' },
+  border: { default: '#ddd' },
+  chrome: { header: { foreground: '#000' } },
   input: { background: '#fff', placeholder: '#aaa', text: '#000' },
   status: { connected: '#0f0', disconnected: '#f00', error: '#f00' },
-  surface: '#fff',
+  surface: { base: '#fff', inset: '#ffffff' },
   textSecondary: '#666',
 } as const;
 

@@ -75,9 +75,9 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
             id: m.id,
             title: m.metadata?.displayName || m.metadata?.host || m.id,
             subtitle: m.id,
-            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
         }));
-    }, [props.machines, theme.colors.textSecondary]);
+    }, [props.machines, theme.colors.text.secondary]);
 
     const bindingItems = React.useMemo((): DropdownMenuItem[] => {
         const items: DropdownMenuItem[] = [
@@ -85,7 +85,7 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
                 id: '',
                 title: t('settings.mcpServersTestNoBinding'),
                 subtitle: t('settings.mcpServersTestNoBindingSubtitle'),
-                icon: <Ionicons name="remove-circle-outline" size={22} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="remove-circle-outline" size={22} color={theme.colors.text.secondary} />,
             },
         ];
 
@@ -94,12 +94,12 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
                 id: binding.id,
                 title: describeBinding(binding, props.machines),
                 subtitle: binding.enabled ? t('common.enabled') : t('common.disabled'),
-                icon: <Ionicons name="pin-outline" size={22} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="pin-outline" size={22} color={theme.colors.text.secondary} />,
             });
         }
 
         return items;
-    }, [props.bindings, props.machines, theme.colors.textSecondary]);
+    }, [props.bindings, props.machines, theme.colors.text.secondary]);
 
     const selectedBinding = React.useMemo(() => {
         if (!bindingId) return null;
@@ -231,7 +231,7 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
                 testID="mcp.server.test.run"
                 title={t('settings.mcpServersTestRunTitle')}
                 subtitle={isTesting ? t('common.loading') : t('settings.mcpServersTestRunSubtitle')}
-                icon={<Ionicons name="flask-outline" size={29} color={theme.colors.success} />}
+                icon={<Ionicons name="flask-outline" size={29} color={theme.colors.state.success.foreground} />}
                 onPress={runTest}
                 disabled={!machineId || !canTestServer || !canTestBinding || isTesting}
                 showChevron={false}
@@ -243,7 +243,7 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
                         testID="mcp.server.test.result.ok"
                         title={t('settings.mcpServersTestResultOkTitle')}
                         subtitle={t('settings.mcpServersTestResultOkSubtitle', { toolCount: lastResult.toolCount, durationMs: lastResult.durationMs })}
-                        icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.success} />}
+                        icon={<Ionicons name="checkmark-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
                         showChevron={false}
                     />
                 ) : (

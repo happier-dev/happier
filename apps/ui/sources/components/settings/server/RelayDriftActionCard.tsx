@@ -32,7 +32,7 @@ export const RelayDriftActionCard = React.memo(function RelayDriftActionCard(pro
                 description={description}
                 loading={props.banner.isRepairStarting}
                 disabled={props.banner.actionDisabled || props.banner.isRepairStarting || isRepairRunning}
-                icon={<Ionicons name="swap-horizontal-outline" size={24} color={theme.colors.warningCritical} />}
+                icon={<Ionicons name="swap-horizontal-outline" size={24} color={theme.colors.state.danger.foreground} />}
                 primaryAction={{
                     label: props.banner.actionLabel,
                     onPress: props.banner.onPress,

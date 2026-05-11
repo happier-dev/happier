@@ -12,12 +12,12 @@ const styles = StyleSheet.create((theme) => ({
     },
     label: {
         ...Typography.default('semiBold'),
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     input: {
         backgroundColor: theme.colors.input.background,
         color: theme.colors.input.text,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 10,
         borderWidth: 0.5,
         paddingHorizontal: 12,

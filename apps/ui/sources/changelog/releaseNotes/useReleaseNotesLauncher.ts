@@ -5,7 +5,7 @@ import { Modal } from '@/modal';
 
 import { ReleaseNotesStorySurface } from '@/components/changelog/releaseNotes';
 
-import { isReleaseNotesFeatureEnabled } from './featureGate';
+import { isReleaseNotesStoryCardsEnabled } from './featureGate';
 import { resolveReleaseNotesLaunchOutcome } from './launchPolicy';
 import { setLastSeenReleaseId } from './storage';
 
@@ -18,7 +18,7 @@ export function useReleaseNotesLauncher(): UseReleaseNotesLauncherResult {
     const router = useRouter();
 
     const open = React.useCallback((): boolean => {
-        if (!isReleaseNotesFeatureEnabled()) return false;
+        if (!isReleaseNotesStoryCardsEnabled()) return false;
         const outcome = resolveReleaseNotesLaunchOutcome();
         if (outcome.kind !== 'open-story') return false;
         const release = outcome.release;

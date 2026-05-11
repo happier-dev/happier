@@ -40,7 +40,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 11,
         lineHeight: 14,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         letterSpacing: 0.24,
         textTransform: 'uppercase',
     },
@@ -54,7 +54,7 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 40,
         lineHeight: 44,
         letterSpacing: -0.7,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     valueNumericHero: {
         fontSize: 58,
@@ -66,7 +66,7 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 28,
         lineHeight: 34,
         letterSpacing: -0.45,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     valueCompactHero: {
         fontSize: 42,
@@ -77,7 +77,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 14,
         lineHeight: 20,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     subtitleHero: {
         fontSize: 16,

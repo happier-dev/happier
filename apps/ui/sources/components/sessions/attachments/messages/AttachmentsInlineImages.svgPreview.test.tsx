@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -18,10 +17,6 @@ installSessionAttachmentCommonModuleMocks({
     }),
 });
 
-vi.mock('react-native-svg', () => ({
-    SvgXml: (props: Record<string, unknown>) => React.createElement('SvgXml', props),
-}));
-
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
@@ -31,16 +26,11 @@ vi.mock('@/components/sessions/attachments/preview/AttachmentImagePreviewModal',
 }));
 
 vi.mock('@/components/sessions/files/content/imagePreview/useSessionImagePreview', () => ({
-    useSessionImagePreview: () => ({
-        status: 'loaded',
-        uri: 'data:image/svg+xml;base64,PHN2Zy8+',
-        svgXml: '<svg/>',
-        error: null,
-    }),
+    useSessionImagePreview: vi.fn(),
 }));
 
 describe('AttachmentsInlineImages (svg previews)', () => {
-    it('renders an SvgXml preview for svg attachments on native', async () => {
+    it('does not render svg attachments as inline transcript images in the V1 media policy', async () => {
         const { AttachmentsInlineImages } = await import('./AttachmentsInlineImages');
 
         const screen = await renderScreen(
@@ -59,6 +49,6 @@ describe('AttachmentsInlineImages (svg previews)', () => {
             />,
         );
 
-        expect(screen.tree.findAllByType('SvgXml').length).toBe(1);
+        expect(screen.findByTestId('message-attachments-inline-images')).toBeNull();
     });
 });

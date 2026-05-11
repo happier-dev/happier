@@ -9,3 +9,8 @@ export {
     StepTransitionFrame,
     type StepTransitionFrameProps,
 } from './StepTransitionFrame';
+export {
+    SoftSlideTransitionFrame,
+    type SoftSlideTransitionFrameProps,
+} from './SoftSlideTransitionFrame';
+export { softSlideTransitionTokens } from './softSlideTransitionTokens';

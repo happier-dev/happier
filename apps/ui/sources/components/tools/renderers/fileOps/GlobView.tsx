@@ -36,7 +36,7 @@ export const GlobView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                     </Text>
                 ))}
                 {more > 0 && (
-                    <Text style={[styles.path, { color: theme.colors.textSecondary }]}>
+                    <Text style={[styles.path, { color: theme.colors.text.secondary }]}>
                         {t('tools.structuredResult.more', { count: more })}
                     </Text>
                 )}
@@ -49,12 +49,12 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: 12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         gap: 6,
     },
     path: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontFamily: 'Menlo',
     },
 }));

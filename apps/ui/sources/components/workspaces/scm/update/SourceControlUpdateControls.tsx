@@ -6,15 +6,21 @@ import { Typography } from '@/constants/Typography';
 
 export type SourceControlUpdateTheme = Readonly<{
     colors: Readonly<{
-        divider: string;
-        text: string;
-        textSecondary: string;
-        textDestructive?: string;
-        deleteAction?: string;
-        warningCritical?: string;
-        surface: string;
-        surfaceHigh?: string;
-        success?: string;
+        border: Readonly<{
+            default: string;
+        }>;
+        text: Readonly<{
+            primary: string;
+            secondary: string;
+        }>;
+        state: Readonly<{
+            success: Readonly<{ foreground?: string }>;
+            danger: Readonly<{ foreground?: string }>;
+        }>;
+        surface: Readonly<{
+            base: string;
+            inset: string;
+        }>;
         button?: Readonly<{
             primary?: Readonly<{
                 background?: string;
@@ -43,14 +49,14 @@ export function SourceControlUpdateSection(props: Readonly<{
                 paddingTop: 12,
                 paddingBottom: 12,
                 borderBottomWidth: 1,
-                borderBottomColor: props.theme.colors.divider,
+                borderBottomColor: props.theme.colors.border.default,
                 gap: 10,
             }}
         >
             <Text
                 style={{
                     fontSize: 12,
-                    color: props.theme.colors.textSecondary,
+                    color: props.theme.colors.text.secondary,
                     ...Typography.default('semiBold'),
                 }}
             >
@@ -76,16 +82,16 @@ export function SourceControlUpdateInput(props: Readonly<{
             accessibilityLabel={props.accessibilityLabel}
             value={props.value}
             placeholder={props.placeholder}
-            placeholderTextColor={props.theme.colors.textSecondary}
+            placeholderTextColor={props.theme.colors.text.secondary}
             editable={props.editable !== false}
             autoCapitalize="none"
             autoCorrect={false}
             style={{
                 minHeight: 34,
                 borderWidth: 1,
-                borderColor: props.theme.colors.input?.border ?? props.theme.colors.divider,
-                backgroundColor: props.theme.colors.input?.background ?? props.theme.colors.surfaceHigh,
-                color: props.theme.colors.text,
+                borderColor: props.theme.colors.input?.border ?? props.theme.colors.border.default,
+                backgroundColor: props.theme.colors.input?.background ?? props.theme.colors.surface.inset,
+                color: props.theme.colors.text.primary,
                 borderRadius: 8,
                 paddingHorizontal: 10,
                 paddingVertical: 7,
@@ -108,22 +114,20 @@ export function SourceControlUpdateButton(props: Readonly<{
     const kind = props.kind ?? 'secondary';
     const primaryBackground =
         props.theme.colors.button?.primary?.background
-        ?? props.theme.colors.success
-        ?? props.theme.colors.surfaceHigh
-        ?? props.theme.colors.surface;
+        ?? props.theme.colors.state.success.foreground
+        ?? props.theme.colors.surface.inset
+        ?? props.theme.colors.surface.base;
     const foreground =
         kind === 'primary'
-            ? props.theme.colors.button?.primary?.tint ?? props.theme.colors.surface
+            ? props.theme.colors.button?.primary?.tint ?? props.theme.colors.surface.base
             : kind === 'danger'
-                ? props.theme.colors.textDestructive
-                    ?? props.theme.colors.deleteAction
-                    ?? props.theme.colors.warningCritical
-                    ?? props.theme.colors.text
-                : props.theme.colors.text;
+                ? props.theme.colors.state.danger.foreground
+                    ?? props.theme.colors.text.primary
+                : props.theme.colors.text.primary;
     const background =
         kind === 'primary'
             ? primaryBackground
-            : props.theme.colors.surfaceHigh ?? props.theme.colors.surface;
+            : props.theme.colors.surface.inset ?? props.theme.colors.surface.base;
 
     return (
         <Pressable
@@ -137,7 +141,7 @@ export function SourceControlUpdateButton(props: Readonly<{
                 minHeight: 34,
                 borderRadius: 8,
                 borderWidth: 1,
-                borderColor: props.theme.colors.divider,
+                borderColor: props.theme.colors.border.default,
                 backgroundColor: background,
                 paddingHorizontal: 10,
                 alignItems: 'center',

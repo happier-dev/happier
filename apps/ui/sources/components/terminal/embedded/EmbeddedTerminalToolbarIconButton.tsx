@@ -34,7 +34,7 @@ export const EmbeddedTerminalToolbarIconButton = React.memo((props: EmbeddedTerm
                 };
             }}
         >
-            <Ionicons name={props.icon} size={18} color={theme.colors.textSecondary} />
+            <Ionicons name={props.icon} size={18} color={theme.colors.text.secondary} />
         </Pressable>
     );
 });

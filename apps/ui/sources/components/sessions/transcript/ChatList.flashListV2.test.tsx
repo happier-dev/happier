@@ -220,20 +220,37 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 });
 });
 
-vi.mock('@/components/sessions/chatListItems', () => ({
-    buildChatListItems: ({ messageIdsOldestFirst, messagesById }: any) =>
-        (messageIdsOldestFirst ?? []).map((id: string) => {
+vi.mock('@/components/sessions/chatListItems', () => {
+    const buildMockChatListItems = ({ messageIdsOldestFirst, messagesById, pendingMessages, discardedMessages }: any) => {
+        const committedLocalIds = new Set<string>();
+        const items = (messageIdsOldestFirst ?? []).map((id: string) => {
             const m = messagesById?.[id];
+            if (typeof m?.localId === 'string' && m.localId.length > 0) {
+                committedLocalIds.add(m.localId);
+            }
             return { kind: 'message', id, messageId: id, createdAt: m?.createdAt ?? 0, seq: null };
+        });
+        const pending = (pendingMessages ?? []).filter((pendingMessage: any) =>
+            typeof pendingMessage?.localId !== 'string' || pendingMessage.localId.length === 0 || !committedLocalIds.has(pendingMessage.localId)
+        );
+        if (pending.length > 0 || (discardedMessages ?? []).length > 0) {
+            items.push({
+                kind: 'pending-queue',
+                id: 'pending-queue',
+                pendingMessages: pending,
+                discardedMessages: discardedMessages ?? [],
+            });
+        }
+        return items;
+    };
+    return {
+        buildChatListItems: buildMockChatListItems,
+        buildChatListItemsCached: (opts: any) => ({
+            cache: null,
+            items: buildMockChatListItems(opts),
         }),
-    buildChatListItemsCached: (opts: any) => ({
-        cache: null,
-        items: (opts?.messageIdsOldestFirst ?? []).map((id: string) => {
-            const m = opts?.messagesById?.[id];
-            return { kind: 'message', id, messageId: id, createdAt: m?.createdAt ?? 0, seq: null };
-        }),
-    }),
-}));
+    };
+});
 
 vi.mock('@/components/sessions/transcript/forkContext/injectForkContextRows', async () => await import('./forkContext/injectForkContextRows'));
 
@@ -1618,6 +1635,77 @@ describe('ChatList (FlashList v2)', () => {
 
                 await primeFlashListMetrics(100, 1400, { turns: 1 });
                 await scrollFlashListTo(900, { trusted: false, turns: 2 });
+
+                expect(scrollEl.scrollTop).toBe(1300);
+                expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
+            },
+            {
+                document: { getElementById: vi.fn(() => scrollEl) },
+                window: { getComputedStyle: vi.fn(() => ({ overflowY: 'auto' })) },
+            },
+        );
+    });
+
+    it('keeps the web hot tail pinned when a pending queue row materializes into the transcript', async () => {
+        flashListRefHandle = { scrollToOffset: vi.fn(), scrollToIndex: vi.fn() };
+        syncTuningState = {
+            ...syncTuningState,
+            transcriptWebInitialPinStabilizeMs: 0,
+            transcriptWebHotTailItemCount: 2,
+        };
+
+        const scrollEl = Object.assign(
+            createFlashListChatListWebScroller({
+                clientHeight: 100,
+                scrollHeight: 1000,
+                scrollTop: 900,
+            }),
+            {
+                scrollTo: ({ top }: { top: number }) => {
+                    scrollEl.scrollTop = top;
+                },
+            },
+        );
+
+        sessionMessagesState = {
+            isLoaded: true,
+            messages: [{ kind: 'agent-text', id: 'a1', localId: null, createdAt: 1, text: 'ready' }],
+        };
+        sessionPendingState = {
+            messages: [{ id: 'pending-1', localId: 'local-user-1', createdAt: 2, text: 'queued message' }],
+        };
+
+        await withFlashListChatListWebScrollerDom(
+            scrollEl,
+            async () => {
+                const { ChatList } = await import('./ChatList');
+                const screen = await renderTrackedFlashListChatList(<ChatList session={{ ...sessionState }} />);
+                await screen.settle();
+
+                flashListRefHandle.scrollToOffset.mockClear();
+
+                await primeFlashListMetrics(100, 1000, { turns: 1 });
+                await scrollFlashListTo(900, { trusted: false, turns: 1 });
+
+                sessionMessagesState = {
+                    isLoaded: true,
+                    messages: [
+                        { kind: 'agent-text', id: 'a1', localId: null, createdAt: 1, text: 'ready' },
+                        { kind: 'user-text', id: 'u1', localId: 'local-user-1', createdAt: 2, text: 'queued message' },
+                    ],
+                };
+                sessionPendingState = { messages: [] };
+                await screen.update(<ChatList session={{ ...sessionState }} />);
+
+                scrollEl.scrollHeight = 1400;
+                const hotTail = screen.findByTestId('transcript-web-hot-tail');
+                if (!hotTail) throw new Error('Expected the web hot tail to stay mounted');
+                await act(async () => {
+                    hotTail.props.onLayout?.({
+                        nativeEvent: { layout: { height: 120, width: 400 } },
+                    });
+                });
+                await screen.settle({ cycles: 1, turns: 1 });
 
                 expect(scrollEl.scrollTop).toBe(1300);
                 expect(flashListRefHandle.scrollToOffset).not.toHaveBeenCalled();

@@ -113,4 +113,35 @@ describe('displayTitlePublish', () => {
             }),
         ]);
     });
+
+    it('does not let metadata-derived title resolution bypass stale display.title arbitration', async () => {
+        const updates: Metadata[] = [];
+
+        await publishDisplayTitleMetadataMutation({
+            sessionId: 's1',
+            title: 'Fallback title',
+            updatedAt: 12,
+            updateSessionMetadataWithRetry: async (_sessionId, updater) => {
+                updates.push(updater(buildMetadata({
+                    summary: {
+                        text: 'Fresh canonical title',
+                        updatedAt: 13,
+                    },
+                    voiceConversation: { title: 'Stale voice title' },
+                })));
+            },
+            resolveTitle: (metadata) => (
+                metadata as Metadata & { voiceConversation?: { title?: string } }
+            ).voiceConversation?.title ?? 'Fallback title',
+        });
+
+        expect(updates).toEqual([
+            expect.objectContaining({
+                summary: {
+                    text: 'Fresh canonical title',
+                    updatedAt: 13,
+                },
+            }),
+        ]);
+    });
 });

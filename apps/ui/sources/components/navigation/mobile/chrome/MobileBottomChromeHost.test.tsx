@@ -5,7 +5,6 @@ import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 import {
     clearPendingMobileSurfaceTransition,
     resolvePendingMobileSurfaceTransitionStackOptions,
@@ -377,6 +376,34 @@ describe('MobileBottomChromeHost', () => {
         expect(routerState.replace).toHaveBeenCalledWith('/session/session-1?mobileSurface=chat');
     });
 
+    it('shows the target main app chrome immediately when returning from a session cockpit route', async () => {
+        pathState.pathname = '/session/session-1/files';
+        authState.isAuthenticated = true;
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        settingsState.sessionLastMobileSurfaceBySessionId = null;
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = null;
+        settingsState.embeddedTerminalDockLocation = 'sidebar';
+        deviceTypeState.value = 'phone';
+        featureState.terminalEmbeddedPtyEnabled = true;
+        searchParamsState.mobileSurface = undefined;
+        searchParamsState.worktreeId = undefined;
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(1);
+
+        pathState.pathname = '/';
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = {};
+        await act(async () => {
+            notifyStorageListeners();
+        });
+
+        expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(0);
+        const bar = screen.tree.findByType('MainAppTabBar' as never);
+        expect(bar.props.activeTab).toBe('sessions');
+    });
+
     it('preserves the scoped server id when navigating between session cockpit tabs', async () => {
         pathState.pathname = '/session/session-1/files';
         authState.isAuthenticated = true;
@@ -546,35 +573,27 @@ describe('MobileBottomChromeHost', () => {
     });
 
     it('hides project cockpit chrome after the mobile workspace experience switches back to classic', async () => {
-        vi.useFakeTimers();
-        try {
-            pathState.pathname = '/projects/wr_1/files';
-            authState.isAuthenticated = true;
-            settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
-            settingsState.sessionLastMobileSurfaceBySessionId = null;
-            settingsState.projectLastMobileSurfaceByWorkspaceRefId = { wr_1: 'browse' };
-            settingsState.embeddedTerminalDockLocation = 'sidebar';
-            deviceTypeState.value = 'phone';
-            featureState.terminalEmbeddedPtyEnabled = true;
-            searchParamsState.mobileSurface = undefined;
-            searchParamsState.worktreeId = undefined;
+        pathState.pathname = '/projects/wr_1/files';
+        authState.isAuthenticated = true;
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        settingsState.sessionLastMobileSurfaceBySessionId = null;
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = { wr_1: 'browse' };
+        settingsState.embeddedTerminalDockLocation = 'sidebar';
+        deviceTypeState.value = 'phone';
+        featureState.terminalEmbeddedPtyEnabled = true;
+        searchParamsState.mobileSurface = undefined;
+        searchParamsState.worktreeId = undefined;
 
-            const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
-            const screen = await renderScreen(<MobileBottomChromeHost />);
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
 
-            expect(screen.tree.findAllByType('ProjectCockpitTabBar' as never)).toHaveLength(1);
+        expect(screen.tree.findAllByType('ProjectCockpitTabBar' as never)).toHaveLength(1);
 
-            await act(async () => {
-                settingsState.mobileWorkspaceExperienceV1 = 'classic';
-                notifyStorageListeners();
-            });
-            await act(async () => {
-                vi.advanceTimersByTime(motionTokens.durationMs.fast);
-            });
+        await act(async () => {
+            settingsState.mobileWorkspaceExperienceV1 = 'classic';
+            notifyStorageListeners();
+        });
 
-            expect(screen.tree.findAllByType('ProjectCockpitTabBar' as never)).toHaveLength(0);
-        } finally {
-            vi.useRealTimers();
-        }
+        expect(screen.tree.findAllByType('ProjectCockpitTabBar' as never)).toHaveLength(0);
     });
 });

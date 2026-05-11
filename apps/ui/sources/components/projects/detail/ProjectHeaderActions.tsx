@@ -19,8 +19,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
     },
 }));
 
@@ -46,7 +46,7 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
                     accessibilityRole="button"
                     accessibilityLabel={props.workspaceExperienceToggleA11yLabel}
                 >
-                    <Ionicons name="swap-horizontal-outline" size={18} color={theme.colors.textSecondary} />
+                    <Ionicons name="swap-horizontal-outline" size={18} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
             {props.showWorktreesButton && props.onOpenWorktrees ? (
@@ -57,7 +57,7 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
                     accessibilityRole="button"
                     accessibilityLabel={t('files.branchMenu.category.worktrees')}
                 >
-                    <Octicons name="git-branch" size={16} color={theme.colors.textSecondary} />
+                    <Octicons name="git-branch" size={16} color={theme.colors.text.secondary} />
                 </Pressable>
             ) : null}
             <Pressable
@@ -67,7 +67,7 @@ export const ProjectHeaderActions = React.memo((props: Readonly<{
                 accessibilityRole="button"
                 accessibilityLabel={t('settings.terminal')}
             >
-                <Ionicons name="terminal-outline" size={18} color={theme.colors.textSecondary} />
+                <Ionicons name="terminal-outline" size={18} color={theme.colors.text.secondary} />
             </Pressable>
         </View>
     );

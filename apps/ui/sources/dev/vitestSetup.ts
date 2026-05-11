@@ -628,12 +628,23 @@ vi.mock('react-native-unistyles', () => {
             //
             // Main colors
             //
-            text: '#000000',
-            textSecondary: '#666666',
-            textLink: '#2BACCC',
-            textDestructive: '#FF3B30',
-            warning: '#8E8E93',
-            success: '#34C759',
+            text: {
+                primary: '#000000',
+                secondary: '#666666',
+                tertiary: '#8E8E93',
+                link: '#2BACCC',
+                destructive: '#FF3B30',
+                placeholder: '#999999',
+                disabled: '#C0C0C0',
+            },
+            state: {
+                success: { foreground: '#34C759', background: '#E8F8EE', border: '#BFE8CC' },
+                warning: { foreground: '#8E8E93', background: '#FFF7E6', border: '#FFD591' },
+                danger: { foreground: '#FF3B30', background: '#FEECEC', border: '#FFB3AD' },
+                info: { foreground: '#007AFF', background: '#E8F2FF', border: '#B8D7FF' },
+                neutral: { foreground: '#8E8E93', background: '#F5F5F5', border: '#D6D6D6' },
+                active: { foreground: '#007AFF', background: '#E8F2FF', border: '#B8D7FF' },
+            },
             accent: {
                 blue: '#007AFF',
                 green: '#34C759',
@@ -643,13 +654,26 @@ vi.mock('react-native-unistyles', () => {
                 indigo: '#5856D6',
                 purple: '#AF52DE',
             },
-            surface: '#ffffff',
-            surfaceRipple: 'rgba(0, 0, 0, 0.08)',
-            surfacePressed: '#f0f0f2',
-            surfaceSelected: '#f2f2f2',
-            surfaceHigh: '#F8F8F8',
-            surfaceHighest: '#f0f0f0',
-            divider: '#eaeaea',
+            background: { canvas: '#F5F5F5' },
+            surface: {
+                base: '#ffffff',
+                inset: '#F8F8F8',
+                elevated: '#f0f0f0',
+                ripple: 'rgba(0, 0, 0, 0.08)',
+                pressed: '#f0f0f2',
+                selected: '#f2f2f2',
+                pressedOverlay: '#f0f0f2',
+            },
+            border: {
+                default: '#eaeaea',
+                surface: 'transparent',
+                strong: '#d6d6d6',
+                modal: 'rgba(0, 0, 0, 0.1)',
+            },
+            effect: { surfaceHighlight: 'transparent' },
+            chrome: {
+                header: { background: '#ffffff', foreground: '#18171C' },
+            },
             shadow: { color: '#000000', opacity: 0.1 },
             shadowLevels: Array.from({ length: 6 }, (_value, idx) => ({
                 boxShadow: '0 0 0 rgba(0, 0, 0, 0)',
@@ -665,8 +689,8 @@ vi.mock('react-native-unistyles', () => {
                 scrimSoft: 'rgba(0, 0, 0, 0.18)',
                 scrimStrong: 'rgba(255, 255, 255, 0.68)',
                 scrimWizard: 'rgba(255, 255, 255, 0.52)',
-                text: '#FFFFFF',
-                textSecondary: 'rgba(255, 255, 255, 0.9)',
+                foreground: '#FFFFFF',
+                secondaryForeground: 'rgba(255, 255, 255, 0.9)',
             },
             desktopPetOverlay: {
                 bubble: {
@@ -682,11 +706,8 @@ vi.mock('react-native-unistyles', () => {
             //
             // System components
             //
-            groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
-            header: { background: '#ffffff', tint: '#18171C' },
             switch: { track: { inactive: '#dddddd', active: '#34C759' }, thumb: { active: '#FFFFFF', inactive: '#767577' } },
             radio: { active: '#007AFF', inactive: '#C0C0C0', dot: '#007AFF' },
-            modal: { border: 'rgba(0, 0, 0, 0.1)' },
             button: {
                 primary: { background: '#000000', tint: '#FFFFFF', disabled: '#C0C0C0' },
                 secondary: { tint: '#666666', surface: '#ffffff' },
@@ -711,20 +732,50 @@ vi.mock('react-native-unistyles', () => {
                 allowAll: { background: '#007AFF' },
                 inactive: { background: '#dddddd' },
             },
+            permission: {
+                allow: { foreground: '#FFFFFF', background: '#34C759', border: '#34C759' },
+                deny: { foreground: '#FFFFFF', background: '#FF3B30', border: '#FF3B30' },
+                allowAll: { foreground: '#FFFFFF', background: '#007AFF', border: '#007AFF' },
+                inactive: { foreground: '#666666', background: '#dddddd', border: '#dddddd' },
+            },
+            message: {
+                user: { background: '#F5F5F5', foreground: '#000000', border: '#eaeaea' },
+                agent: { background: '#ffffff', foreground: '#000000', border: '#eaeaea' },
+                event: { background: '#F8F8F8', foreground: '#666666', border: '#eaeaea' },
+            },
+            syntax: {
+                default: '#000000',
+                comment: '#666666',
+                keyword: '#AF52DE',
+                string: '#34C759',
+                number: '#FF9500',
+                operator: '#000000',
+                punctuation: '#666666',
+                variable: '#000000',
+                function: '#007AFF',
+                class: '#5856D6',
+                type: '#5856D6',
+                property: '#2BACCC',
+            },
+            versionControl: {
+                added: '#34C759',
+                removed: '#FF3B30',
+                modified: '#007AFF',
+                renamed: '#5856D6',
+                untracked: '#8E8E93',
+                conflict: '#FF9500',
+            },
 
             //
             // Diff view palette (used by tool renderers)
             //
             diff: {
-                addedBg: '#e6ffed',
-                addedBorder: '#b7eb8f',
-                addedText: '#135200',
-                removedBg: '#ffecec',
-                removedBorder: '#ffa39e',
-                removedText: '#a8071a',
-                hunkHeaderBg: '#f5f5f5',
-                hunkHeaderText: '#666',
-                contextText: '#333',
+                added: { background: '#e6ffed', foreground: '#135200', border: '#b7eb8f' },
+                removed: { background: '#ffecec', foreground: '#a8071a', border: '#ffa39e' },
+                hunkHeader: { background: '#f5f5f5', foreground: '#666', border: '#eaeaea' },
+                context: { foreground: '#333' },
+                inlineAdded: { background: '#ccffd8', foreground: '#135200' },
+                inlineRemoved: { background: '#ffd6d6', foreground: '#a8071a' },
             },
         },
         borderRadius: {
@@ -749,6 +800,7 @@ vi.mock('react-native-unistyles', () => {
             setRootViewBackgroundColor: () => {},
             setAdaptiveThemes: () => {},
             setTheme: () => {},
+            updateTheme: () => {},
         },
     };
 });

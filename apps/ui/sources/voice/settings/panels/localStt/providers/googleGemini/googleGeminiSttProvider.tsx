@@ -98,7 +98,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
             id: '__custom__',
             title: t('settingsVoice.local.googleGeminiStt.model.customTitle'),
             subtitle: t('settingsVoice.local.googleGeminiStt.model.customSubtitle'),
-            icon: <Ionicons name="create-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="create-outline" size={22} color={theme.colors.text.secondary} />,
           },
           ...((models.length > 0
             ? models
@@ -109,7 +109,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
               title: m.displayName,
               subtitle: m.id,
               disabled: !m.id,
-              icon: <Ionicons name="sparkles-outline" size={22} color={theme.colors.textSecondary} />,
+              icon: <Ionicons name="sparkles-outline" size={22} color={theme.colors.text.secondary} />,
             }))),
         ]}
         onSelect={(id) => {
@@ -157,7 +157,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
                 id: '',
                 title: t('settingsVoice.local.googleGeminiStt.language.autoTitle'),
                 subtitle: t('settingsVoice.local.googleGeminiStt.language.autoSubtitle'),
-                icon: <Ionicons name="sparkles-outline" size={22} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="sparkles-outline" size={22} color={theme.colors.text.secondary} />,
               },
             ];
           }
@@ -166,7 +166,7 @@ const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
               id,
               title: getLanguageDisplayName(lang),
               subtitle: id,
-              icon: <Ionicons name="language-outline" size={22} color={theme.colors.textSecondary} />,
+              icon: <Ionicons name="language-outline" size={22} color={theme.colors.text.secondary} />,
             },
           ];
         })}

@@ -48,16 +48,16 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     modalContainer: {
         width: '92%',
         maxWidth: 560,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         borderRadius: 16,
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     popoverContainer: {
         width: 420,
         maxWidth: '100%',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     header: {
         paddingHorizontal: 16,
@@ -66,11 +66,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
+        borderBottomColor: theme.colors.border.default,
     },
     headerTitle: {
         fontSize: 17,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold'),
     },
     scroll: {
@@ -85,14 +85,14 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingTop: 12,
     },
     descriptionText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 15, default: 14 }),
         lineHeight: 20,
         letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
         ...Typography.default(),
     },
     machineNameText: {
-        color: theme.colors.status?.connected ?? theme.colors.textSecondary,
+        color: theme.colors.status?.connected ?? theme.colors.text.secondary,
         ...Typography.default('semiBold'),
     },
     detailText: {
@@ -173,7 +173,7 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
                 >
-                    {normalizeNodeForView(<Ionicons name="close" size={20} color={theme.colors.textSecondary} />)}
+                    {normalizeNodeForView(<Ionicons name="close" size={20} color={theme.colors.text.secondary} />)}
                 </Pressable>
             </View>
 
@@ -281,12 +281,12 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
                             const detailColor = (() => {
                                 switch (detailKind) {
                                     case 'machine':
-                                        return theme.colors.status?.connected ?? theme.colors.textSecondary;
+                                        return theme.colors.status?.connected ?? theme.colors.text.secondary;
                                     case 'fallback':
                                     case 'missing':
-                                        return theme.colors.warning;
+                                        return theme.colors.state.neutral.foreground;
                                     default:
-                                        return theme.colors.textSecondary;
+                                        return theme.colors.text.secondary;
                                 }
                             })();
 
@@ -294,7 +294,7 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
                                 if (secret) return undefined;
                                 if (!isMachineBased) return undefined;
                                 if (!hasMachineContext || detailKind === 'checking') {
-                                    return <Ionicons name="time-outline" size={18} color={theme.colors.textSecondary} />;
+                                    return <Ionicons name="time-outline" size={18} color={theme.colors.text.secondary} />;
                                 }
                                 return <Ionicons name="desktop-outline" size={18} color={detailColor} />;
                             })();

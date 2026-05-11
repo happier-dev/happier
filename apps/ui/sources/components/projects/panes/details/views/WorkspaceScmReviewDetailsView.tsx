@@ -65,8 +65,8 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
     if (loading && !snapshot) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, gap: 10 }}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.textSecondary, ...Typography.default() }}>
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <Text style={{ color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.loading')}
                 </Text>
             </View>
@@ -89,7 +89,7 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
     }
 
     return (
-        <View style={{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface }}>
+        <View style={{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base }}>
             <ChangedFilesReview
                 theme={theme}
                 sessionId={props.scopeId}

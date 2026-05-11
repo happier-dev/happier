@@ -144,6 +144,8 @@ describe('SettingsLayoutRoute stack registration', () => {
         expect(screenNames).toContain('providers/[providerId]');
         expect(screenNames).toContain('plugins');
         expect(screenNames).toContain('plugins/[pluginId]');
+        expect(screenNames).toContain('actions');
+        expect(screenNames).toContain('actions/[actionId]');
     });
 
     it('refreshes stack chrome translations when the language changes and the route rerenders', async () => {

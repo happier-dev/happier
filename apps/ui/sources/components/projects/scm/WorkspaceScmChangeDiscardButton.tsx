@@ -65,17 +65,17 @@ export const WorkspaceScmChangeDiscardButton = React.memo((props: WorkspaceScmCh
                 height: 28,
                 borderRadius: 10,
                 borderWidth: 1,
-                borderColor: theme.colors.divider,
-                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border.default,
+                backgroundColor: theme.colors.surface.base,
                 alignItems: 'center',
                 justifyContent: 'center',
                 opacity: disabled ? 0.55 : 1,
             }}
         >
             {busy ? (
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             ) : (
-                <Octicons name="history" size={14} color={theme.colors.textSecondary} />
+                <Octicons name="history" size={14} color={theme.colors.text.secondary} />
             )}
         </Pressable>
     );

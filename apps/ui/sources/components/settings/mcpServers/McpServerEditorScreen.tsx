@@ -232,9 +232,9 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
             id: machine.id,
             title: machine.metadata?.displayName || machine.metadata?.host || machine.id,
             subtitle: machine.id,
-            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="laptop-outline" size={22} color={theme.colors.text.secondary} />,
         }));
-    }, [machines, theme.colors.textSecondary]);
+    }, [machines, theme.colors.text.secondary]);
 
     const closeToMcpServersSettings = React.useCallback(() => {
         // `router.replace` expects the public route (group segments like `/(app)` are not valid here on web).
@@ -416,10 +416,10 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     padding: 4,
                 })}
             >
-                <Ionicons name="checkmark" size={24} color={theme.colors.header.tint} />
+                <Ionicons name="checkmark" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         );
-    }, [activeTab, isDirty, saveAndClose, saveDisabled, theme.colors.header.tint]);
+    }, [activeTab, isDirty, saveAndClose, saveDisabled, theme.colors.chrome.header.foreground]);
 
     React.useEffect(() => {
         const setOptions = nav.setOptions;
@@ -434,7 +434,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     <Item
                         title={t('common.error')}
                         subtitle={t('settings.mcpServersServerNotFound')}
-                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.textDestructive} />}
+                        icon={<Ionicons name="alert-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
                         showChevron={false}
                     />
                 </ItemGroup>

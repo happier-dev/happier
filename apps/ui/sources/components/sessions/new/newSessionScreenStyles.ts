@@ -39,14 +39,14 @@ export const newSessionScreenStyles = StyleSheet.create((theme, rt) => ({
     sectionHeader: {
         fontSize: 17,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 8,
         marginTop: 12,
         ...Typography.default('semiBold')
     },
     sectionDescription: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: Platform.OS === 'web' ? 8 : 0,
         lineHeight: 18,
         paddingHorizontal: 16,
@@ -73,7 +73,7 @@ export const newSessionScreenStyles = StyleSheet.create((theme, rt) => ({
     },
     profileListItemSelected: {
         borderWidth: 2,
-        borderColor: theme.colors.text,
+        borderColor: theme.colors.text.primary,
     },
     profileIcon: {
         width: 20,
@@ -87,17 +87,17 @@ export const newSessionScreenStyles = StyleSheet.create((theme, rt) => ({
     profileListName: {
         fontSize: 13,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default('semiBold')
     },
     profileListDetails: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 2,
         ...Typography.default()
     },
     addProfileButton: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: 12,
         padding: 12,
         marginBottom: 12,
@@ -118,13 +118,13 @@ export const newSessionScreenStyles = StyleSheet.create((theme, rt) => ({
         padding: 10,
         marginBottom: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
     },
     selectorButtonText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         flex: 1,
         ...Typography.default()
@@ -152,7 +152,7 @@ export const newSessionScreenStyles = StyleSheet.create((theme, rt) => ({
     permissionButtonText: {
         fontSize: 14,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginTop: 8,
         textAlign: 'center',
         ...Typography.default('semiBold')
@@ -162,7 +162,7 @@ export const newSessionScreenStyles = StyleSheet.create((theme, rt) => ({
     },
     permissionButtonDesc: {
         fontSize: 11,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 4,
         textAlign: 'center',
         ...Typography.default()

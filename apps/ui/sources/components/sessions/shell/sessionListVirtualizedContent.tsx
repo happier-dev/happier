@@ -49,7 +49,7 @@ const SessionsListArchivedFooter = React.memo(function SessionsListArchivedFoote
                 title={hideInactiveSessions
                     ? t('sessionInfo.inactiveAndArchivedSessions')
                     : t('sessionInfo.archivedSessions')}
-                icon={<Ionicons name="archive-outline" size={22} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="archive-outline" size={22} color={theme.colors.text.secondary} />}
                 onPress={props.onPress}
             />
         </ItemGroup>

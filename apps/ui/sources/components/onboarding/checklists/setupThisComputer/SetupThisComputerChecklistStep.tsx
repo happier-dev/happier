@@ -32,11 +32,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'stretch',
     },
     hint: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     error: {
-        color: theme.colors.warningCritical,
+        color: theme.colors.state.danger.foreground,
         textAlign: 'center',
     },
 }));

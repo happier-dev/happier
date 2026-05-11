@@ -14,7 +14,7 @@ type SourceControlOperationsHistoryLoadMoreButtonProps = Readonly<{
 }>;
 
 export const SourceControlOperationsHistoryLoadMoreButton = React.memo((props: SourceControlOperationsHistoryLoadMoreButtonProps) => {
-    const backgroundColor = props.theme.colors.surfaceHigh ?? props.theme.colors.input.background;
+    const backgroundColor = props.theme.colors.surface.inset ?? props.theme.colors.input.background;
 
     return (
         <Pressable
@@ -28,16 +28,16 @@ export const SourceControlOperationsHistoryLoadMoreButton = React.memo((props: S
                 paddingHorizontal: 12,
                 borderRadius: 14,
                 borderWidth: 1,
-                borderColor: props.theme.colors.divider,
+                borderColor: props.theme.colors.border.default,
                 backgroundColor,
                 opacity: props.historyLoading ? 0.6 : state.pressed ? 0.85 : 1,
             })}
         >
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ color: props.theme.colors.textLink, fontSize: 12, ...Typography.default('semiBold') }}>
+                <Text style={{ color: props.theme.colors.text.link, fontSize: 12, ...Typography.default('semiBold') }}>
                     {props.historyLoading ? t('common.loading') : t('files.operationsHistory.loadMore')}
                 </Text>
-                <Octicons name="chevron-down" size={14} color={props.theme.colors.textSecondary} />
+                <Octicons name="chevron-down" size={14} color={props.theme.colors.text.secondary} />
             </View>
         </Pressable>
     );

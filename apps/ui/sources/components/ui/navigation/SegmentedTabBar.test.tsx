@@ -110,32 +110,35 @@ describe('SegmentedTabBar', () => {
         // Tabs should expose the selected state for accessibility (web: aria-selected).
         expect(screen.findByTestId('seg:beta')?.props.accessibilityRole).toBe('tab');
         expect(screen.findByTestId('seg:beta')?.props.accessibilityState).toEqual({ selected: true });
+        expect(screen.findByTestId('seg:beta')?.props['aria-selected']).toBe(true);
         expect(screen.findByTestId('seg:alpha')?.props.accessibilityRole).toBe('tab');
         expect(screen.findByTestId('seg:alpha')?.props.accessibilityState).toEqual({ selected: false });
+        expect(screen.findByTestId('seg:alpha')?.props['aria-selected']).toBe(false);
         expect(screen.findByTestId('seg:gamma')?.props.accessibilityRole).toBe('tab');
         expect(screen.findByTestId('seg:gamma')?.props.accessibilityState).toEqual({ selected: false });
+        expect(screen.findByTestId('seg:gamma')?.props['aria-selected']).toBe(false);
 
         // The active tab ("beta") should include the tabActive background color.
         const activeFlat = flattenStyle(screen.findByTestId('seg:beta')?.props.style);
-        expect(activeFlat.backgroundColor).toBe(theme.colors.surface);
+        expect(activeFlat.backgroundColor).toBe(theme.colors.surface.base);
         expect(screen.findByTestId('seg:beta')?.findByType('LinearGradient' as never).props.colors).toEqual(
             theme.colors.segmentedControl.activeGradient?.colors,
         );
 
         // Inactive tabs should NOT have the active background color.
         for (const testID of ['seg:alpha', 'seg:gamma'] as const) {
-            expect(flattenStyle(screen.findByTestId(testID)?.props.style).backgroundColor).not.toBe(theme.colors.surface);
+            expect(flattenStyle(screen.findByTestId(testID)?.props.style).backgroundColor).not.toBe(theme.colors.surface.base);
         }
 
         // The active tab's label should use the active text color.
         const activeLabelFlat = flattenStyle(screen.findByTestId('seg:beta')?.findByType('Text' as never).props.style);
-        expect(activeLabelFlat.color).toBe(theme.colors.text);
+        expect(activeLabelFlat.color).toBe(theme.colors.text.primary);
         expect(activeLabelFlat.fontWeight).toBe('600');
 
         // Inactive labels should use the secondary text color.
         for (const testID of ['seg:alpha', 'seg:gamma'] as const) {
             expect(flattenStyle(screen.findByTestId(testID)?.findByType('Text' as never).props.style).color).toBe(
-                theme.colors.textSecondary,
+                theme.colors.text.secondary,
             );
         }
     });

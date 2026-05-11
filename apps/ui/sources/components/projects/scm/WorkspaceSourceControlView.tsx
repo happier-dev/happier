@@ -298,8 +298,8 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
     if (loading && !snapshot) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, gap: 10 }}>
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                <Text style={{ color: theme.colors.textSecondary, ...Typography.default() }}>
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+                <Text style={{ color: theme.colors.text.secondary, ...Typography.default() }}>
                     {t('common.loading')}
                 </Text>
             </View>
@@ -319,7 +319,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                     <View
                         style={{
                             borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                            borderBottomColor: theme.colors.divider,
+                            borderBottomColor: theme.colors.border.default,
                         }}
                     >
                         {stashCount > 0 && props.onOpenStashDetails ? (
@@ -336,22 +336,22 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                     paddingHorizontal: 12,
                                     paddingVertical: 10,
                                     borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                                    borderBottomColor: theme.colors.divider,
-                                    backgroundColor: theme.colors.surface,
+                                    borderBottomColor: theme.colors.border.default,
+                                    backgroundColor: theme.colors.surface.base,
                                     opacity: pressed ? 0.85 : 1,
                                 })}
                             >
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                                    <Octicons name="archive" size={14} color={theme.colors.textSecondary} />
-                                    <Text numberOfLines={1} style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                                    <Octicons name="archive" size={14} color={theme.colors.text.secondary} />
+                                    <Text numberOfLines={1} style={{ fontSize: 12, color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                                         {t('files.stash.summaryTitle')}
                                     </Text>
                                 </View>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.mono('semiBold') }}>
+                                    <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
                                         {String(stashCount)}
                                     </Text>
-                                    <Octicons name="chevron-right" size={14} color={theme.colors.textSecondary} />
+                                    <Octicons name="chevron-right" size={14} color={theme.colors.text.secondary} />
                                 </View>
                             </Pressable>
                         ) : null}
@@ -385,10 +385,10 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                     paddingHorizontal: 12,
                                     paddingVertical: 8,
                                     borderWidth: 1,
-                                    borderColor: theme.colors.divider,
+                                    borderColor: theme.colors.border.default,
                                 }}
                             >
-                                <Octicons name="search" size={16} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
+                                <Octicons name="search" size={16} color={theme.colors.text.secondary} style={{ marginRight: 8 }} />
                                 <TextInput
                                     value={searchQuery}
                                     onChangeText={setSearchQuery}
@@ -407,10 +407,10 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
 
                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, gap: 10, paddingHorizontal: 16, paddingBottom: 12 }}>
                             <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, minWidth: 0, flex: 1 }}>
-                                <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                                <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                                     {t('files.toolbar.changedFiles')}
                                 </Text>
-                                <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.mono('semiBold') }}>
+                                <Text style={{ fontSize: 11, color: theme.colors.text.secondary, ...Typography.mono('semiBold') }}>
                                     {String(filteredChangedFiles.length)}
                                 </Text>
                             </View>
@@ -434,14 +434,14 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                         height: 30,
                                         borderRadius: 10,
                                         borderWidth: 1,
-                                        borderColor: theme.colors.divider,
-                                        backgroundColor: theme.colors.surface,
+                                        borderColor: theme.colors.border.default,
+                                        backgroundColor: theme.colors.surface.base,
                                         opacity: pressed ? 0.78 : 1,
                                         gap: 6,
                                     })}
                                 >
-                                    <Octicons name="diff" size={14} color={theme.colors.textSecondary} />
-                                    <Text style={{ fontSize: 12, color: theme.colors.textSecondary, ...Typography.default('semiBold') }}>
+                                    <Octicons name="diff" size={14} color={theme.colors.text.secondary} />
+                                    <Text style={{ fontSize: 12, color: theme.colors.text.secondary, ...Typography.default('semiBold') }}>
                                         {t('files.toolbar.review')}
                                     </Text>
                                 </Pressable>
@@ -458,14 +458,14 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                                     height: 30,
                                     borderRadius: 10,
                                     borderWidth: 1,
-                                    borderColor: theme.colors.divider,
-                                    backgroundColor: theme.colors.surface,
+                                    borderColor: theme.colors.border.default,
+                                    backgroundColor: theme.colors.surface.base,
                                     alignItems: 'center',
                                     justifyContent: 'center',
                                     opacity: pressed ? 0.78 : 1,
                                 })}
                             >
-                                <Octicons name="sync" size={14} color={theme.colors.textSecondary} />
+                                <Octicons name="sync" size={14} color={theme.colors.text.secondary} />
                             </Pressable>
                         </View>
                     </View>
@@ -538,7 +538,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                 removeClippedSubviews={Platform.OS !== 'web'}
                 ListEmptyComponent={(
                     <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-                        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                        <Text style={{ color: theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
                             {t('files.noChanges')}
                         </Text>
                     </View>
@@ -549,8 +549,8 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                 <View
                     style={{
                         borderTopWidth: Platform.select({ ios: 0.33, default: 1 }),
-                        borderTopColor: theme.colors.divider,
-                        backgroundColor: theme.colors.surface,
+                        borderTopColor: theme.colors.border.default,
+                        backgroundColor: theme.colors.surface.base,
                     }}
                 >
                     <ScmCommitComposerCard

@@ -227,67 +227,83 @@ export const MobileBottomChromeHost = React.memo(() => {
         handleMainAppTabPress,
     ]);
     const [renderedChrome, setRenderedChrome] = React.useState(resolvedChrome);
+    const renderedChromeRef = React.useRef(renderedChrome);
     const progress = React.useRef(new Animated.Value(resolvedChrome ? 1 : 0)).current;
-    const transitionTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const activeChromeAnimationRef = React.useRef<Animated.CompositeAnimation | null>(null);
 
-    React.useEffect(() => {
-        if (transitionTimeoutRef.current) {
-            clearTimeout(transitionTimeoutRef.current);
-            transitionTimeoutRef.current = null;
-        }
+    const setRenderedChromeState = React.useCallback((nextChrome: typeof resolvedChrome) => {
+        renderedChromeRef.current = nextChrome;
+        setRenderedChrome(nextChrome);
+    }, []);
+
+    const stopChromeAnimation = React.useCallback(() => {
+        activeChromeAnimationRef.current?.stop();
+        activeChromeAnimationRef.current = null;
+        (progress as Animated.Value & { stopAnimation?: () => void }).stopAnimation?.();
+    }, [progress]);
+
+    React.useLayoutEffect(() => {
+        const currentRenderedChrome = renderedChromeRef.current;
 
         if (reduceMotion) {
-            setRenderedChrome(resolvedChrome);
+            stopChromeAnimation();
+            setRenderedChromeState(resolvedChrome);
             progress.setValue(resolvedChrome ? 1 : 0);
             return;
         }
 
-        if ((renderedChrome?.key ?? null) === (resolvedChrome?.key ?? null)) {
-            if ((renderedChrome?.signature ?? null) !== (resolvedChrome?.signature ?? null)) {
-                setRenderedChrome(resolvedChrome);
+        if (!resolvedChrome) {
+            stopChromeAnimation();
+            setRenderedChromeState(null);
+            progress.setValue(0);
+            return;
+        }
+
+        if ((currentRenderedChrome?.key ?? null) === (resolvedChrome?.key ?? null)) {
+            if ((currentRenderedChrome?.signature ?? null) !== (resolvedChrome?.signature ?? null)) {
+                setRenderedChromeState(resolvedChrome);
             }
             return;
         }
 
         const animateIn = (nextChrome: typeof resolvedChrome) => {
-            setRenderedChrome(nextChrome);
-            if (!nextChrome) {
-                progress.setValue(0);
-                return;
-            }
+            stopChromeAnimation();
+            setRenderedChromeState(nextChrome);
             progress.setValue(0);
-            Animated.timing(progress, {
+            const animation = Animated.timing(progress, {
                 toValue: 1,
                 duration: motionTokens.durationMs.base,
                 easing: motionTokens.easing.emphasized,
                 useNativeDriver: Platform.OS !== 'web',
-            }).start();
+            });
+            activeChromeAnimationRef.current = animation;
+            animation.start(({ finished }) => {
+                if (activeChromeAnimationRef.current !== animation) {
+                    return;
+                }
+                activeChromeAnimationRef.current = null;
+                if (!finished) {
+                    return;
+                }
+                progress.setValue(1);
+            });
         };
 
-        if (!renderedChrome) {
+        if (!currentRenderedChrome) {
             animateIn(resolvedChrome);
             return;
         }
 
-        Animated.timing(progress, {
-            toValue: 0,
-            duration: motionTokens.durationMs.fast,
-            easing: motionTokens.easing.standard,
-            useNativeDriver: Platform.OS !== 'web',
-        }).start();
+        animateIn(resolvedChrome);
+    }, [progress, reduceMotion, resolvedChrome, setRenderedChromeState, stopChromeAnimation]);
 
-        transitionTimeoutRef.current = setTimeout(() => {
-            transitionTimeoutRef.current = null;
-            animateIn(resolvedChrome);
-        }, motionTokens.durationMs.fast);
+    React.useLayoutEffect(() => () => {
+        stopChromeAnimation();
+    }, [stopChromeAnimation]);
 
-        return () => {
-            if (transitionTimeoutRef.current) {
-                clearTimeout(transitionTimeoutRef.current);
-                transitionTimeoutRef.current = null;
-            }
-        };
-    }, [progress, reduceMotion, renderedChrome, resolvedChrome]);
+    if (!resolvedChrome) {
+        return null;
+    }
 
     const chromeToRender =
         (renderedChrome?.key ?? null) === (resolvedChrome?.key ?? null)

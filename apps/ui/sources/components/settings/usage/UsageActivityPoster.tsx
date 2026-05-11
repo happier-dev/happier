@@ -29,7 +29,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         letterSpacing: -0.08,
         textTransform: 'uppercase',
     },
@@ -38,13 +38,13 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 28,
         lineHeight: 34,
         letterSpacing: -0.6,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     subtitle: {
         ...Typography.default(),
         fontSize: 14,
         lineHeight: 19,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         maxWidth: 560,
     },
     tracksStack: {
@@ -56,7 +56,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 18,
         paddingHorizontal: 14,
         paddingVertical: 14,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
     },
     trackRow: {
         width: '100%',
@@ -72,7 +72,7 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 11,
         lineHeight: 14,
         letterSpacing: -0.04,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         textTransform: 'uppercase',
     },
     trackValue: {
@@ -80,7 +80,7 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 32,
         lineHeight: 36,
         letterSpacing: -0.6,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         flexShrink: 1,
         textAlign: 'right',
     },
@@ -99,7 +99,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 8,
         paddingVertical: 10,
         justifyContent: 'space-between',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         minHeight: 74,
     },
     bucketCompact: {
@@ -111,13 +111,13 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     bucketMetric: {
         ...Typography.default(),
         fontSize: 11,
         lineHeight: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));
 
@@ -208,9 +208,9 @@ export function UsageActivityPoster(props: Readonly<{
                         value: count,
                         values: params.counts,
                         baseColor: params.accentColor,
-                        emptyColor: theme.colors.groupped.background,
+                        emptyColor: theme.colors.background.canvas,
                     });
-                    const textColor = count > 0 ? theme.colors.surface : undefined;
+                    const textColor = count > 0 ? theme.colors.surface.base : undefined;
                     return (
                         <ChartTooltip
                             key={label}

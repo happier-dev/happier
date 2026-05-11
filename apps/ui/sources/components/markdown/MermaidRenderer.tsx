@@ -139,7 +139,7 @@ export const MermaidRenderer = React.memo((props: {
                 body {
                     margin: 0;
                     padding: 16px;
-                    background-color: ${theme.colors.surfaceHighest};
+                    background-color: ${theme.colors.surface.elevated};
                 }
                 #mermaid-container {
                     display: flex;
@@ -228,7 +228,7 @@ const style = StyleSheet.create((theme) => ({
     },
     innerContainer: {
         width: '100%',
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderRadius: 8,
     },
     copyButtonWrapper: {
@@ -239,14 +239,14 @@ const style = StyleSheet.create((theme) => ({
         opacity: 0.9,
     },
     copyButton: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderRadius: 6,
         paddingHorizontal: 10,
         paddingVertical: 6,
     },
     copyButtonText: {
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 12,
     },
     loadingContainer: {
@@ -257,11 +257,11 @@ const style = StyleSheet.create((theme) => ({
     loadingPlaceholder: {
         width: 200,
         height: 20,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
         borderRadius: 4,
     },
     errorContainer: {
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
         borderRadius: 8,
         padding: 16,
     },
@@ -271,17 +271,17 @@ const style = StyleSheet.create((theme) => ({
     },
     errorText: {
         ...Typography.default('semiBold'),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 16,
     },
     codeBlock: {
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderRadius: 4,
         padding: 12,
     },
     codeText: {
         ...Typography.mono(),
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 14,
         lineHeight: 20,
     },

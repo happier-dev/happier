@@ -116,7 +116,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     skip: {
@@ -136,7 +136,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     footerHintContainer: {

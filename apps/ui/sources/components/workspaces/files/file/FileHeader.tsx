@@ -20,8 +20,8 @@ export function FileHeader({ theme, fileName, filePathDir, rightElement }: FileH
             style={{
                 padding: 16,
                 borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                borderBottomColor: theme.colors.divider,
-                backgroundColor: theme.colors.surfaceHigh,
+                borderBottomColor: theme.colors.border.default,
+                backgroundColor: theme.colors.surface.inset,
                 flexDirection: 'row',
                 alignItems: 'center',
             }}
@@ -30,7 +30,7 @@ export function FileHeader({ theme, fileName, filePathDir, rightElement }: FileH
             <Text
                 style={{
                     fontSize: 14,
-                    color: theme.colors.textSecondary,
+                    color: theme.colors.text.secondary,
                     marginLeft: 8,
                     flex: 1,
                     ...Typography.mono(),

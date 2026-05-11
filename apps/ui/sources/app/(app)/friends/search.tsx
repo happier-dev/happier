@@ -120,7 +120,7 @@ export default function SearchFriendsScreen() {
                             
                             {isSearching && (
                                 <View style={styles.searchingIndicator}>
-                                    <ActivityIndicator size="small" color={theme.colors.textLink} />
+                                    <ActivityIndicator size="small" color={theme.colors.text.link} />
                                 </View>
                             )}
                         </View>
@@ -135,7 +135,7 @@ export default function SearchFriendsScreen() {
                         <View style={styles.resultsSection}>
                             {isSearching && searchResults.length === 0 ? (
                                 <View style={styles.loadingContainer}>
-                                    <ActivityIndicator size="large" color={theme.colors.textLink} />
+                                    <ActivityIndicator size="large" color={theme.colors.text.link} />
                                     <Text style={styles.loadingText}>{t('friends.searching')}</Text>
                                 </View>
                             ) : searchResults.length > 0 ? (
@@ -177,7 +177,7 @@ export default function SearchFriendsScreen() {
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     searchSection: {
         marginBottom: 16,
@@ -188,14 +188,14 @@ const styles = StyleSheet.create((theme) => ({
         position: 'relative',
     },
     searchInput: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 12,
         paddingHorizontal: 16,
         paddingVertical: 16,
         fontSize: 16,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     searchingIndicator: {
         position: 'absolute',
@@ -221,7 +221,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     separator: {
         height: 1,
-        backgroundColor: theme.colors.divider,
+        backgroundColor: theme.colors.border.default,
         marginHorizontal: 16,
         marginVertical: 8,
     },
@@ -232,7 +232,7 @@ const styles = StyleSheet.create((theme) => ({
     loadingText: {
         marginTop: 16,
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     noResultsContainer: {
         alignItems: 'center',
@@ -240,12 +240,12 @@ const styles = StyleSheet.create((theme) => ({
     },
     noResultsText: {
         fontSize: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginBottom: 8,
     },
     noResultsHint: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
     helpContainer: {
@@ -255,12 +255,12 @@ const styles = StyleSheet.create((theme) => ({
     helpTitle: {
         fontSize: 17,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 16,
     },
     helpText: {
         fontSize: 15,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         lineHeight: 22,
     },

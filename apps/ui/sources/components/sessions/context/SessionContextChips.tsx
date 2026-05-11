@@ -16,13 +16,13 @@ export function SessionContextChips(props: Readonly<{
         <View style={styles.row}>
             {props.machineLabel ? (
                 <View style={styles.chip}>
-                    <Ionicons name="desktop-outline" size={12} color={theme.colors.textSecondary} />
+                    <Ionicons name="desktop-outline" size={12} color={theme.colors.text.secondary} />
                     <Text style={styles.text} numberOfLines={1}>{props.machineLabel}</Text>
                 </View>
             ) : null}
             {props.pathLabel ? (
                 <View style={styles.chip}>
-                    <Ionicons name="folder-open-outline" size={12} color={theme.colors.textSecondary} />
+                    <Ionicons name="folder-open-outline" size={12} color={theme.colors.text.secondary} />
                     <Text style={styles.text} numberOfLines={1}>{props.pathLabel}</Text>
                 </View>
             ) : null}
@@ -44,13 +44,13 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: 6,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         maxWidth: '100%',
     },
     text: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         flexShrink: 1,
     },
 }));

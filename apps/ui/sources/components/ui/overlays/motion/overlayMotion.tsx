@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { Animated, Platform, type StyleProp, type ViewStyle } from 'react-native';
 
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 export type OverlayMotionKind = 'popover' | 'modal';
 export type OverlayMotionDirection = 'top' | 'bottom' | 'left' | 'right' | 'center';
@@ -94,9 +94,7 @@ export function useOverlayPresence(visible: boolean, exitMs: number): Readonly<{
             return;
         }
 
-        if (!presentState) {
-            return;
-        }
+        if (!presentState) return;
 
         if (exitMs <= 0) {
             setPresentState(false);
@@ -121,13 +119,13 @@ export function useOverlayMotionAnimation(params: Readonly<{
     preset: OverlayMotionPreset;
 }>): Readonly<{
     exitMs: number;
-    style: StyleProp<ViewStyle>;
     progress: Animated.Value;
+    style: StyleProp<ViewStyle>;
 }> {
     const reducedMotion = useReducedMotionPreference();
     const progress = React.useRef(new Animated.Value(0)).current;
 
-    React.useEffect(() => {
+    React.useLayoutEffect(() => {
         Animated.timing(progress, {
             toValue: params.visible ? 1 : 0,
             duration: reducedMotion

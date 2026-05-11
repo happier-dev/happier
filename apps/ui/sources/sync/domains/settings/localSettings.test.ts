@@ -14,6 +14,7 @@ describe('localSettingsParse', () => {
         const parsed = localSettingsParse(null);
         expect(parsed.uiBackdropBlurEnabled).toBe(true);
         expect(parsed.uiMultiPanePanelsEnabled).toBe(true);
+        expect(parsed.uiContentWidthMode).toBe('compact');
         expect(parsed.uiItemDensity).toBe('cozy');
         expect(parsed.detailsPaneTabsBehavior).toBe('preview');
         expect(parsed.settingsNavSidebarWidthPx).toBe(230);
@@ -162,6 +163,11 @@ describe('localSettingsParse', () => {
     it('accepts the middle ui item density selection', () => {
         const parsed = localSettingsParse({ uiItemDensity: 'cozy' });
         expect(parsed.uiItemDensity).toBe('cozy');
+    });
+
+    it('accepts explicit content width mode selection', () => {
+        const parsed = localSettingsParse({ uiContentWidthMode: 'full' });
+        expect(parsed.uiContentWidthMode).toBe('full');
     });
 
     it('accepts explicit badge and local notification toggles', () => {

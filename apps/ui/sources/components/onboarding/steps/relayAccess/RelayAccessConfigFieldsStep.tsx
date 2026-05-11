@@ -25,7 +25,7 @@ const stylesheet = UnistylesStyleSheet.create((theme) => ({
         gap: 10,
     },
     hint: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
     },
 }));

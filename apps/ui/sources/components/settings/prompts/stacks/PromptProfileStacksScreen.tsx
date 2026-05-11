@@ -13,7 +13,7 @@ import { t } from '@/text';
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.groupped.background,
+    backgroundColor: theme.colors.background.canvas,
   },
 }));
 
@@ -37,7 +37,7 @@ export const PromptProfileStacksScreen = React.memo(() => {
                 testID={`promptStacks.profile.${profileId}`}
                 title={profileName}
                 subtitle={t('promptLibrary.profileStackCount', { count })}
-                icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.text.secondary} />}
                 onPress={() => router.push(`/settings/prompts/stacks/profiles/${encodeURIComponent(profileId)}`)}
               />
             );
@@ -48,7 +48,7 @@ export const PromptProfileStacksScreen = React.memo(() => {
               testID="promptStacks.profiles.empty"
               title={t('promptLibrary.noProfilesTitle')}
               subtitle={t('promptLibrary.noProfilesSubtitle')}
-              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.textSecondary} />}
+              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           ) : null}

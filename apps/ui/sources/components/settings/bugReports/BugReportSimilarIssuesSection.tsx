@@ -32,7 +32,7 @@ export function BugReportSimilarIssuesSection(props: Readonly<{
 
       {props.loading && (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+          <ActivityIndicator size="small" color={theme.colors.text.secondary} />
           <Text style={styles.helperText}>{t('bugReports.composer.similarIssues.searching')}</Text>
         </View>
       )}
@@ -47,7 +47,7 @@ export function BugReportSimilarIssuesSection(props: Readonly<{
             <Text style={styles.similarIssueTitle}>{t('bugReports.composer.similarIssues.selectedTitle', { number: props.selectedIssueNumber })}</Text>
             <Text style={styles.helperText}>{t('bugReports.composer.similarIssues.selectedSubtitle')}</Text>
           </View>
-          <Ionicons name="close-circle" size={18} color={theme.colors.textSecondary} />
+          <Ionicons name="close-circle" size={18} color={theme.colors.text.secondary} />
         </Pressable>
       )}
 
@@ -66,7 +66,7 @@ export function BugReportSimilarIssuesSection(props: Readonly<{
                   <Text style={styles.similarIssueTitle}>{`#${issue.number} ${issue.title}`}</Text>
                   <Text style={styles.helperText}>{issue.state === 'open' ? t('bugReports.composer.similarIssues.issueState.open') : t('bugReports.composer.similarIssues.issueState.closed')}</Text>
                 </View>
-                <Ionicons name="arrow-forward-circle-outline" size={18} color={theme.colors.textSecondary} />
+                <Ionicons name="arrow-forward-circle-outline" size={18} color={theme.colors.text.secondary} />
               </Pressable>
             ))}
         </View>

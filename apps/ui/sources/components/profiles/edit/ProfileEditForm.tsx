@@ -100,7 +100,7 @@ export function ProfileEditForm({
             fallbackTarget: null,
         });
     }, [routeParams.agentType, routeParams.backendTarget, routeParams.backendTargetKey]);
-    const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
+    const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text.primary : theme.colors.button.primary.background;
     const styles = stylesheet;
     const popoverBoundaryRef = React.useRef<any>(null);
     const enabledAgentIds = useEnabledAgentIds();
@@ -781,7 +781,7 @@ export function ProfileEditForm({
                 <Item
                     title={t('profiles.machineLogin.title')}
                     subtitle={t('profiles.machineLogin.subtitle')}
-                    leftElement={<Ionicons name="terminal-outline" size={24} color={theme.colors.textSecondary} />}
+                    leftElement={<Ionicons name="terminal-outline" size={24} color={theme.colors.text.secondary} />}
                     rightElement={(
                         <Switch
                             value={effectiveAuthMode === 'machineLogin'}
@@ -843,7 +843,7 @@ export function ProfileEditForm({
                                         key={entry.backendTargetKey}
                                         title={entry.title}
                                         subtitle={subtitle}
-                                        leftElement={<Ionicons name={getDisplayAgentIconNameForEntry(entry) as any} size={24} color={theme.colors.textSecondary} />}
+                                        leftElement={<Ionicons name={getDisplayAgentIconNameForEntry(entry) as any} size={24} color={theme.colors.text.secondary} />}
                                         rightElement={<Switch value={enabled} onValueChange={() => toggleCompatibility(profileTargetKey)} />}
                                         showChevron={false}
                                         onPress={() => toggleCompatibility(profileTargetKey)}
@@ -894,18 +894,18 @@ export function ProfileEditForm({
                                             ? getPermissionModeLabelForAgentType(permissionAgentId, override)
                                             : t('profiles.defaultPermissions.accountDefaultSubtitle', { label: getPermissionModeLabelForAgentType(permissionAgentId, accountDefault) })
                                         }
-                                        icon={<Ionicons name={getDisplayAgentIconNameForEntry(entry) as any} size={29} color={theme.colors.textSecondary} />}
+                                        icon={<Ionicons name={getDisplayAgentIconNameForEntry(entry) as any} size={29} color={theme.colors.text.secondary} />}
                                         rightElement={(
                                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                                                 <Ionicons
                                                     name={getPermissionIconNameForAgent(permissionAgentId, effectiveMode) as any}
                                                     size={22}
-                                                    color={theme.colors.textSecondary}
+                                                    color={theme.colors.text.secondary}
                                                 />
                                                 <Ionicons
                                                     name={open ? 'chevron-up' : 'chevron-down'}
                                                     size={20}
-                                                    color={theme.colors.textSecondary}
+                                                    color={theme.colors.text.secondary}
                                                 />
                                             </View>
                                         )}
@@ -921,7 +921,7 @@ export function ProfileEditForm({
                                         subtitle: t('profiles.defaultPermissions.currently', { label: getPermissionModeLabelForAgentType(permissionAgentId, accountDefault) }),
                                         icon: (
                                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name="settings-outline" size={22} color={theme.colors.textSecondary} />
+                                                <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
                                             </View>
                                         ),
                                     },
@@ -931,7 +931,7 @@ export function ProfileEditForm({
                                         subtitle: opt.description,
                                         icon: (
                                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                <Ionicons name={opt.icon as any} size={22} color={theme.colors.textSecondary} />
+                                                <Ionicons name={opt.icon as any} size={22} color={theme.colors.text.secondary} />
                                             </View>
                                         ),
                                     })),
@@ -988,18 +988,18 @@ export function ProfileEditForm({
                                                     label: t(`sessionsList.storage${accountDefault === 'direct' ? 'Direct' : 'Persisted'}Tab`),
                                                 })
                                             }
-                                            icon={<Ionicons name={getDisplayAgentIconNameForEntry(entry) as any} size={29} color={theme.colors.textSecondary} />}
+                                            icon={<Ionicons name={getDisplayAgentIconNameForEntry(entry) as any} size={29} color={theme.colors.text.secondary} />}
                                             rightElement={(
                                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                                                     <Ionicons
                                                         name={effectiveMode === 'direct' ? 'radio-outline' : 'save-outline'}
                                                         size={22}
-                                                        color={theme.colors.textSecondary}
+                                                        color={theme.colors.text.secondary}
                                                     />
                                                     <Ionicons
                                                         name={open ? 'chevron-up' : 'chevron-down'}
                                                         size={20}
-                                                        color={theme.colors.textSecondary}
+                                                        color={theme.colors.text.secondary}
                                                     />
                                                 </View>
                                             )}
@@ -1017,7 +1017,7 @@ export function ProfileEditForm({
                                             }),
                                             icon: (
                                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                    <Ionicons name="settings-outline" size={22} color={theme.colors.textSecondary} />
+                                                    <Ionicons name="settings-outline" size={22} color={theme.colors.text.secondary} />
                                                 </View>
                                             ),
                                         },
@@ -1027,7 +1027,7 @@ export function ProfileEditForm({
                                             subtitle: t('settingsSession.defaultStorage.persistedSubtitle'),
                                             icon: (
                                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                    <Ionicons name="save-outline" size={22} color={theme.colors.textSecondary} />
+                                                    <Ionicons name="save-outline" size={22} color={theme.colors.text.secondary} />
                                                 </View>
                                             ),
                                         },
@@ -1037,7 +1037,7 @@ export function ProfileEditForm({
                                             subtitle: t('settingsSession.defaultStorage.directSubtitle'),
                                             icon: (
                                                 <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                                                    <Ionicons name="radio-outline" size={22} color={theme.colors.textSecondary} />
+                                                    <Ionicons name="radio-outline" size={22} color={theme.colors.text.secondary} />
                                                 </View>
                                             ),
                                         },
@@ -1090,14 +1090,14 @@ export function ProfileEditForm({
                         <Pressable
                             onPress={onCancel}
                             style={({ pressed }) => ({
-                                backgroundColor: theme.colors.surface,
+                                backgroundColor: theme.colors.surface.base,
                                 borderRadius: 10,
                                 paddingVertical: 12,
                                 alignItems: 'center',
                                 opacity: pressed ? 0.85 : 1,
                             })}
                         >
-                            <Text style={{ color: theme.colors.text, ...Typography.default('semiBold') }}>
+                            <Text style={{ color: theme.colors.text.primary, ...Typography.default('semiBold') }}>
                                 {t('common.cancel')}
                             </Text>
                         </Pressable>
@@ -1143,7 +1143,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     requirementsTitle: {
         ...Typography.default('regular'),
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 13, default: 14 }),
         lineHeight: Platform.select({ ios: 18, default: 20 }),
         letterSpacing: Platform.select({ ios: -0.08, default: 0.1 }),
@@ -1152,7 +1152,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     requirementsSubtitle: {
         ...Typography.default('regular'),
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 13, default: 14 }),
         lineHeight: Platform.select({ ios: 18, default: 20 }),
         letterSpacing: Platform.select({ ios: -0.08, default: 0 }),
@@ -1168,7 +1168,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     fieldLabel: {
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         marginBottom: 4,
     },
     aiBackendStatus: {

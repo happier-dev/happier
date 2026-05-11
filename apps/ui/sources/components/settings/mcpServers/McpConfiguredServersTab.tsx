@@ -90,7 +90,7 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
                     testID="settings.mcpServers.addServer"
                     title={t('settings.mcpServersAddServer')}
                     subtitle={t('settings.mcpServersAddServerSubtitle')}
-                    icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.success} />}
+                    icon={<Ionicons name="add-circle-outline" size={29} color={theme.colors.state.success.foreground} />}
                     onPress={props.onAddServer}
                 />
             </ItemGroup>
@@ -102,7 +102,7 @@ export const McpConfiguredServersTab = React.memo(function McpConfiguredServersT
                         testID={`settings.mcpServers.quickInstall.${preset.id}`}
                         title={preset.title}
                         subtitle={preset.description}
-                        icon={<Ionicons name="flash-outline" size={29} color={theme.colors.success} />}
+                        icon={<Ionicons name="flash-outline" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => props.onOpenQuickInstall(preset.id)}
                     />
                 ))}

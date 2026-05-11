@@ -32,6 +32,7 @@ export * from './mocks/capabilities';
 export * from './mocks/syncOps';
 export * from './mocks/serverScopedRpc';
 export * from './mocks/text';
+export * from './mocks/toolSectionView';
 export * from './mocks/unistyles';
 export * from './render/renderScreen';
 export * from './render/renderWithAppProviders';

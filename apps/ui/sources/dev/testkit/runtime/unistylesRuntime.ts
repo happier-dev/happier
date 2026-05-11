@@ -31,6 +31,7 @@ export async function createUnistylesRuntime(overrides?: TestUnistylesRuntimeOve
         {
             setAdaptiveThemes: (..._args: unknown[]) => {},
             setTheme: (..._args: unknown[]) => {},
+            updateTheme: (..._args: unknown[]) => {},
             setRootViewBackgroundColor: (..._args: unknown[]) => {},
         },
         overrides?.runtime,

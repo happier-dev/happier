@@ -147,9 +147,9 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                                 right: 0,
                                 bottom: 0,
                                 zIndex: overlayZIndexBase + 1,
-                                backgroundColor: theme.colors.surface,
+                                backgroundColor: theme.colors.surface.base,
                                 borderTopWidth: 1,
-                                borderTopColor: theme.colors.divider,
+                                borderTopColor: theme.colors.border.default,
                                 overflow: 'hidden',
                                 transform: [{
                                     translateY: bottomPresence.progress.interpolate({

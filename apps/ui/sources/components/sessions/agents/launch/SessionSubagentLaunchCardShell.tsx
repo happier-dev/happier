@@ -7,9 +7,9 @@ import { Text } from '@/components/ui/text/Text';
 const stylesheet = StyleSheet.create((theme) => ({
     card: {
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         borderRadius: 16,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 14,
         paddingVertical: 14,
         gap: 12,
@@ -18,12 +18,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 4,
     },
     title: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 13,
         fontWeight: '600',
     },
     subtitle: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
     },
 }));

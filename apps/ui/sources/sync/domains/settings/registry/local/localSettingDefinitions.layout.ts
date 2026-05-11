@@ -7,6 +7,13 @@ import {
 } from './localSettingDefinitions.shared';
 
 export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
+    uiContentWidthMode: {
+        schema: z.enum(['compact', 'medium', 'full']),
+        default: 'compact',
+        description: 'Preferred max width for main content containers',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
     rightPaneWidthPx: {
         schema: z.number(),
         default: 360,

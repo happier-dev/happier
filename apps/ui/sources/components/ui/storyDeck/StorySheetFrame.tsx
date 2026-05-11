@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, useWindowDimensions, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useWindowDimensions, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
@@ -14,10 +14,9 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { shadowLevelStyle } from '@/shadowElevation';
 
+import { resolveStoryDeckPresentation } from './storyDeckPresentation';
+
 const PHONE_SHEET_MAX_RATIO = 0.85;
-const TABLET_MAX_WIDTH = 540;
-const DESKTOP_MAX_WIDTH = 380;
-const DESKTOP_MAX_HEIGHT = 620;
 const PHONE_BREAKPOINT = 480;
 
 const DRAG_DISMISS_FRACTION = 0.3;
@@ -49,14 +48,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sheetPhone: {
         width: '100%',
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderTopLeftRadius: 22,
         borderTopRightRadius: 22,
         overflow: 'hidden',
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
     },
     sheetCentered: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderRadius: theme.borderRadius.modalCard,
         overflow: 'hidden',
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
@@ -85,13 +84,14 @@ export function StorySheetFrame(props: StorySheetFrameProps) {
     const reducedMotion = useReducedMotionPreference();
 
     const isPhoneSheet = width <= PHONE_BREAKPOINT;
+    const presentation = resolveStoryDeckPresentation(width);
     const canDragDismiss = isPhoneSheet;
     const sheetMaxHeight = isPhoneSheet
         ? Math.max(0, height * PHONE_SHEET_MAX_RATIO)
-        : Math.min(DESKTOP_MAX_HEIGHT, height * 0.85);
+        : Math.min(presentation.frameMaxHeight, height * 0.85);
     const sheetWidth = isPhoneSheet
         ? width
-        : Math.min(width - 32, Platform.OS === 'web' ? DESKTOP_MAX_WIDTH : TABLET_MAX_WIDTH);
+        : Math.min(width - 32, presentation.frameMaxWidth);
 
     const containerStyle = isPhoneSheet ? styles.backdropPhone : styles.backdropCentered;
 

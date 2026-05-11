@@ -15,6 +15,7 @@ vi.mock('react-native', async () => {
                                                 select: ({ default: value }: { default: number }) => value,
                                             },
                                             View: 'View',
+                                            ScrollView: 'ScrollView',
                                             Pressable: 'Pressable',
                                         }
     );
@@ -52,6 +53,20 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async () => {
                 })
                 : props.trigger,
         ),
+    };
+});
+
+vi.mock('@/components/ui/scroll/ScrollEdgeFades', async () => {
+    const React = await import('react');
+    return {
+        ScrollEdgeFades: (props: any) => React.createElement('ScrollEdgeFades', props),
+    };
+});
+
+vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', async () => {
+    const React = await import('react');
+    return {
+        ScrollEdgeIndicators: (props: any) => React.createElement('ScrollEdgeIndicators', props),
     };
 });
 
@@ -173,7 +188,7 @@ describe('FileActionToolbar', () => {
         expect(screen.findByTestId('file-details-stage-file')?.props.disabled).toBe(false);
     });
 
-    it('shows virtual commit selection actions when live staging is disabled', async () => {
+    it('shows only the remove action when a file is already selected for commit', async () => {
         const { FileActionToolbar } = await import('./FileActionToolbar');
 
         const screen = await renderScreen(
@@ -201,8 +216,128 @@ describe('FileActionToolbar', () => {
             }),
         );
 
-        expect(screen.findByTestId('file-details-stage-file')).toBeTruthy();
+        expect(screen.findByTestId('file-details-stage-file')).toBeNull();
         expect(screen.findByTestId('file-details-unstage-file')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('files.fileActions.removeFromCommitSelection');
+    });
+
+    it('replaces the file selection action with one compact line-selection action when lines are selected', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onApplySelectedLines = vi.fn();
+        const onClearSelection = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: true,
+                selectedLineCount: 2,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines,
+                onClearSelection,
+                isUntrackedFile: false,
+            }),
+        );
+
+        expect(screen.findByTestId('file-details-stage-file')).toBeNull();
+        expect(screen.findByTestId('file-details-unstage-file')).toBeNull();
+        expect(screen.findByTestId('file-details-apply-selected-lines')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('files.fileActions.selectedLines.selectLinesForCommit');
+        expect(screen.getTextContent()).not.toContain('files.fileActions.clearSelection');
+
+        await screen.pressByTestIdAsync('file-details-apply-selected-lines');
+        await screen.pressByTestIdAsync('file-details-clear-selection');
+
+        expect(onApplySelectedLines).toHaveBeenCalledTimes(1);
+        expect(onClearSelection).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses a horizontally scrollable compact action row when selected-line controls overflow', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                fileName: 'logger.ts',
+                filePathDir: 'src/middleware',
+                rightElement: React.createElement('View', { testID: 'file-discard-action' }),
+                displayMode: 'diff',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: true,
+                hasIncludedDelta: false,
+                scmWriteEnabled: true,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: true,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: true,
+                selectedLineCount: 2,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                showDiffToggle: true,
+                showFileToggle: true,
+                fileEditorEnabled: true,
+                isEditingFile: false,
+                onStartEditingFile: () => {},
+            }),
+        );
+
+        const toolbar = screen.findByTestId('file-action-toolbar')!;
+        act(() => {
+            toolbar.props.onLayout({ nativeEvent: { layout: { width: 360 } } });
+        });
+
+        expect(screen.findByTestId('file-details-view-actions')).toBeTruthy();
+        expect(screen.findByTestId('file-details-view-mode-menu')).toBeTruthy();
+        expect(screen.findByTestId('file-details-edit')).toBeTruthy();
+        expect(screen.findByTestId('file-details-apply-selected-lines')).toBeTruthy();
+        expect(screen.findByTestId('file-details-clear-selection')).toBeTruthy();
+        expect(screen.findByTestId('file-discard-action')).toBeTruthy();
+
+        const actionScroll = screen.findByTestId('file-details-compact-action-scroll');
+        expect(actionScroll?.props.horizontal).toBe(true);
+        expect(actionScroll?.props.showsHorizontalScrollIndicator).toBe(false);
+        expect(screen.findByTestId('file-details-compact-action-scroll-content')).toBeTruthy();
+
+        act(() => {
+            actionScroll?.props.onLayout({ nativeEvent: { layout: { width: 220, height: 32 } } });
+            actionScroll?.props.onContentSizeChange(480, 32);
+        });
+        expect(screen.findByType('ScrollEdgeFades' as any)?.props.edges).toMatchObject({
+            left: false,
+            right: true,
+        });
+
+        act(() => {
+            actionScroll?.props.onScroll({
+                nativeEvent: {
+                    contentOffset: { x: 80, y: 0 },
+                    layoutMeasurement: { width: 220, height: 32 },
+                    contentSize: { width: 480, height: 32 },
+                },
+            });
+        });
+        expect(screen.findByType('ScrollEdgeIndicators' as any)?.props.edges).toMatchObject({
+            left: true,
+            right: true,
+        });
     });
 
     it('shows an Edit button in file mode when editor is enabled', async () => {

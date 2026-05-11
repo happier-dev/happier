@@ -64,7 +64,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 11,
         lineHeight: 14,
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         textTransform: 'uppercase',
     },
     latestRow: {
@@ -76,7 +76,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 12,
         paddingVertical: 7,
         borderRadius: 999,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
@@ -90,7 +90,7 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 13,
         lineHeight: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));
 
@@ -180,7 +180,7 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
                                     y1={CHART_PADDING_TOP - 10}
                                     x2={x}
                                     y2={CHART_HEIGHT - CHART_PADDING_BOTTOM + 4}
-                                    stroke={theme.colors.divider}
+                                    stroke={theme.colors.border.default}
                                     strokeOpacity={0.8}
                                     strokeWidth={1}
                                 />
@@ -194,7 +194,7 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
                                 y1={CHART_HEIGHT - CHART_PADDING_BOTTOM - (CHART_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM) * ratio}
                                 x2={chartWidth - CHART_PADDING_X}
                                 y2={CHART_HEIGHT - CHART_PADDING_BOTTOM - (CHART_HEIGHT - CHART_PADDING_TOP - CHART_PADDING_BOTTOM) * ratio}
-                                stroke={theme.colors.divider}
+                                stroke={theme.colors.border.default}
                                 strokeOpacity={0.35}
                                 strokeWidth={1}
                                 strokeDasharray="3 8"
@@ -236,7 +236,7 @@ export function UsageJourneyChart(props: UsageJourneyChartProps): React.ReactEle
                                     y={CHART_HEIGHT - 10}
                                     fontSize="11"
                                     textAnchor="middle"
-                                    fill={theme.colors.textSecondary}
+                                    fill={theme.colors.text.secondary}
                                 >
                                     {formatBucketLabel(bucket.bucketStartMs, bucketCount)}
                                 </SvgText>

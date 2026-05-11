@@ -1,16 +1,25 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { ModalState, ModalConfig, ModalContextValue } from './types';
+import { ModalConfig, ModalContextValue } from './types';
 import { Modal } from './ModalManager';
 import { WebAlertModal } from './components/WebAlertModal';
 import { WebPromptModal } from './components/WebPromptModal';
 import { CustomModal } from './components/CustomModal';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 const ModalContext = createContext<ModalContextValue | undefined>(undefined);
 
 type ModalProviderProps = Readonly<{
     active?: boolean;
     children: React.ReactNode;
+}>;
+
+type ModalHostEntry = ModalConfig & Readonly<{
+    visible: boolean;
+}>;
+
+type ModalHostState = Readonly<{
+    modals: ModalHostEntry[];
 }>;
 
 export function useModal() {
@@ -26,9 +35,33 @@ export function useOptionalModal() {
 }
 
 export function ModalProvider({ active = true, children }: ModalProviderProps) {
-    const [state, setState] = useState<ModalState>({
+    const [state, setState] = useState<ModalHostState>({
         modals: []
     });
+    const stateRef = React.useRef<ModalHostState>(state);
+    const removalTimersRef = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+    useEffect(() => {
+        stateRef.current = state;
+    }, [state]);
+
+    const clearRemovalTimer = useCallback((id: string) => {
+        const timer = removalTimersRef.current.get(id);
+        if (timer == null) return;
+        clearTimeout(timer);
+        removalTimersRef.current.delete(id);
+    }, []);
+
+    const removeModalNow = useCallback((id: string) => {
+        clearRemovalTimer(id);
+        setState(prev => {
+            const nextState = {
+                modals: prev.modals.filter(modal => modal.id !== id)
+            };
+            stateRef.current = nextState;
+            return nextState;
+        });
+    }, [clearRemovalTimer]);
 
     const generateId = useCallback(() => {
         return Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -36,41 +69,84 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
 
     const showModal = useCallback((config: Omit<ModalConfig, 'id'>): string => {
         const id = generateId();
-        const modalConfig: ModalConfig = { ...config, id } as ModalConfig;
+        const modalConfig = { ...config, id, visible: true } as ModalHostEntry;
+        clearRemovalTimer(id);
         
-        setState(prev => ({
-            modals: [...prev.modals, modalConfig]
-        }));
+        setState(prev => {
+            const nextState = {
+                modals: [...prev.modals, modalConfig]
+            };
+            stateRef.current = nextState;
+            return nextState;
+        });
         
         return id;
-    }, [generateId]);
+    }, [clearRemovalTimer, generateId]);
 
     const hideModal = useCallback((id: string) => {
-        setState(prev => ({
-            modals: prev.modals.filter(modal => modal.id !== id)
-        }));
-    }, []);
+        const target = stateRef.current.modals.find(modal => modal.id === id);
+        const shouldDelayRemoval = target?.type === 'custom' && target.visible;
+
+        setState(prev => {
+            const currentTarget = prev.modals.find(modal => modal.id === id);
+            if (!currentTarget) return prev;
+            if (currentTarget.type !== 'custom') {
+                const nextState = {
+                    modals: prev.modals.filter(modal => modal.id !== id),
+                };
+                stateRef.current = nextState;
+                return nextState;
+            }
+
+            const nextState = {
+                modals: prev.modals.map((modal) => (
+                    modal.id === id
+                        ? { ...modal, visible: false }
+                        : modal
+                )),
+            };
+            stateRef.current = nextState;
+            return nextState;
+        });
+
+        if (!shouldDelayRemoval) return;
+        clearRemovalTimer(id);
+        const timer = setTimeout(() => {
+            removeModalNow(id);
+        }, motionTokens.overlay.modal.exitMs);
+        removalTimersRef.current.set(id, timer);
+    }, [clearRemovalTimer, removeModalNow]);
 
     const hideAllModals = useCallback(() => {
-        setState({ modals: [] });
+        for (const timer of removalTimersRef.current.values()) {
+            clearTimeout(timer);
+        }
+        removalTimersRef.current.clear();
+        const nextState = { modals: [] };
+        stateRef.current = nextState;
+        setState(nextState);
     }, []);
 
     const updateCustomModalProps = useCallback((id: string, props: Record<string, unknown>) => {
-        setState((prev) => ({
-            modals: prev.modals.map((modal) => {
-                if (modal.id !== id || modal.type !== 'custom') {
-                    return modal;
-                }
+        setState((prev) => {
+            const nextState = {
+                modals: prev.modals.map((modal) => {
+                    if (modal.id !== id || modal.type !== 'custom') {
+                        return modal;
+                    }
 
-                return {
-                    ...modal,
-                    props: {
-                        ...(modal.props ?? {}),
-                        ...props,
-                    },
-                };
-            }),
-        }));
+                    return {
+                        ...modal,
+                        props: {
+                            ...(modal.props ?? {}),
+                            ...props,
+                        },
+                    };
+                }),
+            };
+            stateRef.current = nextState;
+            return nextState;
+        });
     }, []);
 
     useEffect(() => {
@@ -86,6 +162,15 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         });
     }, [active, showModal, hideModal, hideAllModals, updateCustomModalProps]);
 
+    useEffect(() => {
+        return () => {
+            for (const timer of removalTimersRef.current.values()) {
+                clearTimeout(timer);
+            }
+            removalTimersRef.current.clear();
+        };
+    }, []);
+
     const contextValue: ModalContextValue = {
         state,
         showModal,
@@ -94,7 +179,9 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         updateCustomModalProps,
     };
 
-    const topIndex = state.modals.length - 1;
+    const topVisibleIndex = state.modals.reduce((topIndex, modal, index) => (
+        modal.visible ? index : topIndex
+    ), -1);
     const zIndexStep = 10;
     const zIndexBase = 100000;
 
@@ -103,7 +190,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
             <ModalContext.Provider value={contextValue}>
                 {children}
                 {state.modals.map((modal, index) => {
-                    const showBackdrop = index === topIndex;
+                    const showBackdrop = index === topVisibleIndex;
                     const modalZIndexBase = zIndexBase + index * zIndexStep;
 
                     if (modal.type === 'alert') {
@@ -166,6 +253,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                                 config={modal}
                                 onClose={() => hideModal(modal.id)}
                                 showBackdrop={showBackdrop}
+                                visible={modal.visible}
                                 zIndexBase={modalZIndexBase}
                             />
                         );

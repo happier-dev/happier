@@ -43,11 +43,11 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
         headerBackTitle: t('common.back'),
         headerBackVisible: false,
         headerStyle: {
-            backgroundColor: theme.colors.header.background,
+            backgroundColor: theme.colors.chrome.header.background,
         },
-        headerTintColor: theme.colors.header.tint,
+        headerTintColor: theme.colors.chrome.header.foreground,
         headerTitleStyle: {
-            color: theme.colors.header.tint,
+            color: theme.colors.chrome.header.foreground,
         },
         headerShadowVisible: false,
         headerLeft: () => (
@@ -59,7 +59,7 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
                 accessibilityLabel={t('common.back')}
                 style={{ paddingHorizontal: 12, paddingVertical: 6 }}
             >
-                <Ionicons name="arrow-back" size={24} color={theme.colors.header.tint} />
+                <Ionicons name="arrow-back" size={24} color={theme.colors.chrome.header.foreground} />
             </Pressable>
         ),
         headerRight: () => (
@@ -84,7 +84,7 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
         params.testIdPrefix,
         params.workspaceRef,
         params.workspaceExperienceToggleA11yLabel,
-        theme.colors.header.background,
-        theme.colors.header.tint,
+        theme.colors.chrome.header.background,
+        theme.colors.chrome.header.foreground,
     ]);
 }

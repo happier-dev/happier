@@ -23,6 +23,7 @@ export function ReleaseNotesStorySurface(props: ReleaseNotesStorySurfaceProps) {
                 onDismiss={props.onDismiss}
                 onSecondaryAction={showSecondary ? props.onViewFullChangelog : undefined}
                 secondaryActionLabel={t('releaseNotes.viewFullChangelog')}
+                slideAnimation="softBlur"
                 testID="release-notes"
             />
         </StorySheetFrame>

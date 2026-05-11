@@ -54,7 +54,7 @@ const styles = StyleSheet.create((theme) => ({
         gap: 12,
     },
     fieldLabel: {
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         fontSize: 13,
         fontWeight: '600',
     },
@@ -62,7 +62,7 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.input.background,
         borderRadius: 10,
         borderWidth: 0.5,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         color: theme.colors.input.text,
         paddingHorizontal: 12,
         paddingVertical: 10,

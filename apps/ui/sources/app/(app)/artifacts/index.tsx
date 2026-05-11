@@ -17,7 +17,7 @@ import { shadowLevelStyle } from '@/shadowElevation';
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     contentContainer: {
         paddingBottom: 100,
@@ -35,23 +35,23 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     emptyIcon: {
         marginBottom: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     emptyTitle: {
         fontSize: 18,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 8,
         textAlign: 'center',
     },
     emptyDescription: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         lineHeight: 20,
     },
     artifactItem: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         marginHorizontal: 16,
         marginBottom: 1,
         paddingHorizontal: 16,
@@ -81,11 +81,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     artifactTitle: {
         fontSize: 16,
         fontWeight: '500',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         marginBottom: 4,
     },
     artifactUntitled: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontStyle: 'italic',
     },
     artifactMeta: {
@@ -94,10 +94,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     artifactDate: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     artifactChevron: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     fab: {
         position: 'absolute',
@@ -211,7 +211,7 @@ export default function ArtifactsScreen() {
                     name="chevron-forward" 
                     size={18} 
                     style={styles.artifactChevron}
-                    color={theme.colors.textSecondary}
+                    color={theme.colors.text.secondary}
                 />
             </Pressable>
         );
@@ -237,7 +237,7 @@ export default function ArtifactsScreen() {
                     name="document-text-outline" 
                     size={64} 
                     style={styles.emptyIcon}
-                    color={theme.colors.textSecondary}
+                    color={theme.colors.text.secondary}
                 />
                 <Text style={styles.emptyTitle}>
                     {t('artifacts.empty')}

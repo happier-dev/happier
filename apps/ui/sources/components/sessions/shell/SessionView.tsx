@@ -164,19 +164,19 @@ function SessionAuthRecoveryBanner({ message }: Readonly<{ message: string }>) {
                 flexWrap: 'wrap',
                 paddingHorizontal: 12,
                 paddingVertical: 8,
-                backgroundColor: theme.colors.box.warning.background,
+                backgroundColor: theme.colors.state.warning.background,
                 borderWidth: 1,
-                borderColor: theme.colors.box.warning.border,
+                borderColor: theme.colors.state.warning.border,
                 borderRadius: 10,
                 gap: 8,
             }}
         >
-            <Ionicons name="warning-outline" size={16} color={theme.colors.box.warning.text} />
+            <Ionicons name="warning-outline" size={16} color={theme.colors.state.warning.foreground} />
             <View style={{ flexBasis: 0, flexGrow: 1 }}>
-                <Text style={{ fontSize: 13, color: theme.colors.box.warning.text, fontWeight: '700' }}>
+                <Text style={{ fontSize: 13, color: theme.colors.state.warning.foreground, fontWeight: '700' }}>
                     {t('connect.restoreAccount')}
                 </Text>
-                <Text style={{ fontSize: 12, color: theme.colors.box.warning.text, lineHeight: 16 }}>
+                <Text style={{ fontSize: 12, color: theme.colors.state.warning.foreground, lineHeight: 16 }}>
                     {message}
                 </Text>
             </View>
@@ -190,11 +190,11 @@ function SessionAuthRecoveryBanner({ message }: Readonly<{ message: string }>) {
                     paddingHorizontal: 10,
                     paddingVertical: 6,
                     borderRadius: 8,
-                    backgroundColor: theme.colors.box.warning.text,
+                    backgroundColor: theme.colors.state.warning.foreground,
                     opacity: pressed ? 0.7 : 1,
                 })}
             >
-                <Text style={{ fontSize: 12, color: theme.colors.box.warning.background, fontWeight: '700' }}>
+                <Text style={{ fontSize: 12, color: theme.colors.state.warning.background, fontWeight: '700' }}>
                     {t('connect.restoreAccount')}
                 </Text>
             </Pressable>
@@ -398,9 +398,9 @@ export const SessionView = React.memo((props: {
         return [{
             id: resolveMobileWorkspaceExperienceToggleActionId(mobileWorkspaceExperience),
             title: t(workspaceExperienceToggleLabelKey),
-            icon: <Ionicons name="swap-horizontal-outline" size={18} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="swap-horizontal-outline" size={18} color={theme.colors.text.secondary} />,
         }];
-    }, [mobileWorkspaceExperience, showWorkspaceExperienceToggle, theme.colors.textSecondary, workspaceExperienceToggleLabelKey]);
+    }, [mobileWorkspaceExperience, showWorkspaceExperienceToggle, theme.colors.text.secondary, workspaceExperienceToggleLabelKey]);
 
     const headerWorkspaceDisplay = React.useMemo(() => resolveSessionWorkspaceDisplayPresentation({
         serverId: currentSessionRouteServerId,
@@ -428,8 +428,8 @@ export const SessionView = React.memo((props: {
         handleHeaderExtraItemSelect,
         headerMenuExtraItems,
         router,
-        actionIconColor: theme.colors.textSecondary,
-        headerTintColor: theme.colors.header.tint,
+        actionIconColor: theme.colors.text.secondary,
+        headerTintColor: theme.colors.chrome.header.foreground,
         statusErrorColor: theme.colors.status.error,
         workspaceSubtitle: headerWorkspaceDisplay.displayTitle,
         workspaceSubtitleEllipsizeMode: headerWorkspaceDisplay.subtitleEllipsizeMode,
@@ -449,9 +449,9 @@ export const SessionView = React.memo((props: {
         shouldShowSubagentsButton,
         showAutomations,
         subagentCounts.active,
-        theme.colors.header.tint,
+        theme.colors.chrome.header.foreground,
         theme.colors.status.error,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
         windowWidth,
     ]);
 
@@ -474,7 +474,7 @@ export const SessionView = React.memo((props: {
                     left: 0,
                     right: 0,
                     height: safeAreaTopInset,
-                    backgroundColor: theme.colors.surface,
+                    backgroundColor: theme.colors.surface.base,
                     zIndex: 1000,
                     ...shadowLevelStyle(theme.colors.shadowLevels[3]),
                 }} />
@@ -505,14 +505,14 @@ export const SessionView = React.memo((props: {
                 ) : !isDataReady && !session ? (
                     // Loading state
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                        <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                        <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                     </View>
                 ) : !session ? (
                     // Deleted state
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                        <Ionicons name="trash-outline" size={48} color={theme.colors.textSecondary} />
-                        <Text style={{ color: theme.colors.text, fontSize: 20, marginTop: 16, fontWeight: '600' }}>{t('errors.sessionDeleted')}</Text>
-                        <Text style={{ color: theme.colors.textSecondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32 }}>{t('errors.sessionDeletedDescription')}</Text>
+                        <Ionicons name="trash-outline" size={48} color={theme.colors.text.secondary} />
+                        <Text style={{ color: theme.colors.text.primary, fontSize: 20, marginTop: 16, fontWeight: '600' }}>{t('errors.sessionDeleted')}</Text>
+                        <Text style={{ color: theme.colors.text.secondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32 }}>{t('errors.sessionDeletedDescription')}</Text>
                     </View>
                   ) : props.contentOverride ? (
                       props.contentOverride
@@ -1237,7 +1237,7 @@ function SessionViewLoaded({
               ) : null}
               {shouldShowDeferredTranscriptPlaceholder ? (
                   <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                      <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                      <ActivityIndicator size="small" color={theme.colors.text.secondary} />
                   </View>
               ) : null}
           </>
@@ -1261,10 +1261,10 @@ function SessionViewLoaded({
                             gap: 10,
                         }}
                     >
-                        <Text style={{ fontSize: 18, color: theme.colors.text }}>
+                        <Text style={{ fontSize: 18, color: theme.colors.text.primary }}>
                             {t('navigation.restoreWithSecretKey')}
                         </Text>
-                        <Text style={{ fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20 }}>
+                        <Text style={{ fontSize: 14, color: theme.colors.text.secondary, lineHeight: 20 }}>
                             {t('connect.restoreWithSecretKeyDescription')}
                         </Text>
                         <Pressable
@@ -1275,13 +1275,13 @@ function SessionViewLoaded({
                                 paddingVertical: 12,
                                 paddingHorizontal: 14,
                                 borderRadius: 12,
-                                backgroundColor: theme.colors.surfaceHigh,
+                                backgroundColor: theme.colors.surface.inset,
                                 borderWidth: 1,
-                                borderColor: theme.colors.divider,
+                                borderColor: theme.colors.border.default,
                                 opacity: pressed ? 0.7 : 1,
                             })}
                         >
-                            <Text style={{ fontSize: 14, color: theme.colors.text }}>
+                            <Text style={{ fontSize: 14, color: theme.colors.text.primary }}>
                                 {t('connect.restoreWithSecretKeyInstead')}
                             </Text>
                         </Pressable>
@@ -1290,7 +1290,7 @@ function SessionViewLoaded({
             ) : isLoaded ? (
                 <EmptyMessages session={session} />
             ) : (
-                <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                <ActivityIndicator size="small" color={theme.colors.text.secondary} />
             )}
         </>
     ) : null;
@@ -1376,21 +1376,21 @@ function SessionViewLoaded({
                         flexWrap: 'wrap',
                         paddingHorizontal: 12,
                         paddingVertical: 8,
-                        backgroundColor: theme.colors.box.warning.background,
+                        backgroundColor: theme.colors.state.warning.background,
                         borderWidth: 1,
-                        borderColor: theme.colors.box.warning.border,
+                        borderColor: theme.colors.state.warning.border,
                         borderRadius: 10,
                         marginTop: 8,
                         marginHorizontal: 8,
                         gap: 8,
                     }}
                 >
-                    <Ionicons name="warning-outline" size={16} color={theme.colors.box.warning.text} />
+                    <Ionicons name="warning-outline" size={16} color={theme.colors.state.warning.foreground} />
                     <View style={{ flexBasis: 0, flexGrow: 1 }}>
-                        <Text style={{ fontSize: 13, color: theme.colors.box.warning.text, fontWeight: '700' }}>
+                        <Text style={{ fontSize: 13, color: theme.colors.state.warning.foreground, fontWeight: '700' }}>
                             {t('session.pendingQueuedResumeFailedTitle')}
                         </Text>
-                        <Text style={{ fontSize: 12, color: theme.colors.box.warning.text, lineHeight: 16 }}>
+                        <Text style={{ fontSize: 12, color: theme.colors.state.warning.foreground, lineHeight: 16 }}>
                             {t('session.pendingQueuedResumeFailedBody')}
                         </Text>
                     </View>
@@ -1409,11 +1409,11 @@ function SessionViewLoaded({
                             paddingHorizontal: 10,
                             paddingVertical: 6,
                             borderRadius: 8,
-                            backgroundColor: theme.colors.box.warning.text,
+                            backgroundColor: theme.colors.state.warning.foreground,
                             opacity: pressed || isResuming ? 0.7 : 1,
                         })}
                     >
-                        <Text style={{ fontSize: 12, color: theme.colors.box.warning.background, fontWeight: '700' }}>
+                        <Text style={{ fontSize: 12, color: theme.colors.state.warning.background, fontWeight: '700' }}>
                             {t('common.retry')}
                         </Text>
                     </Pressable>

@@ -252,12 +252,12 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
                                         ? 'ellipse'
                                         : 'ellipse-outline';
                     const iconColor = step.status === 'done'
-                        ? theme.colors.success
+                        ? theme.colors.state.success.foreground
                         : step.status === 'failed'
-                            ? theme.colors.warningCritical
+                            ? theme.colors.state.danger.foreground
                             : step.status === 'active' || step.status === 'waiting'
                                 ? theme.colors.accent.blue
-                                : theme.colors.textTertiary;
+                                : theme.colors.text.tertiary;
 
                     const title = renderValue(resolveSystemTaskStepLabel(step.stepId));
                     const subtitle = showStepMessages && (typeof step.message === 'string' && step.message.trim())

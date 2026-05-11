@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import type {
     ScmBranchCreateResponse,
     ScmFollowupAction,
+    ScmPullRequestOpenComposeResponse,
     ScmPullRequestOpenOrReuseResponse,
 } from '@happier-dev/protocol';
 
@@ -22,6 +23,7 @@ export function SourceControlPullRequestSection(props: Readonly<{
     snapshot: ScmWorkingSnapshot | null;
     disabled?: boolean;
     onOpenOrReuse: (request: Readonly<{ base: string; head: string }>) => Promise<ScmPullRequestOpenOrReuseResponse>;
+    onOpenCompose?: (request: Readonly<{ base: string; head: string }>) => Promise<ScmPullRequestOpenComposeResponse>;
     onCreateFeatureBranch?: (request: Readonly<{ name: string; checkout: true; startPoint?: string }>) => Promise<ScmBranchCreateResponse>;
     onRefresh: () => Promise<void>;
     openUrl?: (url: string) => Promise<void>;
@@ -120,6 +122,25 @@ export function SourceControlPullRequestSection(props: Readonly<{
                         await openFollowup(response.nextAction);
                     }
                     await props.onRefresh();
+                    return;
+                }
+                if (action.kind === 'open-compose') {
+                    if (!props.onOpenCompose) {
+                        setError(t('common.error'));
+                        return;
+                    }
+                    const response = await props.onOpenCompose({
+                        base: action.baseBranch,
+                        head: action.headBranch,
+                    });
+                    if (!response.success) {
+                        setError(readErrorMessage(response));
+                        return;
+                    }
+                    if (response.nextAction.kind === 'openUrl') {
+                        await openFollowup(response.nextAction);
+                    }
+                    await props.onRefresh();
                 }
             } finally {
                 setBusy(false);
@@ -136,13 +157,13 @@ export function SourceControlPullRequestSection(props: Readonly<{
             testID="scm-pull-request-section"
         >
             <View style={{ gap: 8 }}>
-                <Text style={{ fontSize: 12, color: props.theme.colors.text, ...Typography.default('semiBold') }}>
+                <Text style={{ fontSize: 12, color: props.theme.colors.text.primary, ...Typography.default('semiBold') }}>
                     {model.kind === 'existing'
                         ? model.title ?? t('files.sourceControlOperations.update.pullRequest.existing')
                         : t('files.sourceControlOperations.update.pullRequest.ready')}
                 </Text>
                 {model.baseBranch && model.headBranch ? (
-                    <Text style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.default() }}>
+                    <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                         {t('files.sourceControlOperations.update.pullRequest.branchPair', {
                             head: model.headBranch,
                             base: model.baseBranch,
@@ -150,7 +171,7 @@ export function SourceControlPullRequestSection(props: Readonly<{
                     </Text>
                 ) : null}
                 {error ? (
-                    <Text style={{ fontSize: 12, color: props.theme.colors.textSecondary, ...Typography.default() }}>
+                    <Text style={{ fontSize: 12, color: props.theme.colors.text.secondary, ...Typography.default() }}>
                         {error}
                     </Text>
                 ) : null}
@@ -159,9 +180,11 @@ export function SourceControlPullRequestSection(props: Readonly<{
                     testID="scm-pull-request-primary"
                     label={model.kind === 'existing'
                         ? t('files.sourceControlOperations.update.pullRequest.open')
-                        : t('files.sourceControlOperations.update.pullRequest.create')}
+                        : model.primaryAction?.kind === 'open-compose'
+                            ? t('files.sourceControlOperations.update.pullRequest.openCompose')
+                            : t('files.sourceControlOperations.update.pullRequest.create')}
                     kind="primary"
-                    disabled={busy || model.primaryAction?.disabled === true}
+                    disabled={busy || model.primaryAction?.disabled === true || (model.primaryAction?.kind === 'open-compose' && !props.onOpenCompose)}
                     onPress={runPrimary}
                 />
             </View>

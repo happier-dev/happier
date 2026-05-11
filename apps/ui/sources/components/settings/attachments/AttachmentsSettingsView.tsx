@@ -102,7 +102,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
                     <Item
                         title={t('settingsAttachments.fileUploads.title')}
                         subtitle={t('common.disabled')}
-                        icon={<Ionicons name="attach-outline" size={29} color={theme.colors.warningCritical} />}
+                        icon={<Ionicons name="attach-outline" size={29} color={theme.colors.state.danger.foreground} />}
                         showChevron={false}
                     />
                 </ItemGroup>
@@ -111,7 +111,7 @@ export const AttachmentsSettingsView = React.memo(function AttachmentsSettingsVi
     }
 
     const renderIcon = (iconName: IoniconName) => (
-        <Ionicons name={iconName} size={29} color={theme.colors.textSecondary} />
+        <Ionicons name={iconName} size={29} color={theme.colors.text.secondary} />
     );
 
     return (

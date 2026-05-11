@@ -60,7 +60,7 @@ const styles = StyleSheet.create((theme) => ({
         height: 14,
         borderRadius: 7,
         marginBottom: 9,
-        backgroundColor: theme.colors.surfaceHighest,
+        backgroundColor: theme.colors.surface.elevated,
     },
     lineWide: {
         width: '92%',

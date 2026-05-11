@@ -41,6 +41,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     gutterText: {
         fontFamily: resolveCodeMonoFontFamily(),
         fontSize: 11,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
 }));

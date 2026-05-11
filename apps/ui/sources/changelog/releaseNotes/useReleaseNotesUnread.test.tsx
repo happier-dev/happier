@@ -92,4 +92,13 @@ describe('useReleaseNotesUnread', () => {
 
         expect(hook.getCurrent().hasUnread).toBe(true);
     });
+
+    it('keeps release-note unread status available without an explicit story allow', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_ALLOW = '';
+        commitRemoteManifest(makeManifestForCurrentTestVersion());
+
+        const hook = await renderHook(() => useReleaseNotesUnread());
+
+        expect(hook.getCurrent().hasUnread).toBe(true);
+    });
 });

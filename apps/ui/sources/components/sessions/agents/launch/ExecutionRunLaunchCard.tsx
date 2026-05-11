@@ -19,16 +19,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         borderRadius: 10,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
     },
     buttonText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontSize: 12,
         fontWeight: '600',
     },
     secondaryText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontWeight: '500',
     },
@@ -78,7 +78,7 @@ export const ExecutionRunLaunchCard = React.memo((props: Readonly<{ sessionId: s
                     accessibilityRole="button"
                     accessibilityLabel={t('session.subagents.panel.launchExecutionRunsAdvanced')}
                     onPress={() => openNewRun()}
-                    style={({ pressed }) => [styles.button, { opacity: pressed ? 0.7 : 1, borderColor: theme.colors.divider }]}
+                    style={({ pressed }) => [styles.button, { opacity: pressed ? 0.7 : 1, borderColor: theme.colors.border.default }]}
                 >
                     <Text style={styles.secondaryText}>{t('session.subagents.panel.launchExecutionRunsAdvanced')}</Text>
                 </Pressable>

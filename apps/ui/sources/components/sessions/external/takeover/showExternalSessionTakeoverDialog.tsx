@@ -35,27 +35,27 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 13,
         paddingHorizontal: 14,
         borderRadius: 12,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     optionTitle: {
         ...Typography.default('semiBold'),
         fontSize: 14,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     optionSubtitle: {
         marginTop: 4,
         ...Typography.default(),
         fontSize: 12,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     forceStopCard: {
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surfaceHigh,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.inset,
         paddingHorizontal: 14,
         paddingVertical: 12,
         gap: 8,
@@ -70,13 +70,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         ...Typography.default('semiBold'),
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     forceStopBody: {
         ...Typography.default(),
         fontSize: 12,
         lineHeight: 18,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     cancelButton: {
         alignSelf: 'flex-start',
@@ -86,7 +86,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     cancelText: {
         ...Typography.default('semiBold'),
         fontSize: 14,
-        color: theme.colors.textLink,
+        color: theme.colors.text.link,
     },
 }));
 

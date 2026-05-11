@@ -35,7 +35,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     error: {
         ...Typography.default(),
-        color: theme.colors.warningCritical,
+        color: theme.colors.state.danger.foreground,
         textAlign: 'center',
     },
 }));

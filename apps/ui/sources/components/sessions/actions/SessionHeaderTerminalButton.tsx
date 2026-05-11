@@ -91,7 +91,7 @@ export const SessionHeaderTerminalButton = React.memo((_props: Readonly<{ sessio
             accessibilityRole="button"
             accessibilityLabel={t('settings.terminal')}
         >
-            <Ionicons name="terminal-outline" size={22} color={theme.colors.header.tint} />
+            <Ionicons name="terminal-outline" size={22} color={theme.colors.chrome.header.foreground} />
         </Pressable>
     );
 });

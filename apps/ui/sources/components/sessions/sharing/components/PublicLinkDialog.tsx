@@ -351,7 +351,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingTop: 12,
     },
     descriptionText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: Platform.select({ ios: 15, default: 14 }),
         lineHeight: 20,
         letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),

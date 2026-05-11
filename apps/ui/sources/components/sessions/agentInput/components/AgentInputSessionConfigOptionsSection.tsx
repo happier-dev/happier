@@ -153,9 +153,9 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 12,
         paddingHorizontal: 10,
         paddingVertical: 10,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     optionRowPressed: {
         opacity: 0.85,
@@ -173,12 +173,12 @@ const styles = StyleSheet.create((theme) => ({
     optionLabel: {
         fontSize: 14,
         fontWeight: '600',
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     optionDescription: {
         fontSize: 12,
         lineHeight: 16,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     switchWrap: {
         paddingLeft: 8,
@@ -188,9 +188,9 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 12,
         paddingHorizontal: 10,
         paddingVertical: 10,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     choiceRow: {
         flexDirection: 'row',
@@ -204,8 +204,8 @@ const styles = StyleSheet.create((theme) => ({
         paddingVertical: 6,
         borderRadius: 999,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         justifyContent: 'center',
     },
     choicePillSelected: {
@@ -214,9 +214,9 @@ const styles = StyleSheet.create((theme) => ({
     choiceLabel: {
         fontSize: 12,
         fontWeight: '500',
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     choiceLabelSelected: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));

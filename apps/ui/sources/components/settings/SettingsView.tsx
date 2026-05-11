@@ -219,7 +219,7 @@ export const SettingsView = React.memo(function SettingsView() {
         <ItemList style={{ paddingTop: 0 }}>
             {/* App Info Header */}
             <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
-                <View style={{ alignItems: 'center', paddingVertical: 24, backgroundColor: theme.colors.surface, marginTop: 16, borderRadius: 12, marginHorizontal: 16 }}>
+                <View style={{ alignItems: 'center', paddingVertical: 24, backgroundColor: theme.colors.surface.base, marginTop: 16, borderRadius: 12, marginHorizontal: 16 }}>
                     {profile.firstName ? (
                         // Profile view: Avatar + name + version
                         <>
@@ -231,11 +231,11 @@ export const SettingsView = React.memo(function SettingsView() {
                                     thumbhash={profile.avatar?.thumbhash}
                                 />
                             </View>
-                            <Text style={{ fontSize: 20, fontWeight: '600', color: theme.colors.text, marginBottom: bio ? 4 : 8 }}>
+                            <Text style={{ fontSize: 20, fontWeight: '600', color: theme.colors.text.primary, marginBottom: bio ? 4 : 8 }}>
                                 {displayName}
                             </Text>
                             {bio && (
-                                <Text style={{ fontSize: 14, color: theme.colors.textSecondary, textAlign: 'center', marginBottom: 8, paddingHorizontal: 16 }}>
+                                <Text style={{ fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', marginBottom: 8, paddingHorizontal: 16 }}>
                                     {bio}
                                 </Text>
                             )}
@@ -317,7 +317,7 @@ export const SettingsView = React.memo(function SettingsView() {
                         <Item
                             title={t('settings.supportUs')}
                             subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
-                            icon={<Ionicons name="heart" size={29} color={theme.colors.warningCritical} />}
+                            icon={<Ionicons name="heart" size={29} color={theme.colors.state.danger.foreground} />}
                             showChevron={false}
                             onPress={handleSupportUs}
                         />
@@ -477,7 +477,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     <Item
                         title={t('settings.voiceAssistant')}
                         subtitle={t('settings.voiceAssistantSubtitle')}
-                        icon={<Ionicons name="mic-outline" size={29} color={theme.colors.success} />}
+                        icon={<Ionicons name="mic-outline" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => router.push('/(app)/settings/voice')}
                     />
                 ) : null}
@@ -485,7 +485,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     <Item
                         title={t('settings.memorySearch')}
                         subtitle={t('settings.memorySearchSubtitle')}
-                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.success} />}
+                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => router.push('/(app)/settings/memory')}
                     />
                 ) : null}
@@ -531,7 +531,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     <Item
                         title={t('runs.title')}
                         subtitle={t('settings.executionRunsSubtitle')}
-                        icon={<Ionicons name="play-outline" size={29} color={theme.colors.success} />}
+                        icon={<Ionicons name="play-outline" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => router.push('/runs')}
                     />
                 ) : null}
@@ -543,7 +543,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     <Item
                         title={t('settings.filesSourceControl')}
                         subtitle={t('settings.filesSourceControlSubtitle')}
-                        icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.success} />}
+                        icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.state.success.foreground} />}
                         onPress={() => router.push('/(app)/settings/source-control')}
                     />
                 ) : null}
@@ -617,13 +617,13 @@ export const SettingsView = React.memo(function SettingsView() {
                 ) : null}
                 <Item
                     title={t('settings.github')}
-                    icon={<Ionicons name="logo-github" size={29} color={theme.colors.text} />}
+                    icon={<Ionicons name="logo-github" size={29} color={theme.colors.text.primary} />}
                     subtitle="happier-dev/happier"
                     onPress={handleGitHub}
                 />
                 <Item
                     title={t('settings.reportIssue')}
-                    icon={<Ionicons name="bug-outline" size={29} color={theme.colors.warningCritical} />}
+                    icon={<Ionicons name="bug-outline" size={29} color={theme.colors.state.danger.foreground} />}
                     onPress={handleReportIssue}
                 />
                 <Item
@@ -664,7 +664,7 @@ export const SettingsView = React.memo(function SettingsView() {
                 <Item
                     title={t('common.version')}
                     detail={appVersion}
-                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
                     onPress={handleVersionClick}
                     showChevron={false}
                 />

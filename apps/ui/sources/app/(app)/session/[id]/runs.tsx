@@ -46,7 +46,7 @@ export default function SessionRunsScreen() {
   const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionRunsScreen.hydrate', routeScope.hydrationOptions);
   if (!hydrateReady) {
     return (
-      <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
+      <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.background?.canvas ?? theme.colors.surface.base }}>
         <Stack.Screen options={screenOptions} />
         <ConstrainedScreenContent
           style={{
@@ -57,7 +57,7 @@ export default function SessionRunsScreen() {
             gap: 12,
           }}
         >
-          <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+          <ActivityIndicator size="small" color={theme.colors.text.secondary} />
         </ConstrainedScreenContent>
       </View>
     );
@@ -65,8 +65,8 @@ export default function SessionRunsScreen() {
 
   if (!sessionId) {
     return (
-      <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.surface, padding: 16 }}>
-        <Text style={{ color: theme.colors.text }}>{t('errors.sessionDeleted')}</Text>
+      <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.surface.base, padding: 16 }}>
+        <Text style={{ color: theme.colors.text.primary }}>{t('errors.sessionDeleted')}</Text>
       </View>
     );
   }
@@ -84,7 +84,7 @@ function SessionRunsScreenContent(props: Readonly<{
 
   const [state, setState] = React.useState<LoadState>({ status: 'loading' });
   const loadGenerationRef = React.useRef(0);
-  const headerTint = theme.colors.header?.tint ?? theme.colors.text;
+  const headerTint = theme.colors.chrome.header.foreground ?? theme.colors.text.primary;
   const { canLaunchExecutionRuns, executionRunsBackends } = useSessionExecutionRunLaunchability(props.sessionId, session);
   const launchIntents = React.useMemo(
     () => resolveExecutionRunLauncherIntents(executionRunsBackends as ExecutionRunBackendCapabilityMap),
@@ -187,7 +187,7 @@ function SessionRunsScreenContent(props: Readonly<{
   }), [headerRight]);
 
   return (
-    <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.groupped?.background ?? theme.colors.surface }}>
+    <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.background?.canvas ?? theme.colors.surface.base }}>
       <Stack.Screen options={screenOptions} />
       <ConstrainedScreenContent
         style={{
@@ -199,9 +199,9 @@ function SessionRunsScreenContent(props: Readonly<{
         }}
       >
         {state.status === 'loading' ? (
-          <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+          <ActivityIndicator size="small" color={theme.colors.text.secondary} />
         ) : state.status === 'error' ? (
-          <Text style={{ color: theme.colors.textSecondary }}>{state.error}</Text>
+          <Text style={{ color: theme.colors.text.secondary }}>{state.error}</Text>
         ) : (
           <ExecutionRunList
             runs={state.runs}

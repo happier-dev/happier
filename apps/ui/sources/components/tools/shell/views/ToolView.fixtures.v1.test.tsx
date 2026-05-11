@@ -77,11 +77,8 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 }));
 
 vi.mock('../presentation/ToolSectionView', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('../presentation/ToolSectionView')>();
-    return {
-        ...actual,
-        ToolSectionView: () => null,
-    };
+    const { installToolSectionViewModuleMock } = await import('@/dev/testkit/mocks/toolSectionView');
+    return installToolSectionViewModuleMock('null')(importOriginal);
 });
 
 vi.mock('@/hooks/ui/useElapsedTime', () => ({

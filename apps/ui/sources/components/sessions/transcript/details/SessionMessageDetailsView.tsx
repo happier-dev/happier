@@ -30,7 +30,9 @@ import { useSessionRecipientState } from '@/components/sessions/agentInput/routi
 
 type SessionMessageDetailsTheme = Readonly<{
     colors: Readonly<{
-        text: string;
+        text: Readonly<{
+            primary: string;
+        }>;
     }>;
 }>;
 
@@ -56,7 +58,7 @@ export function createSessionMessageDetailsStyles(theme: SessionMessageDetailsTh
             minHeight: 0,
         },
         messageText: {
-            color: theme.colors.text,
+            color: theme.colors.text.primary,
             fontSize: 16,
             lineHeight: 24,
             ...Typography.default(),

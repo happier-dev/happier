@@ -135,7 +135,7 @@ function FavoriteToggle(props: Readonly<{
             <Ionicons
                 name={props.model.favorite ? 'star' : 'star-outline'}
                 size={20}
-                color={props.model.favorite ? props.selectedIndicatorColor : theme.colors.textSecondary}
+                color={props.model.favorite ? props.selectedIndicatorColor : theme.colors.text.secondary}
             />
         </Pressable>
     );
@@ -220,7 +220,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
                 title={row.title}
                 subtitle={row.subtitle}
                 leftElement={normalizeNodeForView(
-                    <Ionicons name="sparkles-outline" size={24} color={theme.colors.textSecondary} />,
+                    <Ionicons name="sparkles-outline" size={24} color={theme.colors.text.secondary} />,
                 )}
                 showChevron={false}
                 selected={selected}
@@ -248,7 +248,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
         props.selectedBackendEntry,
         props.selectedIndicatorColor,
         selectedModelId,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
         toggleFavorite,
     ]);
 
@@ -260,7 +260,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
                 subtitle: row.subtitle,
                 category: t('profiles.groups.favorites'),
                 disabled: !row.available,
-                icon: normalizeNodeForView(<Ionicons name="sparkles-outline" size={20} color={theme.colors.textSecondary} />),
+                icon: normalizeNodeForView(<Ionicons name="sparkles-outline" size={20} color={theme.colors.text.secondary} />),
                 rightElement: row.favoritable ? (
                     <FavoriteToggle
                         model={row}
@@ -276,7 +276,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
                 subtitle: row.subtitle,
                 category: t('common.all'),
                 disabled: !row.available,
-                icon: normalizeNodeForView(<Ionicons name="sparkles-outline" size={20} color={theme.colors.textSecondary} />),
+                icon: normalizeNodeForView(<Ionicons name="sparkles-outline" size={20} color={theme.colors.text.secondary} />),
                 rightElement: row.favoritable ? (
                     <FavoriteToggle
                         model={row}
@@ -308,7 +308,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
                         subtitle: selectedRow?.title ?? t('newSession.selectModelDescription'),
                         showSelectedDetail: false,
                         showSelectedSubtitle: false,
-                        icon: normalizeNodeForView(<Ionicons name="sparkles-outline" size={24} color={theme.colors.textSecondary} />),
+                        icon: normalizeNodeForView(<Ionicons name="sparkles-outline" size={24} color={theme.colors.text.secondary} />),
                         itemProps: {
                             testID: 'new-session-model-dropdown-trigger',
                         },

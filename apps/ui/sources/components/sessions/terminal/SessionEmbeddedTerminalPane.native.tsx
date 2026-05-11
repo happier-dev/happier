@@ -60,20 +60,20 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
             {
                 id: 'sidebar',
                 title: t('terminalEmbedded.location.sidebar'),
-                icon: <Ionicons name="albums-outline" size={18} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="albums-outline" size={18} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'details',
                 title: t('terminalEmbedded.location.details'),
-                icon: <Ionicons name="information-circle-outline" size={18} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="information-circle-outline" size={18} color={theme.colors.text.secondary} />,
             },
             {
                 id: 'bottom',
                 title: t('terminalEmbedded.location.bottom'),
-                icon: <Ionicons name="reorder-four-outline" size={18} color={theme.colors.textSecondary} />,
+                icon: <Ionicons name="reorder-four-outline" size={18} color={theme.colors.text.secondary} />,
             },
         ],
-        [theme.colors.textSecondary],
+        [theme.colors.text.secondary],
     );
 
     const onSelectDock = React.useCallback(
@@ -121,7 +121,7 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
                                 accessibilityLabel={t('terminalEmbedded.dockMenuA11y')}
                                 onPress={toggle}
                             >
-                                <Ionicons name="move-outline" size={18} color={theme.colors.textSecondary} />
+                                <Ionicons name="move-outline" size={18} color={theme.colors.text.secondary} />
                             </Pressable>
                         )}
                         items={dockItems}
@@ -137,7 +137,7 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
         props.currentDockLocation,
         props.onOpenNewTerminalTab,
         testId,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
         showDockMenu,
     ]);
 

@@ -19,13 +19,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 6,
         borderRadius: 999,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: 10,
         paddingVertical: 7,
     },
     tagPressed: {
-        backgroundColor: theme.colors.surfacePressed,
+        backgroundColor: theme.colors.surface.pressed,
     },
     label: {
         fontSize: 12,
@@ -35,10 +35,10 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 function resolveToneColor(theme: any, tone: 'success' | 'warning' | 'accent'): string {
     if (tone === 'success') {
-        return theme.colors.success;
+        return theme.colors.state.success.foreground;
     }
     if (tone === 'warning') {
-        return theme.colors.warningCritical;
+        return theme.colors.state.danger.foreground;
     }
     return theme.colors.accent.indigo;
 }

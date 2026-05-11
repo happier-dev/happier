@@ -8,26 +8,26 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'stretch',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     contentContainer: {
         flex: 1,
         maxWidth: layout.maxWidth,
     },
     headerSection: {
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         paddingHorizontal: 24,
         paddingTop: 14,
     },
     listHeaderSection: {
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
     headerText: {
         fontSize: 13,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     groupHeaderSection: {
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
         paddingHorizontal: 24,
         paddingTop: 10,
         paddingBottom: 5,
@@ -35,13 +35,13 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     groupHeaderTitle: {
         fontSize: 12,
         fontWeight: '600',
-        color: theme.colors.groupped.sectionTitle,
+        color: theme.colors.text.secondary,
         flexShrink: 1,
         ...Typography.default('semiBold'),
     },
     groupHeaderSubtitle: {
         fontSize: 11,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         marginTop: 2,
         ...Typography.default(),
     },
@@ -82,7 +82,7 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         marginLeft: 4,
     },
     groupHeaderActionIcon: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     headerRow: {
         flexDirection: 'row' as const,
@@ -100,7 +100,7 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         width: 16,
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     headerActionButton: {
         width: 18,
@@ -114,7 +114,7 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
         width: 16,
         alignItems: 'center' as const,
         justifyContent: 'center' as const,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     webHoverHiddenChevron: {
         opacity: 0,

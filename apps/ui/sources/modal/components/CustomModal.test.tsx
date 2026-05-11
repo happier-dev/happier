@@ -47,7 +47,6 @@ function SelfChromeModal(props: CustomModalInjectedProps & Readonly<{ label: str
         props.setChrome?.({
             kind: 'card',
             title: 'Self chrome',
-            scrollHost: 'body',
             dimensions: { size: 'md' },
         });
     }, [props.setChrome]);
@@ -64,15 +63,14 @@ function PatchChromeModal(props: CustomModalInjectedProps & Readonly<{ label: st
     return React.createElement('PatchChromeModal', props);
 }
 
-function UnmemoizedNodeChromeModal(props: CustomModalInjectedProps & Readonly<{ label: string }>) {
-    const chrome = {
+function CallbackChromeModal(
+    props: CustomModalInjectedProps & Readonly<{ label: string; onAction: () => void }>,
+) {
+    useModalCardChrome(props.setChrome, React.useMemo(() => ({
         kind: 'card' as const,
-        title: React.createElement('ChromeTitle', { style: { opacity: 1 } }, 'Hello'),
-        subtitle: 'World',
-    };
-
-    useModalCardChrome(props.setChrome, chrome);
-    return React.createElement('UnmemoizedNodeChromeModal', props);
+        footer: React.createElement('FooterAction', { onPress: props.onAction }),
+    }), [props.onAction]));
+    return React.createElement('CallbackChromeModal', props);
 }
 
 function LegacyOnRequestCloseModal(
@@ -83,7 +81,7 @@ function LegacyOnRequestCloseModal(
 
 async function renderCustomModal(config: Omit<CustomModalConfig<any>, 'id'>, onClose = vi.fn()) {
     const { CustomModal } = await import('./CustomModal');
-    return renderScreen(React.createElement(CustomModal, { config: { id: 'test-modal', ...config }, onClose }));
+    return renderScreen(React.createElement(CustomModal, { config: { id: 'test-modal', ...config }, onClose, visible: true }));
 }
 
 describe('CustomModal', () => {
@@ -120,9 +118,9 @@ describe('CustomModal', () => {
                 subtitle: 'Pick a session to resume',
                 actions: chromeActions,
                 footer: chromeFooter,
-                scrollHost: 'body',
-                bodyScroll: 'auto',
                 closeButtonTestID: 'chrome-close',
+                layout: 'fill',
+                bodyScroll: 'auto',
                 dimensions: {
                     size: 'lg',
                 },
@@ -136,9 +134,9 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.subtitle).toBe('Pick a session to resume');
         expect(modalCardFrame.props.actions).toBe(chromeActions);
         expect(modalCardFrame.props.footer).toBe(chromeFooter);
-        expect(modalCardFrame.props.scrollHost).toBe('body');
-        expect(modalCardFrame.props.bodyScroll).toBe('auto');
         expect(modalCardFrame.props.closeButtonTestID).toBe('chrome-close');
+        expect(modalCardFrame.props.layout).toBe('fill');
+        expect(modalCardFrame.props.bodyScroll).toBe('auto');
         expect(screen.findByType(ChromeModal).props.label).toBe('browse');
 
         act(() => {
@@ -158,7 +156,7 @@ describe('CustomModal', () => {
 
         const modalCardFrame = screen.findByType(ModalCardFrame);
         expect(modalCardFrame.props.title).toBe('Self chrome');
-        expect(modalCardFrame.props.scrollHost).toBe('body');
+        expect(modalCardFrame.props.layout).toBe('fit');
         expect(screen.findByType(SelfChromeModal).props.label).toBe('self');
     });
 
@@ -172,8 +170,8 @@ describe('CustomModal', () => {
                 title: 'Base title',
                 subtitle: 'Base subtitle',
                 actions: React.createElement('BaseActions'),
-                scrollHost: 'body',
                 testID: 'base-test',
+                layout: 'fill',
                 dimensions: { size: 'lg' },
             },
         });
@@ -182,20 +180,45 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.title).toBe('Base title');
         expect(modalCardFrame.props.subtitle).toBe('Base subtitle');
         expect(modalCardFrame.props.actions?.type).toBe('BaseActions');
-        expect(modalCardFrame.props.scrollHost).toBe('body');
+        expect(modalCardFrame.props.layout).toBe('fill');
         expect(modalCardFrame.props.footer?.type).toBe('PatchedFooter');
     });
 
-    it('does not loop when chrome nodes are referentially unstable', async () => {
-        const screen = await renderCustomModal({
-            type: 'custom',
-            component: UnmemoizedNodeChromeModal,
-            props: { label: 'unstable' },
-        });
+    it('republishes chrome when only callback props change so footer actions stay fresh', async () => {
+        const firstAction = vi.fn();
+        const secondAction = vi.fn();
+        const { CustomModal } = await import('./CustomModal');
+
+        const screen = await renderScreen(React.createElement(CustomModal, {
+            config: {
+                id: 'test-modal',
+                type: 'custom',
+                component: CallbackChromeModal,
+                props: {
+                    label: 'callback',
+                    onAction: firstAction,
+                },
+            },
+            onClose: vi.fn(),
+            visible: true,
+        }));
+
+        await screen.update(React.createElement(CustomModal, {
+            config: {
+                id: 'test-modal',
+                type: 'custom',
+                component: CallbackChromeModal,
+                props: {
+                    label: 'callback',
+                    onAction: secondAction,
+                },
+            },
+            onClose: vi.fn(),
+            visible: true,
+        }));
 
         const modalCardFrame = screen.findByType(ModalCardFrame);
-        expect(modalCardFrame.props.subtitle).toBe('World');
-        expect(modalCardFrame.props.title?.type).toBe('ChromeTitle');
+        expect(modalCardFrame.props.footer?.props.onPress).toBe(secondAction);
     });
 
     it('does not invoke legacy `props.onRequestClose` when dismissing', async () => {

@@ -9,9 +9,9 @@ describe('overlay theme tokens', () => {
     });
 
     it('keeps the overlay text contract crisp for premium chrome surfaces', () => {
-        expect(lightTheme.colors.overlay.text).toBe('#FFFFFF');
-        expect(darkTheme.colors.overlay.text).toBe('#FFFFFF');
-        expect(lightTheme.colors.overlay.textSecondary).toBe('rgba(255, 255, 255, 0.9)');
-        expect(darkTheme.colors.overlay.textSecondary).toBe('rgba(255, 255, 255, 0.9)');
+        expect(lightTheme.colors.overlay.foreground).toBe('#FFFFFF');
+        expect(darkTheme.colors.overlay.foreground).toBe('#FFFFFF');
+        expect(lightTheme.colors.overlay.secondaryForeground).toBe('rgba(255, 255, 255, 0.9)');
+        expect(darkTheme.colors.overlay.secondaryForeground).toBe('rgba(255, 255, 255, 0.9)');
     });
 });

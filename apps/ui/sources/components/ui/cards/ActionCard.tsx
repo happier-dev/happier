@@ -73,14 +73,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         fontSize: 16,
         lineHeight: 22,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
     description: {
         ...Typography.default('regular'),
         fontSize: 14,
         lineHeight: 20,
         marginTop: 4,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
     },
     buttonRow: {
         flexDirection: 'row',

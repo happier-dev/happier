@@ -45,20 +45,20 @@ export function DesktopPetOverlayContextActions(props: Readonly<{
     const [open, setOpen] = React.useState(false);
     const hasTrayItems = props.trayCount > 0;
     const bubbleTheme = theme.colors.desktopPetOverlay?.bubble ?? {
-        background: theme.colors.surface,
-        backgroundPressed: theme.colors.surfacePressed,
-        text: theme.colors.text,
-        textSecondary: theme.colors.textSecondary,
-        controlBackground: theme.colors.surface,
-        controlBackgroundPressed: theme.colors.surfacePressed,
+        background: theme.colors.surface.base,
+        backgroundPressed: theme.colors.surface.pressed,
+        text: theme.colors.text.primary,
+        textSecondary: theme.colors.text.secondary,
+        controlBackground: theme.colors.surface.base,
+        controlBackgroundPressed: theme.colors.surface.pressed,
     };
     const items = React.useMemo<readonly ContextMenuItem[]>(() => [
         {
             id: 'tuck',
             title: t('settingsPets.overlayClosePetAction'),
-            icon: <Ionicons name="close" size={18} color={theme.colors.textSecondary} />,
+            icon: <Ionicons name="close" size={18} color={theme.colors.text.secondary} />,
         },
-    ], [theme.colors.textSecondary]);
+    ], [theme.colors.text.secondary]);
     const openContextMenu = React.useCallback((event?: DesktopPetOverlayContextMenuEvent) => {
         event?.preventDefault?.();
         event?.stopPropagation?.();
@@ -110,7 +110,7 @@ export function DesktopPetOverlayContextActions(props: Readonly<{
                 {!props.trayOpen && hasTrayItems ? (
                     <Text
                         disableUiFontScaling={true}
-                        style={[styles.countText, { color: theme.colors.overlay.text }]}
+                        style={[styles.countText, { color: theme.colors.overlay.foreground }]}
                     >
                         {Math.min(props.trayCount, 99)}
                     </Text>

@@ -52,7 +52,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 8,
     },
     label: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontWeight: '600',
     },
@@ -64,28 +64,28 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 10,
         paddingHorizontal: 14,
         borderRadius: 10,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     primaryActionText: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         fontWeight: '600',
     },
     secondaryActionText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontWeight: '600',
     },
     errorText: {
-        color: theme.colors.status?.error ?? theme.colors.textDestructive ?? theme.colors.text,
+        color: theme.colors.status?.error ?? theme.colors.state.danger.foreground ?? theme.colors.text.primary,
     },
     guidanceLabel: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontWeight: '600',
     },
     guidanceText: {
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontSize: 12,
         fontFamily: 'Menlo',
     },
@@ -467,11 +467,11 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
     ]);
 
     if (!hydrateReady) {
-        return <ActivityIndicator size="small" color={theme.colors.textSecondary} />;
+        return <ActivityIndicator size="small" color={theme.colors.text.secondary} />;
     }
 
     if (waitingForExecutionRunCapabilities) {
-        return <ActivityIndicator size="small" color={theme.colors.textSecondary} />;
+        return <ActivityIndicator size="small" color={theme.colors.text.secondary} />;
     }
 
     if (!canLaunchExecutionRuns) {
@@ -498,12 +498,12 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
                                     paddingHorizontal: 10,
                                     borderRadius: 10,
                                     borderWidth: 1,
-                                    borderColor: theme.colors.divider,
-                                    backgroundColor: theme.colors.surfaceHigh,
+                                    borderColor: theme.colors.border.default,
+                                    backgroundColor: theme.colors.surface.inset,
                                     opacity: pressed ? 0.7 : 1,
                                 })}
                             >
-                                <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary, fontSize: 12, fontWeight: '600' }}>
+                                <Text style={{ color: selected ? theme.colors.text.primary : theme.colors.text.secondary, fontSize: 12, fontWeight: '600' }}>
                                     {intentLabel}
                                 </Text>
                             </Pressable>
@@ -535,12 +535,12 @@ export const SessionExecutionRunLauncherView = React.memo((props: Readonly<{
                                         paddingHorizontal: 10,
                                         borderRadius: 10,
                                         borderWidth: 1,
-                                        borderColor: theme.colors.divider,
-                                        backgroundColor: theme.colors.surfaceHigh,
+                                        borderColor: theme.colors.border.default,
+                                        backgroundColor: theme.colors.surface.inset,
                                         opacity: pressed ? 0.7 : 1,
                                     })}
                                 >
-                                    <Text style={{ color: selected ? theme.colors.text : theme.colors.textSecondary, fontSize: 12, fontWeight: '600' }}>
+                                    <Text style={{ color: selected ? theme.colors.text.primary : theme.colors.text.secondary, fontSize: 12, fontWeight: '600' }}>
                                         {option.label}
                                     </Text>
                                 </Pressable>

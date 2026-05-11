@@ -29,12 +29,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     message: {
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         ...Typography.default(),
     },
     details: {
         fontSize: 13,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         ...Typography.default(),
     },
     footer: {

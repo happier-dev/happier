@@ -161,20 +161,20 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 10,
         paddingVertical: 6,
         borderRadius: 8,
-        backgroundColor: theme.colors.surfaceHigh,
+        backgroundColor: theme.colors.surface.inset,
         borderWidth: 1,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
     },
     toggleButtonActive: {
-        backgroundColor: theme.colors.surfaceHighest,
-        borderColor: theme.colors.textLink ?? theme.colors.divider,
+        backgroundColor: theme.colors.surface.elevated,
+        borderColor: theme.colors.text.link ?? theme.colors.border.default,
     },
     toggleText: {
         fontSize: 12,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         fontWeight: '600',
     },
     toggleTextActive: {
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
     },
 }));

@@ -115,7 +115,7 @@ function resolveStatusColor(
         case 'failed':
             return theme.colors.status.error;
         case 'review':
-            return theme.colors.success;
+            return theme.colors.state.success.foreground;
         case 'running':
             return theme.colors.status.connected;
     }
@@ -138,12 +138,12 @@ function PetCompanionActivityTrayItemCard(props: Readonly<{
     const statusColor = resolveStatusColor(props.item.status, theme);
     const statusIcon = resolveStatusIcon(props.item.status);
     const bubbleTheme = theme.colors.desktopPetOverlay?.bubble ?? {
-        background: theme.colors.surface,
-        backgroundPressed: theme.colors.surfacePressed,
-        text: theme.colors.text,
-        textSecondary: theme.colors.textSecondary,
-        controlBackground: theme.colors.surface,
-        controlBackgroundPressed: theme.colors.surfacePressed,
+        background: theme.colors.surface.base,
+        backgroundPressed: theme.colors.surface.pressed,
+        text: theme.colors.text.primary,
+        textSecondary: theme.colors.text.secondary,
+        controlBackground: theme.colors.surface.base,
+        controlBackgroundPressed: theme.colors.surface.pressed,
     };
     const primaryButtonTheme = theme.colors.button.primary;
     const writingDirection = I18nManager.isRTL ? 'rtl' : 'ltr';

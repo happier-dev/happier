@@ -69,9 +69,9 @@ const ITEM_RIGHT_GAP = 16;
 
 const stylesheet = StyleSheet.create((theme) => ({
     pathEntrySection: {
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
         borderBottomWidth: 1,
-        borderBottomColor: theme.colors.divider,
+        borderBottomColor: theme.colors.border.default,
     },
     pathEntryContent: {
         width: '100%',
@@ -94,7 +94,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 40,
         position: 'relative',
         borderWidth: 0.5,
-        borderColor: theme.colors.divider,
+        borderColor: theme.colors.border.default,
         justifyContent: 'center',
     },
     pathTextInput: {
@@ -156,7 +156,7 @@ export function PathSelector({
     machineBrowse,
 }: PathSelectorProps) {
     const { theme, rt } = useUnistyles();
-    const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
+    const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text.primary : theme.colors.button.primary.background;
     const styles = stylesheet;
     const modalPortalTarget = useModalPortalTarget();
     const inputRef = useRef<React.ElementRef<typeof TextInput> | null>(null);
@@ -412,12 +412,12 @@ export function PathSelector({
                     {renderIconNode(
                         isFavorite ? 'star' : 'star-outline',
                         24,
-                        isFavorite ? selectedIndicatorColor : theme.colors.textSecondary,
+                        isFavorite ? selectedIndicatorColor : theme.colors.text.secondary,
                     )}
                 </Pressable>
             </View>
         );
-    }, [renderIconNode, selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
+    }, [renderIconNode, selectedIndicatorColor, theme.colors.text.secondary, toggleFavorite]);
 
     const renderFavoriteToggle = React.useCallback((absolutePath: string, isFavorite: boolean) => {
         return (
@@ -431,11 +431,11 @@ export function PathSelector({
                 {renderIconNode(
                     isFavorite ? 'star' : 'star-outline',
                     24,
-                    isFavorite ? selectedIndicatorColor : theme.colors.textSecondary,
+                    isFavorite ? selectedIndicatorColor : theme.colors.text.secondary,
                 )}
             </Pressable>
         );
-    }, [renderIconNode, selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
+    }, [renderIconNode, selectedIndicatorColor, theme.colors.text.secondary, toggleFavorite]);
 
     const renderCustomRightElement = React.useCallback((absolutePath: string) => {
         const isFavorite = favoritePaths.includes(absolutePath);
@@ -454,7 +454,7 @@ export function PathSelector({
                     {renderIconNode(
                         isFavorite ? 'star' : 'star-outline',
                         24,
-                        isFavorite ? selectedIndicatorColor : theme.colors.textSecondary,
+                        isFavorite ? selectedIndicatorColor : theme.colors.text.secondary,
                     )}
                 </Pressable>
                 <Pressable
@@ -466,11 +466,11 @@ export function PathSelector({
                         setTimeout(() => inputRef.current?.focus(), 50);
                     }}
                 >
-                    {renderIconNode('close-circle', 24, theme.colors.textSecondary)}
+                    {renderIconNode('close-circle', 24, theme.colors.text.secondary)}
                 </Pressable>
             </View>
         );
-    }, [favoritePaths, onChangeSelectedPath, renderIconNode, selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
+    }, [favoritePaths, onChangeSelectedPath, renderIconNode, selectedIndicatorColor, theme.colors.text.secondary, toggleFavorite]);
 
     const showSubmittedCustomPathRow = useMemo(() => {
         if (!submittedCustomPath) return null;
@@ -496,14 +496,14 @@ export function PathSelector({
             id: path,
             title: path,
             category: t('newSession.pathPicker.favoritesTitle'),
-            icon: renderIconNode('folder-outline', 20, theme.colors.textSecondary),
+            icon: renderIconNode('folder-outline', 20, theme.colors.text.secondary),
             rightElement: renderFavoriteToggle(path, true),
         }));
         const recentItems = filteredRecentPaths.map((path) => ({
             id: path,
             title: path,
             category: t('newSession.pathPicker.recentTitle'),
-            icon: renderIconNode('folder-outline', 20, theme.colors.textSecondary),
+            icon: renderIconNode('folder-outline', 20, theme.colors.text.secondary),
             rightElement: renderFavoriteToggle(path, favoritePaths.includes(path)),
         }));
         return favoriteGroupPlacement === 'beforeRecent'
@@ -516,7 +516,7 @@ export function PathSelector({
         filteredRecentPaths,
         renderFavoriteToggle,
         renderIconNode,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
     ]);
 
     const handleBlurPathInput = React.useCallback(() => {
@@ -612,7 +612,7 @@ export function PathSelector({
                             subtitle: selectedPath.trim() || t('newSession.pathPicker.emptyAll'),
                             showSelectedDetail: false,
                             showSelectedSubtitle: false,
-                            icon: renderIconNode('folder-outline', 24, theme.colors.textSecondary),
+                            icon: renderIconNode('folder-outline', 24, theme.colors.text.secondary),
                             itemProps: { testID: 'path-selector-saved-paths-dropdown-trigger' },
                         }}
                     />
@@ -624,7 +624,7 @@ export function PathSelector({
                     <Item
                         key={showSubmittedCustomPathRow}
                         title={showSubmittedCustomPathRow}
-                        leftElement={<Ionicons name="folder-outline" size={24} color={theme.colors.textSecondary} />}
+                        leftElement={<Ionicons name="folder-outline" size={24} color={theme.colors.text.secondary} />}
                         onPress={() => focusInputAtEnd(showSubmittedCustomPathRow)}
                         selected={true}
                         showChevron={false}
@@ -663,7 +663,7 @@ export function PathSelector({
                                 <Item
                                     key={path}
                                     title={path}
-                                    leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.textSecondary} />}
+                                    leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.text.secondary} />}
                                     onPress={() => setPathAndFocus(path)}
                                     selected={isSelected}
                                     showChevron={false}
@@ -705,7 +705,7 @@ export function PathSelector({
 	                                <Item
 	                                    key={path}
 	                                    title={path}
-	                                    leftElement={<Ionicons name="folder-outline" size={24} color={theme.colors.textSecondary} />}
+	                                    leftElement={<Ionicons name="folder-outline" size={24} color={theme.colors.text.secondary} />}
 	                                    onPress={() => setPathAndFocus(path)}
                                     selected={isSelected}
                                     showChevron={false}
@@ -746,7 +746,7 @@ export function PathSelector({
 	                                <Item
 	                                    key={path}
 	                                    title={path}
-	                                    leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.textSecondary} />}
+	                                    leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.text.secondary} />}
 	                                    onPress={() => setPathAndFocus(path)}
 	                                    selected={isSelected}
 	                                    showChevron={false}
@@ -768,7 +768,7 @@ export function PathSelector({
 	                            <Item
 	                                key={path}
 	                                title={path}
-	                                leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.textSecondary} />}
+	                                leftElement={<Ionicons name="folder-outline" size={18} color={theme.colors.text.secondary} />}
 	                                onPress={() => setPathAndFocus(path)}
 	                                selected={isSelected}
 	                                showChevron={false}
@@ -810,7 +810,7 @@ export function PathSelector({
 	                                <Item
 	                                    key={path}
 	                                    title={path}
-	                                    leftElement={<Ionicons name="folder-outline" size={24} color={theme.colors.textSecondary} />}
+	                                    leftElement={<Ionicons name="folder-outline" size={24} color={theme.colors.text.secondary} />}
 	                                    onPress={() => setPathAndFocus(path)}
 	                                    selected={isSelected}
 	                                    showChevron={false}
@@ -832,7 +832,7 @@ export function PathSelector({
 	                                <Item
 	                                    key={path}
 	                                    title={path}
-	                                    leftElement={<Ionicons name="folder-outline" size={24} color={theme.colors.textSecondary} />}
+	                                    leftElement={<Ionicons name="folder-outline" size={24} color={theme.colors.text.secondary} />}
 	                                    onPress={() => setPathAndFocus(path)}
 	                                    selected={isSelected}
 	                                    showChevron={false}

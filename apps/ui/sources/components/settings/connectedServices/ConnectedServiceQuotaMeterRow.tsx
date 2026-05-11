@@ -37,25 +37,25 @@ const stylesheet = StyleSheet.create((theme) => ({
     flex: 1,
     height: 6,
     borderRadius: 999,
-    backgroundColor: theme.colors.surfacePressedOverlay,
+    backgroundColor: theme.colors.surface.pressedOverlay,
     overflow: 'hidden',
   },
   barInner: {
     height: 6,
     borderRadius: 999,
-    backgroundColor: theme.colors.success,
+    backgroundColor: theme.colors.state.success.foreground,
   },
   subtitleText: {
     fontSize: 12,
     lineHeight: 16,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
   rightText: {
     minWidth: 74,
     textAlign: 'right',
     fontSize: 12,
     lineHeight: 16,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
 }));
 
@@ -101,7 +101,7 @@ export const ConnectedServiceQuotaMeterRow = React.memo(function ConnectedServic
       showChevron={false}
       rightElement={(
         <Pressable onPress={props.onTogglePin} hitSlop={12} style={{ paddingLeft: 8, paddingVertical: 4 }}>
-          <Ionicons name={pinIcon as IoniconName} size={18} color={props.pinned ? theme.colors.text : theme.colors.textSecondary} />
+          <Ionicons name={pinIcon as IoniconName} size={18} color={props.pinned ? theme.colors.text.primary : theme.colors.text.secondary} />
         </Pressable>
       )}
     />

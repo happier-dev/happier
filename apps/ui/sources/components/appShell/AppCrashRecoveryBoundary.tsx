@@ -84,7 +84,7 @@ export function AppBlockingScreen(props: Readonly<{
   const ordered = [...primary, ...secondary];
 
   return (
-    <View testID={props.testID} style={[styles.container, { backgroundColor: theme.colors.surface }]}>
+    <View testID={props.testID} style={[styles.container, { backgroundColor: theme.colors.surface.base }]}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.content}
@@ -100,30 +100,30 @@ export function AppBlockingScreen(props: Readonly<{
         </View>
         <View style={styles.header}>
           <View style={styles.titleRow}>
-            <View style={[styles.dot, { backgroundColor: theme.colors.warningCritical }]} />
+            <View style={[styles.dot, { backgroundColor: theme.colors.state.danger.foreground }]} />
             <View style={styles.titleColumn}>
               <View>
                 <TextBlock
                   text={props.title}
-                  style={[styles.title, { color: theme.colors.text }]}
+                  style={[styles.title, { color: theme.colors.text.primary }]}
                 />
                 <TextBlock
                   text={props.subtitle}
-                  style={[styles.subtitle, { color: theme.colors.textSecondary }]}
+                  style={[styles.subtitle, { color: theme.colors.text.secondary }]}
                 />
               </View>
             </View>
           </View>
         </View>
 
-        <View style={[styles.card, { backgroundColor: theme.colors.surfaceHigh, borderColor: theme.colors.divider }]}>
+        <View style={[styles.card, { backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default }]}>
           <TextBlock
             text={props.detailsTitle}
-            style={[styles.sectionTitle, { color: theme.colors.textSecondary }]}
+            style={[styles.sectionTitle, { color: theme.colors.text.secondary }]}
           />
           <TextBlock
             text={props.details}
-            style={[styles.details, { color: theme.colors.text }]}
+            style={[styles.details, { color: theme.colors.text.primary }]}
             selectable
           />
         </View>
@@ -140,14 +140,14 @@ export function AppBlockingScreen(props: Readonly<{
                   style={({ pressed }) => [
                     styles.primaryButton,
                     {
-                      backgroundColor: pressed ? theme.colors.surfacePressed : theme.colors.accent.blue,
-                      borderColor: theme.colors.divider,
+                      backgroundColor: pressed ? theme.colors.surface.pressed : theme.colors.accent.blue,
+                      borderColor: theme.colors.border.default,
                     },
                   ]}
                 >
                   <TextBlock
                     text={action.label}
-                    style={[styles.primaryButtonText, { color: theme.colors.overlay.text }]}
+                    style={[styles.primaryButtonText, { color: theme.colors.overlay.foreground }]}
                   />
                 </Pressable>
               );
@@ -162,14 +162,14 @@ export function AppBlockingScreen(props: Readonly<{
                 style={({ pressed }) => [
                   styles.secondaryButton,
                   {
-                    backgroundColor: pressed ? theme.colors.surfacePressed : theme.colors.surfaceHighest,
-                    borderColor: theme.colors.divider,
+                    backgroundColor: pressed ? theme.colors.surface.pressed : theme.colors.surface.elevated,
+                    borderColor: theme.colors.border.default,
                   },
                 ]}
               >
                 <TextBlock
                   text={action.label}
-                  style={[styles.secondaryButtonText, { color: theme.colors.text }]}
+                  style={[styles.secondaryButtonText, { color: theme.colors.text.primary }]}
                 />
               </Pressable>
             );

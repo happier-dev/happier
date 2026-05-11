@@ -18,7 +18,7 @@ export function HiddenInactiveSessionsEmptyState() {
             <CenteredInfoTile
                 titleTestID="sessions-hidden-inactive-empty-state-title"
                 descriptionTestID="sessions-hidden-inactive-empty-state-description"
-                icon={<Ionicons name="chatbubbles-outline" size={48} color={theme.colors.textSecondary} style={{ marginBottom: 12 }} />}
+                icon={<Ionicons name="chatbubbles-outline" size={48} color={theme.colors.text.secondary} style={{ marginBottom: 12 }} />}
                 title={t('settingsFeatures.hiddenInactiveSessionsEmptyStateTitle')}
                 description={t('settingsFeatures.hiddenInactiveSessionsEmptyStateSubtitle')}
             />
@@ -27,7 +27,7 @@ export function HiddenInactiveSessionsEmptyState() {
                 <Item
                     testID="sessions-hidden-inactive-empty-state-open-archived"
                     title={t('sessionInfo.inactiveAndArchivedSessions')}
-                    icon={<Ionicons name="archive-outline" size={22} color={theme.colors.textSecondary} />}
+                    icon={<Ionicons name="archive-outline" size={22} color={theme.colors.text.secondary} />}
                     onPress={handleOpenArchivedSessions}
                 />
             </ItemGroup>

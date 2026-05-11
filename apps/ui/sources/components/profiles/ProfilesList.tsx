@@ -110,7 +110,7 @@ const ProfileRow = React.memo(function ProfileRow(props: ProfileRowProps) {
                 <Text
                     style={{
                         ...Typography.default('regular'),
-                        color: theme.colors.textSecondary,
+                        color: theme.colors.text.secondary,
                         fontSize: Platform.select({ ios: 15, default: 14 }),
                         lineHeight: 20,
                         letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
@@ -132,7 +132,7 @@ const ProfileRow = React.memo(function ProfileRow(props: ProfileRowProps) {
                 </View>
             </View>
         );
-    }, [props.ignoreRowPressRef, props.machineId, props.onSecretBadgePress, props.profile, props.showMobileBadge, props.subtitleText, theme.colors.textSecondary]);
+    }, [props.ignoreRowPressRef, props.machineId, props.onSecretBadgePress, props.profile, props.showMobileBadge, props.subtitleText, theme.colors.text.secondary]);
 
     const onPress = React.useCallback(() => {
         if (props.isDisabled) return;
@@ -200,7 +200,7 @@ export function ProfilesList(props: ProfilesListProps) {
     } = props;
 
     const ignoreRowPressRef = React.useRef(false);
-    const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text : theme.colors.button.primary.background;
+    const selectedIndicatorColor = rt.themeName === 'dark' ? theme.colors.text.primary : theme.colors.button.primary.background;
     const isMobile = useWindowDimensions().width < 580;
 
     const groups = React.useMemo(() => {
@@ -228,7 +228,7 @@ export function ProfilesList(props: ProfilesListProps) {
                     profile,
                     isFavorite,
                     favoriteActionColor: selectedIndicatorColor,
-                    nonFavoriteActionColor: theme.colors.textSecondary,
+                    nonFavoriteActionColor: theme.colors.text.secondary,
                     onToggleFavorite: () => toggleFavorite(profile.id),
                     onEdit: () => onEditProfile?.(profile),
                     onDuplicate: () => onDuplicateProfile?.(profile),
@@ -257,7 +257,7 @@ export function ProfilesList(props: ProfilesListProps) {
         onEditProfile,
         onViewEnvironmentVariables,
         selectedIndicatorColor,
-        theme.colors.textSecondary,
+        theme.colors.text.secondary,
         toggleFavorite,
     ]);
 
@@ -269,7 +269,7 @@ export function ProfilesList(props: ProfilesListProps) {
                 title: isFavorite ? t('profiles.actions.removeFromFavorites') : t('profiles.actions.addToFavorites'),
                 icon: isFavorite ? 'star' : 'star-outline',
                 onPress: () => toggleFavorite(''),
-                color: isFavorite ? selectedIndicatorColor : theme.colors.textSecondary,
+                color: isFavorite ? selectedIndicatorColor : theme.colors.text.secondary,
             },
         ];
 
@@ -292,7 +292,7 @@ export function ProfilesList(props: ProfilesListProps) {
                 />
             </View>
         );
-    }, [isDefaultEnvironmentFavorite, selectedIndicatorColor, theme.colors.textSecondary, toggleFavorite]);
+    }, [isDefaultEnvironmentFavorite, selectedIndicatorColor, theme.colors.text.secondary, toggleFavorite]);
 
     const renderProfileRightElement = React.useCallback((profile: AIBackendProfile, displayName: string, isSelected: boolean, isFavorite: boolean) => {
         const entry = actionsByProfileId.get(profile.id);
@@ -352,7 +352,7 @@ export function ProfilesList(props: ProfilesListProps) {
                             testID="profiles-list-row:default-environment"
                             title={t('profiles.noProfile')}
                             subtitle={t('profiles.noProfileDescription')}
-                            leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.textSecondary} />}
+                            leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.text.secondary} />}
                             showChevron={false}
                             selected={!props.selectedProfileId}
                             onPress={() => {
@@ -469,7 +469,7 @@ export function ProfilesList(props: ProfilesListProps) {
                         testID="profiles-list-row:default-environment"
                         title={t('profiles.noProfile')}
                         subtitle={t('profiles.noProfileDescription')}
-                        leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.textSecondary} />}
+                        leftElement={<Ionicons name="home-outline" size={29} color={theme.colors.text.secondary} />}
                         showChevron={false}
                         selected={!props.selectedProfileId}
                         onPress={() => {

@@ -520,6 +520,7 @@ const ChatListInternal = React.memo((props: {
       const lastScrollOffsetForIntentRef = React.useRef<number | null>(null);
     const lastNativeInitialPinOffsetRef = React.useRef<number | null>(null);
     const scheduledPinRef = React.useRef<{ kind: 'raf' | 'timeout'; id: any; previousWebMetrics: WebTranscriptScrollMetrics | null } | null>(null);
+    const scheduleWebHotTailBottomFollowRef = React.useRef<(() => void) | null>(null);
     const initialWebPinStabilizingRef = React.useRef(false);
 
     const cancelScheduledPinToBottom = React.useCallback(() => {
@@ -819,6 +820,9 @@ const ChatListInternal = React.memo((props: {
         listImplementation === 'flash_v2' &&
         transcriptHotColdSegments.hotItems.length > 0;
     const listData = shouldUseWebHotColdSplit ? transcriptHotColdSegments.coldItems : displayItems;
+    const handleWebHotTailLayout = React.useCallback(() => {
+        scheduleWebHotTailBottomFollowRef.current?.();
+    }, []);
 
     // Keep a synchronous view of the current list items for effects that run between renders
     // (e.g. initial viewport fill and jump-to-seq resolution).
@@ -1213,9 +1217,11 @@ const ChatListInternal = React.memo((props: {
                 startIndex={transcriptHotColdSegments.coldItems.length}
                 renderItemAtIndex={renderTranscriptItemAtIndex}
                 footer={listFooterNode}
+                onTailLayout={handleWebHotTailLayout}
             />
         );
     }, [
+        handleWebHotTailLayout,
         listFooterNode,
         renderTranscriptItemAtIndex,
         shouldUseWebHotColdSplit,
@@ -1495,6 +1501,17 @@ const ChatListInternal = React.memo((props: {
             pinToBottom();
         }, waitMs);
     }, [applyWebBottomFollowAdjustment, listImplementation, pinToBottom, resolveAutoPinWaitMs, usesNativeFlashListBottomMaintenance]);
+
+    React.useLayoutEffect(() => {
+        scheduleWebHotTailBottomFollowRef.current = () => {
+            if (Platform.OS !== 'web') return;
+            if (!shouldUseWebHotColdSplit) return;
+            schedulePinToBottom(captureWebBottomFollowPreviousMetrics());
+        };
+        return () => {
+            scheduleWebHotTailBottomFollowRef.current = null;
+        };
+    }, [captureWebBottomFollowPreviousMetrics, schedulePinToBottom, shouldUseWebHotColdSplit]);
 
     React.useEffect(() => {
         return () => {

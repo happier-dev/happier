@@ -133,7 +133,7 @@ function ProviderIdentityItem(props: Readonly<{
     };
 
     const iconName = props.provider.badgeIconName ?? 'key-outline';
-    const iconColor = theme.colors.textSecondary;
+    const iconColor = theme.colors.text.secondary;
     const icon =
         identity?.avatarUrl ? (
             <Image

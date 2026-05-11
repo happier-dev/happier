@@ -34,8 +34,8 @@ export function DesktopOverlayChoiceDropdownRow<T extends string | number>({
     const [open, setOpen] = React.useState(false);
 
     const items = React.useMemo(
-        () => buildChoiceDropdownItems(choices, theme.colors.textSecondary),
-        [choices, theme.colors.textSecondary],
+        () => buildChoiceDropdownItems(choices, theme.colors.text.secondary),
+        [choices, theme.colors.text.secondary],
     );
     const selectedId = React.useMemo(() => {
         const selectedChoice = findChoiceOption(choices, selectedValue);

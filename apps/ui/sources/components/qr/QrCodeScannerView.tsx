@@ -13,7 +13,7 @@ import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport'
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
-        backgroundColor: theme.colors.surface,
+        backgroundColor: theme.colors.surface.base,
     },
     camera: {
         ...StyleSheet.absoluteFillObject,
@@ -45,14 +45,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     title: {
         ...Typography.default('semiBold'),
         fontSize: 18,
-        color: theme.colors.overlay.text,
+        color: theme.colors.overlay.foreground,
         textAlign: 'center',
     },
     subtitle: {
         ...Typography.default(),
         marginTop: 6,
         fontSize: 13,
-        color: theme.colors.overlay.textSecondary,
+        color: theme.colors.overlay.secondaryForeground,
         textAlign: 'center',
         lineHeight: 18,
     },
@@ -79,13 +79,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     permissionsTitle: {
         ...Typography.default('semiBold'),
         fontSize: 18,
-        color: theme.colors.text,
+        color: theme.colors.text.primary,
         textAlign: 'center',
     },
     permissionsBody: {
         ...Typography.default(),
         fontSize: 14,
-        color: theme.colors.textSecondary,
+        color: theme.colors.text.secondary,
         textAlign: 'center',
         lineHeight: 20,
     },
@@ -178,7 +178,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     if (!permission) {
         return (
             <View style={styles.permissionsCard}>
-                <ActivityIndicator size="small" color={theme.colors.text} />
+                <ActivityIndicator size="small" color={theme.colors.text.primary} />
                 <Text style={styles.permissionsBody}>{t('common.loading')}</Text>
             </View>
         );
@@ -253,7 +253,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                         onPress={props.onCancel}
                         style={styles.closeButton}
                     >
-                        <Ionicons name="close" size={22} color={theme.colors.overlay.text} />
+                        <Ionicons name="close" size={22} color={theme.colors.overlay.foreground} />
                     </Pressable>
                     {props.embedded ? (
                         <View style={styles.spacer} pointerEvents="none" />

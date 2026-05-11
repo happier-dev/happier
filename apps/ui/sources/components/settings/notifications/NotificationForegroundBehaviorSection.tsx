@@ -38,7 +38,7 @@ export function NotificationForegroundBehaviorSection({
                 testID="settings-notifications-foreground-account"
                 title={t('settingsNotifications.foregroundBehavior.account')}
                 subtitle={t('settingsNotifications.foregroundBehavior.accountDescription')}
-                icon={<Ionicons name="sync-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="sync-outline" size={29} color={theme.colors.text.secondary} />}
                 selected={deviceOverrides.foregroundBehavior === 'account'}
                 disabled={deviceOverrides.enabled === false}
                 onPress={() => setForegroundBehavior('account')}

@@ -409,7 +409,7 @@ const profileManagerStyles = StyleSheet.create((theme) => ({
         minHeight: 0,
         borderRadius: 16,
         overflow: 'hidden',
-        backgroundColor: theme.colors.groupped.background,
+        backgroundColor: theme.colors.background.canvas,
     },
 }));
 

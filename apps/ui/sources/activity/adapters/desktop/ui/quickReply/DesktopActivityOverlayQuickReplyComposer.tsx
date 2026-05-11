@@ -146,7 +146,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                         >
                             <Text
                                 numberOfLines={1}
-                                style={[styles.phraseText, { color: theme.colors.overlay.text }]}
+                                style={[styles.phraseText, { color: theme.colors.overlay.foreground }]}
                             >
                                 {phrase}
                             </Text>
@@ -167,7 +167,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                     testID="desktop-activity-overlay-quick-reply-input"
                     accessibilityLabel={t('common.message')}
                     placeholder={t('common.message')}
-                    placeholderTextColor={theme.colors.overlay.textSecondary}
+                    placeholderTextColor={theme.colors.overlay.secondaryForeground}
                     value={draft}
                     onChangeText={handleChangeText}
                     onFocus={handleFocus}
@@ -184,8 +184,8 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                         styles.input,
                         I18nManager.isRTL ? styles.inputRtl : null,
                         {
-                            color: theme.colors.overlay.text,
-                            borderColor: theme.colors.overlay.textSecondary,
+                            color: theme.colors.overlay.foreground,
+                            borderColor: theme.colors.overlay.secondaryForeground,
                         },
                     ]}
                 />
@@ -209,13 +209,13 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
                         !canSendDraft ? styles.disabledAction : null,
                     ]}
                 >
-                    <Octicons name="arrow-up" size={15} color={theme.colors.overlay.text} />
+                    <Octicons name="arrow-up" size={15} color={theme.colors.overlay.foreground} />
                 </Pressable>
             </Pressable>
             {targetUnavailable ? (
                 <Text
                     testID="desktop-activity-overlay-quick-reply-no-target"
-                    style={[styles.errorText, { color: theme.colors.overlay.textSecondary }]}
+                    style={[styles.errorText, { color: theme.colors.overlay.secondaryForeground }]}
                 >
                     {t('errors.sessionNotFound')}
                 </Text>
@@ -223,7 +223,7 @@ export function DesktopActivityOverlayQuickReplyComposer(props: Readonly<{
             {sendFailed && !targetUnavailable ? (
                 <Text
                     testID="desktop-activity-overlay-quick-reply-error"
-                    style={[styles.errorText, { color: theme.colors.overlay.textSecondary }]}
+                    style={[styles.errorText, { color: theme.colors.overlay.secondaryForeground }]}
                 >
                     {t('errors.failedToSendMessage')}
                 </Text>

@@ -38,12 +38,12 @@
 }
 
 ::-webkit-scrollbar-track {
-    background: var(--colors-surface-high);
+    background: var(--colors-surface-inset);
     border-radius: 6px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--colors-divider);
+    background: var(--colors-border-default);
     border-radius: 6px;
     border: 2px solid transparent;
     background-clip: padding-box;
@@ -55,13 +55,13 @@
 }
 
 ::-webkit-scrollbar-corner {
-    background: var(--colors-surface-high);
+    background: var(--colors-surface-inset);
 }
 
 /* Firefox */
 * {
     scrollbar-width: thin;
-    scrollbar-color: var(--colors-divider) var(--colors-surface-high);
+    scrollbar-color: var(--colors-border-default) var(--colors-surface-inset);
 }
 
 /* Expo Router (web) modal sizing

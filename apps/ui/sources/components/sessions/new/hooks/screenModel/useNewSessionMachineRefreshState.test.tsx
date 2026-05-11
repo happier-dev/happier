@@ -84,4 +84,45 @@ describe('useNewSessionMachineRefreshState', () => {
 
         await hook.unmount();
     });
+
+    it('keeps previous path suggestions visible while session data is refreshing', async () => {
+        const initialProps: HookParams = {
+            capabilityServerId: 'server-a',
+            selectedMachineId: 'machine-1',
+            machines: [makeMachine({ id: 'machine-1', metadata: { homeDir: '/Users/test' } })],
+            recentMachinePaths: [
+                { machineId: 'machine-1', path: '/Users/test/Development/lantern' },
+            ],
+            favoriteMachines: [],
+            useEnhancedSessionWizard: false,
+            refreshMachineEnvPresence: vi.fn(),
+            sessions: [
+                createSession({
+                    id: 'session-1',
+                    machineId: 'machine-1',
+                    path: '/Users/test/Development/atlas',
+                    updatedAt: 25,
+                }),
+            ],
+        };
+
+        const hook = await renderMachineRefreshState(initialProps);
+
+        expect(hook.getCurrent().recentPaths).toEqual([
+            '/Users/test/Development/lantern',
+            '/Users/test/Development/atlas',
+        ]);
+
+        await hook.rerender({
+            ...initialProps,
+            sessions: null,
+        });
+
+        expect(hook.getCurrent().recentPaths).toEqual([
+            '/Users/test/Development/lantern',
+            '/Users/test/Development/atlas',
+        ]);
+
+        await hook.unmount();
+    });
 });

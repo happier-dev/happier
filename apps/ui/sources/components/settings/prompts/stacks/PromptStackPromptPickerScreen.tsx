@@ -18,7 +18,7 @@ import { t } from '@/text';
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.groupped.background,
+    backgroundColor: theme.colors.background.canvas,
   },
 }));
 
@@ -109,7 +109,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
               key={doc.id}
               testID={`promptStackPicker.doc.${doc.id}`}
               title={doc.header?.title ?? doc.title ?? t('promptLibrary.untitledPrompt')}
-              icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.textSecondary} />}
+              icon={<Ionicons name="document-text-outline" size={22} color={theme.colors.text.secondary} />}
               onPress={() => add({ kind: 'doc', artifactId: doc.id })}
               rightElement={(
                 <ItemRowActions
@@ -131,7 +131,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
             <Item
               testID="promptStackPicker.emptyPrompts"
               title={t('promptLibrary.stackPickerNoPrompts')}
-              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.textSecondary} />}
+              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           ) : null}
@@ -143,7 +143,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
               key={bundle.id}
               testID={`promptStackPicker.bundle.${bundle.id}`}
               title={bundle.header?.title ?? bundle.title ?? t('promptLibrary.untitledSkill')}
-              icon={<Ionicons name="sparkles-outline" size={22} color={theme.colors.textSecondary} />}
+              icon={<Ionicons name="sparkles-outline" size={22} color={theme.colors.text.secondary} />}
               onPress={() => add({ kind: 'bundle', artifactId: bundle.id })}
               rightElement={(
                 <ItemRowActions
@@ -165,7 +165,7 @@ export const PromptStackPromptPickerScreen = React.memo((props: Readonly<{
             <Item
               testID="promptStackPicker.emptySkills"
               title={t('promptLibrary.stackPickerNoSkills')}
-              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.textSecondary} />}
+              icon={<Ionicons name="information-circle-outline" size={22} color={theme.colors.text.secondary} />}
               showChevron={false}
             />
           ) : null}

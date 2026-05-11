@@ -48,7 +48,7 @@ export function LocalVoiceSttGroup(props: {
           id: spec.id,
           title: spec.title,
           subtitle: spec.subtitle,
-          icon: <Ionicons name={spec.iconName as any} size={22} color={theme.colors.textSecondary} />,
+          icon: <Ionicons name={spec.iconName as any} size={22} color={theme.colors.text.secondary} />,
         }))}
         onSelect={(id) => {
           props.setStt({ ...normalized, provider: id as any });

@@ -106,7 +106,7 @@ export function NotificationQuietHoursSection({
                 testID="settings-notifications-quiet-hours-account-nightly"
                 title={t('settingsNotifications.quietHours.accountNightlyTitle')}
                 subtitle={t('settingsNotifications.quietHours.accountNightlySubtitle')}
-                icon={<Ionicons name="moon-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="moon-outline" size={29} color={theme.colors.text.secondary} />}
                 selected={accountNightlySelected}
                 onPress={setAccountNightly}
                 showChevron={false}
@@ -115,7 +115,7 @@ export function NotificationQuietHoursSection({
                 testID="settings-notifications-quiet-hours-device-account"
                 title={t('settingsNotifications.quietHours.deviceAccountTitle')}
                 subtitle={t('settingsNotifications.quietHours.deviceAccountSubtitle')}
-                icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="phone-portrait-outline" size={29} color={theme.colors.text.secondary} />}
                 selected={deviceOverride.mode === 'account'}
                 onPress={() => setDeviceQuietHoursOverride({ mode: 'account' })}
                 showChevron={false}
@@ -124,7 +124,7 @@ export function NotificationQuietHoursSection({
                 testID="settings-notifications-quiet-hours-device-disabled"
                 title={t('settingsNotifications.quietHours.deviceDisabledTitle')}
                 subtitle={t('settingsNotifications.quietHours.deviceDisabledSubtitle')}
-                icon={<Ionicons name="notifications-off-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="notifications-off-outline" size={29} color={theme.colors.text.secondary} />}
                 selected={deviceOverride.mode === 'disabled'}
                 onPress={() => setDeviceQuietHoursOverride({ mode: 'disabled' })}
                 showChevron={false}
@@ -133,7 +133,7 @@ export function NotificationQuietHoursSection({
                 testID="settings-notifications-quiet-hours-device-custom-nightly"
                 title={t('settingsNotifications.quietHours.deviceCustomNightlyTitle')}
                 subtitle={t('settingsNotifications.quietHours.deviceCustomNightlySubtitle')}
-                icon={<Ionicons name="moon-outline" size={29} color={theme.colors.textSecondary} />}
+                icon={<Ionicons name="moon-outline" size={29} color={theme.colors.text.secondary} />}
                 selected={deviceOverride.mode === 'custom'}
                 onPress={setDeviceCustomNightly}
                 showChevron={false}

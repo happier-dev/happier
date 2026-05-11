@@ -26,7 +26,7 @@ import { PromptDocSelectionGroup } from '@/components/settings/prompts/shared/Pr
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.groupped.background,
+    backgroundColor: theme.colors.background.canvas,
   },
   content: {
     padding: 16,
@@ -45,7 +45,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: 12,
   },
   fieldLabel: {
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     fontSize: 14,
     marginBottom: 8,
   },
@@ -253,7 +253,7 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
               testID="promptTemplate.delete"
               title={t('common.delete')}
               destructive
-              icon={<Ionicons name="trash-outline" size={22} color={theme.colors.textDestructive} />}
+              icon={<Ionicons name="trash-outline" size={22} color={theme.colors.state.danger.foreground} />}
               onPress={remove}
             />
           </ItemGroup>
