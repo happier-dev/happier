@@ -20,6 +20,7 @@ export * from './hooks/renderHook';
 export * from './mocks/icons';
 export * from './mocks/flashList';
 export * from './mocks/modal';
+export * from './mocks/nativeEnvironment';
 export * from './mocks/reactNative';
 export * from './mocks/router';
 export * from './mocks/storage';

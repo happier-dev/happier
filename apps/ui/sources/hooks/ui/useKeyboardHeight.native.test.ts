@@ -29,13 +29,15 @@ vi.mock('react-native', async () => {
     });
 });
 
-vi.mock('react-native-keyboard-controller', () => ({
-    useKeyboardState: () => nativeState.keyboard,
-}));
+vi.mock('react-native-keyboard-controller', async () => {
+    const { createKeyboardControllerMock } = await import('@/dev/testkit/mocks/nativeEnvironment');
+    return createKeyboardControllerMock(nativeState);
+});
 
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => nativeState.safeArea,
-}));
+vi.mock('react-native-safe-area-context', async () => {
+    const { createSafeAreaContextMock } = await import('@/dev/testkit/mocks/nativeEnvironment');
+    return createSafeAreaContextMock(nativeState);
+});
 
 describe('useKeyboardHeight native', () => {
     beforeEach(() => {
