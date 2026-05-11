@@ -1,9 +1,15 @@
+import { basename } from 'node:path';
+
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import {
     persistSessionMedia,
     type PersistSessionMediaResult,
     type SessionMediaProviderFileDownloadResult,
 } from '@/session/media/persistSessionMedia';
+import {
+    inferSessionMediaMimeTypeFromName,
+    normalizeSessionMediaMimeType,
+} from '@/session/media/mime';
 import type { SessionMediaFailureV1 } from '@happier-dev/protocol';
 import type {
     SessionMediaIngestionSource,
@@ -112,7 +118,14 @@ function sanitizeBridgeMeta(meta: Record<string, unknown> | undefined): Record<s
 }
 
 function sanitizeOrigin(origin: SessionMediaOrigin): SessionMediaOrigin {
-    return { source: origin.source };
+    return {
+        source: origin.source,
+        ...(typeof origin.agentId === 'string' && origin.agentId.trim() ? { agentId: origin.agentId } : {}),
+        ...(typeof origin.toolCallId === 'string' && origin.toolCallId.trim() ? { toolCallId: origin.toolCallId } : {}),
+        ...(typeof origin.generationId === 'string' && origin.generationId.trim() ? { generationId: origin.generationId } : {}),
+        ...(typeof origin.providerEventId === 'string' && origin.providerEventId.trim() ? { providerEventId: origin.providerEventId } : {}),
+        ...(typeof origin.providerFileId === 'string' && origin.providerFileId.trim() ? { providerFileId: origin.providerFileId } : {}),
+    };
 }
 
 function sanitizeMediaItem(item: SessionMediaItemV1): SessionMediaItemV1 {
@@ -124,15 +137,50 @@ function sanitizeMediaItem(item: SessionMediaItemV1): SessionMediaItemV1 {
 
 function buildFailure(
     request: SendAgentSessionMediaCommittedRequest,
+    entry: SessionMediaBridgeInput,
     index: number,
     result: Extract<PersistSessionMediaResult, { success: false }> | Readonly<{ code: string }>,
 ): SessionMediaFailureV1 {
+    const name = resolveFailureName(entry, index);
+    const mimeType = normalizeSessionMediaMimeType(readSourceMimeType(entry.source))
+        ?? inferSessionMediaMimeTypeFromName(name)
+        ?? undefined;
     return {
         index,
         code: result.code,
         role: request.role,
         category: request.category,
+        mediaKind: 'image',
+        name,
+        ...(mimeType ? { mimeType } : {}),
+        ...(typeof entry.createdAtMs === 'number' ? { createdAtMs: entry.createdAtMs } : {}),
+        origin: sanitizeOrigin(entry.origin),
     };
+}
+
+function readSourceMimeType(source: SessionMediaIngestionSource): string | undefined {
+    return 'mimeType' in source && typeof source.mimeType === 'string' ? source.mimeType : undefined;
+}
+
+function readSourceNameHint(source: SessionMediaIngestionSource): string | undefined {
+    return 'fileNameHint' in source && typeof source.fileNameHint === 'string' ? source.fileNameHint : undefined;
+}
+
+function sanitizeFailureName(value: string, fallback: string): string {
+    const baseName = basename(value).trim();
+    const normalized = baseName.replace(/[^\w.\- ()]/g, '_').replace(/_+/g, '_');
+    if (!normalized || normalized === '.' || normalized === '..') return fallback;
+    return normalized;
+}
+
+function resolveFailureName(entry: SessionMediaBridgeInput, index: number): string {
+    const fallback = `media-${index + 1}`;
+    if (entry.suggestedName) return sanitizeFailureName(entry.suggestedName, fallback);
+    const sourceNameHint = readSourceNameHint(entry.source);
+    if (sourceNameHint) return sanitizeFailureName(sourceNameHint, fallback);
+    if (entry.source.kind === 'local-file') return sanitizeFailureName(entry.source.path, fallback);
+    if (entry.source.kind === 'local-uri') return sanitizeFailureName(entry.source.uri, fallback);
+    return fallback;
 }
 
 function buildSessionMediaMeta(
@@ -160,7 +208,7 @@ export async function persistSessionMediaForTranscript(
     for (let index = 0; index < deps.request.media.length; index += 1) {
         const entry = deps.request.media[index]!;
         if (!workingDirectory) {
-            failures.push(buildFailure(deps.request, index, { code: 'missing_working_directory' }));
+            failures.push(buildFailure(deps.request, entry, index, { code: 'missing_working_directory' }));
             continue;
         }
         const result = await persistSessionMedia({
@@ -173,7 +221,7 @@ export async function persistSessionMediaForTranscript(
                 role: deps.request.role,
                 category: deps.request.category,
                 source: entry.source,
-                origin: sanitizeOrigin(entry.origin),
+                origin: entry.origin,
                 ...(entry.suggestedName ? { suggestedName: entry.suggestedName } : {}),
                 ...(typeof entry.createdAtMs === 'number' ? { createdAtMs: entry.createdAtMs } : {}),
             },
@@ -181,7 +229,7 @@ export async function persistSessionMediaForTranscript(
         if (result.success) {
             items.push(sanitizeMediaItem(result.item));
         } else {
-            failures.push(buildFailure(deps.request, index, result));
+            failures.push(buildFailure(deps.request, entry, index, result));
         }
     }
 
