@@ -26,13 +26,8 @@ const rememberInputSchema: ListToolsResult['tools'][number]['inputSchema'] = {
     tags: { anyOf: [{ type: 'array', items: { type: 'string' } }, { type: 'null' }] },
     metadata: {
       type: 'object',
-      allOf: [
-        {
-          type: 'object',
-          properties: { source: { type: 'string' } },
-          required: ['source'],
-        },
-      ],
+      properties: { source: { type: 'string' } },
+      required: ['source'],
       additionalProperties: false,
     },
   },
@@ -88,13 +83,8 @@ function expectRememberSchemaPreserved(inputSchema: unknown): void {
       tags: { anyOf: [{ type: 'array', items: { type: 'string' } }, { type: 'null' }] },
       metadata: {
         type: 'object',
-        allOf: [
-          {
-            type: 'object',
-            properties: { source: { type: 'string' } },
-            required: ['source'],
-          },
-        ],
+        properties: { source: { type: 'string' } },
+        required: ['source'],
         additionalProperties: false,
       },
     },
@@ -209,6 +199,7 @@ describe('remoteMcpStdioBridge', () => {
   it('proxies listTools/callTool over streamable http via stdio', async () => {
     const httpServer = await startTestMcpHttpServer();
     const tmp = await mkdtemp(join(tmpdir(), 'happier-mcp-bridge-it-'));
+    let client: Client | null = null;
     try {
       const configPath = join(tmp, 'happier-mcp-remote-bridge.it.json');
       await writeFile(
@@ -233,7 +224,7 @@ describe('remoteMcpStdioBridge', () => {
         },
       });
 
-      const client = new Client({ name: 'bridge-test', version: '1.0.0' }, { capabilities: {} });
+      client = new Client({ name: 'bridge-test', version: '1.0.0' }, { capabilities: {} });
       await client.connect(transport);
 
       const tools = await client.listTools();
@@ -252,8 +243,8 @@ describe('remoteMcpStdioBridge', () => {
       const rememberText = readFirstTextContent(rememberRes);
       expect(rememberText).toBe('store this');
 
-      await client.close();
     } finally {
+      await client?.close().catch(() => {});
       httpServer.stop();
       await rm(tmp, { recursive: true, force: true });
     }
@@ -262,6 +253,7 @@ describe('remoteMcpStdioBridge', () => {
   it('supports SSE transport via stdio bridge', async () => {
     const sseServer = await startTestMcpSseServer();
     const tmp = await mkdtemp(join(tmpdir(), 'happier-mcp-bridge-it-'));
+    let client: Client | null = null;
     try {
       const configPath = join(tmp, 'bridge.json');
       await writeFile(
@@ -286,7 +278,7 @@ describe('remoteMcpStdioBridge', () => {
         },
       });
 
-      const client = new Client({ name: 'bridge-test-sse', version: '1.0.0' }, { capabilities: {} });
+      client = new Client({ name: 'bridge-test-sse', version: '1.0.0' }, { capabilities: {} });
       await client.connect(transport);
 
       const tools = await client.listTools();
@@ -301,8 +293,8 @@ describe('remoteMcpStdioBridge', () => {
       const rememberText = readFirstTextContent(rememberRes);
       expect(rememberText).toBe('store this');
 
-      await client.close();
     } finally {
+      await client?.close().catch(() => {});
       sseServer.stop();
       await rm(tmp, { recursive: true, force: true });
     }

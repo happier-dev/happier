@@ -85,7 +85,7 @@ async function main(): Promise<void> {
 
   const server = new Server(
     { name: 'Happier MCP Remote Bridge', version: '1.0.0' },
-    { capabilities: { tools: { listChanged: true } } },
+    { capabilities: { tools: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async (request) => await remoteClient.listTools(request.params));
