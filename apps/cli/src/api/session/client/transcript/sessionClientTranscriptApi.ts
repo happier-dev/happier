@@ -306,7 +306,7 @@ export function createSessionClientTranscriptApi(
                 },
             );
             if (messageText.trim().length === 0) {
-                deps.turnAssistantTextSnapshotStore?.reset({ reason: 'clear' });
+                deps.turnAssistantTextSnapshotStore?.clearSnapshot({ reason: 'media_only_commit' });
             }
         },
 

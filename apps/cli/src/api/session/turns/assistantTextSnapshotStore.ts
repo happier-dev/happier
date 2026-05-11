@@ -140,6 +140,13 @@ export function createTurnAssistantTextSnapshotStore(params?: Readonly<{
       return activeSnapshot;
     },
 
+    clearSnapshot(input) {
+      if (!activeSnapshot) return;
+      const turnToken = normalizeNullableString(input?.turnToken);
+      if (turnToken && activeSnapshot.turnToken !== turnToken) return;
+      activeSnapshot = null;
+    },
+
     completeTurn(input) {
       const turnToken = normalizeNullableString(input.turnToken);
       if (!turnToken || activeTurn?.turnToken !== turnToken) return;
