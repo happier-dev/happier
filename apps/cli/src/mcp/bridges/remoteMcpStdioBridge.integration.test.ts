@@ -57,13 +57,25 @@ function createRemoteTestMcpServer(name: string): Server {
   const server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: remoteTools }));
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const args = request.params.arguments ?? {};
     if (request.params.name === 'echo') {
       return { content: [{ type: 'text' as const, text: String(args.text ?? '') }], isError: false as const };
     }
     if (request.params.name === 'remember') {
-      return { content: [{ type: 'text' as const, text: String(args.content ?? '') }], isError: false as const };
+      const progressToken = request.params._meta?.progressToken;
+      if (typeof progressToken === 'string' || typeof progressToken === 'number') {
+        await extra.sendNotification({
+          method: 'notifications/progress',
+          params: {
+            progressToken,
+            progress: 1,
+            total: 2,
+            message: String(request.params._meta?.requestTrace ?? 'missing-trace'),
+          },
+        });
+      }
+      return { content: [{ type: 'text' as const, text: `${String(args.content ?? '')}:${String(request.params._meta?.requestTrace ?? '')}` }], isError: false as const };
     }
     return { content: [{ type: 'text' as const, text: `Unknown tool: ${request.params.name}` }], isError: true as const };
   });
@@ -239,9 +251,20 @@ describe('remoteMcpStdioBridge', () => {
       const text = readFirstTextContent(res);
       expect(text).toBe('hi');
 
-      const rememberRes = await client.callTool({ name: 'remember', arguments: { content: 'store this', tags: ['workflow'], metadata: { source: 'test' } } });
+      const progressEvents: Array<{ progress: number; total?: number; message?: string }> = [];
+      const rememberRes = await client.callTool(
+        { name: 'remember', arguments: { content: 'store this', tags: ['workflow'], metadata: { source: 'test' } }, _meta: { requestTrace: 'trace-http' } },
+        undefined,
+        { onprogress: (progress) => progressEvents.push(progress) },
+      );
       const rememberText = readFirstTextContent(rememberRes);
-      expect(rememberText).toBe('store this');
+      expect(rememberText).toBe('store this:trace-http');
+      expect(progressEvents).toEqual([{ progress: 1, total: 2, message: 'trace-http' }]);
+
+      const closeStartedAt = Date.now();
+      await client.close();
+      client = null;
+      expect(Date.now() - closeStartedAt).toBeLessThan(1_500);
 
     } finally {
       await client?.close().catch(() => {});
@@ -289,9 +312,9 @@ describe('remoteMcpStdioBridge', () => {
       const text = readFirstTextContent(res);
       expect(text).toBe('hi');
 
-      const rememberRes = await client.callTool({ name: 'remember', arguments: { content: 'store this', tags: ['workflow'], metadata: { source: 'test' } } });
+      const rememberRes = await client.callTool({ name: 'remember', arguments: { content: 'store this', tags: ['workflow'], metadata: { source: 'test' } }, _meta: { requestTrace: 'trace-sse' } });
       const rememberText = readFirstTextContent(rememberRes);
-      expect(rememberText).toBe('store this');
+      expect(rememberText).toBe('store this:trace-sse');
 
     } finally {
       await client?.close().catch(() => {});

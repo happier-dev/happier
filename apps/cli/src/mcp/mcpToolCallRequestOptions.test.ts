@@ -92,4 +92,31 @@ describe('callMcpToolWithResolvedTimeout', () => {
       { timeout: 165_000 },
     );
   });
+
+  it('preserves request metadata and progress callbacks when calling the MCP client', async () => {
+    const callTool = vi.fn().mockResolvedValue({ content: [] });
+    const client = { callTool } as unknown as Pick<Client, 'callTool'>;
+    const onprogress = vi.fn();
+
+    await callMcpToolWithResolvedTimeout({
+      client,
+      toolName: 'remember',
+      args: { content: 'store this' },
+      requestMetadata: { requestTrace: 'trace-1', progressToken: 'downstream-token' },
+      onprogress,
+    });
+
+    expect(callTool).toHaveBeenCalledWith(
+      {
+        name: 'remember',
+        arguments: { content: 'store this' },
+        _meta: { requestTrace: 'trace-1', progressToken: 'downstream-token' },
+      },
+      undefined,
+      {
+        timeout: DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS,
+        onprogress,
+      },
+    );
+  });
 });

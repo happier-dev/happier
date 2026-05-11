@@ -90,14 +90,50 @@ async function main(): Promise<void> {
 
   server.setRequestHandler(ListToolsRequestSchema, async (request) => await remoteClient.listTools(request.params));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => await callMcpToolWithResolvedTimeout({
-    client: remoteClient,
-    toolName: request.params.name,
-    args: request.params.arguments,
-  }));
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    const progressToken = request.params._meta?.progressToken;
+    const onprogress = typeof progressToken === 'string' || typeof progressToken === 'number'
+      ? (progress: Readonly<{ progress: number; total?: number; message?: string }>) => {
+        void extra.sendNotification({
+          method: 'notifications/progress',
+          params: {
+            ...progress,
+            progressToken,
+          },
+        }).catch((err) => {
+          writeStderr(`[happier-mcp-remote-bridge] Failed to forward progress: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+      : undefined;
+
+    return await callMcpToolWithResolvedTimeout({
+      client: remoteClient,
+      toolName: request.params.name,
+      args: request.params.arguments,
+      requestMetadata: request.params._meta,
+      onprogress,
+    });
+  });
+
+  let didCloseRemoteClient = false;
+  const closeRemoteClientOnce = async (): Promise<void> => {
+    if (didCloseRemoteClient) return;
+    didCloseRemoteClient = true;
+    await remoteClient.close().catch(() => {});
+  };
 
   const stdio = new StdioServerTransport();
   await server.connect(stdio);
+  const previousOnClose = stdio.onclose;
+  stdio.onclose = () => {
+    previousOnClose?.();
+    void closeRemoteClientOnce();
+  };
+  process.stdin.once('end', () => {
+    void server.close().catch((err) => {
+      writeStderr(`[happier-mcp-remote-bridge] Failed to close stdio server: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  });
 }
 
 main().catch((err) => {

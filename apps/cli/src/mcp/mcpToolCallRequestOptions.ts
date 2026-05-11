@@ -1,4 +1,6 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type { RequestMeta } from '@modelcontextprotocol/sdk/types.js';
 
 import { configuration } from '@/configuration';
 
@@ -65,13 +67,22 @@ export async function callMcpToolWithResolvedTimeout(params: Readonly<{
   client: McpCallToolClient;
   toolName: string;
   args: unknown;
+  requestMetadata?: RequestMeta;
+  onprogress?: RequestOptions['onprogress'];
 }>): ReturnType<Client['callTool']> {
   return await params.client.callTool(
-    { name: params.toolName, arguments: normalizeMcpToolArguments(params.args) },
+    {
+      name: params.toolName,
+      arguments: normalizeMcpToolArguments(params.args),
+      ...(params.requestMetadata === undefined ? {} : { _meta: params.requestMetadata }),
+    },
     undefined,
-    resolveMcpToolCallRequestOptions({
-      toolName: params.toolName,
-      args: params.args,
-    }),
+    {
+      ...resolveMcpToolCallRequestOptions({
+        toolName: params.toolName,
+        args: params.args,
+      }),
+      ...(params.onprogress === undefined ? {} : { onprogress: params.onprogress }),
+    },
   );
 }
