@@ -1,8 +1,6 @@
 import chalk from 'chalk';
-import { z } from 'zod';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
-import { PERMISSION_MODES, isPermissionMode } from '@/api/types';
 import { runClaude, type StartOptions } from '@/backends/claude/runClaude';
 import { isClaudeCliJavaScriptFile } from '@/backends/claude/utils/resolveClaudeCliPath';
 import { readCredentials, readSettings } from '@/persistence';
@@ -27,6 +25,7 @@ import { readProviderCliOverride } from '@/runtime/managedTools/providerCliResol
 import { isBun } from '@/utils/runtime';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { handleResumeCommand } from '@/cli/commands/resume';
+import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
 import packageJson from '../../../../package.json';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -71,6 +70,41 @@ export function stripHappyInternalSettingsFlag(
   return stripped;
 }
 
+function extractClaudeWrapperFlags(args: readonly string[]): {
+  argsWithoutWrapperFlags: string[];
+  chromeOverride: boolean | undefined;
+  jsRuntime: StartOptions['jsRuntime'];
+} {
+  const argsWithoutWrapperFlags: string[] = [];
+  let chromeOverride: boolean | undefined;
+  let jsRuntime: StartOptions['jsRuntime'];
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === '--chrome') {
+      chromeOverride = true;
+      continue;
+    }
+    if (arg === '--no-chrome') {
+      chromeOverride = false;
+      continue;
+    }
+    if (arg === '--js-runtime') {
+      const runtime = args[i + 1];
+      if (runtime !== 'node' && runtime !== 'bun') {
+        console.error(chalk.red(`Invalid --js-runtime value: ${runtime}. Must be 'node' or 'bun'`));
+        process.exit(1);
+      }
+      jsRuntime = runtime;
+      i += 1;
+      continue;
+    }
+    argsWithoutWrapperFlags.push(arg);
+  }
+
+  return { argsWithoutWrapperFlags, chromeOverride, jsRuntime };
+}
+
 export async function handleClaudeCliCommand(context: CommandContext): Promise<void> {
   const args = [...context.args];
 
@@ -82,141 +116,40 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
 
   const strippedArgs = stripHappyInternalSettingsFlag(args);
 
-  // Parse command line arguments for main command
-  const options: StartOptions = {};
-  let showHelp = false;
-  let showVersion = false;
-  let refreshSettings = false;
-  let profileQuery: string | null = null;
-  let chromeOverride: boolean | undefined = undefined;
-  const unknownArgs: string[] = []; // Collect unknown args to pass through to claude
+  const claudeWrapperFlags = extractClaudeWrapperFlags(strippedArgs);
+  const parsed = partitionProviderSessionArgs({
+    args: claudeWrapperFlags.argsWithoutWrapperFlags,
+    providerSubcommand: 'claude',
+    forwardModelFlag: true,
+    forwardResumeFlag: true,
+    yoloProviderArgs: ['--dangerously-skip-permissions'],
+  });
 
-  for (let i = 0; i < strippedArgs.length; i++) {
-    const arg = strippedArgs[i];
-
-    if (arg === '-h' || arg === '--help') {
-      showHelp = true;
-      unknownArgs.push(arg);
-    } else if (arg === '-v' || arg === '--version') {
-      showVersion = true;
-      unknownArgs.push(arg);
-    } else if (arg === '--refresh-settings') {
-      refreshSettings = true;
-    } else if (arg === '--profile') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red('Missing value for --profile (expected: profile id or name)'));
-        process.exit(1);
-      }
-      const raw = strippedArgs[++i];
-      const normalized = typeof raw === 'string' ? raw.trim() : '';
-      if (!normalized) {
-        console.error(chalk.red('Invalid --profile value: empty'));
-        process.exit(1);
-      }
-      profileQuery = normalized;
-    } else if (arg.startsWith('--profile=')) {
-      const normalized = arg.slice('--profile='.length).trim();
-      if (!normalized) {
-        console.error(chalk.red('Invalid --profile value: empty'));
-        process.exit(1);
-      }
-      profileQuery = normalized;
-    } else if (arg === '--happy-starting-mode') {
-      options.startingMode = z.enum(['local', 'remote']).parse(strippedArgs[++i]);
-    } else if (arg === '--yolo') {
-      // Shortcut for --dangerously-skip-permissions
-      unknownArgs.push('--dangerously-skip-permissions');
-    } else if (arg === '--started-by') {
-      options.startedBy = strippedArgs[++i] as 'daemon' | 'terminal';
-    } else if (arg === '--permission-mode') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red(`Missing value for --permission-mode. Valid values: ${PERMISSION_MODES.join(', ')}`));
-        process.exit(1);
-      }
-      const value = strippedArgs[++i];
-      if (!isPermissionMode(value)) {
-        console.error(chalk.red(`Invalid --permission-mode value: ${value}. Valid values: ${PERMISSION_MODES.join(', ')}`));
-        process.exit(1);
-      }
-      options.permissionMode = value;
-    } else if (arg.startsWith('--permission-mode=')) {
-      const value = arg.slice('--permission-mode='.length).trim();
-      if (!value) {
-        console.error(chalk.red(`Missing value for --permission-mode. Valid values: ${PERMISSION_MODES.join(', ')}`));
-        process.exit(1);
-      }
-      if (!isPermissionMode(value)) {
-        console.error(chalk.red(`Invalid --permission-mode value: ${value}. Valid values: ${PERMISSION_MODES.join(', ')}`));
-        process.exit(1);
-      }
-      options.permissionMode = value;
-    } else if (arg === '--permission-mode-updated-at') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red('Missing value for --permission-mode-updated-at (expected: unix ms timestamp)'));
-        process.exit(1);
-      }
-      const raw = strippedArgs[++i];
-      const parsedAt = Number(raw);
-      if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
-        console.error(chalk.red(`Invalid --permission-mode-updated-at value: ${raw}. Expected a positive number (unix ms)`));
-        process.exit(1);
-      }
-      options.permissionModeUpdatedAt = Math.floor(parsedAt);
-    } else if (arg === '--model') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red('Missing value for --model (expected: model id)'));
-        process.exit(1);
-      }
-      const raw = strippedArgs[++i];
-      const normalized = typeof raw === 'string' ? raw.trim() : '';
-      if (!normalized) {
-        console.error(chalk.red('Invalid --model value: empty'));
-        process.exit(1);
-      }
-      options.modelId = normalized;
-      unknownArgs.push('--model', normalized);
-    } else if (arg === '--model-updated-at') {
-      if (i + 1 >= strippedArgs.length) {
-        console.error(chalk.red('Missing value for --model-updated-at (expected: unix ms timestamp)'));
-        process.exit(1);
-      }
-      const raw = strippedArgs[++i];
-      const parsedAt = Number(raw);
-      if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
-        console.error(chalk.red(`Invalid --model-updated-at value: ${raw}. Expected a positive number (unix ms)`));
-        process.exit(1);
-      }
-      options.modelUpdatedAt = Math.floor(parsedAt);
-    } else if (arg === '--account-settings-version-hint') {
-      if (i + 1 < strippedArgs.length && !strippedArgs[i + 1]?.startsWith('-')) {
-        i += 1;
-      }
-    } else if (arg === '--js-runtime') {
-      const runtime = strippedArgs[++i];
-      if (runtime !== 'node' && runtime !== 'bun') {
-        console.error(chalk.red(`Invalid --js-runtime value: ${runtime}. Must be 'node' or 'bun'`));
-        process.exit(1);
-      }
-      options.jsRuntime = runtime;
-    } else if (arg === '--existing-session') {
-      // Used by daemon to reconnect to an existing session (for inactive session resume)
-      options.existingSessionId = strippedArgs[++i];
-    } else if (arg === '--chrome') {
-      chromeOverride = true;
-    } else if (arg === '--no-chrome') {
-      chromeOverride = false;
-    } else {
-      unknownArgs.push(arg);
-      // Check if this arg expects a value (simplified check for common patterns)
-      if (i + 1 < strippedArgs.length && !strippedArgs[i + 1].startsWith('-')) {
-        unknownArgs.push(strippedArgs[++i]);
-      }
+  const options: StartOptions = {
+    ...(parsed.permissionMode ? { permissionMode: parsed.permissionMode } : {}),
+    ...(typeof parsed.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: parsed.permissionModeUpdatedAt } : {}),
+    ...(parsed.modelId ? { modelId: parsed.modelId } : {}),
+    ...(typeof parsed.modelUpdatedAt === 'number' ? { modelUpdatedAt: parsed.modelUpdatedAt } : {}),
+    ...(parsed.startedBy ? { startedBy: parsed.startedBy } : {}),
+    ...(parsed.existingSessionId ? { existingSessionId: parsed.existingSessionId } : {}),
+    ...(claudeWrapperFlags.jsRuntime ? { jsRuntime: claudeWrapperFlags.jsRuntime } : {}),
+  };
+  if (parsed.startingMode) {
+    if (parsed.startingMode !== 'local' && parsed.startingMode !== 'remote') {
+      console.error(chalk.red(`Invalid --happy-starting-mode: ${parsed.startingMode}. Use "local" or "remote".`));
+      process.exit(1);
     }
+    options.startingMode = parsed.startingMode;
+  }
+  if (parsed.providerArgs.length > 0) {
+    options.claudeArgs = [...parsed.providerArgs];
   }
 
-  if (unknownArgs.length > 0) {
-    options.claudeArgs = [...(options.claudeArgs || []), ...unknownArgs];
-  }
+  const showHelp = parsed.helpRequested;
+  const showVersion = parsed.versionRequested;
+  const refreshSettings = parsed.refreshSettings;
+  const profileQuery = parsed.profileQuery ?? null;
+  const chromeOverride = claudeWrapperFlags.chromeOverride;
 
   if (typeof options.modelId === 'string' && options.modelId.trim()) {
     options.model = options.modelId.trim();

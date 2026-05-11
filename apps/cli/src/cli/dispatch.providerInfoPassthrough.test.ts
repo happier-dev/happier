@@ -34,7 +34,7 @@ describe('dispatchCli provider info passthrough', () => {
     passthroughSpy.mockReturnValue(false);
   });
 
-  it('short-circuits provider --help requests before invoking the provider command handler', async () => {
+  it('lets provider command handlers render combined provider help', async () => {
     passthroughSpy.mockReturnValue(true);
 
     await dispatchCli({
@@ -43,10 +43,11 @@ describe('dispatchCli provider info passthrough', () => {
       terminalRuntime: null,
     });
 
-    expect(passthroughSpy).toHaveBeenCalledWith({
-      agentId: 'gemini',
+    expect(passthroughSpy).not.toHaveBeenCalled();
+    expect(geminiHandlerSpy).toHaveBeenCalledWith({
       args: ['gemini', '--help'],
+      rawArgv: ['happier', 'gemini', '--help'],
+      terminalRuntime: null,
     });
-    expect(geminiHandlerSpy).not.toHaveBeenCalled();
   });
 });

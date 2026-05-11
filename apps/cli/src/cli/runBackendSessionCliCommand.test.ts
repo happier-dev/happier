@@ -514,7 +514,7 @@ describe('runBackendSessionCliCommand', () => {
     }
   });
 
-  it('short-circuits --help to the resolved provider CLI without auth or session startup', async () => {
+  it('shows combined Happier and provider help without auth or session startup', async () => {
     const root = join(tmpdir(), `happier-codex-help-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const codexPath = join(root, process.platform === 'win32' ? 'codex.cmd' : 'codex');
     mkdirSync(root, { recursive: true });
@@ -522,6 +522,7 @@ describe('runBackendSessionCliCommand', () => {
     if (process.platform !== 'win32') chmodSync(codexPath, 0o755);
     process.env.HAPPIER_CODEX_PATH = codexPath;
     spawnSyncSpy.mockReturnValue({ status: 0, signal: null, error: undefined } as any);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const readCredentialsSpy = vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue({ token: 'x' } as any);
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials: { token: 'x' } } as any);
@@ -542,6 +543,8 @@ describe('runBackendSessionCliCommand', () => {
           windowsHide: true,
         }),
       );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('happier'));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('codex CLI Options'));
       expect(loadRun).not.toHaveBeenCalled();
       expect(readCredentialsSpy).not.toHaveBeenCalled();
       expect(authSpy).not.toHaveBeenCalled();

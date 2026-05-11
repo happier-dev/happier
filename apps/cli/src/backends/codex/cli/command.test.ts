@@ -99,4 +99,23 @@ describe('handleCodexCliCommand', () => {
       directory: '/tmp/from-long-flag',
     }));
   });
+
+  it('preserves Codex-native args while consuming Happier session flags', async () => {
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(null);
+    vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
+    const runSpy = vi.spyOn(runCodexModule, 'runCodex').mockResolvedValue();
+
+    await handleCodexCliCommand({
+      args: ['--permission-mode', 'yolo', 'resume', '--all'],
+      terminalRuntime: null,
+    } as any);
+
+    expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({
+      credentials,
+      permissionMode: 'yolo',
+      codexArgs: ['resume', '--all'],
+    }));
+  });
 });

@@ -70,6 +70,7 @@ async function resolveCodexTuiInvocation(opts: {
   cwd: string;
   resumeId?: string | null;
   permissionMode: PermissionMode;
+  codexArgs?: readonly string[];
 }): Promise<{ command: string; args: string[] }> {
   return await resolveCodexCliInvocation({
     args: buildCodexTuiArgs(opts),
@@ -116,13 +117,13 @@ function buildCodexTuiChildEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function buildCodexTuiArgs(opts: { cwd: string; resumeId?: string | null; permissionMode: PermissionMode }): string[] {
+function buildCodexTuiArgs(opts: {
+  cwd: string;
+  resumeId?: string | null;
+  permissionMode: PermissionMode;
+  codexArgs?: readonly string[];
+}): string[] {
   const args: string[] = [];
-
-  const resumeId = typeof opts.resumeId === 'string' && opts.resumeId.trim().length > 0 ? opts.resumeId.trim() : null;
-  if (resumeId) {
-    args.push('resume', resumeId);
-  }
 
   // Always enforce working directory to match the Happy session path.
   args.push('--cd', opts.cwd);
@@ -135,6 +136,16 @@ function buildCodexTuiArgs(opts: { cwd: string; resumeId?: string | null; permis
     const { approvalPolicy, sandbox } = resolveCodexMcpPolicyForPermissionMode(opts.permissionMode);
     args.push('--ask-for-approval', approvalPolicy);
     args.push('--sandbox', sandbox);
+  }
+
+  if (opts.codexArgs && opts.codexArgs.length > 0) {
+    args.push(...opts.codexArgs);
+    return args;
+  }
+
+  const resumeId = typeof opts.resumeId === 'string' && opts.resumeId.trim().length > 0 ? opts.resumeId.trim() : null;
+  if (resumeId) {
+    args.push('resume', resumeId);
   }
 
   return args;
@@ -152,6 +163,7 @@ export async function codexLocalLauncher<TMode>(opts: {
   messageQueue: MessageQueue2<TMode>;
   permissionMode?: PermissionMode;
   resumeId?: string | null;
+  codexArgs?: readonly string[];
   debugMirroring?: boolean;
   rolloutDiscovery?: Partial<CodexRolloutDiscoveryConfig>;
 }): Promise<CodexLauncherResult> {
@@ -366,6 +378,7 @@ export async function codexLocalLauncher<TMode>(opts: {
       cwd: opts.path,
       resumeId: opts.resumeId,
       permissionMode: opts.permissionMode ?? 'default',
+      codexArgs: opts.codexArgs ?? [],
     });
 
     const invocation = resolveWindowsCommandInvocation({

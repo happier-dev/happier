@@ -4,9 +4,8 @@ import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFla
 import { commandRegistry } from '@/cli/commandRegistry';
 import { buildRootHelpText } from '@/cli/buildRootHelpText';
 import { isTmuxAllowedCommand } from '@/cli/commandSurfaceManifest';
-import { maybePassthroughProviderCliInfoRequest } from '@/cli/providerCliPassthrough';
 import { readStartedByArg } from '@/cli/readStartedByArg';
-import { requireCatalogEntry, resolveCatalogAgentIdForCliSubcommand } from '@/backends/catalog';
+import { requireCatalogEntry } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
 import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation } from '@/daemon/ensureDaemon';
 import { applyEphemeralServerSelectionFromPrefixArgs } from '@/server/serverSelection';
@@ -88,13 +87,6 @@ export async function dispatchCli(params: Readonly<{
   }
   const commandHandler = (subcommand ? commandRegistry[subcommand] : undefined);
   if (commandHandler) {
-    const catalogAgentId =
-      typeof subcommand === 'string' && subcommand.length > 0
-        ? resolveCatalogAgentIdForCliSubcommand(subcommand)
-        : null;
-    if (catalogAgentId && maybePassthroughProviderCliInfoRequest({ agentId: catalogAgentId, args })) {
-      return;
-    }
     await commandHandler({ args, rawArgv, terminalRuntime });
     return;
   }

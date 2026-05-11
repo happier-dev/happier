@@ -98,7 +98,7 @@ describe('maybePassthroughProviderCliInfoRequest', () => {
     };
   }
 
-  it('passes native Codex resume subcommands through to the provider CLI', () => {
+  it('does not native-spawn provider subcommands through the info passthrough path', () => {
     spawnSyncMock.mockReturnValue(successfulSpawnResult());
     requireProviderCliLaunchSpecMock.mockReturnValueOnce({
       source: 'system',
@@ -110,44 +110,6 @@ describe('maybePassthroughProviderCliInfoRequest', () => {
     const handled = maybePassthroughProviderCliInfoRequest({
       agentId: 'codex',
       args: ['codex', 'resume', '--all'],
-      processEnv: process.env,
-    });
-
-    expect(handled).toBe(true);
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      'codex',
-      ['resume', '--all'],
-      expect.objectContaining({ stdio: 'inherit', windowsHide: true }),
-    );
-  });
-
-  it('passes native Codex fork subcommands through to the provider CLI', () => {
-    spawnSyncMock.mockReturnValue(successfulSpawnResult());
-    requireProviderCliLaunchSpecMock.mockReturnValueOnce({
-      source: 'system',
-      resolvedPath: 'codex',
-      command: 'codex',
-      args: [],
-    });
-
-    const handled = maybePassthroughProviderCliInfoRequest({
-      agentId: 'codex',
-      args: ['codex', 'fork', 'thread-1'],
-      processEnv: process.env,
-    });
-
-    expect(handled).toBe(true);
-    expect(spawnSyncMock).toHaveBeenCalledWith(
-      'codex',
-      ['fork', 'thread-1'],
-      expect.objectContaining({ stdio: 'inherit', windowsHide: true }),
-    );
-  });
-
-  it('does not pass unsupported native provider subcommands through', () => {
-    const handled = maybePassthroughProviderCliInfoRequest({
-      agentId: 'gemini',
-      args: ['gemini', 'resume', '--all'],
       processEnv: process.env,
     });
 

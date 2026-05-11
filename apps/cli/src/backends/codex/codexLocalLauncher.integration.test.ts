@@ -407,6 +407,58 @@ describe('codexLocalLauncher', () => {
     }
   });
 
+  it('passes provider-native Codex args after Happier wrapper args', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const argsPath = join(fixture.binDir, 'argv.json');
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      recordArgv: true,
+    });
+
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: argsPath,
+    });
+
+    try {
+      const launcherPromise = codexLocalLauncher({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        resumeId: sessionId,
+        codexArgs: ['resume', '--all'],
+      });
+
+      await waitFor(() => {
+        expect(existsSync(argsPath)).toBe(true);
+      });
+      const argv = JSON.parse(await readFile(argsPath, 'utf8')) as string[];
+      const cdIndex = argv.indexOf('--cd');
+      expect(cdIndex).toBeGreaterThanOrEqual(0);
+      expect(argv.slice(cdIndex, cdIndex + 4)).toEqual(['--cd', fixture.sessionsRoot, 'resume', '--all']);
+      expect(argv).not.toContain(sessionId);
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
+      await waitFor(() => {
+        expect(existsSync(fixture.terminatedFlag)).toBe(true);
+      });
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
   it('maps read-only permission mode to never approvalPolicy', async () => {
     const fixture = await createCodexBinaryFixture();
     const argsPath = join(fixture.binDir, 'argv.json');

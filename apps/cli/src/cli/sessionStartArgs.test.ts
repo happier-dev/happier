@@ -49,12 +49,12 @@ describe('parseSessionStartArgs', () => {
 
   it('accepts bypass-permissions as bypassPermissions', () => {
     const parsed = parseWithTrap(['happier', '--permission-mode', 'bypass-permissions']);
-    expect(parsed.permissionMode).toBe('yolo');
+    expect(parsed.permissionMode).toBe('bypassPermissions');
   });
 
   it('accepts accept-edits as acceptEdits', () => {
     const parsed = parseWithTrap(['happier', '--permission-mode', 'accept-edits']);
-    expect(parsed.permissionMode).toBe('safe-yolo');
+    expect(parsed.permissionMode).toBe('acceptEdits');
   });
 
   it('accepts ask as default', () => {

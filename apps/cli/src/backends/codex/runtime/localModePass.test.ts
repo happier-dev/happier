@@ -87,4 +87,32 @@ describe('runCodexLocalModePass', () => {
 
     expect(result).toEqual({ type: 'remote', resumeId: 'resume-123' });
   });
+
+  it('passes provider-native Codex args through to the local launcher', async () => {
+    const queue = new MessageQueue2<Mode>(() => 'hash');
+    const session = {
+      listPendingMessageQueueV2LocalIds: vi.fn().mockResolvedValue([]),
+      discardPendingMessageQueueV2All: vi.fn(),
+      discardCommittedMessageLocalIds: vi.fn(),
+      sendSessionEvent: vi.fn(),
+    };
+    const launchLocal = vi.fn().mockResolvedValue({ type: 'switch', resumeId: 'resume-123' });
+
+    await runCodexLocalModePass({
+      session: session as unknown as ApiSessionClient,
+      messageQueue: queue,
+      workspaceDir: '/tmp/project',
+      api: {},
+      permissionMode: 'default',
+      resumeId: null,
+      codexArgs: ['resume', '--all'],
+      launchLocal,
+      discardController: vi.fn(),
+      formatError: (error: unknown) => String(error),
+    });
+
+    expect(launchLocal).toHaveBeenCalledWith(expect.objectContaining({
+      codexArgs: ['resume', '--all'],
+    }));
+  });
 });

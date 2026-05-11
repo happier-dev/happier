@@ -23,6 +23,7 @@ export async function runCodexLocalModePass<Mode extends QueueModeWithLocalId>(o
   api: unknown;
   permissionMode: PermissionMode;
   resumeId: string | null;
+  codexArgs?: readonly string[];
   formatError: (error: unknown) => string;
   launchLocal?: (args: {
     path: string;
@@ -31,6 +32,7 @@ export async function runCodexLocalModePass<Mode extends QueueModeWithLocalId>(o
     messageQueue: MessageQueue2<Mode>;
     permissionMode: PermissionMode;
     resumeId: string | null;
+    codexArgs?: readonly string[];
   }) => Promise<CodexLauncherResult>;
   discardController?: DiscardController;
 }): Promise<CodexLocalModePassResult> {
@@ -75,6 +77,7 @@ export async function runCodexLocalModePass<Mode extends QueueModeWithLocalId>(o
     messageQueue: opts.messageQueue,
     permissionMode: opts.permissionMode,
     resumeId: opts.resumeId,
+    codexArgs: opts.codexArgs ?? [],
   });
 
   if (localResult.type === 'exit') {

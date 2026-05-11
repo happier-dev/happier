@@ -1,11 +1,6 @@
-import chalk from 'chalk';
-import { isPermissionMode, type PermissionMode } from '@/api/types';
-import {
-  PERMISSION_INTENTS,
-  getAgentSessionModesKind,
-  parsePermissionIntentAlias as parsePermissionIntentAliasShared,
-  type AgentId,
-} from '@happier-dev/agents';
+import type { PermissionMode } from '@/api/types';
+import { getAgentSessionModesKind, type AgentId } from '@happier-dev/agents';
+import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
 
 export type ParsedSessionStartArgs = {
   startedBy: 'daemon' | 'terminal' | undefined;
@@ -17,135 +12,20 @@ export type ParsedSessionStartArgs = {
   modelUpdatedAt: number | undefined;
 };
 
-const PERMISSION_MODE_EXAMPLES = [
-  '--permission-mode read-only',
-  '--permission-mode yolo',
-  '--permission-mode accept-edits',
-] as const;
-
-function parsePermissionModeAlias(raw: string): PermissionMode | null {
-  const parsed = parsePermissionIntentAliasShared(raw);
-  if (!parsed) return null;
-  // Defensive: keep CLI's PermissionMode as the gate until the type is fully unified.
-  return isPermissionMode(parsed) ? parsed : null;
-}
-
 export function parseSessionStartArgs(args: string[]): ParsedSessionStartArgs {
-  let startedBy: 'daemon' | 'terminal' | undefined = undefined;
-  let permissionMode: PermissionMode | undefined = undefined;
-  let permissionModeUpdatedAt: number | undefined = undefined;
-  let agentModeId: string | undefined = undefined;
-  let agentModeUpdatedAt: number | undefined = undefined;
-  let modelId: string | undefined = undefined;
-  let modelUpdatedAt: number | undefined = undefined;
+  const parsed = partitionProviderSessionArgs({
+    args: args[0] === 'happier' ? args.slice(1) : args,
+  });
 
-  for (let i = 1; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--started-by') {
-      if (i + 1 >= args.length) {
-        console.error(chalk.red('Missing value for --started-by (expected: daemon|terminal)'));
-        process.exit(1);
-      }
-      const value = args[++i];
-      if (value !== 'daemon' && value !== 'terminal') {
-        console.error(chalk.red(`Invalid --started-by value: ${value}. Expected: daemon|terminal`));
-        process.exit(1);
-      }
-      startedBy = value;
-    } else if (arg === '--permission-mode') {
-      if (i + 1 >= args.length) {
-        console.error(
-          chalk.red(
-            `Missing value for --permission-mode. Valid values: ${PERMISSION_INTENTS.join(', ')}. Examples: ${PERMISSION_MODE_EXAMPLES.join(
-              ' | ',
-            )}`,
-          ),
-        );
-        process.exit(1);
-      }
-      const value = args[++i];
-      const parsed = parsePermissionModeAlias(value);
-      if (!parsed) {
-        console.error(
-          chalk.red(
-            `Invalid --permission-mode value: ${value}. Valid values: ${PERMISSION_INTENTS.join(', ')}. Examples: ${PERMISSION_MODE_EXAMPLES.join(
-              ' | ',
-            )}`,
-          ),
-        );
-        process.exit(1);
-      }
-      permissionMode = parsed;
-    } else if (arg === '--permission-mode-updated-at') {
-      if (i + 1 >= args.length) {
-        console.error(chalk.red('Missing value for --permission-mode-updated-at (expected: unix ms timestamp)'));
-        process.exit(1);
-      }
-      const raw = args[++i];
-      const parsedAt = Number(raw);
-      if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
-        console.error(chalk.red(`Invalid --permission-mode-updated-at value: ${raw}. Expected a positive number (unix ms)`));
-        process.exit(1);
-      }
-      permissionModeUpdatedAt = Math.floor(parsedAt);
-    } else if (arg === '--agent-mode') {
-      if (i + 1 >= args.length) {
-        console.error(chalk.red('Missing value for --agent-mode (expected: ACP session mode id)'));
-        process.exit(1);
-      }
-      const raw = args[++i];
-      const normalized = typeof raw === 'string' ? raw.trim() : '';
-      if (!normalized) {
-        console.error(chalk.red('Invalid --agent-mode value: empty'));
-        process.exit(1);
-      }
-      agentModeId = normalized;
-    } else if (arg === '--agent-mode-updated-at') {
-      if (i + 1 >= args.length) {
-        console.error(chalk.red('Missing value for --agent-mode-updated-at (expected: unix ms timestamp)'));
-        process.exit(1);
-      }
-      const raw = args[++i];
-      const parsedAt = Number(raw);
-      if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
-        console.error(chalk.red(`Invalid --agent-mode-updated-at value: ${raw}. Expected a positive number (unix ms)`));
-        process.exit(1);
-      }
-      agentModeUpdatedAt = Math.floor(parsedAt);
-    } else if (arg === '--model') {
-      if (i + 1 >= args.length) {
-        console.error(chalk.red('Missing value for --model (expected: model id)'));
-        process.exit(1);
-      }
-      const raw = args[++i];
-      const normalized = typeof raw === 'string' ? raw.trim() : '';
-      if (!normalized) {
-        console.error(chalk.red('Invalid --model value: empty'));
-        process.exit(1);
-      }
-      modelId = normalized;
-    } else if (arg === '--model-updated-at') {
-      if (i + 1 >= args.length) {
-        console.error(chalk.red('Missing value for --model-updated-at (expected: unix ms timestamp)'));
-        process.exit(1);
-      }
-      const raw = args[++i];
-      const parsedAt = Number(raw);
-      if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
-        console.error(chalk.red(`Invalid --model-updated-at value: ${raw}. Expected a positive number (unix ms)`));
-        process.exit(1);
-      }
-      modelUpdatedAt = Math.floor(parsedAt);
-    } else if (arg === '--account-settings-version-hint') {
-      if (i + 1 < args.length && !args[i + 1]?.startsWith('-')) {
-        i += 1;
-      }
-    } else if (arg === '--yolo') {
-      permissionMode = 'yolo';
-    }
-  }
-
-  return { startedBy, permissionMode, permissionModeUpdatedAt, agentModeId, agentModeUpdatedAt, modelId, modelUpdatedAt };
+  return {
+    startedBy: parsed.startedBy,
+    permissionMode: parsed.permissionMode,
+    permissionModeUpdatedAt: parsed.permissionModeUpdatedAt,
+    agentModeId: parsed.agentModeId,
+    agentModeUpdatedAt: parsed.agentModeUpdatedAt,
+    modelId: parsed.modelId,
+    modelUpdatedAt: parsed.modelUpdatedAt,
+  };
 }
 
 export function readOptionalFlagValue(args: string[], flag: string): string | undefined {

@@ -20,10 +20,10 @@ import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAge
 import { isPermissionMode, type PermissionMode } from '@/api/types';
 import {
   applyDeprecatedSessionStartAliasesForAgent,
-  parseSessionStartArgs,
-  readOptionalFlagValue,
   type ParsedSessionStartArgs,
 } from '@/cli/sessionStartArgs';
+import { partitionProviderSessionArgs, type ProviderSessionArgPartitionResult } from '@/cli/providerSessionArgPartition';
+import { buildRootHelpText } from '@/cli/buildRootHelpText';
 import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
 import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
@@ -35,6 +35,7 @@ type CommonBackendRunOptions = ParsedSessionStartArgs & {
   terminalRuntime: CommandContext['terminalRuntime'];
   existingSessionId: string | undefined;
   resume: string | undefined;
+  providerArgs: string[];
   accountSettingsContext: AccountSettingsContext | null;
   experimentalCodexAcp?: boolean;
   codexBackendMode?: CodexBackendMode;
@@ -59,38 +60,67 @@ function pickProviderRunOptions(extras: Record<string, unknown>): Pick<CommonBac
   return out;
 }
 
+function pickSessionStartArgs(parsed: ProviderSessionArgPartitionResult): ParsedSessionStartArgs {
+  return {
+    startedBy: parsed.startedBy,
+    permissionMode: parsed.permissionMode,
+    permissionModeUpdatedAt: parsed.permissionModeUpdatedAt,
+    agentModeId: parsed.agentModeId,
+    agentModeUpdatedAt: parsed.agentModeUpdatedAt,
+    modelId: parsed.modelId,
+    modelUpdatedAt: parsed.modelUpdatedAt,
+  };
+}
+
 export async function runBackendSessionCliCommand<Extra extends Record<string, unknown>>(params: {
   context: CommandContext;
   loadRun: () => Promise<(opts: CommonBackendRunOptions & Extra) => Promise<void>>;
   agentIdForDeprecatedAliases?: AgentId;
   agentIdForAccountSettings?: AgentId;
   loadAccountSettings?: boolean;
-  resolveExtraOptions?: (args: string[]) => Extra;
+  directoryFlags?: readonly string[];
+  forwardModelFlag?: boolean;
+  resolveExtraOptions?: (args: string[], parsed: ProviderSessionArgPartitionResult) => Extra;
 }): Promise<void> {
   let releaseSessionRunnerLock: (() => Promise<void>) | null = null;
 
   try {
     const agentId = params.agentIdForAccountSettings ?? params.agentIdForDeprecatedAliases;
-    if (agentId && maybePassthroughProviderCliInfoRequest({ agentId, args: params.context.args })) {
+    const parsed = partitionProviderSessionArgs({
+      args: params.context.args,
+      providerSubcommand: agentId,
+      directoryFlags: params.directoryFlags,
+      forwardModelFlag: params.forwardModelFlag,
+    });
+
+    if (agentId && parsed.helpRequested) {
+      console.log(`${buildRootHelpText()}
+${chalk.gray('─'.repeat(60))}
+${chalk.bold.cyan(`${agentId} CLI Options (from \`${agentId} --help\`):`)}
+`);
+      maybePassthroughProviderCliInfoRequest({ agentId, args: ['--help'] });
       return;
     }
 
-    const refreshSettings = params.context.args.includes('--refresh-settings');
+    if (agentId && parsed.versionRequested && maybePassthroughProviderCliInfoRequest({ agentId, args: ['--version'] })) {
+      return;
+    }
 
-    const parsed = parseSessionStartArgs(params.context.args);
+    const refreshSettings = parsed.refreshSettings;
+
+    const sessionStartArgs = pickSessionStartArgs(parsed);
     const resolved = params.agentIdForDeprecatedAliases
-      ? applyDeprecatedSessionStartAliasesForAgent({ agentId: params.agentIdForDeprecatedAliases, ...parsed })
-      : { ...parsed, warnings: [] as string[] };
+      ? applyDeprecatedSessionStartAliasesForAgent({ agentId: params.agentIdForDeprecatedAliases, ...sessionStartArgs })
+      : { ...sessionStartArgs, warnings: [] as string[] };
 
     for (const warning of resolved.warnings) {
       console.error(chalk.yellow(warning));
     }
 
-    const existingSessionId = readOptionalFlagValue(params.context.args, '--existing-session');
-    const resume = readOptionalFlagValue(params.context.args, '--resume');
-    const profileQueryRaw = readOptionalFlagValue(params.context.args, '--profile');
-    const profileQuery = typeof profileQueryRaw === 'string' ? profileQueryRaw.trim() : '';
-    const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args) : ({} as Extra);
+    const existingSessionId = parsed.existingSessionId;
+    const resume = parsed.resume;
+    const profileQuery = parsed.profileQuery ?? '';
+    const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args, parsed) : ({} as Extra);
     const startedBy = resolved.startedBy ?? 'terminal';
 
     const selfMigration = await selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup();
@@ -207,6 +237,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       modelUpdatedAt: resolved.modelUpdatedAt,
       existingSessionId: normalizedExistingSessionId || undefined,
       resume,
+      providerArgs: parsed.providerArgs,
       accountSettingsContext,
       ...providerSpawnExtras,
       ...extraOptions,

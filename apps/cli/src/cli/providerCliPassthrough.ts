@@ -1,29 +1,12 @@
 import { spawnSync } from 'node:child_process';
 
-import { AGENTS_CORE, type AgentId } from '@happier-dev/agents';
+import type { AgentId } from '@happier-dev/agents';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
 const HELP_FLAGS = new Set(['-h', '--help']);
 const VERSION_FLAGS = new Set(['-v', '--version']);
-
-type AgentCoreDefinition = (typeof AGENTS_CORE)[AgentId];
-
-function getNativeCliPassthroughSubcommands(agent: AgentCoreDefinition): readonly string[] {
-  if (!('nativeCliPassthroughSubcommands' in agent)) return [];
-  return agent.nativeCliPassthroughSubcommands ?? [];
-}
-
-function resolveNativeProviderArgs(agentId: AgentId, args: readonly string[]): string[] | null {
-  const supported = getNativeCliPassthroughSubcommands(AGENTS_CORE[agentId]);
-  if (supported.length === 0) return null;
-
-  const providerArgs = args[0] === agentId ? args.slice(1) : args;
-  const subcommand = providerArgs[0];
-  if (!subcommand || !supported.includes(subcommand)) return null;
-  return [...providerArgs];
-}
 
 export function detectProviderCliInfoRequest(args: readonly string[]): '--help' | '--version' | null {
   if (args.some((arg) => HELP_FLAGS.has(arg))) return '--help';
@@ -67,15 +50,6 @@ export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
   args: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
 }>): boolean {
-  const nativeProviderArgs = resolveNativeProviderArgs(params.agentId, params.args);
-  if (nativeProviderArgs) {
-    return passthroughProviderCli({
-      agentId: params.agentId,
-      providerArgs: nativeProviderArgs,
-      processEnv: params.processEnv,
-    });
-  }
-
   const flag = detectProviderCliInfoRequest(params.args);
   if (!flag) return false;
 
