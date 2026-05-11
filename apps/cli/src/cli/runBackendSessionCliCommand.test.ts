@@ -553,6 +553,39 @@ describe('runBackendSessionCliCommand', () => {
     }
   });
 
+  it('forwards provider subcommand context when showing combined help', async () => {
+    const root = join(tmpdir(), `happier-codex-subcommand-help-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const codexPath = join(root, process.platform === 'win32' ? 'codex.cmd' : 'codex');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(codexPath, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n', 'utf8');
+    if (process.platform !== 'win32') chmodSync(codexPath, 0o755);
+    process.env.HAPPIER_CODEX_PATH = codexPath;
+    spawnSyncSpy.mockReturnValue({ status: 0, signal: null, error: undefined } as any);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const loadRun = vi.fn();
+
+    try {
+      await runBackendSessionCliCommand({
+        context: { args: ['codex', 'exec', '--help'], terminalRuntime: null } as any,
+        loadRun,
+        agentIdForAccountSettings: 'codex' as any,
+      });
+
+      expect(spawnSyncSpy).toHaveBeenCalledWith(
+        codexPath,
+        ['exec', '--help'],
+        expect.objectContaining({
+          stdio: 'inherit',
+          windowsHide: true,
+        }),
+      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('codex exec --help'));
+      expect(loadRun).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('short-circuits --version to the resolved provider CLI without auth or session startup', async () => {
     const root = join(tmpdir(), `happier-codex-version-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const codexPath = join(root, process.platform === 'win32' ? 'codex.cmd' : 'codex');
@@ -576,6 +609,43 @@ describe('runBackendSessionCliCommand', () => {
       expect(spawnSyncSpy).toHaveBeenCalledWith(
         codexPath,
         ['--version'],
+        expect.objectContaining({
+          stdio: 'inherit',
+          windowsHide: true,
+        }),
+      );
+      expect(loadRun).not.toHaveBeenCalled();
+      expect(readCredentialsSpy).not.toHaveBeenCalled();
+      expect(authSpy).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('short-circuits Codex -V to the resolved provider CLI without auth or session startup', async () => {
+    const root = join(tmpdir(), `happier-codex-version-uppercase-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const codexPath = join(root, process.platform === 'win32' ? 'codex.cmd' : 'codex');
+    mkdirSync(root, { recursive: true });
+    writeFileSync(codexPath, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n', 'utf8');
+    if (process.platform !== 'win32') chmodSync(codexPath, 0o755);
+    process.env.HAPPIER_CODEX_PATH = codexPath;
+    spawnSyncSpy.mockReturnValue({ status: 0, signal: null, error: undefined } as any);
+
+    const readCredentialsSpy = vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue({ token: 'x' } as any);
+    const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials: { token: 'x' } } as any);
+    const loadRun = vi.fn();
+
+    try {
+      await runBackendSessionCliCommand({
+        context: { args: ['codex', '-V'], terminalRuntime: null } as any,
+        loadRun,
+        agentIdForAccountSettings: 'codex' as any,
+        versionFlags: ['-v', '-V', '--version'],
+      });
+
+      expect(spawnSyncSpy).toHaveBeenCalledWith(
+        codexPath,
+        ['-V'],
         expect.objectContaining({
           stdio: 'inherit',
           windowsHide: true,

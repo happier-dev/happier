@@ -12,6 +12,7 @@ export async function handleCodexCliCommand(context: CommandContext): Promise<vo
     agentIdForAccountSettings: 'codex',
     directoryFlags: ['-C', '--cd'],
     forwardModelFlag: true,
+    versionFlags: ['-v', '-V', '--version'],
     resolveExtraOptions: (args, parsed) => {
       const startingModeRaw = readOptionalFlagValue(args, '--happy-starting-mode');
       const startingMode: 'local' | 'remote' | undefined =

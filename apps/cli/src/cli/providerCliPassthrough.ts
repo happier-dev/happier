@@ -6,15 +6,17 @@ import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
 const HELP_FLAGS = new Set(['-h', '--help']);
-const VERSION_FLAGS = new Set(['-v', '--version']);
+const VERSION_FLAGS = new Set(['-v', '-V', '--version']);
 
-export function detectProviderCliInfoRequest(args: readonly string[]): '--help' | '--version' | null {
-  if (args.some((arg) => HELP_FLAGS.has(arg))) return '--help';
-  if (args.some((arg) => VERSION_FLAGS.has(arg))) return '--version';
+export function detectProviderCliInfoRequest(args: readonly string[]): string | null {
+  const helpFlag = args.find((arg) => HELP_FLAGS.has(arg));
+  if (helpFlag) return helpFlag;
+  const versionFlag = args.find((arg) => VERSION_FLAGS.has(arg));
+  if (versionFlag) return versionFlag;
   return null;
 }
 
-function passthroughProviderCli(params: Readonly<{
+export function passthroughProviderCliArgs(params: Readonly<{
   agentId: AgentId;
   providerArgs: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
@@ -53,7 +55,7 @@ export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
   const flag = detectProviderCliInfoRequest(params.args);
   if (!flag) return false;
 
-  return passthroughProviderCli({
+  return passthroughProviderCliArgs({
     agentId: params.agentId,
     providerArgs: [flag],
     processEnv: params.processEnv,

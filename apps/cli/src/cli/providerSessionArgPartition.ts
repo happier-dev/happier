@@ -23,6 +23,7 @@ export type ProviderSessionArgPartitionResult = Readonly<{
   providerArgs: string[];
   helpRequested: boolean;
   versionRequested: boolean;
+  versionFlag?: string;
 }>;
 
 export type ProviderSessionArgPartitionOptions = Readonly<{
@@ -32,6 +33,7 @@ export type ProviderSessionArgPartitionOptions = Readonly<{
   forwardModelFlag?: boolean;
   forwardResumeFlag?: boolean;
   yoloProviderArgs?: readonly string[];
+  versionFlags?: readonly string[];
 }>;
 
 const PERMISSION_MODE_EXAMPLES = [
@@ -89,8 +91,10 @@ export function partitionProviderSessionArgs(options: ProviderSessionArgPartitio
   let directory: string | undefined;
   let helpRequested = false;
   let versionRequested = false;
+  let versionFlag: string | undefined;
   const providerArgs: string[] = [];
   const directoryFlags = new Set(options.directoryFlags ?? []);
+  const versionFlags = new Set(options.versionFlags ?? ['-v', '--version']);
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -99,8 +103,9 @@ export function partitionProviderSessionArgs(options: ProviderSessionArgPartitio
       helpRequested = true;
       continue;
     }
-    if (arg === '-v' || arg === '--version') {
+    if (versionFlags.has(arg)) {
       versionRequested = true;
+      versionFlag = arg;
       continue;
     }
     if (arg === '--refresh-settings') {
@@ -277,6 +282,7 @@ export function partitionProviderSessionArgs(options: ProviderSessionArgPartitio
     ...(directory ? { directory } : {}),
     helpRequested,
     versionRequested,
+    ...(versionFlag ? { versionFlag } : {}),
     providerArgs,
   };
 }

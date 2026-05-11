@@ -80,4 +80,35 @@ describe('partitionProviderSessionArgs', () => {
     expect(result.permissionMode).toBe('bypassPermissions');
     expect(result.providerArgs).toEqual([]);
   });
+
+  it('recognizes Codex native -V as a provider version request', () => {
+    const result = partitionProviderSessionArgs({
+      args: ['codex', '-V'],
+      providerSubcommand: 'codex',
+      versionFlags: ['-v', '-V', '--version'],
+    });
+
+    expect(result.versionRequested).toBe(true);
+    expect(result.providerArgs).toEqual([]);
+  });
+
+  it('does not treat provider-specific -V as a common Happier version flag', () => {
+    const result = partitionProviderSessionArgs({
+      args: ['claude', '-V'],
+      providerSubcommand: 'claude',
+    });
+
+    expect(result.versionRequested).toBe(false);
+    expect(result.providerArgs).toEqual(['-V']);
+  });
+
+  it('preserves provider subcommand context around help requests', () => {
+    const result = partitionProviderSessionArgs({
+      args: ['codex', 'exec', '--help'],
+      providerSubcommand: 'codex',
+    });
+
+    expect(result.helpRequested).toBe(true);
+    expect(result.providerArgs).toEqual(['exec']);
+  });
 });

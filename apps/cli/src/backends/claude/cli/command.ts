@@ -26,7 +26,6 @@ import { isBun } from '@/utils/runtime';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { handleResumeCommand } from '@/cli/commands/resume';
 import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
-import packageJson from '../../../../package.json';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -163,6 +162,8 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
   }
 
   if (showHelp) {
+    const providerHelpArgs = [...parsed.providerArgs, '--help'];
+    const providerHelpCommand = `claude ${providerHelpArgs.join(' ')}`;
     console.log(`${buildRootHelpText()}
 ${chalk.bold('Happier supports ALL Claude options!')}
   Use any claude flag with happier as you would with claude. Our favorite:
@@ -170,13 +171,13 @@ ${chalk.bold('Happier supports ALL Claude options!')}
   happier --resume
 
 ${chalk.gray('─'.repeat(60))}
-${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
+${chalk.bold.cyan(`Claude Code Options (from \`${providerHelpCommand}\`):`)}
 `);
 
     // Run claude --help and display its output
     try {
       const { execFileSync } = await import('node:child_process');
-      const helpInvocation = await resolveClaudeHelpInvocation();
+      const helpInvocation = await resolveClaudeCliInfoInvocation(providerHelpArgs);
       const claudeHelp = execFileSync(
         helpInvocation.command,
         helpInvocation.args,
@@ -204,14 +205,32 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
   }
 
   if (showVersion) {
-    console.log(`happier version: ${packageJson.version}`);
-    const versionOnlyInvocation =
-      strippedArgs.length > 0 &&
-      strippedArgs.every((arg) => arg === '-v' || arg === '--version');
-    if (versionOnlyInvocation) {
-      return;
+    try {
+      const { execFileSync } = await import('node:child_process');
+      const versionInvocation = await resolveClaudeCliInfoInvocation([parsed.versionFlag ?? '--version']);
+      const claudeVersion = execFileSync(
+        versionInvocation.command,
+        versionInvocation.args,
+        {
+          encoding: 'utf8',
+          windowsHide: true,
+          ...(versionInvocation.env ? { env: versionInvocation.env } : {}),
+          ...(versionInvocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+          ...(configuration.vendorCliHelpTimeoutMs > 0 ? { timeout: configuration.vendorCliHelpTimeoutMs } : {}),
+        },
+      );
+      console.log(claudeVersion.trimEnd());
+    } catch (error) {
+      if (error instanceof ReferenceError) {
+        console.log(chalk.yellow(error.message));
+        if (readProviderCliOverride('claude')) {
+          process.exit(1);
+        }
+      } else {
+        console.log(chalk.yellow('Could not retrieve claude version. Make sure claude is installed.'));
+      }
     }
-    // For mixed invocations, continue and pass --version through to Claude Code.
+    return;
   }
 
   const startedBy = options.startedBy ?? 'terminal';
@@ -299,7 +318,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
   }
 }
 
-async function resolveClaudeHelpInvocation(): Promise<{
+async function resolveClaudeCliInfoInvocation(providerArgs: readonly string[]): Promise<{
   command: string;
   args: string[];
   env?: NodeJS.ProcessEnv;
@@ -313,7 +332,7 @@ async function resolveClaudeHelpInvocation(): Promise<{
     });
     const invocation = resolveWindowsCommandInvocation({
       command: runtimeExecutable,
-      args: [launch.resolvedPath, '--help'],
+      args: [launch.resolvedPath, ...providerArgs],
       env: process.env,
     });
     return {
@@ -326,7 +345,7 @@ async function resolveClaudeHelpInvocation(): Promise<{
 
   const invocation = resolveWindowsCommandInvocation({
     command: launch.command,
-    args: [...launch.args, '--help'],
+    args: [...launch.args, ...providerArgs],
     env: process.env,
   });
   return {

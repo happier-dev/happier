@@ -1,32 +1,61 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { handleClaudeCliCommand } from './command';
 import * as authModule from '@/ui/auth';
 import * as runClaudeModule from '@/backends/claude/runClaude';
 import * as persistenceModule from '@/persistence';
 import * as accountSettingsModule from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import * as providerSettingsModule from '@/settings/providerSettings';
 
+const { execFileSyncSpy } = vi.hoisted(() => ({
+  execFileSyncSpy: vi.fn(() => '2.1.138 (Claude Code)\n'),
+}));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, execFileSync: execFileSyncSpy };
+});
+
+import { handleClaudeCliCommand } from './command';
+
 afterEach(() => {
   vi.restoreAllMocks();
+  execFileSyncSpy.mockClear();
 });
 
 describe('handleClaudeCliCommand --version', () => {
-  it('does not initialize auth/session for version-only invocation', async () => {
+  it('passes explicit Claude version requests through without auth or session startup', async () => {
+    const previousClaudePath = process.env.HAPPIER_CLAUDE_PATH;
+    process.env.HAPPIER_CLAUDE_PATH = process.execPath;
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials: { token: 'x' } as any } as any);
     const runSpy = vi.spyOn(runClaudeModule, 'runClaude').mockResolvedValue(undefined);
     vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({} as any);
 
-    await handleClaudeCliCommand({
-      args: ['--version'],
-      terminalRuntime: null,
-      rawArgv: ['happier', '--version'],
-    } as any);
+    try {
+      await handleClaudeCliCommand({
+        args: ['claude', '--version'],
+        terminalRuntime: null,
+        rawArgv: ['happier', 'claude', '--version'],
+      } as any);
 
-    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/^happier version:/));
-    expect(authSpy).not.toHaveBeenCalled();
-    expect(runSpy).not.toHaveBeenCalled();
+      expect(execFileSyncSpy).toHaveBeenCalledWith(
+        process.execPath,
+        ['--version'],
+        expect.objectContaining({
+          encoding: 'utf8',
+          windowsHide: true,
+        }),
+      );
+      expect(logSpy).toHaveBeenCalledWith('2.1.138 (Claude Code)');
+      expect(authSpy).not.toHaveBeenCalled();
+      expect(runSpy).not.toHaveBeenCalled();
+    } finally {
+      if (previousClaudePath === undefined) {
+        delete process.env.HAPPIER_CLAUDE_PATH;
+      } else {
+        process.env.HAPPIER_CLAUDE_PATH = previousClaudePath;
+      }
+    }
   });
 
   it('fast-starts local terminal invocations without blocking on auth/setup', async () => {

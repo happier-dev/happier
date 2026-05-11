@@ -27,7 +27,7 @@ import { buildRootHelpText } from '@/cli/buildRootHelpText';
 import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
 import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
-import { maybePassthroughProviderCliInfoRequest } from '@/cli/providerCliPassthrough';
+import { maybePassthroughProviderCliInfoRequest, passthroughProviderCliArgs } from '@/cli/providerCliPassthrough';
 import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 
 type CommonBackendRunOptions = ParsedSessionStartArgs & {
@@ -80,6 +80,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   loadAccountSettings?: boolean;
   directoryFlags?: readonly string[];
   forwardModelFlag?: boolean;
+  versionFlags?: readonly string[];
   resolveExtraOptions?: (args: string[], parsed: ProviderSessionArgPartitionResult) => Extra;
 }): Promise<void> {
   let releaseSessionRunnerLock: (() => Promise<void>) | null = null;
@@ -91,18 +92,21 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       providerSubcommand: agentId,
       directoryFlags: params.directoryFlags,
       forwardModelFlag: params.forwardModelFlag,
+      versionFlags: params.versionFlags,
     });
 
     if (agentId && parsed.helpRequested) {
+      const providerHelpArgs = [...parsed.providerArgs, '--help'];
+      const providerHelpCommand = `${agentId} ${providerHelpArgs.join(' ')}`;
       console.log(`${buildRootHelpText()}
 ${chalk.gray('─'.repeat(60))}
-${chalk.bold.cyan(`${agentId} CLI Options (from \`${agentId} --help\`):`)}
+${chalk.bold.cyan(`${agentId} CLI Options (from \`${providerHelpCommand}\`):`)}
 `);
-      maybePassthroughProviderCliInfoRequest({ agentId, args: ['--help'] });
+      passthroughProviderCliArgs({ agentId, providerArgs: providerHelpArgs });
       return;
     }
 
-    if (agentId && parsed.versionRequested && maybePassthroughProviderCliInfoRequest({ agentId, args: ['--version'] })) {
+    if (agentId && parsed.versionRequested && maybePassthroughProviderCliInfoRequest({ agentId, args: [parsed.versionFlag ?? '--version'] })) {
       return;
     }
 
