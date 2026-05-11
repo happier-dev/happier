@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type ViewStyle } from 'react-native';
+import { Pressable, View, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -12,11 +12,30 @@ export function TranscriptSeparatorRow(props: Readonly<{
   titleTestID?: string;
   subtitle?: string | null;
   rightAccessory?: React.ReactNode;
+  onPress?: () => void;
+  chipTestID?: string;
+  accessibilityLabel?: string;
   padding?: 'default' | 'none';
   containerStyle?: ViewStyle | null;
 }>): React.ReactElement {
   const { theme } = useUnistyles();
   const padding = props.padding === 'none' ? 'none' : 'default';
+  const chipContent = (
+    <>
+      <Ionicons name={props.iconName} size={14} color={theme.colors.textSecondary} />
+      <View style={styles.textStack}>
+        <Text testID={props.titleTestID} style={[styles.title, { color: theme.colors.text }]} numberOfLines={1}>
+          {props.title}
+        </Text>
+        {props.subtitle ? (
+          <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+            {props.subtitle}
+          </Text>
+        ) : null}
+      </View>
+      {props.rightAccessory ? <View style={styles.rightAccessory}>{props.rightAccessory}</View> : null}
+    </>
+  );
 
   return (
     <View
@@ -29,20 +48,27 @@ export function TranscriptSeparatorRow(props: Readonly<{
     >
       <View style={styles.row}>
         <View style={[styles.line, { backgroundColor: theme.colors.divider }]} />
-        <View style={[styles.chip, { backgroundColor: theme.colors.surface, borderColor: theme.colors.divider }]}>
-          <Ionicons name={props.iconName} size={14} color={theme.colors.textSecondary} />
-          <View style={styles.textStack}>
-            <Text testID={props.titleTestID} style={[styles.title, { color: theme.colors.text }]} numberOfLines={1}>
-              {props.title}
-            </Text>
-            {props.subtitle ? (
-              <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
-                {props.subtitle}
-              </Text>
-            ) : null}
+        {props.onPress ? (
+          <Pressable
+            testID={props.chipTestID}
+            onPress={props.onPress}
+            accessibilityRole="button"
+            accessibilityLabel={props.accessibilityLabel ?? props.title}
+            style={({ pressed }) => [
+              styles.chip,
+              { backgroundColor: theme.colors.surface, borderColor: theme.colors.divider, opacity: pressed ? 0.82 : 1 },
+            ]}
+          >
+            {chipContent}
+          </Pressable>
+        ) : (
+          <View
+            testID={props.chipTestID}
+            style={[styles.chip, { backgroundColor: theme.colors.surface, borderColor: theme.colors.divider }]}
+          >
+            {chipContent}
           </View>
-          {props.rightAccessory ? <View style={styles.rightAccessory}>{props.rightAccessory}</View> : null}
-        </View>
+        )}
         <View style={[styles.line, { backgroundColor: theme.colors.divider }]} />
       </View>
     </View>

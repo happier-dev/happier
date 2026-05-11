@@ -476,6 +476,7 @@ export interface PendingMessage {
     localId: string | null;
     createdAt: number;
     updatedAt: number;
+    deliveryStatus?: 'queued' | 'accepted';
     text: string;
     displayText?: string;
     pendingDecryptFailure?: { kind: 'decrypt_failed' };

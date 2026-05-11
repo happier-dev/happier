@@ -333,6 +333,7 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         const pending = storage.getState().sessionPending[sessionId]?.messages ?? [];
         expect(pending.map((message) => message.text)).toEqual(['steer this']);
+        expect(pending.map((message) => message.deliveryStatus)).toEqual(['accepted']);
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
 
         sessionRpcSpy.mockRestore();

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -55,6 +55,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             ? Math.max(1, Math.trunc(maxHeightSetting))
             : settingsDefaults.transcriptPendingQueueMaxHeightPx;
 
+    const expandedMaxHeightSetting = useSetting('transcriptPendingQueueExpandedMaxHeightPx');
+    const expandedMaxHeightPx =
+        typeof expandedMaxHeightSetting === 'number' && Number.isFinite(expandedMaxHeightSetting)
+            ? Math.max(maxHeightPx, Math.trunc(expandedMaxHeightSetting))
+            : Math.max(maxHeightPx, settingsDefaults.transcriptPendingQueueExpandedMaxHeightPx);
+
     const collapseThresholdCharsSetting = useSetting('transcriptPendingMessageCollapseThresholdChars');
     const collapseThresholdChars =
         typeof collapseThresholdCharsSetting === 'number' && Number.isFinite(collapseThresholdCharsSetting)
@@ -74,6 +80,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             : settingsDefaults.transcriptPendingQueueReorderRowHeightPx;
 
     const [expandedMessageIds, setExpandedMessageIds] = React.useState<Record<string, true>>({});
+    const [isPendingQueueExpanded, setIsPendingQueueExpanded] = React.useState(false);
     const [openMenuKey, setOpenMenuKey] = React.useState<string | null>(null);
     const [scrollContentHeightPx, setScrollContentHeightPx] = React.useState<number | null>(null);
     const isWeb = Platform.OS === 'web';
@@ -81,6 +88,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const [scrollViewportHeightPx, setScrollViewportHeightPx] = React.useState<number | null>(null);
     const [scrollOffsetY, setScrollOffsetY] = React.useState<number | null>(null);
     const scrollRef = React.useRef<ScrollView | null>(null);
+
+    React.useEffect(() => {
+        if (props.pendingMessages.length <= 0) {
+            setIsPendingQueueExpanded(false);
+        }
+    }, [props.pendingMessages.length]);
 
     const pendingIndexById = React.useMemo(() => {
         const map: Record<string, number> = {};
@@ -100,6 +113,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             }
             return next;
         });
+    }, []);
+
+    const togglePendingQueueExpanded = React.useCallback(() => {
+        setIsPendingQueueExpanded((value) => !value);
     }, []);
 
     const handleEdit = React.useCallback(async (pendingId: string, currentText: string) => {
@@ -275,6 +292,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }) => {
         const { message, index, renderDragHandle } = args;
         const text = getPendingText(message).trim();
+        const isAccepted = message.deliveryStatus === 'accepted';
         const isCollapsible = collapseThresholdChars > 0 && text.length >= collapseThresholdChars;
 	        const isExpanded = expandedMessageIds[message.id] === true || !isCollapsible;
 
@@ -386,10 +404,23 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 isWeb ? { pointerEvents: 'none' as const } : null,
                             ]}
                         >
-                            <Ionicons name="time-outline" size={8} color={theme.colors.textSecondary} />
-                            <Text style={[styles.pendingAffordanceText, { color: theme.colors.textSecondary }]}>
-                                {t('session.pendingMessages.badgeLabel', { count: 0 })}
-                            </Text>
+                            {isAccepted ? (
+                                <ActivityIndicator
+                                    testID={`pendingMessages.acceptedIndicator:${message.id}`}
+                                    size="small"
+                                    color={theme.colors.textSecondary}
+                                />
+                            ) : (
+                                <>
+                                    <Ionicons name="time-outline" size={8} color={theme.colors.textSecondary} />
+                                    <Text
+                                        testID={`pendingMessages.pendingAffordanceLabel:${message.id}`}
+                                        style={[styles.pendingAffordanceText, { color: theme.colors.textSecondary }]}
+                                    >
+                                        {t('session.pendingMessages.badgeLabel', { count: 0 })}
+                                    </Text>
+                                </>
+                            )}
                         </View>
 
                         {isWeb ? (
@@ -608,7 +639,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
     if (pendingCount <= 0 && discardedCount <= 0) return null;
 
-    const maxHeight = maxHeightPx;
+    const canExpandPendingQueue =
+        pendingCount > 0
+        && typeof scrollContentHeightPx === 'number'
+        && Number.isFinite(scrollContentHeightPx)
+        && scrollContentHeightPx > maxHeightPx;
+    const isQueueExpanded = canExpandPendingQueue && isPendingQueueExpanded;
+    const maxHeight = isQueueExpanded ? expandedMaxHeightPx : maxHeightPx;
     const headerLabel =
         pendingCount > 0
             ? `${t('session.pendingMessages.title')} (${pendingCount})`
@@ -628,7 +665,17 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 iconName="time-outline"
                                 title={headerLabel}
                                 titleTestID="pendingMessages.headerLabel"
+                                chipTestID={canExpandPendingQueue ? 'pendingMessages.headerToggle' : undefined}
+                                onPress={canExpandPendingQueue ? togglePendingQueueExpanded : undefined}
+                                accessibilityLabel={isQueueExpanded ? t('session.pendingMessages.actions.viewLess') : t('session.pendingMessages.actions.viewMore')}
                                 subtitle={discardedCount > 0 && pendingCount > 0 ? `${t('session.pendingMessages.discarded.label')} (${discardedCount})` : null}
+                                rightAccessory={canExpandPendingQueue ? (
+                                    <Ionicons
+                                        name={isQueueExpanded ? 'chevron-up' : 'chevron-down'}
+                                        size={13}
+                                        color={theme.colors.textSecondary}
+                                    />
+                                ) : null}
                                 padding="none"
                             />
                         </View>

@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { View, Animated } from 'react-native';
+import { View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
@@ -33,6 +33,7 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSessionExecutionRunsSupported } from '@/hooks/server/useSessionExecutionRunsSupported';
 import { Text } from '@/components/ui/text/Text';
+import { StatusDot } from '@/components/ui/status/StatusDot';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
@@ -63,46 +64,6 @@ import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/
 import { createSessionReadStateInfoItemProps } from '@/components/sessions/actions/sessionReadStateActionItems';
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
-
-
-// Animated status dot component
-function StatusDot({ color, isPulsing, size = 8 }: { color: string; isPulsing?: boolean; size?: number }) {
-    const pulseAnim = React.useRef(new Animated.Value(1)).current;
-
-    React.useEffect(() => {
-        if (isPulsing) {
-            Animated.loop(
-                Animated.sequence([
-                    Animated.timing(pulseAnim, {
-                        toValue: 0.3,
-                        duration: 1000,
-                        useNativeDriver: true,
-                    }),
-                    Animated.timing(pulseAnim, {
-                        toValue: 1,
-                        duration: 1000,
-                        useNativeDriver: true,
-                    }),
-                ])
-            ).start();
-        } else {
-            pulseAnim.setValue(1);
-        }
-    }, [isPulsing, pulseAnim]);
-
-    return (
-        <Animated.View
-            style={{
-                width: size,
-                height: size,
-                borderRadius: size / 2,
-                backgroundColor: color,
-                opacity: pulseAnim,
-                marginRight: 4,
-            }}
-        />
-    );
-}
 
 function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandoff, runtimeAvailability, routeScope }: Readonly<{
     session: Session;
@@ -551,7 +512,12 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             {sessionName}
                         </Text>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                            <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} size={10} />
+                            <StatusDot
+                                color={sessionStatus.statusDotColor}
+                                isPulsing={sessionStatus.isPulsing}
+                                size={10}
+                                style={{ marginRight: 4 }}
+                            />
                             <Text style={{
                                 fontSize: 15,
                                 color: sessionStatus.statusColor,

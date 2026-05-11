@@ -126,7 +126,7 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
     },
     transcriptPendingQueueMaxHeightPx: {
         schema: z.number(),
-        default: 64,
+        default: 80,
         description: 'Max height (px) for the pending queue block in the transcript',
         storageScope: 'account',
         analytics: {
@@ -135,7 +135,7 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
             valueKind: 'bucket',
             privacy: 'bucketed',
             identityScope: 'person',
-            serializeCurrent: serializeBucketCount(64, 96),
+            serializeCurrent: serializeBucketCount(80, 96),
         },
     },
     transcriptPendingQueueExpandedMaxHeightPx: {

@@ -37,13 +37,14 @@ const modalAlert = vi.fn();
 const reorderPendingMessages = vi.fn();
 
 let sessionValue: any = null;
+let settingValues: Record<string, unknown> = {};
 
 installPendingMessagesCommonModuleMocks({
     storage: async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit');
         return createPartialStorageModuleMock(importOriginal, {
             useSession: () => sessionValue,
-            useSetting: () => undefined,
+            useSetting: (key: string) => settingValues[key],
             storage: { getState: () => ({}) },
         });
     },
@@ -175,6 +176,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         modalAlert.mockReset();
         reorderPendingMessages.mockReset();
         sessionValue = null;
+        settingValues = {};
     });
 
     function flattenStyle(style: any): Record<string, any> {
@@ -419,7 +421,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(modalAlert).toHaveBeenCalledTimes(1);
     });
 
-    it('uses a smaller default max-height for the pending queue block', async () => {
+    it('uses an 80px default max-height for the pending queue block', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -428,7 +430,148 @@ describe('PendingMessagesTranscriptBlock', () => {
             }));
 
         const scroll = screen.findByType('ScrollView');
-        expect(scroll.props.style?.maxHeight).toBe(64);
+        expect(scroll.props.style?.maxHeight).toBe(80);
+    });
+
+    it('shows the collapsed header toggle only when pending content overflows the compact height', async () => {
+        settingValues = {
+            transcriptPendingQueueMaxHeightPx: 80,
+            transcriptPendingQueueExpandedMaxHeightPx: 520,
+        };
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
+
+        const scroll = screen.findByTestId('pendingMessages.scroll');
+        await act(async () => {
+            scroll!.props.onContentSizeChange(0, 160);
+        });
+
+        expect(screen.findByTestId('pendingMessages.headerToggle')).toBeTruthy();
+        expect(screen.findByProps({ name: 'chevron-down' })).toBeTruthy();
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+    });
+
+    it('does not show a header toggle when pending content fits the compact height', async () => {
+        settingValues = { transcriptPendingQueueMaxHeightPx: 80 };
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        const scroll = screen.findByTestId('pendingMessages.scroll');
+        await act(async () => {
+            scroll!.props.onContentSizeChange(0, 72);
+        });
+
+        expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+    });
+
+    it('expands the pending queue from the header toggle without changing the compact default', async () => {
+        settingValues = {
+            transcriptPendingQueueMaxHeightPx: 80,
+            transcriptPendingQueueExpandedMaxHeightPx: 520,
+        };
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        const scroll = screen.findByTestId('pendingMessages.scroll');
+        await act(async () => {
+            scroll!.props.onContentSizeChange(0, 160);
+        });
+
+        await screen.pressByTestIdAsync('pendingMessages.headerToggle');
+
+        expect(screen.findByProps({ name: 'chevron-up' })).toBeTruthy();
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(520);
+    });
+
+    it('collapses the pending queue from the expanded header toggle', async () => {
+        settingValues = {
+            transcriptPendingQueueMaxHeightPx: 80,
+            transcriptPendingQueueExpandedMaxHeightPx: 520,
+        };
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        const scroll = screen.findByTestId('pendingMessages.scroll');
+        await act(async () => {
+            scroll!.props.onContentSizeChange(0, 160);
+        });
+        await screen.pressByTestIdAsync('pendingMessages.headerToggle');
+        await screen.pressByTestIdAsync('pendingMessages.headerToggle');
+
+        expect(screen.findByProps({ name: 'chevron-down' })).toBeTruthy();
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+    });
+
+    it('resets expanded pending queue state after all pending rows clear', async () => {
+        settingValues = {
+            transcriptPendingQueueMaxHeightPx: 80,
+            transcriptPendingQueueExpandedMaxHeightPx: 520,
+        };
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const firstPendingMessage = { id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} };
+        const secondPendingMessage = { id: 'p2', text: 'world', displayText: undefined, createdAt: 1, updatedAt: 1, localId: 'p2', rawRecord: {} };
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [firstPendingMessage],
+                discardedMessages: [],
+            }));
+
+        const scroll = screen.findByTestId('pendingMessages.scroll');
+        await act(async () => {
+            scroll!.props.onContentSizeChange(0, 160);
+        });
+        await screen.pressByTestIdAsync('pendingMessages.headerToggle');
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(520);
+
+        await screen.update(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [],
+            discardedMessages: [],
+        }));
+
+        await screen.update(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [secondPendingMessage],
+            discardedMessages: [],
+        }));
+        const nextScroll = screen.findByTestId('pendingMessages.scroll');
+        await act(async () => {
+            nextScroll!.props.onContentSizeChange(0, 160);
+        });
+
+        expect(screen.findByProps({ name: 'chevron-down' })).toBeTruthy();
+        expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
+    });
+
+    it('shows a loading affordance instead of the pending badge for accepted pending rows', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', deliveryStatus: 'accepted', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        expect(screen.findByTestId('pendingMessages.acceptedIndicator:p1')).toBeTruthy();
+        expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:p1')).toBeNull();
     });
 
     it('does not show discarded action icons until hover on web', async () => {
