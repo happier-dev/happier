@@ -8,6 +8,33 @@ This constitution defines your mandatory behaviors.
 
 ---
 
+## Architecture Path, Folder, and Naming Discipline (CRITICAL)
+
+This is a hard constraint for all planning and implementation work.
+
+Keep this section plan-agnostic. It defines how to choose and name owners; individual plans/packets decide the concrete target paths.
+
+- Before creating, moving, renaming, or deleting files/folders, identify the canonical owner for the behavior: package, app, domain, provider/plugin leaf, shared substrate, protocol schema, UI projection, testkit, or runtime boundary.
+- New files must live at the narrowest owner that can correctly own the responsibility. Do not place behavior in a shared/core/root folder if it is provider-specific, UI-specific, CLI-specific, protocol-specific, or test-only.
+- Generic/shared layers must stay generic. Do not add provider, backend, source, or product-case branches to shared/core code when an existing registry, adapter, hook, facet, or provider-owned seam can own the variation.
+- Domain folders are lowercase and single-word by default. Multi-word domain concepts must usually become domain/subdomain paths, not compound camelCase folders.
+- Use the splittability test before naming a folder: if the first word can be a real domain that hosts meaningful subtypes, split it into `<domain>/<subdomain>/`.
+- Do not split names mechanically. Domain/subdomain structure is for grouping real related concepts, not for creating deep one-file folder ladders or empty taxonomy layers.
+- Reserve camelCase folders for concrete feature folders where local convention already uses them. Do not use camelCase to name shared runtime, protocol, provider/backend, or architectural domain ownership concepts.
+- Keep folder names small and navigable. Do not create redundant marker folders such as `backend/`, `vendor/`, `native/`, or broad catch-all folders when the parent folder already establishes that context.
+- Group related concepts under shared domain folders. Do not grow flat sibling clusters that repeat a prefix or concept at one level; fold them under the domain they share.
+- Prefer the shallowest structure that expresses the real ownership domain. If a split would leave only a single file in each nested folder with no expected sibling concepts, keep the clearer parent-level file/folder name unless a plan/packet explicitly accepts the deeper shape.
+- Avoid single-file folders unless they group platform variants, represent an accepted public entrypoint shape, or are clearly about to grow.
+- File names must be short, explicit, and non-redundant with the parent path. Read the import path as one noun phrase; if the basename repeats a noun already implied by a parent folder, rename it.
+- Strip structural suffixes such as `Catalog`, `Registry`, `Map`, `Spec`, `List`, `Table`, and `Index` when the directory and plural filename already convey that role. Prefer `prompts/library/providers.ts` over `prompts/library/promptProviderCatalog.ts`.
+- Use behavior prefixes such as `create`, `resolve`, `normalize`, `publish`, `read`, `write`, `build`, or `apply` only when they clarify the file's primary behavior. Do not add them mechanically if the domain path already makes a shorter noun filename clearer.
+- Avoid vague production module names such as `helpers.ts`, `utils.ts`, `misc.ts`, `manager.ts`, `stuff.ts`, `common.ts`, or broad bucket files unless the parent folder makes the responsibility unambiguous and the module is genuinely broad.
+- Keep files single-purpose. If a file starts owning multiple policies, registries, adapters, IO paths, and presentation concerns, split it before adding more responsibility.
+- Do not introduce compatibility shims for moves/renames by default. Codemod imports and public barrels directly to the canonical owner, then delete the obsolete file in the same change unless an accepted compatibility requirement explicitly says otherwise.
+- Do not copy folder names from old branches, recovery trees, generated artifacts, or nearby legacy code if the current architecture uses a different owner/name. Treat old paths as evidence, not naming authority.
+- Plans, packets, and implementation reports must name concrete target files/folders whenever work creates structure, moves code, deletes code, or changes ownership. If the target owner is unclear, refine the plan before implementing.
+- Before handoff, run an import/path/direct-writer inventory for migrated symbols and prove no stale alternate owner, duplicate registry, compatibility wrapper, provider branch, or old public-barrel export remains.
+
 ## Core Principles (CRITICAL)
 
 <default_follow_through_policy>
@@ -284,13 +311,16 @@ Test real internal behavior, not mocked internal behavior. Mocking internal code
 - No commented-out code blocks
 
 ### File and Folder Naming (Required)
+- Follow the top-level Architecture Path, Folder, and Naming Discipline section first. This section adds local examples; it does not override the short-name/domain-folder rules above.
 - Use explicit, purpose-revealing names. A reader should infer intent from path + filename without opening the file.
 - Do not use vague names for production modules (`helpers`, `utils`, `misc`, `bundle`, `manager`, `stuff`) unless the folder scope already makes the purpose unambiguous and the module is genuinely broad.
-- Prefer names aligned with primary export/behavior:
-  - `createX.ts` for module factories
-  - `normalizeX.ts` for normalization logic
-  - `waitForX.ts` for wait/poll utilities
+- Prefer the shortest non-redundant filename that remains clear in its folder path.
+- Use behavior prefixes only when they add signal that the path does not already provide:
+  - `createX.ts` only for true factories
+  - `normalizeX.ts` only for normalization entrypoints
+  - `waitForX.ts` only for wait/poll utilities
   - `startX.ts` / `runX.ts` only for true entrypoints
+- Do not add verb prefixes mechanically. If the folder already says the domain and the file is the primary noun in that domain, prefer the shorter noun filename.
 - Keep backend/provider-specific logic inside that backend/provider folder. Shared cross-provider logic must live in core and remain provider-agnostic.
 - **Provider folder ownership (enforced)**:
   - `apps/cli` uses `apps/cli/src/backends/<providerId>` for executable provider wiring (CLI historical naming).

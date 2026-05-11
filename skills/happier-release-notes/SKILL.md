@@ -237,6 +237,7 @@ List cards:
 - Use 3-5 rows for the best Notelet-style feel.
 - Up to 6 rows render statically.
 - More than 6 rows render in a vertical scroll region with edge fades and chevron hints.
+- Static rows use a 25px item gap; on tablet/desktop-width surfaces, static list cards can render as two columns.
 - Do not cram dense changelog prose into one list card; split into multiple cards when the story would read better.
 
 Image cards:
@@ -244,12 +245,14 @@ Image cards:
 - Provide an `altKey`.
 - Prefer `media.localAssetKey` for offline-safe bundled artwork.
 - Add `media.key` only when a remote fallback is useful.
+- Add `media.mobile` or `media.desktop` only when the crop/artwork should differ by surface. Base media remains the fallback.
 - Prefer `.webp` for screenshots and illustrations.
 
 Video cards:
 - Keep `media.key` as the remote video file.
 - Prefer `media.localPosterAssetKey` for the bundled poster image.
 - Add `media.posterKey` only when a remote poster fallback is useful.
+- Add `media.mobile` or `media.desktop` to override the video and/or poster per surface. A video override keeps the base poster unless a poster override is also provided.
 - Keep videos short, silent/muted by default, and optimized.
 - Video plays only while the card is active and falls back to poster under reduced motion or load failure.
 
@@ -281,7 +284,10 @@ Video cards:
             "media": {
                 "localAssetKey": "v0_2_7.hero",
                 "key": "hero-fallback.webp",
-                "altKey": "releaseNotes.v0_2_7.cards.hero.alt"
+                "altKey": "releaseNotes.v0_2_7.cards.hero.alt",
+                "desktop": {
+                    "localAssetKey": "v0_2_7.heroWide"
+                }
             }
         },
         {
@@ -292,7 +298,11 @@ Video cards:
                 "key": "demo.mp4",
                 "localPosterAssetKey": "v0_2_7.demoPoster",
                 "posterKey": "demo-poster-fallback.webp",
-                "accessibilityLabelKey": "releaseNotes.v0_2_7.cards.demo.accessibilityLabel"
+                "accessibilityLabelKey": "releaseNotes.v0_2_7.cards.demo.accessibilityLabel",
+                "desktop": {
+                    "key": "demo-wide.mp4",
+                    "posterKey": "demo-wide-poster.webp"
+                }
             }
         }
     ],
