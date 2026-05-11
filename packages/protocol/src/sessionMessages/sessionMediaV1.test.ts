@@ -120,6 +120,25 @@ describe('session media v1 schemas', () => {
     });
   });
 
+  it('requires session media failures to carry renderable media identity', () => {
+    const schema = readSchema('SessionMediaMessageMetaV1Schema');
+
+    expect(schema.safeParse({
+      kind: 'session_media.v1',
+      payload: {
+        media: [],
+        failures: [{
+          index: 0,
+          code: 'invalid_source_file',
+          role: 'output',
+          category: 'generated',
+          name: 'generated-image.png',
+          origin: { source: 'provider-generated' },
+        }],
+      },
+    }).success).toBe(false);
+  });
+
   it('rejects transient or unsafe persisted shapes', () => {
     const schema = readSchema('SessionMediaItemV1Schema');
     const invalidItems = [

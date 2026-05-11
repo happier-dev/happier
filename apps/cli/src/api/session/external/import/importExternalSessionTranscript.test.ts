@@ -127,4 +127,65 @@ describe('importExternalSessionTranscript', () => {
       await rm(providerDirectory, { recursive: true, force: true });
     }
   });
+
+  it('adopts provider-native relative media paths instead of treating them as durable workspace media', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-import-relative-workspace-'));
+
+    try {
+      await mkdir(join(workingDirectory, '.git', 'info'), { recursive: true });
+      const providerImagePath = join(workingDirectory, 'images', 'out.png');
+      await mkdir(join(workingDirectory, 'images'), { recursive: true });
+      await writeFile(providerImagePath, pngBytes);
+
+      const item: ExternalSessionTranscriptRawMessageV1 = {
+        id: 'direct-item-relative',
+        localId: 'direct-item-relative',
+        createdAtMs: 124,
+        raw: {
+          role: 'agent',
+          content: { type: 'output', data: { type: 'message', message: 'generated relative image' } },
+          meta: {
+            happier: {
+              kind: 'session_media.v1',
+              payload: { media: [directMediaItem('images/out.png')] },
+            },
+          },
+        },
+      };
+
+      pageTranscriptMock.mockResolvedValueOnce({
+        items: [item],
+        nextCursor: null,
+        hasMore: false,
+      });
+      commitSessionStoredMessageMock.mockResolvedValue({
+        didWrite: true,
+        messageId: 'msg-1',
+        seq: 1,
+        createdAt: 124,
+      });
+
+      const { importExternalSessionTranscript } = await import('./importExternalSessionTranscript');
+      await expect(importExternalSessionTranscript({
+        linked: createLinkedSession(workingDirectory),
+        credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+        sessionId: 'sess_direct_import_relative',
+      })).resolves.toEqual({ importedCount: 1 });
+
+      const committed = commitSessionStoredMessageMock.mock.calls[0]?.[0] as {
+        content: { t: 'plain'; v: Record<string, unknown> };
+      };
+      const committedMeta = committed.content.v.meta as Record<string, unknown>;
+      const committedEnvelope = committedMeta.happier as Record<string, unknown>;
+      const committedPayload = committedEnvelope.payload as Record<string, unknown>;
+      const committedMedia = committedPayload.media as Array<Record<string, unknown>>;
+      const adoptedPath = String(committedMedia[0]?.path ?? '');
+
+      expect(adoptedPath).toMatch(/^\.happier\/uploads\/generated\/sess_direct_import_relative\/direct-import:v1:opencode:/);
+      expect(adoptedPath).not.toBe('images/out.png');
+      await expect(readFile(resolve(workingDirectory, adoptedPath))).resolves.toEqual(pngBytes);
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
 });

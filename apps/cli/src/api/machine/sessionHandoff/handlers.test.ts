@@ -3484,6 +3484,11 @@ function createLoopbackMachineTransferChannels() {
         activeServerDir: '/tmp/happier-adapter-seam',
         handoffId: started.handoffId,
         negotiatedTransportStrategy: 'server_routed_stream',
+        providerBundle: expect.objectContaining({
+          providerId: 'claude',
+          remoteSessionId: 'claude_session_1',
+          transcriptBase64: 'e30K',
+        }),
         sourceRootPath: sourcePath,
         workspaceTransfer: expect.objectContaining({
           enabled: true,
