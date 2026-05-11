@@ -1,17 +1,25 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import {
-    clearSessionStateFieldFromMetadata,
     computeMonotonicUpdatedAt,
     readAcpSessionModeIntentFromMetadata,
     readModelIntentFromMetadata,
     readPermissionModeIntentFromMetadata,
 } from '@happier-dev/agents';
-import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import {
+    applyAcpConfigOptionIntentSessionMetadata,
+    applyAcpSessionModeIntentSessionMetadata,
+    applyModelIntentSessionMetadata,
+    applyPermissionModeIntentSessionMetadata,
+    clearAcpConfigOptionIntentSessionMetadata,
+    clearAcpSessionModeIntentSessionMetadata,
+    clearModelIntentSessionMetadata,
+    clearPermissionModeIntentSessionMetadata,
+} from '@happier-dev/agents/session/state/metadataWriters';
 import {
     readSessionMcpSelectionV1FromMetadata,
-    AcpConfigOptionOverridesV1Schema,
     type SessionAttachMetadataIdentityPolicy,
 } from '@happier-dev/protocol';
+import { resolveSessionConfigOptionOverridesFromMetadataSnapshot } from './sessionConfigOptionOverrideSync';
 
 type AcpConfigOptionOverrideUpdate = Readonly<{
     configId: string;
@@ -33,37 +41,20 @@ function shouldPreserveCurrentIdentityOnAttach(
 }
 
 function readAcpConfigOptionUpdates(metadata: Metadata): AcpConfigOptionOverrideUpdate[] {
-    const record = metadata as Record<string, unknown>;
-    const roots = [
-        AcpConfigOptionOverridesV1Schema.safeParse(record.sessionConfigOptionOverridesV1),
-        AcpConfigOptionOverridesV1Schema.safeParse(record.acpConfigOptionOverridesV1),
-    ].filter((parsed) => parsed.success);
-
-    const updatesByConfigId = new Map<string, AcpConfigOptionOverrideUpdate>();
-    for (const root of roots) {
-        if (!root.success) continue;
-        for (const [configId, entry] of Object.entries(root.data.overrides)) {
-            const normalizedConfigId = configId.trim();
-            if (!normalizedConfigId) continue;
-            const current = updatesByConfigId.get(normalizedConfigId);
-            if (current && entry.updatedAt < current.updatedAt) continue;
-            updatesByConfigId.set(normalizedConfigId, {
-            configId: normalizedConfigId,
-            value: entry.value,
-            updatedAt: entry.updatedAt,
-            });
-        }
-    }
-    return Array.from(updatesByConfigId.values());
+    return resolveSessionConfigOptionOverridesFromMetadataSnapshot({ metadata }).map((update) => ({
+        configId: update.configId,
+        value: update.valueId,
+        updatedAt: update.updatedAt,
+    }));
 }
 
 function replayAcpConfigOptionUpdates(
     metadata: Metadata,
     updates: readonly AcpConfigOptionOverrideUpdate[],
 ): Metadata {
-    let nextMetadata = clearSessionStateFieldFromMetadata(metadata, 'intent.acpConfigOption') as Metadata;
+    let nextMetadata = clearAcpConfigOptionIntentSessionMetadata(metadata) as Metadata;
     for (const update of updates) {
-        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.acpConfigOption', {
+        nextMetadata = applyAcpConfigOptionIntentSessionMetadata(nextMetadata, {
             v: 1,
             configId: update.configId,
             value: update.value,
@@ -408,17 +399,15 @@ export function mergeSessionMetadataForStartup(opts: {
         mode,
     });
     if (perm) {
-        const permissionBase = { ...merged };
-        delete (permissionBase as Record<string, unknown>).permissionMode;
-        delete (permissionBase as Record<string, unknown>).permissionModeUpdatedAt;
-        merged = applySessionStateFieldMetadataPatch(permissionBase, 'intent.permissionMode', {
+        const permissionBase = clearPermissionModeIntentSessionMetadata(merged);
+        merged = applyPermissionModeIntentSessionMetadata(permissionBase, {
             v: 1,
             permissionMode: perm.mode,
             updatedAt: perm.updatedAt,
         }) as Metadata;
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived permissionMode fields.
-        merged = clearSessionStateFieldFromMetadata(merged, 'intent.permissionMode') as Metadata;
+        merged = clearPermissionModeIntentSessionMetadata(merged) as Metadata;
     }
 
     const sessionMode = resolveSessionModeOverrideForStartup({
@@ -429,15 +418,15 @@ export function mergeSessionMetadataForStartup(opts: {
         mode,
     });
     if (sessionMode) {
-        const sessionModeBase = clearSessionStateFieldFromMetadata(merged, 'intent.acpSessionMode');
-        merged = applySessionStateFieldMetadataPatch(sessionModeBase, 'intent.acpSessionMode', {
+        const sessionModeBase = clearAcpSessionModeIntentSessionMetadata(merged);
+        merged = applyAcpSessionModeIntentSessionMetadata(sessionModeBase, {
             v: 1,
             modeId: sessionMode.modeId,
             updatedAt: sessionMode.updatedAt,
         }) as Metadata;
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived override fields.
-        merged = clearSessionStateFieldFromMetadata(merged, 'intent.acpSessionMode') as Metadata;
+        merged = clearAcpSessionModeIntentSessionMetadata(merged) as Metadata;
     }
 
     const model = resolveModelOverrideForStartup({
@@ -448,14 +437,14 @@ export function mergeSessionMetadataForStartup(opts: {
         mode,
     });
     if (model) {
-        merged = applySessionStateFieldMetadataPatch(merged, 'intent.model', {
+        merged = applyModelIntentSessionMetadata(clearModelIntentSessionMetadata(merged), {
             v: 1,
             modelId: model.modelId,
             updatedAt: model.updatedAt,
         }) as Metadata;
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived override fields.
-        merged = clearSessionStateFieldFromMetadata(merged, 'intent.model') as Metadata;
+        merged = clearModelIntentSessionMetadata(merged) as Metadata;
     }
 
     const acpConfigOptionUpdates = [
@@ -466,7 +455,7 @@ export function mergeSessionMetadataForStartup(opts: {
         merged = replayAcpConfigOptionUpdates(merged, acpConfigOptionUpdates);
     } else if (mode === 'attach') {
         // Attach safety: explicitly remove any next-derived config option overrides.
-        merged = clearSessionStateFieldFromMetadata(merged, 'intent.acpConfigOption') as Metadata;
+        merged = clearAcpConfigOptionIntentSessionMetadata(merged) as Metadata;
     }
 
     const mcpSelection = resolveSessionMcpSelectionForStartup({

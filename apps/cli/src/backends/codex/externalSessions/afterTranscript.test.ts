@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile, appendFile, unlink } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, writeFile, appendFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,7 @@ import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protoco
 import type { FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
 import {
   createCodexAppServerProcessEnv,
+  writeFakeCodexAppServerScript,
   writeFakeCodexAppServerThreadListScript,
 } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import type { CodexRolloutSessionStoreReadAfterResult } from '../rollout/sessionStore/codexRolloutSessionStoreTypes';
@@ -158,6 +159,70 @@ describe('readAfterCodexTranscript', () => {
     expect(idle.items).toHaveLength(0);
     expect(idle.truncated).toBe(false);
     expect(idle.nextCursor).toBe(init.nextCursor);
+  });
+
+  it('advances the follow cursor across non-renderable rollout lines', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-non-renderable-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = 'non-renderable-progress-session';
+    const filePath = join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`);
+
+    await writeFile(
+      filePath,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z', cwd: '/repo/non-renderable' }),
+      'utf8',
+    );
+
+    const init = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: 'tail',
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(init.items).toHaveLength(0);
+    expect(init.nextCursor).toBeTruthy();
+
+    await appendFile(
+      filePath,
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:01.000Z', cwd: '/repo/non-renderable' }),
+      'utf8',
+    );
+
+    const firstPoll = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: init.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(firstPoll.items).toHaveLength(0);
+    expect(firstPoll.truncated).toBe(false);
+    expect(firstPoll.nextCursor).toBeTruthy();
+    expect(firstPoll.nextCursor).not.toBe(init.nextCursor);
+
+    const secondPoll = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: firstPoll.nextCursor!,
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(secondPoll.items).toHaveLength(0);
+    expect(secondPoll.truncated).toBe(false);
+    expect(secondPoll.nextCursor).toBe(firstPoll.nextCursor);
   });
 
   it('continues from the last delivered unread line when maxItems truncates a readAfter batch', async () => {
@@ -332,7 +397,7 @@ describe('readAfterCodexTranscript', () => {
     expect(secondBatch.nextCursor).toBeTruthy();
   });
 
-  it('keeps the cached tail cursor stable after the rollout file disappears', async () => {
+  it('returns an empty follow result after the rollout file disappears', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-cache-'));
     const codexHome = join(root, 'codex-home');
     const sessionsDir = join(codexHome, 'sessions');
@@ -378,7 +443,7 @@ describe('readAfterCodexTranscript', () => {
 
     expect(afterMissing.items).toHaveLength(0);
     expect(afterMissing.truncated).toBe(false);
-    expect(afterMissing.nextCursor).toBe(init.nextCursor);
+    expect(afterMissing.nextCursor).toBeNull();
   });
 
   it('keeps polling app-server-linked sessions when rollout files are missing, then forces a refresh when one appears', async () => {
@@ -453,6 +518,46 @@ describe('readAfterCodexTranscript', () => {
     expect(afterRolloutAppears.items).toHaveLength(0);
     expect(afterRolloutAppears.truncated).toBe(true);
     expect(afterRolloutAppears.nextCursor).toBeTruthy();
+  });
+
+  it('does not start the Codex app-server metadata fallback when tailing rollout-backed history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-tail-no-app-server-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = 'tail-existing-rollout-session';
+    const markerPath = join(root, 'app-server-started');
+    const fakeAppServer = await writeFakeCodexAppServerScript({
+      dir: root,
+      setupLines: [
+        'import("node:fs/promises").then(({ writeFile }) => writeFile(process.env.APP_SERVER_MARKER, "started"));',
+      ],
+      bodyLines: ['for await (const _line of rl) {}'],
+    });
+
+    await writeFile(
+      join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`),
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z' }),
+      'utf8',
+    );
+
+    const init = await readAfterCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: createCodexAppServerProcessEnv(fakeAppServer, {
+        CODEX_HOME: codexHome,
+        APP_SERVER_MARKER: markerPath,
+      }),
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      cursor: 'tail',
+      maxBytes: 1024 * 1024,
+      maxItems: 100,
+    });
+
+    expect(init.items).toHaveLength(0);
+    expect(init.nextCursor).toBeTruthy();
+    await expect(access(markerPath)).rejects.toThrow();
   });
 
   it('returns appended synthetic SubAgent root rows when collaboration events are written after tail', async () => {

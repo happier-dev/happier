@@ -13,6 +13,7 @@ import {
 import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
+import { adoptSessionMediaMetadataForManagedSession } from '@/session/media/adoption';
 
 function sha256(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex');
@@ -126,21 +127,28 @@ export async function importExternalSessionTranscript(params: Readonly<{
   let importedCount = 0;
 
   for (const item of items) {
+    const localId = makeImportLocalId({
+      providerId: params.linked.providerId,
+      remoteSessionId: params.linked.remoteSessionId,
+      directItemId: item.id,
+    });
+    const raw = await adoptSessionMediaMetadataForManagedSession({
+      raw: item.raw,
+      sessionId: params.sessionId,
+      messageLocalId: localId,
+      workingDirectory: params.linked.sessionPath,
+    });
     const content = buildStoredMessageContent({
       rawSession: params.linked.rawSession,
       credentials: params.credentials,
-      raw: item.raw,
+      raw,
     });
 
     await commitSessionStoredMessage({
       token: params.credentials.token,
       sessionId: params.sessionId,
       content,
-      localId: makeImportLocalId({
-        providerId: params.linked.providerId,
-        remoteSessionId: params.linked.remoteSessionId,
-        directItemId: item.id,
-      }),
+      localId,
     });
     importedCount += 1;
   }

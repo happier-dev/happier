@@ -6,26 +6,25 @@ import type { CatalogAgentLookupId } from '@/backends/types';
 import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 
 const HELP_FLAGS = new Set(['-h', '--help']);
-const VERSION_FLAGS = new Set(['-v', '--version']);
+const VERSION_FLAGS = new Set(['-v', '-V', '--version']);
 
-export function detectProviderCliInfoRequest(args: readonly string[]): '--help' | '--version' | null {
-  if (args.some((arg) => HELP_FLAGS.has(arg))) return '--help';
-  if (args.some((arg) => VERSION_FLAGS.has(arg))) return '--version';
+export function detectProviderCliInfoRequest(args: readonly string[]): string | null {
+  const helpFlag = args.find((arg) => HELP_FLAGS.has(arg));
+  if (helpFlag) return helpFlag;
+  const versionFlag = args.find((arg) => VERSION_FLAGS.has(arg));
+  if (versionFlag) return versionFlag;
   return null;
 }
 
-export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
+export function passthroughProviderCliArgs(params: Readonly<{
   agentId: CatalogAgentLookupId;
-  args: readonly string[];
+  providerArgs: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
-}>): boolean {
-  const flag = detectProviderCliInfoRequest(params.args);
-  if (!flag) return false;
-
+}>): void {
   const launch = requireProviderCliLaunchSpec(params.agentId, { processEnv: params.processEnv });
   const invocation = resolveWindowsCommandInvocation({
     command: launch.command,
-    args: [...launch.args, flag],
+    args: [...launch.args, ...params.providerArgs],
     env: params.processEnv ?? process.env,
     resolveCommandOnPath: false,
   });
@@ -45,5 +44,20 @@ export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
   if (result.signal) {
     process.exit(1);
   }
+}
+
+export function maybePassthroughProviderCliInfoRequest(params: Readonly<{
+  agentId: CatalogAgentLookupId;
+  args: readonly string[];
+  processEnv?: NodeJS.ProcessEnv;
+}>): boolean {
+  const flag = detectProviderCliInfoRequest(params.args);
+  if (!flag) return false;
+
+  passthroughProviderCliArgs({
+    agentId: params.agentId,
+    providerArgs: [flag],
+    processEnv: params.processEnv,
+  });
   return true;
 }

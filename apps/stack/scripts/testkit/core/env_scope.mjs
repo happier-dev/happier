@@ -71,8 +71,12 @@ export function filterEnvForSpawn(env = process.env, { keepKeys = [], keepPrefix
 }
 
 export function withPatchedProcessEnv(t, overrides = {}) {
+  const effectiveOverrides =
+    process.platform === 'win32' && Object.prototype.hasOwnProperty.call(overrides, 'PATH')
+      ? { ...overrides, Path: overrides.PATH }
+      : overrides;
   const previous = new Map();
-  for (const [key, value] of Object.entries(overrides)) {
+  for (const [key, value] of Object.entries(effectiveOverrides)) {
     previous.set(key, Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined);
     if (value == null) delete process.env[key];
     else process.env[key] = String(value);

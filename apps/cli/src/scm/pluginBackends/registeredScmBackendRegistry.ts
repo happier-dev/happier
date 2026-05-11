@@ -82,6 +82,7 @@ const EXECUTABLE_SUPPORTED_LEAVES: readonly SupportedLeaf[] = [
     { key: 'worktree.remove', hasHandler: (registration) => typeof registration.handlers.worktree?.remove === 'function' },
     { key: 'worktree.prune', hasHandler: (registration) => typeof registration.handlers.worktree?.prune === 'function' },
     { key: 'lifecycle.init', hasHandler: (registration) => typeof registration.handlers.lifecycle?.init === 'function' },
+    { key: 'lifecycle.clone', hasHandler: (registration) => typeof registration.handlers.lifecycle?.clone === 'function' },
     { key: 'lifecycle.removeIndexLock', hasHandler: (registration) => typeof registration.handlers.lifecycle?.removeIndexLock === 'function' },
     { key: 'hosting.providerDetection', hasHandler: (registration) => typeof registration.handlers.read?.statusSnapshot === 'function' },
     {
@@ -92,9 +93,9 @@ const EXECUTABLE_SUPPORTED_LEAVES: readonly SupportedLeaf[] = [
     { key: 'hosting.pullRequestStatus', hasHandler: (registration) => typeof registration.handlers.read?.statusSnapshot === 'function' },
     { key: 'hosting.pullRequestCreate', hasHandler: (registration) => typeof registration.handlers.hosting?.pullRequestOpenCompose === 'function' },
     { key: 'hosting.pullRequestReuse', hasHandler: (registration) => typeof registration.handlers.hosting?.pullRequestOpenOrReuse === 'function' },
-    { key: 'hosting.pullRequestCheckout', hasHandler: () => false },
-    { key: 'hosting.pullRequestPrepareWorktree', hasHandler: () => false },
-    { key: 'hosting.pullRequestRunStacked', hasHandler: () => false },
+    { key: 'hosting.pullRequestCheckout', hasHandler: (registration) => typeof registration.handlers.hosting?.pullRequestCheckout === 'function' },
+    { key: 'hosting.pullRequestPrepareWorktree', hasHandler: (registration) => typeof registration.handlers.hosting?.pullRequestPrepareWorktree === 'function' },
+    { key: 'hosting.pullRequestRunStacked', hasHandler: (registration) => typeof registration.handlers.hosting?.pullRequestRunStacked === 'function' },
     { key: 'workspaceIntegration.inspectLocation', hasHandler: (registration) => typeof registration.handlers.workspaceIntegration?.inspectWorkspaceLocation === 'function' },
     {
         key: 'workspaceIntegration.checkoutMaterialization',

@@ -36,10 +36,8 @@ import type {
     PluginApiHostLifecycleHandlerDeclaration,
     PluginApiHookRegistration,
     PluginApiLifecycleHandlerRegistration,
-    PluginApiMcpBackendClientRegistration,
     PluginApiMcpDiscoveryProviderRegistration,
     PluginApiMcpServerRegistration,
-    PluginApiMcpToolRegistration,
     PluginApiNotificationCategoryRegistration,
     PluginApiNotificationChannelRegistration,
     PluginApiRequestInterceptorRegistration,
@@ -59,10 +57,6 @@ import type {
     PluginLifecycleHandlerRequest,
     ResolvedPluginLifecycleHandler,
 } from '../types';
-import {
-    claimPluginMcpToolNamespace,
-    createPluginMcpToolNamespaceRegistry,
-} from '@/mcp/pluginMcpToolNamespaces';
 
 type ActivationTarget = Readonly<{
     provenance: ResolvedContributionProvenance;
@@ -178,14 +172,6 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
     mcpServers: readonly Readonly<{
         pluginId: string;
         registration: PluginApiMcpServerRegistration;
-    }>[];
-    mcpBackendClients: readonly Readonly<{
-        pluginId: string;
-        registration: PluginApiMcpBackendClientRegistration;
-    }>[];
-    mcpTools: readonly Readonly<{
-        pluginId: string;
-        registration: PluginApiMcpToolRegistration;
     }>[];
     mcpDiscoveryProviders: readonly Readonly<{
         pluginId: string;
@@ -874,8 +860,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         scmBackends: readonly PluginApiScmBackendRegistration[];
         requestInterceptors: readonly PluginApiRequestInterceptorRegistration[];
         mcpServers: readonly PluginApiMcpServerRegistration[];
-        mcpBackendClients: readonly PluginApiMcpBackendClientRegistration[];
-        mcpTools: readonly PluginApiMcpToolRegistration[];
         mcpDiscoveryProviders: readonly PluginApiMcpDiscoveryProviderRegistration[];
         permissions: readonly PluginPermissionCapabilityV1[];
         permissionDeclarations: readonly PluginPermissionDeclarationV1[];
@@ -1019,8 +1003,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             scmBackends: registrations.scmBackends,
             requestInterceptors: registrations.requestInterceptors,
             mcpServers: registrations.mcpServers,
-            mcpBackendClients: registrations.mcpBackendClients,
-            mcpTools: registrations.mcpTools,
             mcpDiscoveryProviders: registrations.mcpDiscoveryProviders,
             permissions: activationSource.kind === 'bundled'
                 ? bundledPolicy!.permissions
@@ -1154,26 +1136,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             scmBackendsById.set(registration.id, ownerScopedRegistration);
         }
     }
-    const globalMcpToolNamespaces = createPluginMcpToolNamespaceRegistry();
-    const mcpTools = Object.freeze(activatedEntries.flatMap((entry) => entry.mcpTools.flatMap((registration) => {
-        try {
-            claimPluginMcpToolNamespace(globalMcpToolNamespaces, {
-                pluginId: entry.pluginId,
-                toolName: registration.name,
-                registrationId: registration.id,
-            });
-            return [Object.freeze({
-                pluginId: entry.pluginId,
-                registration,
-            })];
-        } catch (error) {
-            appendDiagnostic(diagnosticsByPluginId, entry.pluginId, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: error instanceof Error ? error.message : `Plugin '${entry.pluginId}' registered an invalid MCP tool namespace`,
-            });
-            return [];
-        }
-    })));
     const networkAllowedUrlOriginsByPluginId = collectScopedPermissionMap(
         activatedEntries,
         'network',
@@ -1221,11 +1183,6 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             pluginId: entry.pluginId,
             registration,
         })))),
-        mcpBackendClients: Object.freeze(activatedEntries.flatMap((entry) => entry.mcpBackendClients.map((registration) => Object.freeze({
-            pluginId: entry.pluginId,
-            registration,
-        })))),
-        mcpTools,
         mcpDiscoveryProviders: Object.freeze(activatedEntries.flatMap((entry) => entry.mcpDiscoveryProviders.map((registration) => Object.freeze({
             pluginId: entry.pluginId,
             registration,

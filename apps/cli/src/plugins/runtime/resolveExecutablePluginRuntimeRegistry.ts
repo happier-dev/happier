@@ -37,8 +37,6 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     scmBackendRegistrations?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['scmBackendRegistrations'];
     requestInterceptors?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['requestInterceptors'];
     mcpServers?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpServers'];
-    mcpBackendClients?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpBackendClients'];
-    mcpTools?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpTools'];
     mcpDiscoveryProviders?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['mcpDiscoveryProviders'];
     networkAllowedPluginIds?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['networkAllowedPluginIds'];
     networkAllowedUrlOriginsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['networkAllowedUrlOriginsByPluginId'];
@@ -85,11 +83,13 @@ function mergeActivatedContributes(
     base: ResolvedContributionRegistry,
     activated: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>,
 ): ResolvedContributionRegistry {
+    const baseActionIds = new Set(base.actions.map((action) => action.definition.id));
+    const activatedActions = activated.actions.filter((action) => !baseActionIds.has(action.definition.id));
     const baseLifecycleHandlerIds = new Set((base.lifecycleHandlers ?? []).map((handler) => handler.definition.id));
     const activatedLifecycleHandlers = activated.lifecycleHandlers.filter((handler) => !baseLifecycleHandlerIds.has(handler.definition.id));
 
     if (
-        activated.actions.length === 0
+        activatedActions.length === 0
         && activated.tools.length === 0
         && activated.commands.length === 0
         && activated.resources.length === 0
@@ -105,7 +105,7 @@ function mergeActivatedContributes(
         backends: base.backends,
         actions: Object.freeze([
             ...base.actions,
-            ...activated.actions,
+            ...activatedActions,
         ]),
         tools: Object.freeze([
             ...(base.tools ?? []),
@@ -164,12 +164,12 @@ async function loadBundledFirstPartyPluginDaemonModule(packageName: string): Pro
         const distCandidate = resolve(repoRootCandidate, 'packages', 'plugins', pluginId, 'dist', 'index.js');
         const srcCandidate = resolve(repoRootCandidate, 'packages', 'plugins', pluginId, 'src', 'index.ts');
 
+        if (existsSync(srcCandidate)) {
+            // Dev/test local plugins must share the host's TS module graph; dist can carry a second SDK runtime context.
+            return await import(pathToFileURL(srcCandidate).href) as PluginDaemonModuleNamespace;
+        }
         if (existsSync(distCandidate)) {
             return await import(pathToFileURL(distCandidate).href) as PluginDaemonModuleNamespace;
-        }
-        if (existsSync(srcCandidate)) {
-            // Dev-mode fallback so unit tests and local execution can run before plugin build outputs exist.
-            return await import(pathToFileURL(srcCandidate).href) as PluginDaemonModuleNamespace;
         }
     }
 
@@ -245,8 +245,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
         scmBackendRegistrations: activatedRegistry.scmBackendRegistrations,
         requestInterceptors: activatedRegistry.requestInterceptors,
         mcpServers: activatedRegistry.mcpServers,
-        mcpBackendClients: activatedRegistry.mcpBackendClients,
-        mcpTools: activatedRegistry.mcpTools,
         mcpDiscoveryProviders: activatedRegistry.mcpDiscoveryProviders,
         networkAllowedPluginIds: activatedRegistry.networkAllowedPluginIds,
         networkAllowedUrlOriginsByPluginId: activatedRegistry.networkAllowedUrlOriginsByPluginId,

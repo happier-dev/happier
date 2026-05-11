@@ -20,10 +20,9 @@ import { isBun } from '@/utils/runtime';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { handleResumeCommand } from '@/cli/commands/resume';
 import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
-import packageJson from '../../../../package.json';
+import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { readOptionalFlagValue, readOptionalFlagValueFromAliases } from '@/cli/sessionStartArgs';
 
 function readResumeFlagValue(args: readonly string[] | null | undefined): { flagIndex: number; valueIndex: number; value: string } | null {
   const list = Array.isArray(args) ? args : [];
@@ -85,10 +84,6 @@ function expandEqualsFlags(args: readonly string[]): string[] {
   return out;
 }
 
-function resolveClaudeSessionRuntimeExtras(args: readonly string[]): Pick<StartOptions, 'claudeArgs' | 'jsRuntime'> {
-  return resolveClaudeSessionRuntimeExtrasInternal(args, { passThroughResume: false });
-}
-
 function resolveClaudeSessionRuntimeExtrasInternal(
   args: readonly string[],
   opts: Readonly<{ passThroughResume: boolean }>,
@@ -96,75 +91,38 @@ function resolveClaudeSessionRuntimeExtrasInternal(
   const strippedArgs = Array.isArray(args) ? args : [];
 
   let jsRuntime: 'node' | 'bun' | undefined = undefined;
-  const claudeArgs: string[] = [];
+  const providerPartitionArgs: string[] = [];
 
   for (let i = 0; i < strippedArgs.length; i += 1) {
     const arg = strippedArgs[i];
 
     if (arg === '--js-runtime') {
       const raw = strippedArgs[i + 1];
+      if (typeof raw !== 'string' || raw.startsWith('-')) {
+        console.error(chalk.red("Missing value for --js-runtime. Must be 'node' or 'bun'"));
+        process.exit(1);
+      }
       i += 1;
       if (raw === 'node' || raw === 'bun') {
         jsRuntime = raw;
+      } else {
+        console.error(chalk.red(`Invalid --js-runtime value: ${raw}. Must be 'node' or 'bun'`));
+        process.exit(1);
       }
       continue;
     }
-
-    // Claude-specific passthrough shorthand.
-    if (arg === '--yolo') {
-      claudeArgs.push('--dangerously-skip-permissions');
-      continue;
-    }
-
-    // Do not pass Happier-owned flags down to Claude Code.
-    if (
-      arg === '--refresh-settings'
-      || arg === '--profile'
-      || arg.startsWith('--profile=')
-      || arg === '--permission-mode'
-      || arg.startsWith('--permission-mode=')
-      || arg === '--permission-mode-updated-at'
-      || arg === '--account-settings-version-hint'
-      || arg === '--existing-session'
-      || arg === '--happy-starting-mode'
-      || arg === '--started-by'
-      || (!opts.passThroughResume && (arg === '--resume' || arg === '-r'))
-    ) {
-      // Skip paired values for flags that take an argument.
-      if (
-        arg === '--profile'
-        || arg === '--permission-mode'
-        || arg === '--permission-mode-updated-at'
-        || arg === '--account-settings-version-hint'
-        || arg === '--existing-session'
-        || arg === '--happy-starting-mode'
-        || arg === '--started-by'
-        || (!opts.passThroughResume && (arg === '--resume' || arg === '-r'))
-      ) {
-        i += 1;
-      }
-      continue;
-    }
-
-    // Preserve model passthrough for Claude Code.
-    if (arg === '--model') {
-      claudeArgs.push(arg);
-      const raw = strippedArgs[i + 1];
-      if (typeof raw === 'string' && raw.trim().length > 0) {
-        claudeArgs.push(raw);
-        i += 1;
-      }
-      continue;
-    }
-
-    // Keep all other args for Claude Code (and best-effort pair values).
-    claudeArgs.push(arg);
-    const next = strippedArgs[i + 1];
-    if (typeof next === 'string' && !next.startsWith('-')) {
-      claudeArgs.push(next);
-      i += 1;
-    }
+    providerPartitionArgs.push(arg);
   }
+
+  const partitioned = partitionProviderSessionArgs({
+    args: providerPartitionArgs,
+    directoryFlags: ['-C', '--cd'],
+    forwardModelFlag: true,
+    forwardResumeFlag: opts.passThroughResume,
+    yoloProviderArgs: ['--dangerously-skip-permissions'],
+    versionFlags: ['-v', '--version'],
+  });
+  const claudeArgs = partitioned.providerArgs;
 
   return {
     ...(claudeArgs.length > 0 ? { claudeArgs } : {}),
@@ -204,6 +162,7 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
 
   let showHelp = false;
   let showVersion = false;
+  let versionFlag: '-v' | '--version' | undefined = undefined;
   let chromeOverride: boolean | undefined = undefined;
 
   for (let i = 0; i < strippedArgs.length; i += 1) {
@@ -214,6 +173,7 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
     }
     if (arg === '-v' || arg === '--version') {
       showVersion = true;
+      versionFlag = arg;
       continue;
     }
     if (arg === '--chrome') {
@@ -226,27 +186,32 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
     }
   }
 
-  const versionOnlyInvocation =
-    showVersion &&
-    strippedArgs.length > 0 &&
-    strippedArgs.every((arg) => arg === '-v' || arg === '--version');
+  const passThroughResume = explicitClaudeSubcommand;
 
-  if (versionOnlyInvocation) {
-    console.log(`happier version: ${packageJson.version}`);
+  if (showVersion && versionFlag) {
+    const versionInvocation = await resolveClaudeCliInfoInvocation([versionFlag]);
+    const { execFileSync } = await import('node:child_process');
+    const claudeVersion = execFileSync(
+      versionInvocation.command,
+      versionInvocation.args,
+      {
+        encoding: 'utf8',
+        windowsHide: true,
+        ...(versionInvocation.env ? { env: versionInvocation.env } : {}),
+        ...(versionInvocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+        ...(configuration.vendorCliHelpTimeoutMs > 0 ? { timeout: configuration.vendorCliHelpTimeoutMs } : {}),
+      },
+    );
+    console.log(String(claudeVersion).trimEnd());
     return;
   }
 
-  // Resolve Chrome mode: explicit flag > settings > false
-  const settings = await readSettings();
-  const chromeEnabled = chromeOverride ?? settings.chromeMode ?? false;
-  const baseExtras = explicitClaudeSubcommand
-    ? resolveClaudeSessionRuntimeExtrasInternal(strippedArgs, { passThroughResume: true })
-    : resolveClaudeSessionRuntimeExtrasInternal(strippedArgs, { passThroughResume: false });
-  const claudeArgsWithChrome = chromeEnabled && !(baseExtras.claudeArgs ?? []).includes('--chrome')
-    ? [...(baseExtras.claudeArgs ?? []), '--chrome']
-    : (baseExtras.claudeArgs ?? []);
-
   if (showHelp) {
+    const helpExtras = resolveClaudeSessionRuntimeExtrasInternal(strippedArgs, { passThroughResume });
+    const providerHelpArgs = [
+      ...(helpExtras.claudeArgs ?? []).filter((arg) => arg !== '-h' && arg !== '--help'),
+      '--help',
+    ];
     console.log(`${buildRootHelpText()}
 ${chalk.bold('Happier supports ALL Claude options!')}
   Use any claude flag with happier as you would with claude. Our favorite:
@@ -260,7 +225,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
     // Run claude --help and display its output
     try {
       const { execFileSync } = await import('node:child_process');
-      const helpInvocation = await resolveClaudeHelpInvocation();
+      const helpInvocation = await resolveClaudeCliInfoInvocation(providerHelpArgs);
       const claudeHelp = execFileSync(
         helpInvocation.command,
         helpInvocation.args,
@@ -287,10 +252,13 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
     process.exit(0);
   }
 
-  if (showVersion) {
-    console.log(`happier version: ${packageJson.version}`);
-    // For mixed invocations, continue and pass --version through to Claude Code.
-  }
+  // Resolve Chrome mode: explicit flag > settings > false
+  const settings = await readSettings();
+  const chromeEnabled = chromeOverride ?? settings.chromeMode ?? false;
+  const baseExtras = resolveClaudeSessionRuntimeExtrasInternal(strippedArgs, { passThroughResume });
+  const claudeArgsWithChrome = chromeEnabled && !(baseExtras.claudeArgs ?? []).includes('--chrome')
+    ? [...(baseExtras.claudeArgs ?? []), '--chrome']
+    : (baseExtras.claudeArgs ?? []);
 
   if (!explicitClaudeSubcommand) {
     const resume = readResumeFlagValue(strippedArgs);
@@ -323,24 +291,23 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
       backendIdForSessionRuntime: 'claude',
       agentIdForDeprecatedAliases: AGENTS_CORE.claude.id,
       agentIdForAccountSettings: AGENTS_CORE.claude.id,
-      resolveExtraOptions: (args) => {
-        const startingModeRaw = readOptionalFlagValue(args, '--happy-starting-mode');
+      directoryFlags: ['-C', '--cd'],
+      forwardModelFlag: true,
+      forwardResumeFlag: explicitClaudeSubcommand,
+      yoloProviderArgs: ['--dangerously-skip-permissions'],
+      resolveExtraOptions: (_args, parsed) => {
+        const startingModeRaw = parsed.startingMode;
         const startingMode = normalizeStartingMode(startingModeRaw) ?? undefined;
         if (startingModeRaw && typeof startingMode === 'undefined') {
           console.error(chalk.red(`Invalid --happy-starting-mode: ${startingModeRaw}. Use "terminal" or "remote".`));
           process.exit(1);
         }
 
-        const directoryRaw = readOptionalFlagValueFromAliases(args, ['-C', '--cd']);
-        const directory = typeof directoryRaw === 'string' && directoryRaw.trim().length > 0
-          ? directoryRaw.trim()
-          : undefined;
-
         return {
           ...(claudeArgsWithChrome.length > 0 ? { claudeArgs: claudeArgsWithChrome } : {}),
           ...(baseExtras.jsRuntime ? { jsRuntime: baseExtras.jsRuntime } : {}),
           ...(startingMode ? { startingMode } : {}),
-          ...(directory ? { directory } : {}),
+          ...(parsed.directory ? { directory: parsed.directory } : {}),
         };
       },
     });
@@ -353,7 +320,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
   }
 }
 
-async function resolveClaudeHelpInvocation(): Promise<{
+async function resolveClaudeCliInfoInvocation(providerArgs: readonly string[]): Promise<{
   command: string;
   args: string[];
   env?: NodeJS.ProcessEnv;
@@ -367,7 +334,7 @@ async function resolveClaudeHelpInvocation(): Promise<{
     });
     const invocation = resolveWindowsCommandInvocation({
       command: runtimeExecutable,
-      args: [launch.resolvedPath, '--help'],
+      args: [launch.resolvedPath, ...providerArgs],
       env: process.env,
     });
     return {
@@ -380,7 +347,7 @@ async function resolveClaudeHelpInvocation(): Promise<{
 
   const invocation = resolveWindowsCommandInvocation({
     command: launch.command,
-    args: [...launch.args, '--help'],
+    args: [...launch.args, ...providerArgs],
     env: process.env,
   });
   return {

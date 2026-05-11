@@ -499,8 +499,10 @@ async function assertIdentityRediscoverySupported(input: ScmBackendContractOpera
 }
 
 async function assertWorkspaceInspectLocationSupported(input: ScmBackendContractOperationInput): Promise<void> {
-    expect(input.backend.workspaceIntegration?.inspectWorkspaceLocation).toBeTypeOf('function');
-    const inspection = await input.backend.workspaceIntegration?.inspectWorkspaceLocation({ context: input.context });
+    const inspectWorkspaceLocation = input.backend.workspaceIntegration?.inspectWorkspaceLocation;
+    expect(inspectWorkspaceLocation).toBeTypeOf('function');
+    if (!inspectWorkspaceLocation) return;
+    const inspection = await inspectWorkspaceLocation({ context: input.context });
     expect(inspection?.rootPath).toBe(input.fixture.rootPath);
 }
 

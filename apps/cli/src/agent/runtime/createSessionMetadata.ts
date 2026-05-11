@@ -10,10 +10,15 @@
 import os from 'node:os';
 import { resolve } from 'node:path';
 
-import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
 import {
     parseSessionMcpSelectionV1Json,
 } from '@happier-dev/protocol';
+import {
+    applyAcpConfigOptionIntentSessionMetadata,
+    applyAcpSessionModeIntentSessionMetadata,
+    applyModelIntentSessionMetadata,
+    applyPermissionModeIntentSessionMetadata,
+} from '@happier-dev/agents/session/state/metadataWriters';
 
 import type { AgentState, Metadata, PermissionMode } from '@/api/types';
 import { configuration } from '@/configuration';
@@ -82,7 +87,7 @@ function applySessionConfigOptionOverridesToMetadata(
 
     let nextMetadata = metadata as Record<string, unknown>;
     for (const [configId, entry] of Object.entries(overrides.overrides)) {
-        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.acpConfigOption', {
+        nextMetadata = applyAcpConfigOptionIntentSessionMetadata(nextMetadata, {
             v: 1,
             configId,
             value: entry.value,
@@ -97,7 +102,7 @@ function applyInitialIntentMetadata(metadata: Metadata, opts: CreateSessionMetad
     let nextMetadata = metadata;
 
     if (opts.permissionMode) {
-        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.permissionMode', {
+        nextMetadata = applyPermissionModeIntentSessionMetadata(nextMetadata, {
             v: 1,
             permissionMode: opts.permissionMode,
             updatedAt: typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : Date.now(),
@@ -105,7 +110,7 @@ function applyInitialIntentMetadata(metadata: Metadata, opts: CreateSessionMetad
     }
 
     if (typeof opts.sessionModeId === 'string' && opts.sessionModeId.trim()) {
-        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.acpSessionMode', {
+        nextMetadata = applyAcpSessionModeIntentSessionMetadata(nextMetadata, {
             v: 1,
             modeId: opts.sessionModeId.trim(),
             updatedAt: typeof opts.sessionModeUpdatedAt === 'number' ? opts.sessionModeUpdatedAt : Date.now(),
@@ -113,7 +118,7 @@ function applyInitialIntentMetadata(metadata: Metadata, opts: CreateSessionMetad
     }
 
     if (typeof opts.modelId === 'string' && opts.modelId.trim()) {
-        nextMetadata = applySessionStateFieldMetadataPatch(nextMetadata, 'intent.model', {
+        nextMetadata = applyModelIntentSessionMetadata(nextMetadata, {
             v: 1,
             modelId: opts.modelId.trim(),
             updatedAt: typeof opts.modelUpdatedAt === 'number' ? opts.modelUpdatedAt : Date.now(),

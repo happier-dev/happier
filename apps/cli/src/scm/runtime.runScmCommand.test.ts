@@ -17,6 +17,28 @@ function initRepo(cwd: string): void {
 }
 
 describe('runScmCommand output limits', () => {
+    it('fails through host executable resolution when the SCM tool is missing', async () => {
+        const originalPath = process.env.PATH;
+        process.env.PATH = '';
+        try {
+            const result = await runScmCommand({
+                bin: 'git',
+                cwd: tmpdir(),
+                args: ['--version'],
+                timeoutMs: 5000,
+            });
+
+            expect(result).toEqual(expect.objectContaining({
+                success: false,
+                exitCode: -1,
+            }));
+            expect(result.stderr).toContain('SCM executable not found');
+            expect(result.stderr).toContain('dep.git');
+        } finally {
+            process.env.PATH = originalPath;
+        }
+    });
+
     it('fails deterministically when command output exceeds configured limit', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-runtime-limit-'));
         initRepo(workspace);

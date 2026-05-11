@@ -8,6 +8,10 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import type { ScmBackend } from '@/scm/types';
 import type { WorkspaceManifestEntry } from '@/scm/workspace/workspaceExportPackaging/buildWorkspaceManifestEntry';
 import { scanWorkspaceManifest, type ScannedWorkspaceFile } from './scanWorkspaceManifest';
+import {
+    DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+    shouldFilterWorkspaceManifestPath,
+} from './workspaceManifestSafeFilterPolicy';
 
 const tempRoots: string[] = [];
 
@@ -357,6 +361,30 @@ describe('scanWorkspaceManifest', () => {
                 },
             ],
         });
+    });
+
+    it('filters git admin paths through the plugin-backed default registry without an explicit registry', async () => {
+        await expect(shouldFilterWorkspaceManifestPath(
+            '.git/HEAD',
+            DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+        )).resolves.toBe(true);
+
+        await expect(shouldFilterWorkspaceManifestPath(
+            'README.md',
+            DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+        )).resolves.toBe(false);
+    });
+
+    it('filters sapling admin paths through the plugin-backed default registry without an explicit registry', async () => {
+        await expect(shouldFilterWorkspaceManifestPath(
+            '.sl/store',
+            DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+        )).resolves.toBe(true);
+
+        await expect(shouldFilterWorkspaceManifestPath(
+            'src/store',
+            DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+        )).resolves.toBe(false);
     });
 
     it('can include git admin paths when the safe filter policy allows them', async () => {

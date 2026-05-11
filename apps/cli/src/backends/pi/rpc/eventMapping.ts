@@ -1,4 +1,5 @@
 import type { AgentMessage } from '@/agent/core';
+import { extractAcpMediaContentBlocks } from '@/agent/acp/media/extractAcpMediaContentBlocks';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -39,6 +40,45 @@ function extractAssistantText(message: unknown): string | null {
   return text;
 }
 
+function extractAssistantContent(message: unknown): unknown {
+  const record = asRecord(message);
+  if (!record || record.role !== 'assistant') return undefined;
+  return record.content;
+}
+
+function extractAssistantMessageId(message: unknown): string | null {
+  const record = asRecord(message);
+  if (!record) return null;
+  return asNonEmptyString(record.id) ?? asNonEmptyString(record.messageId);
+}
+
+function buildPiAssistantMessages(message: unknown): AgentMessage[] {
+  const messages: AgentMessage[] = [];
+  const fullText = extractAssistantText(message);
+  if (fullText !== null && fullText.length > 0) {
+    messages.push({ type: 'model-output', fullText });
+  }
+
+  const messageId = extractAssistantMessageId(message);
+  const mediaResult = extractAcpMediaContentBlocks(extractAssistantContent(message), {
+    originSource: 'provider-generated',
+    ...(messageId ? { providerEventId: messageId } : {}),
+  });
+  if (mediaResult.media.length > 0) {
+    messages.push({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        localId: `pi-media-${messageId ?? 'assistant'}`,
+        role: 'output',
+        category: 'generated',
+        media: mediaResult.media,
+      },
+    });
+  }
+  return messages;
+}
+
 function extractTextFromToolResult(value: unknown): string | null {
   const record = asRecord(value);
   if (!record) return null;
@@ -76,17 +116,13 @@ export function mapPiRpcEventToAgentMessages(event: unknown): AgentMessage[] {
     const assistantType = asNonEmptyString(assistantMessageEvent.type);
     if (!assistantType) return [];
     if (assistantType === 'text_start' || assistantType === 'text_delta' || assistantType === 'text_end') {
-      const fullText = extractAssistantText(record.message);
-      if (fullText === null || fullText.length === 0) return [];
-      return [{ type: 'model-output', fullText }];
+      return buildPiAssistantMessages(record.message);
     }
     return [];
   }
 
   if (type === 'message_end') {
-    const fullText = extractAssistantText(record.message);
-    if (fullText === null || fullText.length === 0) return [];
-    return [{ type: 'model-output', fullText }];
+    return buildPiAssistantMessages(record.message);
   }
 
   if (type === 'tool_execution_start') {

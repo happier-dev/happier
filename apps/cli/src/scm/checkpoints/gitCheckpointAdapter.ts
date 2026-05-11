@@ -1,25 +1,26 @@
 import { resolve } from 'node:path';
 
 import {
-    aliasGitRepositoryCheckpoint,
-    captureGitRepositoryCheckpoint,
-    diffGitRepositoryCheckpoints,
-} from '@happier-dev/plugins-scm-git/checkpoints';
-import {
-    applyGitCheckpointReversePatch,
-    createGitRollbackBackup,
-    createGitRollbackStash,
-} from '@happier-dev/plugins-scm-git/checkpoints/rollback';
-import {
     runWithScmBackendRuntimeServices,
     type ScmBackendRuntimeServices,
 } from '@happier-dev/plugin-sdk/scm/backend';
 
+import {
+    aliasGitRepositoryCheckpoint,
+    captureGitRepositoryCheckpoint,
+    diffGitRepositoryCheckpoints,
+} from './gitRepositoryCheckpointOperations';
 import type { CheckpointRollbackOrchestrationDependencies } from './rollback/types';
+import {
+    applyGitCheckpointReversePatch,
+    createGitRollbackBackup,
+    createGitRollbackStash,
+} from './rollback/gitCheckpointRollbackOperations';
+import { rejectUnauthorizedScmInstallableCommand } from '../commandAuthorization';
 import { runScmCommand as runHostScmCommand } from '../runtime';
 import type { ScmBackendContext } from '../types';
 
-function createGitCheckpointRuntimeServices(): ScmBackendRuntimeServices {
+export function createGitCheckpointRuntimeServices(): ScmBackendRuntimeServices {
     return {
         async runCommand(input) {
             if (input.command !== 'git') {
@@ -30,6 +31,8 @@ function createGitCheckpointRuntimeServices(): ScmBackendRuntimeServices {
                     exitCode: -1,
                 };
             }
+            const unauthorizedCommand = rejectUnauthorizedScmInstallableCommand(input);
+            if (unauthorizedCommand) return unauthorizedCommand;
             return await runHostScmCommand({
                 bin: 'git',
                 cwd: input.cwd,

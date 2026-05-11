@@ -14,7 +14,7 @@ import {
     getAgentResumeConfig,
     isAgentId,
 } from '@happier-dev/agents';
-import { buildSessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import { buildVendorSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 function asMetadataRecord(value: unknown): Metadata | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -138,7 +138,7 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
         if (vendorResumeIdField && !(runtimeLocalMetadata as Record<string, unknown>)[vendorResumeIdField]) {
             Object.assign(
                 runtimeLocalMetadata,
-                buildSessionStateFieldMetadataPatch('identity.vendorSessionId', {
+                buildVendorSessionIdSessionMetadata({
                     metadataKey: vendorResumeIdField,
                     value: vendorResumeId,
                 }),

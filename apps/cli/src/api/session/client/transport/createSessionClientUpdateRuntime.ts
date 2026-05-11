@@ -4,6 +4,8 @@ import { logger } from '@/ui/logger';
 import type { AgentState, Metadata, Update, UserMessage } from '../../../types';
 import { handleSessionNewMessageUpdate } from '../../sessionNewMessageUpdate';
 import { handleSessionStateUpdate } from '../../sessionStateUpdateHandling';
+import { extractAssistantTextSnapshotFromSessionContent } from '../../turns/extractAssistantTextSnapshot';
+import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 
 export type SessionClientUpdateRuntime = Readonly<{
     handleUpdate: (data: Update, opts: { source: 'session-scoped' | 'user-scoped' }) => void;
@@ -38,6 +40,7 @@ export function createSessionClientUpdateRuntime(
         hasPendingQueueMaterializedLocalId: (localId: string) => boolean;
         deleteMaterializedLocalId: (localId: string) => void;
         initialLastObservedMessageSeq: number;
+        turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
     }>,
 ): SessionClientUpdateRuntime {
     const receivedMessageIds = new Set<string>();
@@ -98,6 +101,20 @@ export function createSessionClientUpdateRuntime(
                     emit: (event, payload) => deps.emit(event, payload),
                     debug: (message, payload) => logger.debug(message, payload),
                     debugLargeJson: (message, payload) => logger.debugLargeJson(message, payload),
+                    observeMessage: (message, seq) => {
+                        const extracted = extractAssistantTextSnapshotFromSessionContent(message);
+                        if (!extracted) return;
+                        deps.turnAssistantTextSnapshotStore?.observe({
+                            text: extracted.text,
+                            provider: extracted.provider,
+                            sidechainId: extracted.sidechainId,
+                            seq,
+                            localId: typeof (message as { localId?: unknown }).localId === 'string'
+                                ? (message as { localId: string }).localId
+                                : null,
+                            source: 'socket',
+                        });
+                    },
                 });
                 if (newMessageHandlingResult.handled) {
                     lastObservedMessageSeq = newMessageHandlingResult.lastObservedMessageSeq;

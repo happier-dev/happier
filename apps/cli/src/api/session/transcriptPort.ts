@@ -1,6 +1,9 @@
 import type { ACPMessageData, ACPProvider } from './sessionMessageTypes';
+import type { TurnAssistantTextSnapshotStore } from './turns/assistantTextSnapshot';
+import type { SendAgentSessionMediaCommittedRequest } from './client/transcript/sessionMediaBridge';
 
 export type TranscriptSessionPort = Readonly<{
+  turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
   sendAgentMessage?: (
     provider: ACPProvider,
     body: ACPMessageData,
@@ -15,5 +18,9 @@ export type TranscriptSessionPort = Readonly<{
     provider: ACPProvider,
     body: ACPMessageData,
     opts: { localId: string; meta?: Record<string, unknown> },
+  ) => Promise<void>;
+  sendAgentSessionMediaCommitted?: (
+    provider: ACPProvider,
+    request: SendAgentSessionMediaCommittedRequest,
   ) => Promise<void>;
 }>;

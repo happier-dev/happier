@@ -137,6 +137,12 @@ describe('resolveBuiltInContributions', () => {
                 ['dep.sapling'],
             ],
         ]));
+        const gitBackend = contributes.scmBackends?.find((backend) => backend.id === 'git');
+        expect(gitBackend?.definition.capabilities.hosting).toEqual(expect.objectContaining({
+            pullRequestCheckout: { support: 'supported' },
+            pullRequestPrepareWorktree: { support: 'supported' },
+            pullRequestRunStacked: { support: 'supported' },
+        }));
         expect((contributes.installables ?? []).map((installable) => [
             installable.pluginId,
             installable.definition.key,

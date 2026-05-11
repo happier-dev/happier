@@ -31,6 +31,7 @@ import { handleServerCliCommand } from './commands/server';
 import { handleSelfCliCommand } from './commands/self';
 import { handleSelfUpdateCliCommand } from './commands/selfUpdate';
 import { handleServiceCliCommand } from './commands/service';
+import { handleStatusCliCommand } from './commands/status';
 import { handleToolsCliCommand } from './commands/tools';
 import { handleUninstallCliCommand } from './commands/uninstall';
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleCatalogCliCommand';
@@ -75,6 +76,7 @@ const staticCommandRegistry: Readonly<Record<string, CommandHandler>> = {
   server: handleServerCliCommand,
   self: handleSelfCliCommand,
   'self-update': handleSelfUpdateCliCommand,
+  status: handleStatusCliCommand,
   tools: handleToolsCliCommand,
   uninstall: handleUninstallCliCommand,
 };

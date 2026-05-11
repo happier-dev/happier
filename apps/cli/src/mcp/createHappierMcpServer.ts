@@ -7,7 +7,6 @@ import type { Metadata } from '@/api/types';
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
-import { isActionEnabledByEnv } from '@/settings/actionsSettings';
 import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRuns';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import type { Credentials } from '@/persistence';
@@ -17,12 +16,14 @@ import {
   PromptRegistryInstallRequestV1Schema,
   PromptRegistryInstallResponseV1Schema,
   type ActionId,
+  type AccountSettings,
   getActionSpec,
   isActionSpecSurfacedOn,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1, type SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 import { createSessionStateSyncEngine } from '@happier-dev/agents';
+import { createMcpActionApprovalRequirement, createMcpActionEnablement } from '@/mcp/server/createMcpActionEnablement';
 
 const MCP_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
   display: {
@@ -65,13 +66,21 @@ async function writeMcpSessionTitleMetadata(params: Readonly<{
 
 export function createHappierMcpServer(
   client: HappyMcpSessionClient,
-  opts?: Readonly<{ credentials?: Credentials | null }>,
+  opts?: Readonly<{ credentials?: Credentials | null; accountSettings?: AccountSettings | null }>,
 ): { mcp: McpServer; toolNames: string[] } {
   // This server is the per-session MCP bridge that a running session agent uses.
   // It must use the `session_agent` surface so action enablement + approvals can be
   // configured separately from the external MCP surface (`mcp`).
   const toolSurface = 'session_agent' as const;
   const credentials = opts?.credentials ?? null;
+  const isActionEnabled = createMcpActionEnablement({
+    accountSettings: opts?.accountSettings ?? null,
+    surface: toolSurface,
+  });
+  const isActionApprovalRequired = createMcpActionApprovalRequirement({
+    accountSettings: opts?.accountSettings ?? null,
+    surface: toolSurface,
+  });
   const ctx = credentials
     ? resolveSessionEncryptionContextFromCredentials(credentials)
     : { encryptionKey: new Uint8Array(0), encryptionVariant: 'legacy' as const };
@@ -198,6 +207,8 @@ export function createHappierMcpServer(
       },
 
       resetGlobalVoiceAgent: async () => {},
+      isActionEnabled: (id) => isActionEnabled(id),
+      isActionApprovalRequired: (id) => isActionApprovalRequired(id),
     },
   );
 
@@ -205,14 +216,14 @@ export function createHappierMcpServer(
 
   registerHappierMcpResources(mcp as any, {
     surface: toolSurface,
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: toolSurface }),
+    isActionEnabled,
   });
 
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
     isActionEnabled: (id) => {
       const spec = getActionSpec(id as any);
-      return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabledByEnv(id as any, { surface: toolSurface });
+      return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabled(id as any);
     },
     surface: toolSurface,
   });

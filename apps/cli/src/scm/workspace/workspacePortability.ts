@@ -1,5 +1,5 @@
 import type { ScmBackendRegistry } from '../registry';
-import { defaultScmBackendRegistry } from '../scmBackendCatalog';
+import { resolveScmBackendRegistry } from '../scmBackendCatalog';
 import {
     createScmWorkspaceIntegrationPortableWorkspacePathRequest,
     resolveScmWorkspaceIntegrationPortableWorkspacePathRelativePath,
@@ -14,7 +14,7 @@ export async function assertPortableWorkspaceEntriesWithScmWorkspace(input: Read
     }>[];
     registry?: ScmBackendRegistry;
 }>): Promise<void> {
-    const registry = input.registry ?? defaultScmBackendRegistry;
+    const registry = await resolveScmBackendRegistry(input.registry);
     for (const backend of registry.listBackends()) {
         await backend.workspaceIntegration?.assertPortableWorkspaceEntries?.({
             entries: input.entries,
@@ -35,7 +35,8 @@ export function isAdministrativeWorkspacePathWithScmWorkspace(input: Readonly<{
     relativePath: string;
     registry?: ScmBackendRegistry;
 }>): boolean {
-    for (const backend of (input.registry ?? defaultScmBackendRegistry).listBackends()) {
+    if (!input.registry) return false;
+    for (const backend of input.registry.listBackends()) {
         if (backend.workspaceIntegration?.isAdministrativeWorkspacePath?.({
             relativePath: input.relativePath,
         }) === true) {
@@ -46,6 +47,16 @@ export function isAdministrativeWorkspacePathWithScmWorkspace(input: Readonly<{
     return false;
 }
 
+export async function resolveIsAdministrativeWorkspacePathWithScmWorkspace(input: Readonly<{
+    relativePath: string;
+    registry?: ScmBackendRegistry;
+}>): Promise<boolean> {
+    return isAdministrativeWorkspacePathWithScmWorkspace({
+        relativePath: input.relativePath,
+        registry: await resolveScmBackendRegistry(input.registry),
+    });
+}
+
 export function classifyPortableWorkspacePathWithScmWorkspace(input: Readonly<{
     relativePath: string;
     registry?: ScmBackendRegistry;
@@ -53,7 +64,8 @@ export function classifyPortableWorkspacePathWithScmWorkspace(input: Readonly<{
     const request = createScmWorkspaceIntegrationPortableWorkspacePathRequest({
         relativePath: input.relativePath,
     });
-    for (const backend of (input.registry ?? defaultScmBackendRegistry).listBackends()) {
+    if (!input.registry) return 'unknown';
+    for (const backend of input.registry.listBackends()) {
         const classification = backend.workspaceIntegration?.classifyPortableWorkspacePath?.(request);
         if (classification && classification !== 'unknown') {
             return classification;
@@ -65,4 +77,14 @@ export function classifyPortableWorkspacePathWithScmWorkspace(input: Readonly<{
     }
 
     return 'unknown';
+}
+
+export async function resolveClassifyPortableWorkspacePathWithScmWorkspace(input: Readonly<{
+    relativePath: string;
+    registry?: ScmBackendRegistry;
+}>): Promise<ScmWorkspaceIntegrationPortableWorkspacePathClassification> {
+    return classifyPortableWorkspacePathWithScmWorkspace({
+        relativePath: input.relativePath,
+        registry: await resolveScmBackendRegistry(input.registry),
+    });
 }

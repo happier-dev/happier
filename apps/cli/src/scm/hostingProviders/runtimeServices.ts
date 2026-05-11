@@ -14,7 +14,7 @@ import {
     type ResolvedScmHostingProviderRegistry,
     type ScmHostingProviderDescriptor,
     type ScmHostingProviderRuntimeBinding,
-} from '@happier-dev/plugins-scm-git/hostingProviders';
+} from './registry';
 
 import { ApiClient } from '@/api/api';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';

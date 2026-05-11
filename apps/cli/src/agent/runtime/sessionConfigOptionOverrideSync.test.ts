@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { Metadata } from '@/api/types';
 import { createSessionConfigOptionOverrideSynchronizer } from './sessionConfigOptionOverrideSync';
 
 describe('createSessionConfigOptionOverrideSynchronizer', () => {
@@ -145,6 +146,94 @@ describe('createSessionConfigOptionOverrideSynchronizer', () => {
 
     sync.syncFromMetadata();
     expect(setSessionConfigOption).toHaveBeenCalledWith('effort', 'high');
+  });
+
+  it('applies canonical alias tie values after legacy value was applied at the same timestamp', async () => {
+    let started = false;
+    let metadata: Metadata = {
+      path: '/tmp/session',
+      host: 'localhost',
+      homeDir: '/tmp',
+      happyHomeDir: '/tmp/.happier',
+      happyLibDir: '/tmp/.happier/lib',
+      happyToolsDir: '/tmp/.happier/tools',
+      acpConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 20,
+        overrides: {
+          effort: { updatedAt: 20, value: 'legacy' },
+        },
+      },
+    };
+    const setSessionConfigOption = vi.fn(async (_configId: string, _value: string | number | boolean | null) => {});
+
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () => metadata,
+      },
+      runtime: { setSessionConfigOption },
+      isStarted: () => started,
+    });
+
+    sync.syncFromMetadata();
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+
+    started = true;
+    await sync.flushPendingAfterStart();
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(1);
+    expect(setSessionConfigOption).toHaveBeenLastCalledWith('effort', 'legacy');
+
+    metadata = {
+      ...metadata,
+      sessionConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 20,
+        overrides: {
+          effort: { updatedAt: 20, value: 'canonical' },
+        },
+      },
+    };
+
+    sync.syncFromMetadata();
+    await Promise.resolve();
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
+    expect(setSessionConfigOption).toHaveBeenLastCalledWith('effort', 'canonical');
+
+    sync.syncFromMetadata();
+    await Promise.resolve();
+    expect(setSessionConfigOption).toHaveBeenCalledTimes(2);
+  });
+
+  it('applies config option entries that exist only in one alias root', async () => {
+    const setSessionConfigOption = vi.fn(async (_configId: string, _value: any) => {});
+
+    const sync = createSessionConfigOptionOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () =>
+          ({
+            sessionConfigOptionOverridesV1: {
+              v: 1,
+              updatedAt: 10,
+              overrides: {
+                effort: { updatedAt: 10, value: 'medium' },
+              },
+            },
+            acpConfigOptionOverridesV1: {
+              v: 1,
+              updatedAt: 20,
+              overrides: {
+                speed: { updatedAt: 20, value: 'fast' },
+              },
+            },
+          }) as any,
+      },
+      runtime: { setSessionConfigOption },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    expect(setSessionConfigOption).toHaveBeenCalledWith('effort', 'medium');
+    expect(setSessionConfigOption).toHaveBeenCalledWith('speed', 'fast');
   });
 
   it('applies null config option tombstones instead of dropping them', async () => {

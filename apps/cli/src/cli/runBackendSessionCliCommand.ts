@@ -18,14 +18,17 @@ import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAge
 import { isPermissionMode, type PermissionMode } from '@/api/types';
 import {
   applyDeprecatedSessionStartAliasesForAgent,
-  parseSessionStartArgs,
-  readOptionalFlagValue,
   type ParsedSessionStartArgs,
 } from '@/cli/sessionStartArgs';
 import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
 import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
-import { maybePassthroughProviderCliInfoRequest } from '@/cli/providerCliPassthrough';
+import { passthroughProviderCliArgs } from '@/cli/providerCliPassthrough';
+import {
+  partitionProviderSessionArgs,
+  type ProviderSessionArgPartitionResult,
+} from '@/cli/providerSessionArgPartition';
+import { buildRootHelpText } from '@/cli/buildRootHelpText';
 import {
   resolveCodexSessionRuntimePreferences,
   resolveOpenCodeSessionRuntimePreferences,
@@ -89,19 +92,43 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   agentIdForDeprecatedAliases?: AgentId;
   agentIdForAccountSettings?: AgentId;
   loadAccountSettings?: boolean;
-  resolveExtraOptions?: (args: string[]) => Extra;
+  directoryFlags?: readonly string[];
+  forwardModelFlag?: boolean;
+  forwardResumeFlag?: boolean;
+  yoloProviderArgs?: readonly string[];
+  versionFlags?: readonly string[];
+  resolveExtraOptions?: (args: string[], parsed: ProviderSessionArgPartitionResult) => Extra;
 }): Promise<void> {
   let releaseSessionRunnerLock: (() => Promise<void>) | null = null;
 
   try {
     const agentId = params.agentIdForAccountSettings ?? params.agentIdForDeprecatedAliases;
-    if (agentId && maybePassthroughProviderCliInfoRequest({ agentId, args: params.context.args })) {
+    const parsed = partitionProviderSessionArgs({
+      args: params.context.args,
+      providerSubcommand: agentId,
+      directoryFlags: params.directoryFlags,
+      forwardModelFlag: params.forwardModelFlag,
+      forwardResumeFlag: params.forwardResumeFlag,
+      yoloProviderArgs: params.yoloProviderArgs,
+      versionFlags: params.versionFlags,
+    });
+    if (agentId && parsed.helpRequested) {
+      console.log(`${buildRootHelpText()}
+
+${'-'.repeat(60)}
+Provider CLI Options:
+`);
+      const providerHelpArgs = parsed.providerArgs.some((arg) => arg === '-h' || arg === '--help')
+        ? parsed.providerArgs
+        : [...parsed.providerArgs, '--help'];
+      passthroughProviderCliArgs({ agentId, providerArgs: providerHelpArgs });
+      return;
+    }
+    if (agentId && parsed.versionRequested && parsed.versionFlag) {
+      passthroughProviderCliArgs({ agentId, providerArgs: [parsed.versionFlag] });
       return;
     }
 
-    const refreshSettings = params.context.args.includes('--refresh-settings');
-
-    const parsed = parseSessionStartArgs(params.context.args);
     const resolved = params.agentIdForDeprecatedAliases
       ? applyDeprecatedSessionStartAliasesForAgent({ agentId: params.agentIdForDeprecatedAliases, ...parsed })
       : { ...parsed, warnings: [] as string[] };
@@ -110,11 +137,10 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
       console.error(warn(warning));
     }
 
-    const existingSessionId = readOptionalFlagValue(params.context.args, '--existing-session');
-    const resume = readOptionalFlagValue(params.context.args, '--resume');
-    const profileQueryRaw = readOptionalFlagValue(params.context.args, '--profile');
-    const profileQuery = typeof profileQueryRaw === 'string' ? profileQueryRaw.trim() : '';
-    const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args) : ({} as Extra);
+    const existingSessionId = parsed.existingSessionId;
+    const resume = parsed.resume;
+    const profileQuery = parsed.profileQuery ?? '';
+    const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args, parsed) : ({} as Extra);
     const startedBy = resolved.startedBy ?? 'terminal';
 
     const selfMigration = await selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup();
@@ -172,7 +198,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
         mode: accountSettingsBootstrapMode,
         refresh: resolveSessionStartAccountSettingsRefreshMode({
           mode: accountSettingsBootstrapMode,
-          refreshRequested: refreshSettings,
+          refreshRequested: parsed.refreshSettings,
           minSettingsVersion: null,
         }),
       });
@@ -221,7 +247,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
 
     await getSessionHostBridge().runSessionCommand(backendId, {
       credentials,
-      directory: resolveRequestedSessionDirectory(),
+      directory: parsed.directory ?? resolveRequestedSessionDirectory(),
       terminalRuntime: params.context.terminalRuntime,
       happyHomeDir: configuration.happyHomeDir,
       startedBy,

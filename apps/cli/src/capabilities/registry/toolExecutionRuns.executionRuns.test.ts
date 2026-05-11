@@ -6,7 +6,7 @@ import { executionRunsCapability } from './toolExecutionRuns';
 import type { DetectCliSnapshot } from '../snapshots/cliSnapshot';
 import { createEnvKeyScope } from '../../testkit/env/envScope';
 import { withTempDir } from '../../testkit/fs/tempDir';
-import { ExecutionRunIntentSchema } from '@happier-dev/protocol';
+import { ExecutionRunIntentSchema, normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
 import * as engineRegistry from '../../agent/runtime/registry/engineRegistry';
 
 function makeCliSnapshot(overrides: Partial<DetectCliSnapshot['clis']>, path = ''): DetectCliSnapshot {
@@ -382,9 +382,9 @@ describe('executionRunsCapability', () => {
             provenance: 'external',
             source: { kind: 'path' },
             definition: { kindVersion: 1, id: 'plugin.review', providerId: 'plugin.provider' },
-            capabilities: {
+            capabilities: normalizePluginBackendCapabilitiesV1({
               executionRun: { supported: false },
-            },
+            }),
             getRuntimeCore: async () => async () => ({
               runtimeCore: {
                 createSessionRuntime: async () => {

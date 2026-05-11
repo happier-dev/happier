@@ -327,6 +327,15 @@ export function createStreamedTranscriptWriter(params: {
     const segment = getOrCreateSegment(kind, sidechainId);
     segment.accumulatedText += deltaText;
     segment.textVersion += 1;
+    if (kind === 'assistant' && sidechainId === null) {
+      session.turnAssistantTextSnapshotStore?.observe({
+        text: segment.accumulatedText,
+        provider,
+        localId: segment.segmentLocalId,
+        sidechainId,
+        source: 'streaming',
+      });
+    }
     maybeEmitLiveStreamingSnapshot(segment);
     maybeCommitDurableStreamingSnapshot(segment);
   };
@@ -337,6 +346,15 @@ export function createStreamedTranscriptWriter(params: {
     if (segment.accumulatedText === text) return true;
     segment.accumulatedText = text;
     segment.textVersion += 1;
+    if (kind === 'assistant' && sidechainId === null) {
+      session.turnAssistantTextSnapshotStore?.observe({
+        text: segment.accumulatedText,
+        provider,
+        localId: segment.segmentLocalId,
+        sidechainId,
+        source: 'streaming',
+      });
+    }
     maybeEmitLiveStreamingSnapshot(segment);
     maybeCommitDurableStreamingSnapshot(segment);
     return true;

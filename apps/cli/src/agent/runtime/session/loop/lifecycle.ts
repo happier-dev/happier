@@ -23,6 +23,7 @@ import {
 } from '@/agent/runtime/runPermissionModePromptLoop';
 import { createReadyNotificationDispatcher } from '@/agent/runtime/notifications/createReadyNotificationDispatcher';
 import { sendReadyWithPushNotification } from '@/agent/runtime/notifications/sendReadyWithPushNotification';
+import { resetAssistantTextSnapshotTurnScope } from '@/agent/runtime/turns/assistantTextSnapshotTurnScope';
 import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import type { InFlightSteerController } from '@/agent/runtime/permissions/bindModeQueue';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
@@ -235,6 +236,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
 
   const handleAbort = async () => {
     logger.debug(`${params.config.uiLogPrefix} Abort requested`);
+    resetAssistantTextSnapshotTurnScope(params.session, 'abort');
     params.session.sendAgentMessage(params.config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
     params.permissionHandler.reset();
     try {
@@ -373,7 +375,6 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         pushSender: params.api.push(),
         waitingForCommandLabel: params.config.waitingForCommandLabel,
         logPrefix: params.config.uiLogPrefix,
-        messageBuffer: params.messageBuffer,
         accountSettings: params.opts.accountSettingsContext?.settings ?? null,
         settingsSecretsReadKeys: params.opts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
         includeAssistantPreviewText:

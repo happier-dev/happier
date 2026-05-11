@@ -16,6 +16,7 @@ import type { CodexTerminalRuntimeStartupState } from '../startup/resolveTermina
 
 export function createCodexTerminalRuntime(params: Readonly<{
     runtimeParams: CodexRuntimeFactoryParams;
+    codexArgs?: readonly string[];
     startupRef: CodexDeferredStartupState;
     startupState: CodexTerminalRuntimeStartupState;
     createRemoteRuntime: () => Promise<CodexNativeRuntime>;
@@ -52,6 +53,7 @@ export function createCodexTerminalRuntime(params: Readonly<{
                 messageQueue: NonNullable<CodexRuntimeFactoryParams['messageQueue']>;
                 permissionMode: PermissionMode;
                 resumeId: string | null;
+                codexArgs?: readonly string[];
             }, CodexTerminalRuntimeLaunchResult>('codex');
             params.startupRef.markVendorSpawnInvoked?.();
             terminalLaunchPromise = launchTerminalRuntime({
@@ -64,6 +66,9 @@ export function createCodexTerminalRuntime(params: Readonly<{
                     typeof options?.resumeId === 'string' && options.resumeId.trim().length > 0
                         ? options.resumeId.trim()
                         : null,
+                ...(params.codexArgs && params.codexArgs.length > 0
+                    ? { codexArgs: params.codexArgs }
+                    : {}),
             });
         }
 

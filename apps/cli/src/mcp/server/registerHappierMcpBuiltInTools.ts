@@ -16,10 +16,12 @@ export function registerHappierMcpBuiltInTools(
         resolveSessionId?: (toolArgs: unknown) => string;
     }>,
 ): Readonly<{ toolNames: string[] }> {
-  // B8 closure note:
-  // This registrar intentionally exposes first-party built-in Happier tools.
-  // Plugin-contributed MCP tool/resource seams are a separate lane and must not be implied here.
-  const enabledTools = listBuiltInHappierTools({ surface: params.surface });
+    // This registrar intentionally exposes first-party built-in Happier tools.
+    // Plugin-contributed direct tools use the ActionSpec/tool projection path.
+    const enabledTools = listBuiltInHappierTools({
+        surface: params.surface,
+        isActionEnabled: params.deps.isActionEnabled,
+    });
 
     for (const tool of enabledTools) {
         server.registerTool(
@@ -28,7 +30,7 @@ export function registerHappierMcpBuiltInTools(
                 description: tool.description,
                 title: tool.title,
                 inputSchema: tool.inputSchema,
-            } as any,
+            },
             async (args: unknown) => {
                 try {
                     const sessionId = params.resolveSessionId ? params.resolveSessionId(args) : params.sessionId;

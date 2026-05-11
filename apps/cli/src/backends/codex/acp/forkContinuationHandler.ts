@@ -1,8 +1,8 @@
 import type { AcpForkContinuationHandler } from '@/session/fork/acpForkContinuationHandler';
-import { buildSessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import { buildVendorSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 export const codexAcpForkContinuationHandler: AcpForkContinuationHandler = async (params) => {
-  const vendorSessionMetadata = buildSessionStateFieldMetadataPatch('identity.vendorSessionId', {
+  const vendorSessionMetadata = buildVendorSessionIdSessionMetadata({
     metadataKey: 'codexSessionId',
     value: params.vendorSessionId,
   });

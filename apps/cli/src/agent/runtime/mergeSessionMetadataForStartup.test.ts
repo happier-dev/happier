@@ -378,6 +378,71 @@ describe('mergeSessionMetadataForStartup', () => {
         expect((merged as any).acpConfigOptionOverridesV1).toEqual((merged as any).sessionConfigOptionOverridesV1);
     });
 
+    it('preserves config option entries that exist only in one alias root during startup merge', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 10,
+                    overrides: {
+                        effort: { updatedAt: 10, value: 'medium' },
+                    },
+                },
+                acpConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    overrides: {
+                        speed: { updatedAt: 20, value: 'fast' },
+                    },
+                },
+            } as any,
+            next: {} as any,
+            nowMs: 50,
+        } as any);
+
+        expect((merged as any).sessionConfigOptionOverridesV1).toEqual({
+            v: 1,
+            updatedAt: 20,
+            overrides: {
+                effort: { updatedAt: 10, value: 'medium' },
+                speed: { updatedAt: 20, value: 'fast' },
+            },
+        });
+        expect((merged as any).acpConfigOptionOverridesV1).toEqual((merged as any).sessionConfigOptionOverridesV1);
+    });
+
+    it('keeps canonical config option entries when aliases tie during startup merge', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: {
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    overrides: {
+                        effort: { updatedAt: 20, value: 'canonical' },
+                    },
+                },
+                acpConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 20,
+                    overrides: {
+                        effort: { updatedAt: 20, value: 'legacy' },
+                    },
+                },
+            } as any,
+            next: {} as any,
+            nowMs: 50,
+        } as any);
+
+        expect((merged as any).sessionConfigOptionOverridesV1).toEqual({
+            v: 1,
+            updatedAt: 20,
+            overrides: {
+                effort: { updatedAt: 20, value: 'canonical' },
+            },
+        });
+        expect((merged as any).acpConfigOptionOverridesV1).toEqual((merged as any).sessionConfigOptionOverridesV1);
+    });
+
     it('does not seed ACP config option overrides from next metadata when attaching', () => {
         const merged = mergeSessionMetadataForStartup({
             current: {} as any,

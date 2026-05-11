@@ -8,13 +8,19 @@ export type CodexRolloutAction =
     | { type: 'codex-session-id'; id: string }
     | { type: 'user-text'; text: string }
     | { type: 'assistant-text'; text: string }
-    | { type: 'tool-call'; callId: string; name: string; input: unknown }
+    | { type: 'tool-call'; callId: string; name: string; input: unknown; source?: CodexRolloutToolSource }
     | { type: 'tool-result'; callId: string; output: unknown }
     | { type: 'collaboration-tool-call'; callId: string; name: 'spawn_agent' | 'wait_agent' | 'close_agent'; prompt: string | null; nickname: string | null; role: string | null }
     | { type: 'collaboration-tool-result'; callId: string; threadId: string | null; nickname: string | null }
     | { type: 'subagent-spawn'; threadId: string; prompt: string | null; nickname: string | null; role: string | null }
     | { type: 'subagent-complete'; threadId: string; status: 'completed' | 'interrupted'; summaryText: string | null }
     | { type: 'debug'; message: string; value?: unknown };
+
+export type CodexRolloutToolSource = Readonly<{
+    kind: 'mcp';
+    serverName: string;
+    toolName: string;
+}>;
 
 type RolloutEnvelope = { timestamp?: string; type?: string; payload?: any };
 
@@ -82,6 +88,42 @@ function withLocalControlMeta(input: unknown): unknown {
 function readStringField(record: Record<string, unknown>, key: string): string | null {
     const value = record[key];
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function parseMcpToolName(name: string): { serverName: string; toolName: string } | null {
+    const normalized = name.trim();
+    const match = normalized.match(/^mcp__(.+?)__(.+)$/);
+    if (!match?.[1] || !match[2]) return null;
+    return {
+        serverName: match[1],
+        toolName: match[2],
+    };
+}
+
+function readMcpToolSource(payload: Record<string, unknown>, name: string): CodexRolloutToolSource | undefined {
+    const parsedName = parseMcpToolName(name);
+    const serverName =
+        readStringField(payload, 'server')
+        ?? readStringField(payload, 'mcpServer')
+        ?? readStringField(payload, 'mcp_server')
+        ?? readStringField(payload, 'serverName')
+        ?? readStringField(payload, 'server_name')
+        ?? null;
+    if (!serverName) return undefined;
+
+    const toolName =
+        readStringField(payload, 'tool')
+        ?? readStringField(payload, 'toolName')
+        ?? readStringField(payload, 'tool_name')
+        ?? parsedName?.toolName
+        ?? readStringField(payload, 'name');
+    if (!toolName) return undefined;
+
+    return {
+        kind: 'mcp',
+        serverName,
+        toolName,
+    };
 }
 
 function readCollaborationStatus(statusValue: unknown): { status: 'completed' | 'interrupted'; summaryText: string | null } | null {
@@ -223,7 +265,9 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
             }];
         }
 
-        const { canonicalToolName, visibility } = canonicalizeCodexRolloutToolName(name);
+        const source = readMcpToolSource(payload, name);
+        const rawToolName = source ? `mcp__${source.serverName}__${source.toolName}` : name;
+        const { canonicalToolName, visibility } = canonicalizeCodexRolloutToolName(rawToolName);
         if (visibility === 'ignore') return [];
         if (visibility === 'debug-only' && !opts.debug) return [];
 
@@ -234,7 +278,7 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
                 : rawArgs;
         const input = withLocalControlMeta(normalizeCodexRolloutToolInput(name, parsedArgs));
 
-        return [{ type: 'tool-call', callId, name: canonicalToolName, input }];
+        return [{ type: 'tool-call', callId, name: canonicalToolName, input, ...(source ? { source } : {}) }];
     }
 
     if (payloadType === 'function_call_output') {
@@ -260,12 +304,14 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
         const callId = typeof (payload as any).call_id === 'string' ? String((payload as any).call_id) : '';
         if (!name || !callId) return [];
 
-        const { canonicalToolName, visibility } = canonicalizeCodexRolloutToolName(name);
+        const source = readMcpToolSource(payload, name);
+        const rawToolName = source ? `mcp__${source.serverName}__${source.toolName}` : name;
+        const { canonicalToolName, visibility } = canonicalizeCodexRolloutToolName(rawToolName);
         if (visibility === 'ignore') return [];
         if (visibility === 'debug-only' && !opts.debug) return [];
 
         const input = withLocalControlMeta(normalizeCodexRolloutToolInput(name, (payload as any).input));
-        return [{ type: 'tool-call', callId, name: canonicalToolName, input }];
+        return [{ type: 'tool-call', callId, name: canonicalToolName, input, ...(source ? { source } : {}) }];
     }
 
     if (payloadType === 'custom_tool_call_output') {

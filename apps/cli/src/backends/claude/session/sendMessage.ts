@@ -11,6 +11,7 @@ import {
 import { applyClaudePostSendReactions } from '@/api/session/client/reactions/providers/applyClaudePostSendReactions';
 import type { PostSendReactionPort } from '@/api/session/client/reactions/providers/postSendReactionPort';
 import type { SessionClientTranscriptSendPort } from '@/api/session/client/transcript/sendMessages';
+import { extractAssistantTextSnapshotFromSessionContent } from '@/api/session/turns/extractAssistantTextSnapshot';
 
 type ClaudeSessionSendResult = Readonly<{
     usage?: Readonly<{ usage: Usage; model?: string }>;
@@ -43,6 +44,15 @@ export function sendClaudeSessionClientMessage(
         sidechainId,
         logErrorMessage: '[SOCKET] Failed to commit Claude session message (non-fatal)',
     });
+    const extracted = extractAssistantTextSnapshotFromSessionContent(content);
+    if (extracted) {
+        port.turnAssistantTextSnapshotStore?.observe({
+            text: extracted.text,
+            provider: extracted.provider,
+            sidechainId: extracted.sidechainId,
+            source: 'provider-dispatch',
+        });
+    }
 
     if (opts?.postSendReactionPort) {
         applyClaudePostSendReactions(opts.postSendReactionPort, { usage, summary });

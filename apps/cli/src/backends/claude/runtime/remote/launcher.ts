@@ -170,6 +170,7 @@ export async function launchClaudeRemoteSession(session: Session): Promise<'swit
         return createStreamedTranscriptWriter({
             provider: 'claude' as any,
             session: {
+                turnAssistantTextSnapshotStore: client.turnAssistantTextSnapshotStore,
                 sendAgentMessage: (provider, body, opts) => session.client.sendAgentMessage(provider, body, opts),
                 // sendAgentMessageEphemeral is still optional on the concrete client; keep the
                 // runtime check so tests/stubs that don't implement it can opt out.

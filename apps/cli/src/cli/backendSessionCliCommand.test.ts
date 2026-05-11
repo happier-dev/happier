@@ -224,6 +224,33 @@ describe('runBackendSessionCliCommand', () => {
     expect(runSessionCommandSpy).toHaveBeenCalled();
   });
 
+  it('passes parsed provider-native arguments to provider extra option resolvers', async () => {
+    const credentials = { token: 'x' } as any;
+
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ machineId: 'machine-1' } as any);
+
+    runSessionCommandSpy.mockResolvedValue(undefined);
+
+    await runBackendSessionCliCommand({
+      context: {
+        args: ['codex', 'exec', '--model', 'gpt-5.1-codex-max', '--sandbox', 'workspace-write'],
+        terminalRuntime: null,
+      } as any,
+      backendIdForSessionRuntime: 'codex',
+      agentIdForDeprecatedAliases: 'codex' as any,
+      forwardModelFlag: true,
+      resolveExtraOptions: (_args, parsed) => ({
+        providerArgsFromParsed: parsed.providerArgs,
+      }),
+    });
+
+    expect(runSessionCommandSpy).toHaveBeenCalledWith('codex', expect.objectContaining({
+      modelId: 'gpt-5.1-codex-max',
+      providerArgsFromParsed: ['exec', '--model', 'gpt-5.1-codex-max', '--sandbox', 'workspace-write'],
+    }));
+  });
+
   it('binds machine id selection to decoded token sub when credentials already exist', async () => {
     const credentials = { token: makeJwtWithSub('acct-b') } as any;
 

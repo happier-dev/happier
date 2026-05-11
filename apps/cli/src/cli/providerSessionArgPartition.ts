@@ -1,0 +1,310 @@
+import chalk from 'chalk';
+
+import type { AgentId } from '@happier-dev/agents';
+import { PERMISSION_INTENTS, parsePermissionIntentAlias } from '@happier-dev/agents';
+
+import { isPermissionMode, type PermissionMode } from '@/api/types';
+
+/**
+ * Partitions raw provider command arguments into Happier-owned session options
+ * and provider-native passthrough arguments. This module is pure parsing only:
+ * it performs no I/O beyond existing CLI error reporting and exits on invalid
+ * Happier-owned values so callers do not launch sessions with ambiguous state.
+ */
+export interface ProviderSessionArgPartitionResult {
+  readonly startedBy: 'daemon' | 'terminal' | undefined;
+  readonly refreshSettings: boolean;
+  readonly profileQuery: string | undefined;
+  readonly permissionMode: PermissionMode | undefined;
+  readonly permissionModeUpdatedAt: number | undefined;
+  readonly sessionModeId: string | undefined;
+  readonly sessionModeUpdatedAt: number | undefined;
+  readonly modelId: string | undefined;
+  readonly modelUpdatedAt: number | undefined;
+  readonly existingSessionId: string | undefined;
+  readonly resume: string | undefined;
+  readonly startingMode: string | undefined;
+  readonly directory: string | undefined;
+  readonly providerArgs: string[];
+  readonly helpRequested: boolean;
+  readonly versionRequested: boolean;
+  readonly versionFlag: string | undefined;
+}
+
+export interface ProviderSessionArgPartitionOptions {
+  readonly args: readonly string[];
+  readonly providerSubcommand?: AgentId | string | null;
+  readonly directoryFlags?: readonly string[];
+  readonly forwardModelFlag?: boolean;
+  readonly forwardResumeFlag?: boolean;
+  readonly yoloProviderArgs?: readonly string[];
+  readonly versionFlags?: readonly string[];
+}
+
+const HELP_FLAGS = new Set(['-h', '--help']);
+const DEFAULT_VERSION_FLAGS = ['-v', '--version'] as const;
+
+const PERMISSION_MODE_EXAMPLES = [
+  '--permission-mode read-only',
+  '--permission-mode yolo',
+  '--permission-mode accept-edits',
+] as const;
+
+function parsePermissionModeAlias(raw: string): PermissionMode | null {
+  const parsed = parsePermissionIntentAlias(raw);
+  return parsed && isPermissionMode(parsed) ? parsed : null;
+}
+
+function exitWithMissingValue(flag: string, expected: string): never {
+  console.error(chalk.red(`Missing value for ${flag} (expected: ${expected})`));
+  process.exit(1);
+}
+
+function readRequiredNext(args: readonly string[], index: number, flag: string, expected: string): string {
+  const next = args[index + 1];
+  if (typeof next !== 'string' || next.startsWith('-')) {
+    exitWithMissingValue(flag, expected);
+  }
+  return next;
+}
+
+function parsePositiveTimestamp(raw: string, flag: string): number {
+  const parsedAt = Number(raw);
+  if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
+    console.error(chalk.red(`Invalid ${flag} value: ${raw}. Expected a positive number (unix ms)`));
+    process.exit(1);
+  }
+  return Math.floor(parsedAt);
+}
+
+function splitEqualsFlag(raw: string): { flag: string; value: string } | null {
+  if (!raw.startsWith('--')) return null;
+  const equalsIndex = raw.indexOf('=');
+  if (equalsIndex <= 2) return null;
+  return {
+    flag: raw.slice(0, equalsIndex),
+    value: raw.slice(equalsIndex + 1),
+  };
+}
+
+function normalizeOptionalValue(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeOptionalFlagValue(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || raw.startsWith('-')) return undefined;
+  return normalizeOptionalValue(raw);
+}
+
+export function partitionProviderSessionArgs(
+  opts: ProviderSessionArgPartitionOptions,
+): ProviderSessionArgPartitionResult {
+  const input =
+    opts.providerSubcommand && opts.args[0] === opts.providerSubcommand
+      ? opts.args.slice(1)
+      : [...opts.args];
+  const directoryFlags = new Set(opts.directoryFlags ?? []);
+  const versionFlags = new Set(opts.versionFlags ?? DEFAULT_VERSION_FLAGS);
+
+  let startedBy: 'daemon' | 'terminal' | undefined;
+  let refreshSettings = false;
+  let profileQuery: string | undefined;
+  let permissionMode: PermissionMode | undefined;
+  let permissionModeUpdatedAt: number | undefined;
+  let sessionModeId: string | undefined;
+  let sessionModeUpdatedAt: number | undefined;
+  let modelId: string | undefined;
+  let modelUpdatedAt: number | undefined;
+  let existingSessionId: string | undefined;
+  let resume: string | undefined;
+  let startingMode: string | undefined;
+  let directory: string | undefined;
+  let helpRequested = false;
+  let versionFlag: string | undefined;
+  const providerArgs: string[] = [];
+
+  for (let i = 0; i < input.length; i += 1) {
+    const arg = input[i];
+    const equals = splitEqualsFlag(arg);
+    const flag = equals?.flag ?? arg;
+    const equalsValue = equals?.value;
+
+    if (HELP_FLAGS.has(arg)) {
+      helpRequested = true;
+      providerArgs.push(arg);
+      continue;
+    }
+    if (versionFlags.has(arg)) {
+      versionFlag = arg;
+      providerArgs.push(arg);
+      continue;
+    }
+
+    if (arg === '--refresh-settings') {
+      refreshSettings = true;
+      continue;
+    }
+
+    if (arg === '--yolo') {
+      permissionMode = 'yolo';
+      providerArgs.push(...(opts.yoloProviderArgs ?? []));
+      continue;
+    }
+
+    if (flag === '--started-by') {
+      const raw = equalsValue ?? readRequiredNext(input, i, '--started-by', 'daemon|terminal');
+      if (!equalsValue) i += 1;
+      if (raw !== 'daemon' && raw !== 'terminal') {
+        console.error(chalk.red(`Invalid --started-by value: ${raw}. Expected: daemon|terminal`));
+        process.exit(1);
+      }
+      startedBy = raw;
+      continue;
+    }
+
+    if (flag === '--profile') {
+      const raw = equalsValue ?? input[i + 1];
+      if (!equalsValue && typeof raw === 'string' && !raw.startsWith('-')) i += 1;
+      profileQuery = equalsValue !== undefined ? normalizeOptionalValue(raw) : normalizeOptionalFlagValue(raw);
+      continue;
+    }
+
+    if (flag === '--permission-mode') {
+      const raw = equalsValue ?? readRequiredNext(input, i, '--permission-mode', PERMISSION_INTENTS.join('|'));
+      if (!equalsValue) i += 1;
+      const parsed = parsePermissionModeAlias(raw);
+      if (!parsed) {
+        console.error(
+          chalk.red(
+            `Invalid --permission-mode value: ${raw}. Valid values: ${PERMISSION_INTENTS.join(', ')}. Examples: ${PERMISSION_MODE_EXAMPLES.join(
+              ' | ',
+            )}`,
+          ),
+        );
+        process.exit(1);
+      }
+      permissionMode = parsed;
+      continue;
+    }
+
+    if (flag === '--permission-mode-updated-at') {
+      const raw = equalsValue ?? readRequiredNext(input, i, '--permission-mode-updated-at', 'unix ms timestamp');
+      if (!equalsValue) i += 1;
+      permissionModeUpdatedAt = parsePositiveTimestamp(raw, '--permission-mode-updated-at');
+      continue;
+    }
+
+    if (flag === '--agent-mode') {
+      const raw = equalsValue ?? readRequiredNext(input, i, '--agent-mode', 'ACP session mode id');
+      if (!equalsValue) i += 1;
+      const normalized = normalizeOptionalValue(raw);
+      if (!normalized) {
+        console.error(chalk.red('Invalid --agent-mode value: empty'));
+        process.exit(1);
+      }
+      sessionModeId = normalized;
+      continue;
+    }
+
+    if (flag === '--agent-mode-updated-at') {
+      const raw = equalsValue ?? readRequiredNext(input, i, '--agent-mode-updated-at', 'unix ms timestamp');
+      if (!equalsValue) i += 1;
+      sessionModeUpdatedAt = parsePositiveTimestamp(raw, '--agent-mode-updated-at');
+      continue;
+    }
+
+    if (flag === '--model') {
+      const raw = equalsValue ?? readRequiredNext(input, i, '--model', 'model id');
+      if (!equalsValue) i += 1;
+      const normalized = normalizeOptionalValue(raw);
+      if (!normalized) {
+        console.error(chalk.red('Invalid --model value: empty'));
+        process.exit(1);
+      }
+      modelId = normalized;
+      if (opts.forwardModelFlag) {
+        if (equalsValue !== undefined) {
+          providerArgs.push(arg);
+        } else {
+          providerArgs.push(arg, raw);
+        }
+      }
+      continue;
+    }
+
+    if (flag === '--model-updated-at') {
+      const raw = equalsValue ?? readRequiredNext(input, i, '--model-updated-at', 'unix ms timestamp');
+      if (!equalsValue) i += 1;
+      modelUpdatedAt = parsePositiveTimestamp(raw, '--model-updated-at');
+      continue;
+    }
+
+    if (flag === '--existing-session') {
+      const raw = equalsValue ?? input[i + 1];
+      if (!equalsValue && typeof raw === 'string' && !raw.startsWith('-')) i += 1;
+      existingSessionId = equalsValue !== undefined ? normalizeOptionalValue(raw) : normalizeOptionalFlagValue(raw);
+      continue;
+    }
+
+    if (flag === '--resume' || arg === '-r') {
+      const raw = equalsValue ?? input[i + 1];
+      const hasValue = typeof raw === 'string' && !raw.startsWith('-');
+      if (!equalsValue && hasValue) i += 1;
+      resume = equalsValue !== undefined ? normalizeOptionalValue(raw) : normalizeOptionalFlagValue(raw);
+      if (opts.forwardResumeFlag) {
+        if (equalsValue !== undefined) {
+          providerArgs.push(arg);
+        } else if (hasValue) {
+          providerArgs.push(arg, raw);
+        } else {
+          providerArgs.push(arg);
+        }
+      }
+      continue;
+    }
+
+    if (flag === '--happy-starting-mode') {
+      const raw = equalsValue ?? input[i + 1];
+      if (!equalsValue && typeof raw === 'string' && !raw.startsWith('-')) i += 1;
+      startingMode = equalsValue !== undefined ? normalizeOptionalValue(raw) : normalizeOptionalFlagValue(raw);
+      continue;
+    }
+
+    if (flag === '--account-settings-version-hint') {
+      const raw = equalsValue ?? input[i + 1];
+      if (!equalsValue && typeof raw === 'string' && /^-?\d+$/.test(raw.trim())) i += 1;
+      continue;
+    }
+
+    if (directoryFlags.has(flag) || directoryFlags.has(arg)) {
+      const raw = equalsValue ?? input[i + 1];
+      if (!equalsValue && typeof raw === 'string' && !raw.startsWith('-')) i += 1;
+      directory = (equalsValue !== undefined ? normalizeOptionalValue(raw) : normalizeOptionalFlagValue(raw)) ?? directory;
+      continue;
+    }
+
+    providerArgs.push(arg);
+  }
+
+  return {
+    startedBy,
+    refreshSettings,
+    profileQuery,
+    permissionMode,
+    permissionModeUpdatedAt,
+    sessionModeId,
+    sessionModeUpdatedAt,
+    modelId,
+    modelUpdatedAt,
+    existingSessionId,
+    resume,
+    startingMode,
+    directory,
+    providerArgs,
+    helpRequested,
+    versionRequested: typeof versionFlag === 'string',
+    versionFlag,
+  };
+}

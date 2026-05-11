@@ -15,6 +15,7 @@ import {
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Credentials } from '@/persistence';
 import { createCliSessionStateMetadataUpdatePort } from './metadataUpdatePort';
+import { mergeHostSessionStateCapabilities } from './sessionStateMetadataCapabilities';
 
 export type CliRuntimeSessionStateBridge = Readonly<{
   engine: SessionStateSyncEngine;
@@ -36,7 +37,7 @@ export function createCliRuntimeSessionStateBridge(params: Readonly<{
   capabilities?: SessionStateCapabilitiesV1 | null;
   metadataPort?: MetadataUpdatePort;
 }>): CliRuntimeSessionStateBridge {
-  const capabilities = params.capabilities ?? params.facet?.capabilities ?? {};
+  const capabilities = mergeHostSessionStateCapabilities(params.capabilities ?? params.facet?.capabilities);
   const engine = createSessionStateSyncEngine({
     capabilities,
     facet: params.facet ?? null,

@@ -1,10 +1,11 @@
 import { spawn } from 'child_process';
 import { isAbsolute, relative, sep } from 'path';
 import os from 'node:os';
-import path from 'node:path';
-import { realpathSync } from 'node:fs';
+import path, { delimiter as PATH_DELIMITER } from 'node:path';
+import { accessSync, constants as fsConstants, realpathSync } from 'node:fs';
 
 import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/protocol';
+import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import {
@@ -22,6 +23,10 @@ export type ScmExecResult = {
 };
 
 const DEFAULT_SCM_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+const SCM_INSTALLABLE_KEYS = {
+    git: 'dep.git',
+    sl: 'dep.sapling',
+} as const;
 
 function resolveScmMaxOutputBytes(inputMaxOutputBytes: number | undefined): number {
     if (typeof inputMaxOutputBytes === 'number' && Number.isFinite(inputMaxOutputBytes) && inputMaxOutputBytes > 0) {
@@ -68,8 +73,39 @@ function writeChildStdin(childStdin: ChildStdinLike | null | undefined, stdin: s
     }
 }
 
+function resolveScmInstallableKey(command: string, installableKey?: string): string {
+    return installableKey ?? SCM_INSTALLABLE_KEYS[command as keyof typeof SCM_INSTALLABLE_KEYS] ?? `dep.${command}`;
+}
+
+function isSafeScmCommandName(command: string): boolean {
+    return /^[A-Za-z0-9._-]+$/.test(command);
+}
+
+function resolveSystemScmBinPath(command: string, env: NodeJS.ProcessEnv): string | null {
+    if (!isSafeScmCommandName(command)) return null;
+    if (process.platform === 'win32') {
+        return resolveWindowsCommandOnPath(command, env);
+    }
+
+    const pathRaw = typeof env.PATH === 'string' ? env.PATH.trim() : '';
+    if (!pathRaw) return null;
+
+    for (const dir of pathRaw.split(PATH_DELIMITER).map((entry) => entry.trim()).filter(Boolean)) {
+        const candidate = path.join(dir, command);
+        try {
+            accessSync(candidate, fsConstants.X_OK);
+            return candidate;
+        } catch {
+            // Keep searching PATH entries.
+        }
+    }
+
+    return null;
+}
+
 export function runScmCommand(input: {
-    bin: 'git' | 'sl';
+    bin: string;
+    installableKey?: string;
     cwd: string;
     args: string[];
     timeoutMs?: number;
@@ -77,10 +113,22 @@ export function runScmCommand(input: {
     maxOutputBytes?: number;
     env?: Record<string, string | undefined>;
 }): Promise<ScmExecResult> {
+    const execEnv = input.env ? { ...process.env, ...input.env } : process.env;
+    const resolvedBinPath = resolveSystemScmBinPath(input.bin, execEnv);
+    if (!resolvedBinPath) {
+        const installableKey = resolveScmInstallableKey(input.bin, input.installableKey);
+        return Promise.resolve({
+            success: false,
+            stdout: '',
+            stderr: `SCM executable not found for ${installableKey} (${input.bin})`,
+            exitCode: -1,
+        });
+    }
+
     return new Promise((resolvePromise) => {
-        const child = spawn(input.bin, input.args, {
+        const child = spawn(resolvedBinPath, input.args, {
             cwd: input.cwd,
-            env: input.env ? { ...process.env, ...input.env } : process.env,
+            env: execEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
         });

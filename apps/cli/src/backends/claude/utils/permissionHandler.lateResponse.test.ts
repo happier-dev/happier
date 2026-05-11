@@ -94,7 +94,7 @@ describe('PermissionHandler (late permission responses)', () => {
       behavior: 'allow',
       updatedInput: { command: 'unset ANTHROPIC_AUTH_TOKEN; ls src' },
     });
-    expect(session.setLastPermissionMode).toHaveBeenCalledWith('yolo');
+    expect(session.setLastPermissionMode).not.toHaveBeenCalled();
     expect((client.agentState as any).requests?.[firstId]).toBeUndefined();
     expect((client.agentState as any).requests?.[secondId]).toBeUndefined();
     expect((client.agentState as any).completedRequests?.[firstId]).toMatchObject({
@@ -162,7 +162,7 @@ describe('PermissionHandler (late permission responses)', () => {
       behavior: 'allow',
       updatedInput: { file_path: '/tmp/b.txt' },
     });
-    expect(session.setLastPermissionMode).toHaveBeenCalledWith('yolo');
+    expect(session.setLastPermissionMode).not.toHaveBeenCalled();
     expect((client.agentState as any).requests?.[secondId]).toBeUndefined();
     expect((client.agentState as any).completedRequests?.[secondId]).toMatchObject({
       status: 'approved',

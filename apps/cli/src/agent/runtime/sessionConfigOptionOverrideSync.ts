@@ -1,12 +1,12 @@
 import type { Metadata } from '@/api/types';
 import {
-  readAcpConfigOptionIntentFromMetadata,
   LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
-  readMetadataAliasValue,
+  readAcpConfigOptionIntentFromMetadata,
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents';
 
 type ConfigOptionValueId = string | number | boolean | null;
+type ConfigOptionOverrideCandidate = { configId: string; valueId: ConfigOptionValueId; updatedAt: number };
 
 function normalizeValueId(raw: unknown): ConfigOptionValueId | undefined {
   if (raw === null) return null;
@@ -19,36 +19,70 @@ function normalizeValueId(raw: unknown): ConfigOptionValueId | undefined {
   return undefined;
 }
 
+function collectConfigOptionIdsFromAliasRoot(metadata: Metadata | null | undefined, key: string, out: Set<string>): void {
+  const root = metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>)[key] : null;
+  const rootRecord = root && typeof root === 'object' && !Array.isArray(root) ? root as Record<string, unknown> : null;
+  const overridesRaw = rootRecord?.overrides;
+  if (!overridesRaw || typeof overridesRaw !== 'object' || Array.isArray(overridesRaw)) return;
+
+  for (const configIdRaw of Object.keys(overridesRaw as Record<string, unknown>)) {
+    const configId = configIdRaw.trim();
+    if (configId) out.add(configId);
+  }
+}
+
+function collectConfigOptionIdsFromMetadata(metadata: Metadata | null | undefined): string[] {
+  const configIds = new Set<string>();
+  collectConfigOptionIdsFromAliasRoot(metadata, SESSION_CONFIG_OPTION_OVERRIDES_KEY, configIds);
+  collectConfigOptionIdsFromAliasRoot(metadata, LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY, configIds);
+  return Array.from(configIds);
+}
+
 export function resolveSessionConfigOptionOverridesFromMetadataSnapshot(opts: Readonly<{
   metadata: Metadata | null | undefined;
-}>): Array<{ configId: string; valueId: ConfigOptionValueId; updatedAt: number }> {
-  const root = readMetadataAliasValue<Record<string, unknown>>(
-    opts.metadata ?? null,
-    SESSION_CONFIG_OPTION_OVERRIDES_KEY,
-    LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
-  ) ?? null;
-  const overridesRaw = root?.overrides;
-  if (!overridesRaw || typeof overridesRaw !== 'object' || Array.isArray(overridesRaw)) return [];
-
-  const out: Array<{ configId: string; valueId: ConfigOptionValueId; updatedAt: number }> = [];
-
-  for (const [configIdRaw, entryRaw] of Object.entries(overridesRaw as Record<string, unknown>)) {
-    const configId = typeof configIdRaw === 'string' ? configIdRaw.trim() : '';
-    if (!configId) continue;
-    const entry = entryRaw && typeof entryRaw === 'object' && !Array.isArray(entryRaw) ? (entryRaw as Record<string, unknown>) : null;
-    if (!entry) continue;
-    const updatedAt = typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt) ? entry.updatedAt : null;
-    if (updatedAt === null) continue;
-
+}>): ConfigOptionOverrideCandidate[] {
+  const out: ConfigOptionOverrideCandidate[] = [];
+  const configIds = collectConfigOptionIdsFromMetadata(opts.metadata);
+  for (const configId of configIds) {
     const intent = readAcpConfigOptionIntentFromMetadata((opts.metadata ?? {}) as Metadata, configId);
-    const valueId = normalizeValueId(intent?.value ?? entry.value);
+    if (!intent) continue;
+    const valueId = normalizeValueId(intent.value);
     if (valueId === undefined) continue;
-
-    out.push({ configId, valueId, updatedAt: intent?.updatedAt ?? updatedAt });
+    out.push({ configId: intent.configId, valueId, updatedAt: intent.updatedAt });
   }
 
   out.sort((a, b) => (a.updatedAt - b.updatedAt) || a.configId.localeCompare(b.configId));
   return out;
+}
+
+function isSameConfigOptionOverrideValue(left: ConfigOptionValueId, right: ConfigOptionValueId): boolean {
+  return Object.is(left, right);
+}
+
+function isSameConfigOptionOverrideCandidate(
+  left: ConfigOptionOverrideCandidate,
+  right: ConfigOptionOverrideCandidate,
+): boolean {
+  return left.updatedAt === right.updatedAt && isSameConfigOptionOverrideValue(left.valueId, right.valueId);
+}
+
+function shouldSuppressConfigOptionOverrideCandidate(
+  candidate: ConfigOptionOverrideCandidate,
+  lastApplied: ConfigOptionOverrideCandidate | undefined,
+): boolean {
+  if (!lastApplied) return false;
+  if (candidate.updatedAt < lastApplied.updatedAt) return true;
+  return isSameConfigOptionOverrideCandidate(candidate, lastApplied);
+}
+
+function shouldReplacePendingConfigOptionOverrideCandidate(
+  candidate: ConfigOptionOverrideCandidate,
+  pending: ConfigOptionOverrideCandidate | undefined,
+): boolean {
+  if (!pending) return true;
+  if (candidate.updatedAt > pending.updatedAt) return true;
+  return candidate.updatedAt === pending.updatedAt
+    && !isSameConfigOptionOverrideValue(candidate.valueId, pending.valueId);
 }
 
 export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
@@ -59,8 +93,8 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
   syncFromMetadata: () => void;
   flushPendingAfterStart: () => Promise<void>;
 } {
-  const lastAppliedUpdatedAtByConfigId = new Map<string, number>();
-  const pendingByConfigId = new Map<string, { configId: string; valueId: ConfigOptionValueId; updatedAt: number }>();
+  const lastAppliedByConfigId = new Map<string, ConfigOptionOverrideCandidate>();
+  const pendingByConfigId = new Map<string, ConfigOptionOverrideCandidate>();
   const inFlightByConfigId = new Map<string, Promise<void>>();
 
   const applyPendingForConfigId = (configId: string): Promise<void> => {
@@ -71,8 +105,8 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
     if (!candidate) return Promise.resolve();
     if (!params.isStarted()) return Promise.resolve();
 
-    const lastApplied = lastAppliedUpdatedAtByConfigId.get(configId) ?? 0;
-    if (candidate.updatedAt <= lastApplied) {
+    const lastApplied = lastAppliedByConfigId.get(configId);
+    if (shouldSuppressConfigOptionOverrideCandidate(candidate, lastApplied)) {
       pendingByConfigId.delete(configId);
       return Promise.resolve();
     }
@@ -80,9 +114,9 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
     const promise = params.runtime
       .setSessionConfigOption(candidate.configId, candidate.valueId)
       .then(() => {
-        lastAppliedUpdatedAtByConfigId.set(candidate.configId, candidate.updatedAt);
+        lastAppliedByConfigId.set(candidate.configId, candidate);
         const currentPending = pendingByConfigId.get(candidate.configId);
-        if (currentPending?.updatedAt === candidate.updatedAt) {
+        if (currentPending && isSameConfigOptionOverrideCandidate(currentPending, candidate)) {
           pendingByConfigId.delete(candidate.configId);
         }
       })
@@ -92,7 +126,12 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
       .finally(() => {
         inFlightByConfigId.delete(configId);
         const nextPending = pendingByConfigId.get(configId);
-        if (nextPending && nextPending.updatedAt > candidate.updatedAt && params.isStarted()) {
+        if (
+          nextPending
+          && !isSameConfigOptionOverrideCandidate(nextPending, candidate)
+          && nextPending.updatedAt >= candidate.updatedAt
+          && params.isStarted()
+        ) {
           void applyPendingForConfigId(configId);
         }
       });
@@ -108,11 +147,11 @@ export function createSessionConfigOptionOverrideSynchronizer(params: Readonly<{
     if (candidates.length === 0) return;
 
     for (const candidate of candidates) {
-      const lastApplied = lastAppliedUpdatedAtByConfigId.get(candidate.configId) ?? 0;
-      if (candidate.updatedAt <= lastApplied) continue;
+      const lastApplied = lastAppliedByConfigId.get(candidate.configId);
+      if (shouldSuppressConfigOptionOverrideCandidate(candidate, lastApplied)) continue;
 
       const prevPending = pendingByConfigId.get(candidate.configId);
-      if (prevPending && prevPending.updatedAt >= candidate.updatedAt) {
+      if (!shouldReplacePendingConfigOptionOverrideCandidate(candidate, prevPending)) {
         if (params.isStarted()) {
           void applyPendingForConfigId(candidate.configId);
         }

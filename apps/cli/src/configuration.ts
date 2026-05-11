@@ -100,6 +100,8 @@ class Configuration {
   public readonly filesDownloadMaxFileBytes: number
   public readonly filesZipMaxTotalBytes: number
   public readonly filesZipMaxEntryCount: number
+  public readonly sessionMediaMaxBytesPerSession: number
+  public readonly sessionMediaMaxBytesPerWorkspace: number
   public readonly filesZipExcludedTopLevelDirs: readonly string[]
   public readonly workspaceReplicationBlobPackTargetBytes: number
   public readonly workspaceReplicationBlobPackMaxBlobs: number
@@ -188,6 +190,7 @@ class Configuration {
   public readonly permissionRequestPushRetryDelaysMs: readonly number[]
   public readonly permissionRequestPushRetryMaxMs: number
   public readonly permissionRequestPushDedupeMaxEntries: number
+  public readonly readyNotificationAssistantTextMaxChars: number
 
   // Execution runs and one-shot tasks (session-process budgets).
   public readonly executionRunsMaxConcurrentPerSession: number | null
@@ -364,6 +367,14 @@ class Configuration {
       min: 1, max: 100_000, default: 10_000,
     });
 
+    // Default: 512MB per session and 2GB per workspace for local session media.
+    this.sessionMediaMaxBytesPerSession = resolveIntEnvWithBounds('HAPPIER_SESSION_MEDIA_MAX_BYTES_PER_SESSION', {
+      min: 1, default: 512 * 1024 * 1024,
+    });
+    this.sessionMediaMaxBytesPerWorkspace = resolveIntEnvWithBounds('HAPPIER_SESSION_MEDIA_MAX_BYTES_PER_WORKSPACE', {
+      min: 1, default: 2 * 1024 * 1024 * 1024,
+    });
+
     const defaultZipExcludedTopLevelDirs = '.git,.sl,node_modules,.happier';
     const filesZipExcludedTopLevelDirsRaw = String(process.env.HAPPIER_FILES_ZIP_EXCLUDED_TOP_LEVEL_DIRS ?? '').trim();
     const zipExcludedTopLevelDirsCsv = filesZipExcludedTopLevelDirsRaw || defaultZipExcludedTopLevelDirs;
@@ -502,6 +513,10 @@ class Configuration {
     this.permissionRequestPushDedupeMaxEntries = resolveIntEnvWithBounds(
       'HAPPIER_PERMISSION_REQUEST_PUSH_DEDUPE_MAX',
       { min: 0, max: 50_000, default: 2_000 },
+    );
+    this.readyNotificationAssistantTextMaxChars = resolveIntEnvWithBounds(
+      'HAPPIER_READY_NOTIFICATION_ASSISTANT_TEXT_MAX_CHARS',
+      { min: 40, max: 2_000, default: 500 },
     );
 
     this.transcriptLookupRequestTimeoutMs = resolveIntEnvWithBounds(

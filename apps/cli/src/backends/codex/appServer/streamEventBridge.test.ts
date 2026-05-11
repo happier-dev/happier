@@ -178,6 +178,11 @@ describe('createCodexAppServerStreamEventBridge', () => {
                 type: 'tool-result',
                 toolKind: 'command',
                 callId: 'cmd_1',
+                name: 'CodexBash',
+                input: {
+                    command: 'ls -la',
+                    cwd: '/repo',
+                },
                 output: {
                     stdout: 'done',
                     exitCode: 0,
@@ -222,6 +227,100 @@ describe('createCodexAppServerStreamEventBridge', () => {
         ]);
     });
 
+    it('maps final image generation results to session media and ignores partial images', () => {
+        const bridge = createCodexAppServerStreamEventBridge();
+
+        expect(
+            bridge.onNotification({
+                method: 'response.image_generation_call.partial_image',
+                params: {
+                    item: {
+                        id: 'img_1',
+                        type: 'image_generation_call',
+                        partial_image_b64: 'PARTIAL',
+                    },
+                },
+            }),
+        ).toEqual([]);
+
+        expect(
+            bridge.onNotification({
+                method: 'item/completed',
+                params: {
+                    item: {
+                        id: 'img_1',
+                        type: 'image_generation_call',
+                        status: 'completed',
+                        result: 'iVBORw0KGgo=',
+                        revised_prompt: 'safe prompt',
+                    },
+                },
+            }),
+        ).toEqual([
+            {
+                type: 'session-media',
+                itemId: 'img_1',
+                media: [
+                    {
+                        source: {
+                            kind: 'base64',
+                            data: 'iVBORw0KGgo=',
+                            mimeType: 'image/png',
+                            fileNameHint: 'img_1.png',
+                        },
+                        origin: {
+                            source: 'provider-generated',
+                            generationId: 'img_1',
+                            providerEventId: 'img_1',
+                        },
+                    },
+                ],
+                meta: {
+                    codexImageGenerationV1: {
+                        revisedPrompt: 'safe prompt',
+                    },
+                },
+            },
+        ]);
+    });
+
+    it('maps saved Codex image generation files without embedding bytes', () => {
+        const bridge = createCodexAppServerStreamEventBridge();
+
+        expect(
+            bridge.onNotification({
+                method: 'item/completed',
+                params: {
+                    item: {
+                        id: 'img_saved_1',
+                        type: 'imageGeneration',
+                        status: 'generating',
+                        savedPath: '/tmp/codex/generated.png',
+                    },
+                },
+            }),
+        ).toEqual([
+            {
+                type: 'session-media',
+                itemId: 'img_saved_1',
+                media: [
+                    {
+                        source: {
+                            kind: 'local-file',
+                            path: '/tmp/codex/generated.png',
+                            fileNameHint: 'generated.png',
+                        },
+                        origin: {
+                            source: 'provider-generated',
+                            generationId: 'img_saved_1',
+                            providerEventId: 'img_saved_1',
+                        },
+                    },
+                ],
+            },
+        ]);
+    });
+
     it('synthesizes a command tool-call before the result when completion arrives without a prior started event', () => {
         const bridge = createCodexAppServerStreamEventBridge();
 
@@ -254,6 +353,11 @@ describe('createCodexAppServerStreamEventBridge', () => {
                 type: 'tool-result',
                 toolKind: 'command',
                 callId: 'cmd_failed',
+                name: 'CodexBash',
+                input: {
+                    command: 'mkdir -p /tmp/demo',
+                    cwd: '/repo',
+                },
                 output: {
                     stderr: 'Rejected("rejected by user")',
                     exitCode: 1,
@@ -345,6 +449,8 @@ describe('createCodexAppServerStreamEventBridge', () => {
                 type: 'tool-result',
                 toolKind: 'mcp',
                 callId: 'tool_1',
+                name: 'mcp__playwright__browser_navigate',
+                input: { url: 'https://example.com' },
                 output: { status: 'ok' },
             },
         ]);
@@ -365,6 +471,8 @@ describe('createCodexAppServerStreamEventBridge', () => {
                 type: 'tool-result',
                 toolKind: 'mcp',
                 callId: 'tool_title',
+                name: 'mcp__happier__change_title',
+                input: { title: 'Normalized title' },
                 output: { title: 'Normalized title' },
             },
         ]);
@@ -445,6 +553,13 @@ describe('createCodexAppServerStreamEventBridge', () => {
                 type: 'tool-result',
                 toolKind: 'file-change',
                 callId: 'patch_1',
+                name: 'CodexPatch',
+                input: {
+                    auto_approved: true,
+                    changes: {
+                        'src/file.ts': { hunks: 2 },
+                    },
+                },
                 output: {
                     stdout: 'patched',
                     success: true,

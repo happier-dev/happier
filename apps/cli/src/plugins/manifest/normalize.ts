@@ -157,8 +157,6 @@ function toCanonicalPluginManifestFromV2(manifest: PluginManifestV2): CanonicalP
       executionRunProfiles: Object.freeze([...(contributes.executionRunProfiles ?? [])]),
       mcp: Object.freeze({
         servers: Object.freeze([...(contributes.mcp?.servers ?? [])]),
-        backendClients: Object.freeze([...(contributes.mcp?.backendClients ?? [])]),
-        tools: Object.freeze([...(contributes.mcp?.tools ?? [])]),
         discoveryProviders: Object.freeze([...(contributes.mcp?.discoveryProviders ?? [])]),
       }),
       scmHostingProviders: Object.freeze([...(contributes.scmHostingProviders ?? [])]),

@@ -25,4 +25,5 @@ export type AcpRuntimeSessionClient = AcpReplayHistorySessionClient & Readonly<{
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
   sendAgentMessage: NonNullable<TranscriptSessionPort['sendAgentMessage']>;
   sendAgentMessageEphemeral?: TranscriptSessionPort['sendAgentMessageEphemeral'];
+  sendAgentSessionMediaCommitted?: TranscriptSessionPort['sendAgentSessionMediaCommitted'];
 }>;

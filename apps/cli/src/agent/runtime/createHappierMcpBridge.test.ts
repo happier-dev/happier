@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge'
 
@@ -38,8 +38,11 @@ vi.mock('@/mcp/startHappyServer', () => ({
   startHappyServer: startHappyServerMock,
 }))
 
+const originalActionSettingsEnv = process.env.HAPPIER_ACTIONS_SETTINGS_V1
+
 describe('createHappierMcpBridge', () => {
   beforeEach(() => {
+    delete process.env.HAPPIER_ACTIONS_SETTINGS_V1
     vi.mocked(existsSync).mockReset()
     vi.mocked(existsSync).mockReturnValue(false)
     requireJavaScriptRuntimeExecutableMock.mockReset()
@@ -49,6 +52,14 @@ describe('createHappierMcpBridge', () => {
       url: 'http://127.0.0.1:12345',
       stop: vi.fn(),
     })
+  })
+
+  afterAll(() => {
+    if (originalActionSettingsEnv === undefined) {
+      delete process.env.HAPPIER_ACTIONS_SETTINGS_V1
+    } else {
+      process.env.HAPPIER_ACTIONS_SETTINGS_V1 = originalActionSettingsEnv
+    }
   })
 
   it('uses direct script mode by default', async () => {
@@ -90,6 +101,63 @@ describe('createHappierMcpBridge', () => {
         '--url',
         'http://127.0.0.1:12345',
       ],
+    })
+  })
+
+  it('passes the action settings snapshot to the bridge stdio process', async () => {
+    const previousActionSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'session.list': { disabledSurfaces: [] },
+      },
+    })
+
+    try {
+      vi.mocked(existsSync).mockImplementation((pathLike) => {
+        const path = String(pathLike)
+        return path.endsWith('/package-dist/backends/codex/mcp/happierStdioBridge.mjs')
+      })
+
+      const session = {} as any
+      const { mcpServers } = await createHappierMcpBridge(session)
+
+      expect(mcpServers.happier.env).toEqual({
+        HAPPIER_ACTIONS_SETTINGS_V1: process.env.HAPPIER_ACTIONS_SETTINGS_V1,
+      })
+    } finally {
+      if (previousActionSettings === undefined) {
+        delete process.env.HAPPIER_ACTIONS_SETTINGS_V1
+      } else {
+        process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousActionSettings
+      }
+    }
+  })
+
+  it('passes account action settings to the in-session server and bridge stdio process', async () => {
+    vi.mocked(existsSync).mockImplementation((pathLike) => {
+      const path = String(pathLike)
+      return path.endsWith('/package-dist/backends/codex/mcp/happierStdioBridge.mjs')
+    })
+
+    const session = {} as any
+    const accountSettings = {
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.list': { disabledSurfaces: [] },
+        },
+      },
+    } as any
+
+    const { mcpServers } = await createHappierMcpBridge(session, { accountSettings })
+
+    expect(startHappyServerMock).toHaveBeenCalledWith(session, {
+      credentials: null,
+      accountSettings,
+    })
+    expect(mcpServers.happier.env).toEqual({
+      HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify(accountSettings.actionsSettingsV1),
     })
   })
 
@@ -204,6 +272,6 @@ describe('createHappierMcpBridge', () => {
 
     await createHappierMcpBridge(session, { credentials })
 
-    expect(startHappyServerMock).toHaveBeenCalledWith(session, { credentials })
+    expect(startHappyServerMock).toHaveBeenCalledWith(session, { credentials, accountSettings: null })
   })
 })

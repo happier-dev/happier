@@ -6,9 +6,10 @@ import {
   type CodexBackendMode,
 } from '@happier-dev/agents';
 import {
-  applySessionStateFieldMetadataPatch,
-  buildSessionStateFieldMetadataPatch,
-} from '@happier-dev/agents/session/state/metadataPatch';
+  applyDisplayTitleSessionMetadata,
+  applyRuntimeDescriptorSessionMetadata,
+  buildVendorSessionIdSessionMetadata,
+} from '@happier-dev/agents/session/state/metadataWriters';
 import {
   resolveExternalSessionsSourceKey,
   type ExternalSessionsProviderId,
@@ -76,7 +77,7 @@ function resolveRefreshedExternalSessionMetadata(params: Readonly<{
   if (titleHint && !currentTitle) {
     Object.assign(
       nextMetadata,
-      applySessionStateFieldMetadataPatch(nextMetadata, 'display.title', {
+      applyDisplayTitleSessionMetadata(nextMetadata, {
         title: titleHint,
         staleBehavior: 'bump-if-value-changed',
       }),
@@ -199,14 +200,12 @@ function buildExternalSessionMetadata(params: Readonly<{
   const directoryHint = normalizeNullableString(params.directoryHint) ?? '';
   const resume = getAgentResumeConfig(params.providerId);
   const vendorResumeIdField = 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
-  const externalSessionMetadata = applySessionStateFieldMetadataPatch(
+  const externalSessionMetadata = applyRuntimeDescriptorSessionMetadata(
     params.externalSessionMetadata ?? {},
-    'identity.runtimeDescriptor',
     null,
   );
-  const vendorMetadata = applySessionStateFieldMetadataPatch(
+  const vendorMetadata = applyRuntimeDescriptorSessionMetadata(
     params.vendorMetadata ?? {},
-    'identity.runtimeDescriptor',
     null,
   );
   const base: Record<string, unknown> = {
@@ -223,26 +222,24 @@ function buildExternalSessionMetadata(params: Readonly<{
       source: params.source,
       linkedAtMs: params.nowMs,
       ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
-      ...applySessionStateFieldMetadataPatch(
+      ...applyRuntimeDescriptorSessionMetadata(
         externalSessionMetadata as Record<string, unknown>,
-        'identity.runtimeDescriptor',
         params.runtimeDescriptor ?? null,
       ),
     },
     ...(vendorResumeIdField
-      ? buildSessionStateFieldMetadataPatch('identity.vendorSessionId', {
+      ? buildVendorSessionIdSessionMetadata({
         metadataKey: vendorResumeIdField,
         value: params.remoteSessionId,
       })
       : {}),
-    ...applySessionStateFieldMetadataPatch(
+    ...applyRuntimeDescriptorSessionMetadata(
       vendorMetadata as Record<string, unknown>,
-      'identity.runtimeDescriptor',
       params.runtimeDescriptor ?? null,
     ),
   };
   if (titleHint) {
-    return applySessionStateFieldMetadataPatch(base, 'display.title', {
+    return applyDisplayTitleSessionMetadata(base, {
       title: titleHint,
       staleBehavior: 'bump-if-value-changed',
     });

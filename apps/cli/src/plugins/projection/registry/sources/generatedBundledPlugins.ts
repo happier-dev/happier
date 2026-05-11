@@ -771,15 +771,13 @@ export const BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS: readonly ResolvedScm
         "support": "supported"
       },
       "pullRequestCheckout": {
-        "reason": "not_implemented",
-        "support": "unsupported"
+        "support": "supported"
       },
       "pullRequestCreate": {
         "support": "supported"
       },
       "pullRequestPrepareWorktree": {
-        "reason": "not_implemented",
-        "support": "unsupported"
+        "support": "supported"
       },
       "pullRequestRead": {
         "support": "supported"
@@ -788,8 +786,7 @@ export const BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS: readonly ResolvedScm
         "support": "supported"
       },
       "pullRequestRunStacked": {
-        "reason": "not_implemented",
-        "support": "unsupported"
+        "support": "supported"
       },
       "pullRequestStatus": {
         "support": "supported"
@@ -1243,8 +1240,7 @@ export const BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS: readonly ResolvedScm
         "support": "unsupported"
       },
       "portablePathClassification": {
-        "reason": "not_implemented",
-        "support": "unsupported"
+        "support": "supported"
       },
       "workspaceTransfer": {
         "reason": "not_implemented",

@@ -40,7 +40,7 @@ vi.mock('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec', async (im
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import { maybePassthroughProviderCliInfoRequest } from './providerCliPassthrough';
+import { maybePassthroughProviderCliInfoRequest, passthroughProviderCliArgs } from './providerCliPassthrough';
 
 const envKeys = [
   'PATH',
@@ -162,6 +162,34 @@ describe('maybePassthroughProviderCliInfoRequest', () => {
       'C:\\Windows\\System32\\cmd.exe',
       ['/d', '/s', '/c', '"C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD --help"'],
       expect.objectContaining({ windowsHide: true, windowsVerbatimArguments: true }),
+    );
+  });
+
+  it('preserves exact provider-native info arguments when spawning the provider CLI', () => {
+    spawnSyncMock.mockReturnValue({
+      pid: 1,
+      output: [],
+      stdout: null,
+      stderr: null,
+      status: 0,
+      signal: null,
+    } as any);
+    requireProviderCliLaunchSpecMock.mockReturnValueOnce({
+      source: 'path',
+      resolvedPath: '/usr/local/bin/codex',
+      command: '/usr/local/bin/codex',
+      args: ['--wrapped'],
+    });
+
+    passthroughProviderCliArgs({
+      agentId: 'codex',
+      providerArgs: ['exec', '--help'],
+    });
+
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      '/usr/local/bin/codex',
+      ['--wrapped', 'exec', '--help'],
+      expect.objectContaining({ stdio: 'inherit', windowsHide: true }),
     );
   });
 });

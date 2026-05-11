@@ -126,4 +126,45 @@ describe('handleCodexCliCommand', () => {
     }));
     expect(runSpy).not.toHaveBeenCalled();
   });
+
+  it('passes provider-native Codex arguments through the shared session bridge', async () => {
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    readCredentialsMock.mockResolvedValue(null);
+    authAndSetupMachineIfNeededMock.mockResolvedValue({ credentials } as any);
+    const runSpy = vi.spyOn(runCodexModule, 'runCodex').mockResolvedValue();
+    runSessionCommandSpy.mockResolvedValue(undefined);
+
+    await handleCodexCliCommand({
+      args: ['exec', '--model', 'gpt-5.1-codex-max', '--sandbox', 'workspace-write'],
+      terminalRuntime: null,
+    } as any);
+
+    expect(runSessionCommandSpy).toHaveBeenCalledWith('codex', expect.objectContaining({
+      credentials,
+      modelId: 'gpt-5.1-codex-max',
+      codexArgs: ['exec', '--model', 'gpt-5.1-codex-max', '--sandbox', 'workspace-write'],
+    }));
+    expect(runSpy).not.toHaveBeenCalled();
+  });
+
+  it('treats lowercase -v as a provider-native Codex argument, not as a version shortcut', async () => {
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    readCredentialsMock.mockResolvedValue(null);
+    authAndSetupMachineIfNeededMock.mockResolvedValue({ credentials } as any);
+    const runSpy = vi.spyOn(runCodexModule, 'runCodex').mockResolvedValue();
+    runSessionCommandSpy.mockResolvedValue(undefined);
+
+    await handleCodexCliCommand({
+      args: ['-v'],
+      terminalRuntime: null,
+    } as any);
+
+    expect(runSessionCommandSpy).toHaveBeenCalledWith('codex', expect.objectContaining({
+      credentials,
+      codexArgs: ['-v'],
+    }));
+    expect(runSpy).not.toHaveBeenCalled();
+  });
 });

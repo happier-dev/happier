@@ -192,6 +192,7 @@ export function createCodexSessionRuntime(sessionParams: unknown): HostSessionRu
                 if (startupState?.runtimeMode === 'terminal') {
                     const nativeRuntime = createCodexTerminalRuntime({
                         runtimeParams: params,
+                        codexArgs: opts.codexArgs,
                         startupRef,
                         startupState,
                         createRemoteRuntime,

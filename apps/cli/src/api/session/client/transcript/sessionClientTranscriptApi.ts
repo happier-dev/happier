@@ -42,6 +42,12 @@ import {
     dispatchProviderTranscriptMessage,
     type ProviderTranscriptDispatchRequest,
 } from './providerDispatch';
+import { extractAssistantTextSnapshotFromAcpMessage } from '../../turns/extractAssistantTextSnapshot';
+import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
+import {
+    persistSessionMediaForTranscript,
+    type SendAgentSessionMediaCommittedRequest,
+} from './sessionMediaBridge';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 
@@ -56,6 +62,7 @@ type CommitSessionMessageParams = Readonly<{
 export type SessionClientTranscriptApiDeps = Readonly<{
     token: string;
     sessionId: string;
+    turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
     outboundShapeLogger: {
         log: (label: string, payload: unknown) => void;
     };
@@ -115,6 +122,10 @@ export type SessionClientTranscriptApi = Readonly<{
         body: ACPMessageData,
         opts: { localId: string; meta?: Record<string, unknown> },
     ) => Promise<void>;
+    sendAgentSessionMediaCommitted: (
+        provider: ACPProvider,
+        request: SendAgentSessionMediaCommittedRequest,
+    ) => Promise<void>;
     sendAgentMessageEphemeral: (
         provider: ACPProvider,
         body: ACPMessageData,
@@ -136,6 +147,7 @@ export function createSessionClientTranscriptApi(
 ): SessionClientTranscriptApi {
     const getTranscriptSendPort = (): SessionClientTranscriptSendPort => ({
         sessionId: deps.sessionId,
+        turnAssistantTextSnapshotStore: deps.turnAssistantTextSnapshotStore,
         socket: {
             connected: deps.getSocket().connected,
             emit: (event, payload) => {
@@ -168,6 +180,37 @@ export function createSessionClientTranscriptApi(
         opts?: { localId?: string; meta?: Record<string, unknown> },
     ): void => {
         sendUserTextMessageViaPort(getTranscriptSendPort(), text, opts);
+    };
+
+    const sendAgentMessageCommitted = async (
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; meta?: Record<string, unknown> },
+    ): Promise<void> => {
+        const { normalizedBody, payload, localId, sidechainId } = prepareCommittedAgentMessageViaPort(
+            getTranscriptSendPort(),
+            provider,
+            body,
+            opts,
+        );
+
+        if (shouldTraceAcpMessageType(normalizedBody.type)) {
+            recordAcpToolTraceEventIfNeeded({ sessionId: deps.sessionId, provider, body: normalizedBody, localId });
+        }
+
+        await deps.enqueueMessageCommit(() =>
+            deps.commitSessionMessage({ message: payload, localId, sidechainId, requireCommit: true }),
+        );
+        const extracted = extractAssistantTextSnapshotFromAcpMessage(provider, normalizedBody);
+        if (extracted) {
+            deps.turnAssistantTextSnapshotStore?.observe({
+                text: extracted.text,
+                provider: extracted.provider,
+                sidechainId: extracted.sidechainId,
+                localId,
+                source: 'committed',
+            });
+        }
     };
 
     return {
@@ -243,21 +286,28 @@ export function createSessionClientTranscriptApi(
             sendUserTextMessage(text, { localId, meta });
         },
 
-        async sendAgentMessageCommitted(provider, body, opts) {
-            const { normalizedBody, payload, localId, sidechainId } = prepareCommittedAgentMessageViaPort(
-                getTranscriptSendPort(),
+        sendAgentMessageCommitted,
+
+        async sendAgentSessionMediaCommitted(provider, request) {
+            const workingDirectory = deps.getMetadataSnapshot()?.path;
+            const persisted = await persistSessionMediaForTranscript({
+                sessionId: deps.sessionId,
+                workingDirectory,
+                request,
+            });
+            const messageText = request.messageText ?? '';
+
+            await sendAgentMessageCommitted(
                 provider,
-                body,
-                opts,
+                { type: 'message', message: messageText },
+                {
+                    localId: request.localId,
+                    meta: persisted.meta,
+                },
             );
-
-            if (shouldTraceAcpMessageType(normalizedBody.type)) {
-                recordAcpToolTraceEventIfNeeded({ sessionId: deps.sessionId, provider, body: normalizedBody, localId });
+            if (messageText.trim().length === 0) {
+                deps.turnAssistantTextSnapshotStore?.reset({ reason: 'clear' });
             }
-
-            await deps.enqueueMessageCommit(() =>
-                deps.commitSessionMessage({ message: payload, localId, sidechainId, requireCommit: true }),
-            );
         },
 
         sendAgentMessageEphemeral(provider, body, opts) {

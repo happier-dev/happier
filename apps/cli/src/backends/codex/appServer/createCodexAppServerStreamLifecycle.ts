@@ -112,6 +112,17 @@ export function createCodexAppServerStreamLifecycle(params: Readonly<{
         update: CodexAppServerStreamUpdate,
         context: CodexAppServerStreamUpdateContext,
     ): Promise<void> => {
+        if (update.type === 'session-media') {
+            await params.session.sendAgentSessionMediaCommitted?.('codex', {
+                localId: `codex-media-${update.itemId}`,
+                role: 'output',
+                category: 'generated',
+                media: update.media,
+                ...(update.meta ? { meta: update.meta } : {}),
+            });
+            return;
+        }
+
         if (assistantReasoningProjector.observeStreamUpdate(update, context)) {
             return;
         }

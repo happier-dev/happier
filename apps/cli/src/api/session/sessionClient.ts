@@ -21,6 +21,9 @@ import {
     createSessionClientTranscriptApi,
     type SessionClientTranscriptApi,
 } from './client/transcript/sessionClientTranscriptApi';
+import type { SendAgentSessionMediaCommittedRequest } from './client/transcript/sessionMediaBridge';
+import type { TurnAssistantTextSnapshotStore } from './turns/assistantTextSnapshot';
+import { createTurnAssistantTextSnapshotStore } from './turns/assistantTextSnapshotStore';
 import {
     registerSessionClientRuntimeHandlers,
 } from './client/executionRuns/registerSessionClientRuntimeHandlers';
@@ -50,6 +53,7 @@ import {
 } from './client/lifecycle/startupCatchUpRuntime';
 import type { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import { configuration } from '@/configuration';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -116,6 +120,7 @@ export class ApiSessionClient extends EventEmitter {
     private readonly transcriptStorage: 'persisted' | 'direct';
     private readonly usageObservationPublisher: ReturnType<typeof createSessionClientUsageObservationPublisher>;
     private readonly transcriptApi: SessionClientTranscriptApi;
+    readonly turnAssistantTextSnapshotStore: TurnAssistantTextSnapshotStore;
     private readonly interactionApi: SessionClientInteractionApi;
     private readonly recoveryRuntime: SessionClientRecoveryRuntime;
     private readonly materializationRuntime: ReturnType<typeof createSessionClientMaterializationRuntime>;
@@ -209,6 +214,9 @@ export class ApiSessionClient extends EventEmitter {
                     encryptionVariant: this.encryptionVariant,
                 }),
             });
+            this.turnAssistantTextSnapshotStore = createTurnAssistantTextSnapshotStore({
+                maxTextChars: configuration.readyNotificationAssistantTextMaxChars,
+            });
 	        if (session.encryptionMode === 'plain') {
 	            this.sessionEncryptionMode = 'plain';
 	            // Plaintext sessions should not require encryption materials. Keep dummy values for
@@ -268,6 +276,7 @@ export class ApiSessionClient extends EventEmitter {
             markAgentQueueEchoSuppressedLocalId: (localId) => this.materializationRuntime.markAgentQueueEchoSuppressedLocalId(localId),
             hasPendingQueueMaterializedLocalId: (localId) => this.materializationRuntime.hasPendingQueueMaterializedLocalId(localId),
             deleteMaterializedLocalId: (localId) => this.materializationRuntime.deleteMaterializedLocalId(localId),
+            turnAssistantTextSnapshotStore: this.turnAssistantTextSnapshotStore,
             initialLastObservedMessageSeq:
                 typeof session.seq === 'number' && Number.isFinite(session.seq) && session.seq >= 0
                     ? Math.trunc(session.seq)
@@ -316,6 +325,7 @@ export class ApiSessionClient extends EventEmitter {
         this.transcriptApi = createSessionClientTranscriptApi({
             token: this.token,
             sessionId: this.sessionId,
+            turnAssistantTextSnapshotStore: this.turnAssistantTextSnapshotStore,
             outboundShapeLogger: this.outboundShapeLogger,
             getSocket: () => ({
                 connected: this.socket?.connected ?? false,
@@ -741,6 +751,13 @@ export class ApiSessionClient extends EventEmitter {
         await this.transcriptApi.sendAgentMessageCommitted(provider, body, opts);
     }
 
+    async sendAgentSessionMediaCommitted(
+        provider: ACPProvider,
+        request: SendAgentSessionMediaCommittedRequest,
+    ): Promise<void> {
+        await this.transcriptApi.sendAgentSessionMediaCommitted(provider, request);
+    }
+
     sendAgentMessageEphemeral(
         provider: ACPProvider,
         body: ACPMessageData,
@@ -912,6 +929,10 @@ export class ApiSessionClient extends EventEmitter {
 
     getLastObservedUserMessageSeq(): number {
         return this.lastObservedUserMessageSeq;
+    }
+
+    getTurnAssistantTextSnapshotStore(): TurnAssistantTextSnapshotStore {
+        return this.turnAssistantTextSnapshotStore;
     }
 
     async close() {

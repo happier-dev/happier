@@ -3,10 +3,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const { runSessionCommandSpy } = vi.hoisted(() => ({
   runSessionCommandSpy: vi.fn(),
 }));
+const { execFileSyncSpy } = vi.hoisted(() => ({
+  execFileSyncSpy: vi.fn(() => '1.2.3\n'),
+}));
 
 vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
   getSessionHostBridge: () => ({
     runSessionCommand: (...args: unknown[]) => runSessionCommandSpy(...args),
+  }),
+}));
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    execFileSync: execFileSyncSpy,
+  };
+});
+vi.mock('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec', () => ({
+  requireProviderCliLaunchSpec: () => ({
+    source: 'path',
+    resolvedPath: '/usr/local/bin/claude',
+    command: '/usr/local/bin/claude',
+    args: [],
   }),
 }));
 
@@ -18,10 +36,11 @@ import * as accountSettingsModule from '@/settings/accountSettings/bootstrapAcco
 afterEach(() => {
   vi.restoreAllMocks();
   runSessionCommandSpy.mockReset();
+  execFileSyncSpy.mockClear();
 });
 
 describe('handleClaudeCliCommand --version', () => {
-  it('does not initialize auth/session for version-only invocation', async () => {
+  it('passes version-only invocation through to Claude without initializing auth/session', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials: { token: 'x' } as any } as any);
     const readSettingsSpy = vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({} as any);
@@ -32,7 +51,12 @@ describe('handleClaudeCliCommand --version', () => {
       rawArgv: ['happier', '--version'],
     } as any);
 
-    expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/^happier version:/));
+    expect(execFileSyncSpy).toHaveBeenCalledWith(
+      '/usr/local/bin/claude',
+      ['--version'],
+      expect.objectContaining({ encoding: 'utf8', windowsHide: true }),
+    );
+    expect(logSpy).toHaveBeenCalledWith('1.2.3');
     expect(readSettingsSpy).not.toHaveBeenCalled();
     expect(authSpy).not.toHaveBeenCalled();
     expect(runSessionCommandSpy).not.toHaveBeenCalled();
@@ -171,6 +195,31 @@ describe('handleClaudeCliCommand --version', () => {
       'claude',
       expect.objectContaining({ credentials, startedBy: 'daemon', startingMode: 'remote' }),
     );
+  });
+
+  it('fails closed when --js-runtime is followed by another flag instead of a runtime name', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null): never => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const credentials = { token: 'x' } as any;
+
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(persistenceModule, 'readSettings').mockResolvedValue({ chromeMode: false, machineId: 'machine-1' } as any);
+
+    try {
+      await expect(handleClaudeCliCommand({
+        args: ['--js-runtime', '--permission-mode', 'plan'],
+        terminalRuntime: null,
+        rawArgv: ['happier', '--js-runtime', '--permission-mode', 'plan'],
+      } as any)).rejects.toThrow('exit:1');
+
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Missing value for --js-runtime'));
+      expect(runSessionCommandSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
   });
 
   it('ignores obsolete child account settings version hints for daemon-started Claude sessions', async () => {

@@ -1,4 +1,5 @@
 import type { AgentMessage } from '@/agent/core/AgentBackend';
+import { extractAcpMediaContentBlocks } from '@/agent/acp/media/extractAcpMediaContentBlocks';
 import type { SDKAssistantMessage, SDKMessage, SDKResultMessage, SDKSystemMessage } from '@/backends/claude/sdk/types';
 import { isClaudeExplicitDiffToolInput } from '../utils/isClaudeExplicitDiffToolInput';
 import type { ClaudeSdkLifecycleState, ClaudeSdkRuntimeState } from './runtimeState';
@@ -103,6 +104,7 @@ function handleUserMessage(params: Readonly<{
 }>): void {
   const content = params.userMessage?.message?.content;
   if (!Array.isArray(content)) return;
+  const providerEventId = typeof params.userMessage.uuid === 'string' ? params.userMessage.uuid : undefined;
   for (const block of content) {
     if (!block || typeof block !== 'object') continue;
     if ((block as { type?: unknown }).type !== 'tool_result') continue;
@@ -124,6 +126,23 @@ function handleUserMessage(params: Readonly<{
       callId,
       result: (block as { content?: unknown }).content,
     });
+    const mediaResult = extractAcpMediaContentBlocks((block as { content?: unknown }).content, {
+      originSource: 'tool-output',
+      toolCallId: callId,
+      ...(providerEventId ? { providerEventId } : {}),
+    });
+    if (mediaResult.media.length > 0) {
+      params.emit({
+        type: 'event',
+        name: 'session_media',
+        payload: {
+          localId: `claude-media-${callId}`,
+          role: 'output',
+          category: 'tool-artifact',
+          media: mediaResult.media,
+        },
+      });
+    }
   }
 }
 
@@ -162,6 +181,25 @@ function handleAssistantMessage(params: Readonly<{
   }
 
   const text = extractAssistantText(params.assistantMessage);
+  const providerEventId = typeof params.assistantMessage.uuid === 'string'
+    ? params.assistantMessage.uuid
+    : undefined;
+  const mediaResult = extractAcpMediaContentBlocks(assistantContent, {
+    originSource: 'provider-generated',
+    ...(providerEventId ? { providerEventId } : {}),
+  });
+  if (mediaResult.media.length > 0) {
+    params.emit({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        localId: `claude-media-${providerEventId ?? 'assistant'}`,
+        role: 'output',
+        category: 'generated',
+        media: mediaResult.media,
+      },
+    });
+  }
   if (!text) return;
   const pending = params.runtime.pendingTurn;
   if (pending) {

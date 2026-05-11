@@ -4,6 +4,7 @@ import { join } from 'path';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
+import { resolveSessionMediaTransferTarget } from './resolveSessionMediaTransferTarget';
 import { resolveWorkspaceFileUploadTarget, type WorkspaceFileUploadTarget } from './resolveWorkspaceFileUploadTarget';
 
 export type AttachmentUploadLocation = 'workspace' | 'os_temp';
@@ -65,19 +66,11 @@ export function resolveAttachmentTransferTarget(
   config: AttachmentTransferConfig,
   tempUploadRoot: string,
 ): AttachmentTransferTarget {
-  if (config.uploadLocation === 'workspace') {
-    return {
-      uploadBasePath: join(config.workspaceRelativeDir, 'messages').replace(/[\\]+/g, '/'),
-      additionalAllowedReadDirs: [],
-      additionalAllowedWriteDirs: [],
-    };
-  }
-
-  return {
-    uploadBasePath: join(tempUploadRoot, 'messages'),
-    additionalAllowedReadDirs: [tempUploadRoot],
-    additionalAllowedWriteDirs: [tempUploadRoot],
-  };
+  return resolveSessionMediaTransferTarget({
+    config,
+    tempUploadRoot,
+    category: 'messages',
+  });
 }
 
 export function sanitizeAttachmentFileName(value: string): string {

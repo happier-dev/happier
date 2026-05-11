@@ -19,8 +19,8 @@ import type {
 } from './codexRolloutSessionStoreTypes';
 import { encodeCodexDirectForwardCursor } from '../../externalSessions/codexDirectForwardCursor';
 import {
-    pageCodexRolloutDirectTranscriptSnapshot,
-    readAfterCodexRolloutDirectTranscriptSnapshot,
+    pageCodexRolloutDirectTranscriptHistory,
+    readAfterCodexRolloutDirectTranscriptHistory,
     resolveCodexRolloutDirectTranscriptSnapshot,
 } from './transcriptHistory';
 
@@ -72,27 +72,31 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
 
     async pageOlder(params?: unknown): Promise<CodexRolloutSessionStorePageResult> {
         const pageParams = params as CodexRolloutSessionStorePageParams | undefined;
-        const result = await this.withTranscriptSnapshot((snapshot) =>
-            pageCodexRolloutDirectTranscriptSnapshot(snapshot, {
-                direction: pageParams?.direction ?? 'older',
-                cursor: pageParams?.cursor,
-                maxBytes: pageParams?.maxBytes ?? 1024 * 1024,
-                maxItems: pageParams?.maxItems ?? 100,
-            }),
-        );
+        const result = await pageCodexRolloutDirectTranscriptHistory({
+            source: this.options.key.source,
+            activeServerDir: this.options.activeServerDir,
+            env: this.options.env,
+            remoteSessionId: this.options.key.remoteSessionId,
+            direction: pageParams?.direction ?? 'older',
+            cursor: pageParams?.cursor,
+            maxBytes: pageParams?.maxBytes ?? 1024 * 1024,
+            maxItems: pageParams?.maxItems ?? 100,
+        });
         this.tailCursor = result.tailCursor ?? this.tailCursor;
         return result;
     }
 
     async readAfter(params?: unknown): Promise<CodexRolloutSessionStoreReadAfterResult> {
         const readParams = params as CodexRolloutSessionStoreReadAfterParams | undefined;
-        const result = await this.withTranscriptSnapshot((snapshot) =>
-            readAfterCodexRolloutDirectTranscriptSnapshot(snapshot, {
-                cursor: readParams?.cursor ?? 'tail',
-                maxBytes: readParams?.maxBytes ?? 1024 * 1024,
-                maxItems: readParams?.maxItems ?? 100,
-            }),
-        );
+        const result = await readAfterCodexRolloutDirectTranscriptHistory({
+            source: this.options.key.source,
+            activeServerDir: this.options.activeServerDir,
+            env: this.options.env,
+            remoteSessionId: this.options.key.remoteSessionId,
+            cursor: readParams?.cursor ?? 'tail',
+            maxBytes: readParams?.maxBytes ?? 1024 * 1024,
+            maxItems: readParams?.maxItems ?? 100,
+        });
         this.tailCursor = result.nextCursor ?? this.tailCursor;
         return result;
     }
@@ -118,15 +122,24 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
     }
 
     async getTitle(): Promise<string | null> {
-        return this.withTranscriptSnapshot((snapshot) => snapshot.title);
+        return this.withTranscriptSnapshot(
+            (snapshot) => snapshot.title,
+            { allowRolloutCwdAppServerFallback: false, resolveTitle: true },
+        );
     }
 
     async getWorkingDirectory(): Promise<string | null> {
-        return this.withTranscriptSnapshot((snapshot) => snapshot.workingDirectory);
+        return this.withTranscriptSnapshot(
+            (snapshot) => snapshot.workingDirectory,
+            { resolveTitle: false },
+        );
     }
 
     async getActivity(): Promise<CodexRolloutStoreActivity | null> {
-        return this.withTranscriptSnapshot((snapshot) => ({ lastActivityAtMs: snapshot.lastActivityAtMs }));
+        return this.withTranscriptSnapshot(
+            (snapshot) => ({ lastActivityAtMs: snapshot.lastActivityAtMs }),
+            { allowRolloutCwdAppServerFallback: false, resolveTitle: false },
+        );
     }
 
     async getPreview(): Promise<string | null> {
@@ -137,8 +150,9 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
         readSnapshot: (
             snapshot: Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>,
         ) => TResult | Promise<TResult>,
+        options?: Readonly<{ allowRolloutCwdAppServerFallback?: boolean; resolveTitle?: boolean }>,
     ): Promise<TResult> {
-        const snapshot = await this.resolveTranscriptSnapshot();
+        const snapshot = await this.resolveTranscriptSnapshot(options);
         try {
             return await readSnapshot(snapshot);
         } finally {
@@ -154,8 +168,21 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
         this.invalidateTranscriptSnapshot();
     }
 
-    private async resolveTranscriptSnapshot(): Promise<Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>> {
-        if (this.transcriptSnapshotPromise) {
+    private async resolveTranscriptSnapshot(
+        options?: Readonly<{ allowRolloutCwdAppServerFallback?: boolean; resolveTitle?: boolean }>,
+    ): Promise<Awaited<ReturnType<typeof resolveCodexRolloutDirectTranscriptSnapshot>>> {
+        const allowRolloutCwdAppServerFallback = options?.allowRolloutCwdAppServerFallback !== false;
+        const resolveTitle = options?.resolveTitle !== false;
+        const existingSnapshotNeedsCwdFallback =
+            allowRolloutCwdAppServerFallback
+            && this.transcriptSnapshot?.rolloutHome !== null
+            && this.transcriptSnapshot?.workingDirectory === null
+            && this.transcriptSnapshot?.appServerMetadata === null;
+        const existingSnapshotNeedsTitle =
+            resolveTitle
+            && this.transcriptSnapshot?.rolloutHome !== null
+            && this.transcriptSnapshot?.title === null;
+        if (this.transcriptSnapshotPromise && !existingSnapshotNeedsCwdFallback && !existingSnapshotNeedsTitle) {
             return this.transcriptSnapshotPromise;
         }
         this.transcriptSnapshotPromise = resolveCodexRolloutDirectTranscriptSnapshot({
@@ -164,6 +191,7 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
             env: this.options.env,
             remoteSessionId: this.options.key.remoteSessionId,
             previousSnapshot: this.transcriptSnapshot,
+            options: { allowRolloutCwdAppServerFallback, resolveTitle },
         }).then((snapshot) => {
             this.transcriptSnapshot = snapshot;
             return snapshot;
@@ -197,7 +225,10 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
             }
 
             this.clearSubscriptionDiscoveryTimer();
-            const snapshot = await this.resolveTranscriptSnapshot();
+            const snapshot = await this.resolveTranscriptSnapshot({
+                allowRolloutCwdAppServerFallback: false,
+                resolveTitle: false,
+            });
             const codexHome = snapshot.rolloutHome;
             if (this.isSubscriptionRuntimeStartupStale(startupGeneration)) {
                 return;
@@ -318,7 +349,10 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
     }
 
     private async replaySubscriptionHistory(): Promise<CodexRolloutSessionStoreReadAfterResult> {
-        const snapshot = await this.resolveTranscriptSnapshot();
+        const snapshot = await this.resolveTranscriptSnapshot({
+            allowRolloutCwdAppServerFallback: false,
+            resolveTitle: false,
+        });
         if (this.replayDiscoveredHistoryOnNextDrain) {
             this.replayDiscoveredHistoryOnNextDrain = false;
             const startCursor = buildStartCursorFromSnapshot(snapshot);
@@ -376,7 +410,10 @@ class CodexRolloutSessionStore implements FileBackedTranscriptSessionStore<Exter
     }
 
     private async resolvePrimaryRolloutFilePath(): Promise<string | null> {
-        return this.withTranscriptSnapshot((snapshot) => snapshot.primaryRolloutFilePath);
+        return this.withTranscriptSnapshot(
+            (snapshot) => snapshot.primaryRolloutFilePath,
+            { allowRolloutCwdAppServerFallback: false, resolveTitle: false },
+        );
     }
 }
 

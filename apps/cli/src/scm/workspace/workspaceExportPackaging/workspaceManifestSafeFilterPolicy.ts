@@ -1,5 +1,9 @@
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { isAdministrativeWorkspacePathWithScmWorkspace } from '@/scm/workspace/workspacePortability';
+import { resolveScmBackendRegistry } from '@/scm/scmBackendCatalog';
+import {
+    isAdministrativeWorkspacePathWithScmWorkspace,
+    resolveIsAdministrativeWorkspacePathWithScmWorkspace,
+} from '@/scm/workspace/workspacePortability';
 import { detectWorkspacePathTraits } from '@/scm/workspace/workspaceExportPackaging/detectWorkspacePathTraits';
 
 export type WorkspaceManifestSafeFilterPolicy = Readonly<{
@@ -17,12 +21,22 @@ export function resolveWorkspaceManifestSafeFilterPolicy(policy?: WorkspaceManif
 export function inferWorkspaceManifestSafeFilterPolicyFromEntries(entries: readonly Readonly<{
     relativePath: string;
 }>[], registry?: ScmBackendRegistry): WorkspaceManifestSafeFilterPolicy {
+    if (!registry) return DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY;
     return entries.some((entry) => isAdministrativeWorkspacePathWithScmWorkspace({
         relativePath: entry.relativePath,
         registry,
     }))
         ? { excludeAdministrativePaths: false }
         : DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY;
+}
+
+export async function resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries: readonly Readonly<{
+    relativePath: string;
+}>[], registry?: ScmBackendRegistry): Promise<WorkspaceManifestSafeFilterPolicy> {
+    return inferWorkspaceManifestSafeFilterPolicyFromEntries(
+        entries,
+        await resolveScmBackendRegistry(registry),
+    );
 }
 
 export async function shouldFilterWorkspaceManifestPath(
@@ -32,7 +46,7 @@ export async function shouldFilterWorkspaceManifestPath(
 ): Promise<boolean> {
     return policy.excludeAdministrativePaths
         && !detectWorkspacePathTraits(relativePath).isRoot
-        && isAdministrativeWorkspacePathWithScmWorkspace({
+        && await resolveIsAdministrativeWorkspacePathWithScmWorkspace({
             relativePath,
             registry,
         });

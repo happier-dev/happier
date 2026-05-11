@@ -33,10 +33,8 @@ import type {
     ResolvedHookRegistration,
     ResolvedInstallableContribution,
     ResolvedLifecycleHandlerContribution,
-    ResolvedMcpBackendClientContribution,
     ResolvedMcpDiscoveryProviderContribution,
     ResolvedMcpServerContribution,
-    ResolvedMcpToolContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
     ResolvedScmBackendContribution,
@@ -145,22 +143,6 @@ type PluginResolvedExecutionRunProfileContribution = ResolvedExecutionRunProfile
 }>;
 
 type PluginResolvedMcpServerContribution = ResolvedMcpServerContribution & Readonly<{
-    provenance: 'external';
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
-}>;
-
-type PluginResolvedMcpBackendClientContribution = ResolvedMcpBackendClientContribution & Readonly<{
-    provenance: 'external';
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
-}>;
-
-type PluginResolvedMcpToolContribution = ResolvedMcpToolContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
     manifestPath: string;
@@ -517,8 +499,6 @@ export async function resolvePluginContributes(
     const notificationChannelCandidates: PluginResolvedNotificationChannelContribution[] = [];
     const executionRunProfileCandidates: PluginResolvedExecutionRunProfileContribution[] = [];
     const mcpServerCandidates: PluginResolvedMcpServerContribution[] = [];
-    const mcpBackendClientCandidates: PluginResolvedMcpBackendClientContribution[] = [];
-    const mcpToolCandidates: PluginResolvedMcpToolContribution[] = [];
     const mcpDiscoveryProviderCandidates: PluginResolvedMcpDiscoveryProviderContribution[] = [];
     const scmHostingProviderCandidates: PluginResolvedScmHostingProviderContribution[] = [];
     const scmBackendCandidates: PluginResolvedScmBackendContribution[] = [];
@@ -810,32 +790,6 @@ export async function resolvePluginContributes(
         });
     }
 
-    for (const contribution of pluginRegistry.mcpBackendClients) {
-        mcpBackendClientCandidates.push({
-            provenance: 'external',
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
-
-    for (const contribution of pluginRegistry.mcpTools) {
-        mcpToolCandidates.push({
-            provenance: 'external',
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
-
     for (const contribution of pluginRegistry.mcpDiscoveryProviders) {
         mcpDiscoveryProviderCandidates.push({
             provenance: 'external',
@@ -1051,8 +1005,6 @@ export async function resolvePluginContributes(
         notificationChannels: Object.freeze(notificationChannelCandidates),
         executionRunProfiles: Object.freeze(executionRunProfileCandidates),
         mcpServers: Object.freeze(mcpServerCandidates),
-        mcpBackendClients: Object.freeze(mcpBackendClientCandidates),
-        mcpTools: Object.freeze(mcpToolCandidates),
         mcpDiscoveryProviders: Object.freeze(mcpDiscoveryProviderCandidates),
         scmHostingProviders: Object.freeze(scmHostingProviderCandidates),
         scmBackends: Object.freeze(scmBackendCandidates),

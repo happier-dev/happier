@@ -3,7 +3,7 @@ import type {
     PluginProjectionInstalledPackageV2,
     PluginProjectionV2,
 } from '@happier-dev/protocol';
-import { getPluginHookDefinitionV1 } from '@happier-dev/protocol';
+import { getPluginHookDefinitionV1, normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
 
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
@@ -289,12 +289,6 @@ function collectPluginContributionMetadata(
     for (const server of registry.mcpServers ?? []) {
         upsert(server);
     }
-    for (const client of registry.mcpBackendClients ?? []) {
-        upsert(client);
-    }
-    for (const tool of registry.mcpTools ?? []) {
-        upsert(tool);
-    }
     for (const provider of registry.mcpDiscoveryProviders ?? []) {
         upsert(provider);
     }
@@ -459,13 +453,13 @@ function buildBackendsById(
 function cloneProjectedBackendCapabilities(
     capabilities: ResolvedBackendContribution['capabilities'],
 ): NonNullable<PluginProjectionV2['backendsById'][string]>['capabilities'] {
-    return {
+    return normalizePluginBackendCapabilitiesV1({
         ...(capabilities ?? {}),
         executionRun: {
             ...(capabilities?.executionRun ?? {}),
             supported: capabilities?.executionRun?.supported !== false,
         },
-    };
+    });
 }
 
 function buildHooksById(

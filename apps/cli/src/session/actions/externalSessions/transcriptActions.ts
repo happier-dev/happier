@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { validateDirectMachineSource } from '@/api/session/external/security/validateDirectMachineSource';
+import { collectTransientSessionMediaReadDirs } from '@/session/media/referencedPaths';
 
 import { resolveDefaultMaxBytes, resolveDefaultMaxItems } from './actionConfiguration';
 import { getExternalSessionProviderOps } from './providerOpsResolution';
@@ -54,6 +55,7 @@ export async function executeExternalSessionTranscriptPageAction(
             tailCursor: res.tailCursor,
             hasMore: res.hasMore,
             truncated: res.truncated,
+            transientMediaReadDirs: collectTransientSessionMediaReadDirs(res.items),
         } satisfies ExternalSessionTranscriptPageResponse;
     } catch (error) {
         return internalErrorResponse(
@@ -100,7 +102,13 @@ export async function executeExternalSessionTranscriptReadAfterAction(
             maxBytes,
             maxItems,
         });
-        return { ok: true, items: res.items, nextCursor: res.nextCursor, truncated: res.truncated } satisfies ExternalSessionTranscriptReadAfterResponse;
+        return {
+            ok: true,
+            items: res.items,
+            nextCursor: res.nextCursor,
+            truncated: res.truncated,
+            transientMediaReadDirs: collectTransientSessionMediaReadDirs(res.items),
+        } satisfies ExternalSessionTranscriptReadAfterResponse;
     } catch (error) {
         return internalErrorResponse(
             'external_session_transcript_read_after',

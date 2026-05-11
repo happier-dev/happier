@@ -14,6 +14,8 @@ import {
 import {
     buildUserTextMessageContent,
 } from '../../outbound/shared';
+import { extractAssistantTextSnapshotFromAcpMessage } from '../../turns/extractAssistantTextSnapshot';
+import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 
@@ -45,6 +47,7 @@ type CommitSessionMessageParams = Readonly<{
 
 export type SessionClientTranscriptSendPort = Readonly<{
     sessionId: string;
+    turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
     socket: {
         connected: boolean;
         emit: (event: 'transcript-stream-segment', payload: unknown) => void;
@@ -63,6 +66,24 @@ export type SessionClientTranscriptSendPort = Readonly<{
     permissionToolCallRawInputByProviderAndId: Map<string, unknown>;
     toolCallInputByProviderAndId: Map<string, unknown>;
 }>;
+
+function observeAcpAssistantText(params: Readonly<{
+    store?: TurnAssistantTextSnapshotStore;
+    provider: ACPProvider;
+    body: ACPMessageData;
+    localId?: string | null;
+    source: 'ephemeral' | 'provider-dispatch';
+}>): void {
+    const extracted = extractAssistantTextSnapshotFromAcpMessage(params.provider, params.body);
+    if (!extracted) return;
+    params.store?.observe({
+        text: extracted.text,
+        provider: extracted.provider,
+        sidechainId: extracted.sidechainId,
+        localId: params.localId ?? null,
+        source: params.source,
+    });
+}
 
 export function sendAgentMessageViaPort(
     port: SessionClientTranscriptSendPort,
@@ -96,6 +117,13 @@ export function sendAgentMessageViaPort(
         localId,
         sidechainId,
         logErrorMessage: '[SOCKET] Failed to commit agent message (non-fatal)',
+    });
+    observeAcpAssistantText({
+        store: port.turnAssistantTextSnapshotStore,
+        provider,
+        body: normalizedBody,
+        localId,
+        source: 'provider-dispatch',
     });
 
     return { normalizedBody, localId };
@@ -179,6 +207,13 @@ export function sendAgentMessageEphemeralViaPort(
     } catch {
         // best effort
     }
+    observeAcpAssistantText({
+        store: port.turnAssistantTextSnapshotStore,
+        provider,
+        body,
+        localId,
+        source: 'ephemeral',
+    });
 }
 
 export function sendSessionEventViaPort(

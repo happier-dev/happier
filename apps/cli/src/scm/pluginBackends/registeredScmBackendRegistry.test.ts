@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { mkdtempSync } from 'node:fs';
 
 import type { ScmBackendContribution } from '@happier-dev/protocol';
 import type { ScmBackendRuntimeRegistration } from '@happier-dev/plugin-sdk';
+import { readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { createRegisteredScmBackendRegistry } from './registeredScmBackendRegistry';
 
@@ -14,6 +19,7 @@ function createCapabilities(input?: Readonly<{
     diffCommit?: 'supported' | 'unsupported';
     log?: 'supported' | 'unsupported';
     workspaceCheckoutMaterialization?: 'supported' | 'unsupported';
+    lifecycleClone?: 'supported' | 'unsupported';
 }>): ScmBackendContribution['capabilities'] {
     const supported = { support: 'supported' } as const;
     const unsupported = { support: 'unsupported', reason: 'not_implemented' } as const;
@@ -76,7 +82,7 @@ function createCapabilities(input?: Readonly<{
         },
         lifecycle: {
             init: unsupported,
-            clone: unsupported,
+            clone: input?.lifecycleClone === 'supported' ? supported : unsupported,
             publish: unsupported,
             identityRediscovery: unsupported,
             removeIndexLock: unsupported,
@@ -455,6 +461,161 @@ describe('registered SCM backend registry', () => {
             relativePath: '.git/HEAD',
             sourcePath: '/repo/.git/HEAD',
         })).toBe('non_portable');
+    });
+
+    it('rejects plugin command execution when the installable key does not own the requested SCM command', async () => {
+        const registration: ScmBackendRuntimeRegistration = {
+            id: 'acme-vcs',
+            handlers: {
+                detection: {
+                    detectRepo: async () => ({ isRepo: true, rootPath: '/repo', mode: '.git' }),
+                },
+                read: {
+                    statusSnapshot: async () => {
+                        const services = readCurrentScmBackendRuntimeServices();
+                        if (!services) throw new Error('Expected SCM backend runtime services');
+                        const result = await services.runCommand({
+                            installableKey: 'dep.acme-vcs',
+                            command: 'git',
+                            cwd: '/repo',
+                            args: ['--version'],
+                        });
+                        return {
+                            success: false,
+                            errorCode: 'FEATURE_UNSUPPORTED',
+                            error: result.stderr,
+                        };
+                    },
+                    diffFile: async () => ({ success: true, diff: '' }),
+                },
+            },
+        };
+
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: [{
+                pluginId: 'acme.scm.backend',
+                contributionId: 'acme-vcs',
+                definition: createDefinition(),
+            }],
+            registrations: [{
+                pluginId: 'acme.scm.backend',
+                registration,
+            }],
+        });
+
+        expect(resolved.diagnostics).toEqual([]);
+        const backend = resolved.backends[0];
+        if (!backend) throw new Error('Expected registered backend');
+
+        await expect(backend.statusSnapshot({
+            context: {
+                cwd: '/repo',
+                projectKey: 'acme-vcs:/repo',
+                detection: { isRepo: true, rootPath: '/repo', mode: '.git' },
+            },
+            request: { cwd: '/repo' },
+        })).resolves.toEqual(expect.objectContaining({
+            success: false,
+            error: expect.stringContaining("does not authorize SCM command 'git'"),
+        }));
+    });
+
+    it('allows declared third-party SCM backend commands through the host runtime command seam', async () => {
+        const binDir = mkdtempSync(join(tmpdir(), 'happier-acme-scm-bin-'));
+        const acmeBin = join(binDir, 'acme');
+        await writeFile(acmeBin, '#!/bin/sh\nprintf "acme-ok\\n"\n', 'utf8');
+        await chmod(acmeBin, 0o755);
+
+        const registration: ScmBackendRuntimeRegistration = {
+            id: 'acme-vcs',
+            handlers: {
+                detection: {
+                    detectRepo: async () => ({ isRepo: true, rootPath: '/repo', mode: '.git' }),
+                },
+                read: {
+                    statusSnapshot: async () => {
+                        const services = readCurrentScmBackendRuntimeServices();
+                        if (!services) throw new Error('Expected SCM backend runtime services');
+                        const result = await services.runCommand({
+                            installableKey: 'dep.acme-vcs',
+                            command: 'acme',
+                            cwd: binDir,
+                            args: [],
+                            env: { PATH: binDir },
+                        });
+                        return result.success
+                            ? { success: true, snapshot: undefined, diagnostics: [result.stdout.trim()] }
+                            : { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: result.stderr };
+                    },
+                    diffFile: async () => ({ success: true, diff: '' }),
+                },
+            },
+        };
+
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: [{
+                pluginId: 'acme.scm.backend',
+                contributionId: 'acme-vcs',
+                definition: createDefinition(),
+            }],
+            registrations: [{
+                pluginId: 'acme.scm.backend',
+                registration,
+            }],
+        });
+
+        expect(resolved.diagnostics).toEqual([]);
+        const backend = resolved.backends[0];
+        if (!backend) throw new Error('Expected registered backend');
+
+        await expect(backend.statusSnapshot({
+            context: {
+                cwd: binDir,
+                projectKey: 'acme-vcs:/repo',
+                detection: { isRepo: true, rootPath: binDir, mode: '.git' },
+            },
+            request: { cwd: binDir },
+        })).resolves.toEqual(expect.objectContaining({
+            success: true,
+            diagnostics: ['acme-ok'],
+        }));
+    });
+
+    it('rejects activation when lifecycle clone is advertised without a clone handler', () => {
+        const registration: ScmBackendRuntimeRegistration = {
+            id: 'acme-vcs',
+            handlers: {
+                detection: {
+                    detectRepo: async () => ({ isRepo: true, rootPath: '/repo', mode: '.git' }),
+                },
+                read: {
+                    statusSnapshot: async () => ({ success: true }),
+                    diffFile: async () => ({ success: true, diff: '' }),
+                },
+            },
+        };
+
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: [{
+                pluginId: 'acme.scm.backend',
+                contributionId: 'acme-vcs',
+                definition: createDefinition({
+                    capabilities: createCapabilities({ lifecycleClone: 'supported' }),
+                }),
+            }],
+            registrations: [{
+                pluginId: 'acme.scm.backend',
+                registration,
+            }],
+        });
+
+        expect(resolved.backends).toEqual([]);
+        expect(resolved.diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_scm_backend_activation_drift',
+                message: expect.stringContaining('lifecycle.clone'),
+            }),
+        ]);
     });
 
     it('reports undeclared activation with plugin owner and contribution id', () => {

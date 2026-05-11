@@ -15,6 +15,10 @@ import { requestDirectPeerTransferToFileWithRetry } from '@/machines/transfer/re
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { ScmWorkspaceIntegrationWorkspaceExportArtifacts } from '@/scm/workspace/workspaceExportArtifacts';
 import { buildWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
+import {
+  collectReferencedSessionMediaWorkspacePaths,
+  collectReferencedSessionMediaWorkspacePathsFromProviderBundle,
+} from '@/session/media/referencedPaths';
 import { createWorkspaceReplicationEngine } from '@/workspaces/replication/engine';
 import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
 import { createWorkspaceReplicationSourceOfferFromManifest } from '@/workspaces/replication/transport/createWorkspaceReplicationSourceOffer';
@@ -41,6 +45,7 @@ import {
   parseSessionHandoffWorkspaceBlobPackTransferId,
 } from './serverRouted';
 import type { SessionHandoffProviderBundleTransferPublication } from '@/session/handoff/providerBundle/transferPublication';
+import type { SessionHandoffProviderBundle } from '@/session/handoff/types';
 
 type DirectPeerTransferPublisher = Readonly<{
   publishTransfer: (input: Readonly<{
@@ -63,6 +68,33 @@ export {
 
 export type SessionHandoffWorkspaceReplicationSourceOffer =
   Awaited<ReturnType<typeof buildSessionHandoffWorkspaceReplicationSourceOffer>>;
+
+function toLiteralGitPathspec(relativePath: string): string {
+  return `:(literal)${relativePath}`;
+}
+
+function mergeReferencedMediaWorkspaceTransfer(input: Readonly<{
+  workspaceTransfer: SessionHandoffWorkspaceTransfer;
+  referencedMediaPaths: readonly string[];
+}>): SessionHandoffWorkspaceTransfer {
+  if (input.referencedMediaPaths.length === 0) {
+    return {
+      ...input.workspaceTransfer,
+      ignoredIncludeGlobs: [...input.workspaceTransfer.ignoredIncludeGlobs],
+    };
+  }
+
+  const ignoredIncludeGlobs = new Set(input.workspaceTransfer.ignoredIncludeGlobs);
+  for (const path of input.referencedMediaPaths) {
+    ignoredIncludeGlobs.add(toLiteralGitPathspec(path));
+  }
+
+  return {
+    ...input.workspaceTransfer,
+    includeIgnoredMode: 'include_selected',
+    ignoredIncludeGlobs: [...ignoredIncludeGlobs],
+  };
+}
 
 function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
@@ -138,12 +170,22 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
   sourceRootPath: string;
   activeServerDir: string;
   workspaceTransfer: SessionHandoffWorkspaceTransfer;
+  sessionTranscriptRecords?: readonly unknown[];
+  providerBundle?: SessionHandoffProviderBundle;
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
 }>> {
+  const referencedMediaPaths = [
+    ...collectReferencedSessionMediaWorkspacePaths(input.sessionTranscriptRecords ?? []),
+    ...collectReferencedSessionMediaWorkspacePathsFromProviderBundle(input.providerBundle),
+  ];
+  const workspaceTransfer = mergeReferencedMediaWorkspaceTransfer({
+    workspaceTransfer: input.workspaceTransfer,
+    referencedMediaPaths,
+  });
   const workspaceExportArtifacts = await buildWorkspaceExportArtifactsWithScmWorkspace({
     sourcePath: input.sourceRootPath,
-    workspaceTransfer: input.workspaceTransfer,
+    workspaceTransfer,
   });
   const workspaceReplicationMetadata = createSessionHandoffWorkspaceReplicationMetadata({
     sourceRootPath: input.sourceRootPath,
@@ -466,6 +508,8 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
   directPeerTransfer?: DirectPeerTransferPublisher;
   sourceRootPath: string;
   providerBundleTransferPublication?: SessionHandoffProviderBundleTransferPublication;
+  sessionTranscriptRecords?: readonly unknown[];
+  providerBundle?: SessionHandoffProviderBundle;
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
   handoffMetadataV2?: SessionHandoffMetadataV2;
@@ -477,6 +521,8 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
       sourceRootPath: input.sourceRootPath,
       activeServerDir: input.activeServerDir,
       workspaceTransfer: input.workspaceTransfer,
+      sessionTranscriptRecords: input.sessionTranscriptRecords,
+      providerBundle: input.providerBundle,
     })
     : null;
   const workspaceReplicationMetadata = workspaceReplicationState?.workspaceReplicationMetadata;

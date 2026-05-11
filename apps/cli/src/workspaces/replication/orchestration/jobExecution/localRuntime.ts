@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { inferWorkspaceManifestSafeFilterPolicyFromEntries } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import { resolveWorkspaceManifestSafeFilterPolicyFromEntries } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 import { applyWorkspaceReplicationPlan } from '@/workspaces/replication/apply/applyWorkspaceReplicationPlan';
 import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
 import type { WorkspaceReplicationJobStore } from '@/workspaces/replication/jobs/workspaceReplicationJobStore';
@@ -93,7 +93,7 @@ export async function executeWorkspaceReplicationJobWithLocalRuntime(params: Rea
       activeServerDir: params.activeServerDir,
       relationshipId: offer.relationshipId,
       workspaceRoot: params.apply.targetPath,
-      safeFilterPolicy: inferWorkspaceManifestSafeFilterPolicyFromEntries(
+      safeFilterPolicy: await resolveWorkspaceManifestSafeFilterPolicyFromEntries(
         offer.manifest.entries,
         params.apply.registry,
       ),

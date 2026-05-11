@@ -205,38 +205,6 @@ async function writeActivationModuleWithAutoAcpBackend(params: Readonly<{
     return { manifestPath, daemonEntryPath };
 }
 
-async function writeActivationModuleWithMcpTool(params: Readonly<{
-    pluginId: string;
-    toolId: string;
-    toolName: string;
-}>): Promise<Readonly<{
-    manifestPath: string;
-    daemonEntryPath: string;
-}>> {
-    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-mcp-tool-'));
-    const manifestPath = await writeManifest(root, {
-        id: params.pluginId,
-        runtimeCapabilities: ['mcp'],
-        permissions: [],
-    });
-    const daemonEntryPath = join(root, 'daemon.mjs');
-    await writeFile(
-        daemonEntryPath,
-        [
-            'export async function activate(api) {',
-            '  api.registerMcpTool({',
-            `    id: ${JSON.stringify(params.toolId)},`,
-            `    name: ${JSON.stringify(params.toolName)},`,
-            '    handler: async () => null,',
-            '  });',
-            '}',
-            '',
-        ].join('\n'),
-        'utf8',
-    );
-    return { manifestPath, daemonEntryPath };
-}
-
 async function writeManifest(
     root: string,
     params: Readonly<{
@@ -879,50 +847,6 @@ describe('activatePluginRuntimeRegistry', () => {
         await activated.dispose();
 
         await expect(readFile(markerPath, 'utf8')).resolves.toBe('activated\ndeactivating\n');
-    });
-
-    it('rejects MCP tool namespace collisions across activated plugins', async () => {
-        const first = await writeActivationModuleWithMcpTool({
-            pluginId: 'acme.alpha',
-            toolId: 'acme.alpha.search',
-            toolName: 'codex.github.search',
-        });
-        const second = await writeActivationModuleWithMcpTool({
-            pluginId: 'acme.beta',
-            toolId: 'acme.beta.create',
-            toolName: 'codex.github.create',
-        });
-
-        const activated = await activatePluginRuntimeRegistry({
-            contributes: mergeContributes(
-                createContributes({
-                    pluginId: 'acme.alpha',
-                    manifestPath: first.manifestPath,
-                    daemonEntryPath: first.daemonEntryPath,
-                }),
-                createContributes({
-                    pluginId: 'acme.beta',
-                    manifestPath: second.manifestPath,
-                    daemonEntryPath: second.daemonEntryPath,
-                }),
-            ),
-            generation: 13,
-        });
-
-        expect(activated.mcpTools).toEqual([
-            expect.objectContaining({
-                pluginId: 'acme.alpha',
-                registration: expect.objectContaining({
-                    name: 'codex.github.search',
-                }),
-            }),
-        ]);
-        expect(activated.pluginDiagnosticsByPluginId['acme.beta']).toEqual([
-            expect.objectContaining({
-                code: 'plugin_manifest_semantic_invalid',
-                message: expect.stringContaining('MCP tool namespace collision'),
-            }),
-        ]);
     });
 
     it('supports bundled activation sources without requiring a file-backed daemon entry path', async () => {

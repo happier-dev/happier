@@ -9,7 +9,7 @@ import {
   buildCodexAgentRuntimeDescriptor,
   type CodexBackendMode,
 } from '@happier-dev/agents';
-import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import {
   normalizeCodexBackendMode,
   type ExternalSessionsSource,
@@ -108,11 +108,10 @@ function buildExternalSessionMetadata(
   };
 
   const externalSessionV1: ExternalSessionMetadata = runtimeDescriptor
-    ? applySessionStateFieldMetadataPatch(
+    ? applyRuntimeDescriptorSessionMetadata(
         externalSessionBase,
-        'identity.runtimeDescriptor',
         runtimeDescriptor,
-      ) as ExternalSessionMetadata
+      )
     : externalSessionBase;
 
   return {

@@ -21,10 +21,8 @@ import type {
     ResolvedExecutionRunProfileContribution,
     ResolvedInstallableContribution,
     ResolvedLifecycleHandlerContribution,
-    ResolvedMcpBackendClientContribution,
     ResolvedMcpDiscoveryProviderContribution,
     ResolvedMcpServerContribution,
-    ResolvedMcpToolContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
     ResolvedSettingsContribution,
@@ -51,8 +49,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const notificationChannels = Object.freeze([...(inputs.notificationChannels ?? [])].sort(compareNotificationChannelContributes));
     const executionRunProfiles = Object.freeze([...(inputs.executionRunProfiles ?? [])].sort(compareExecutionRunProfileContributes));
     const mcpServers = Object.freeze([...(inputs.mcpServers ?? [])].sort(compareMcpServerContributes));
-    const mcpBackendClients = Object.freeze([...(inputs.mcpBackendClients ?? [])].sort(compareMcpBackendClientContributes));
-    const mcpTools = Object.freeze([...(inputs.mcpTools ?? [])].sort(compareMcpToolContributes));
     const mcpDiscoveryProviders = Object.freeze([...(inputs.mcpDiscoveryProviders ?? [])].sort(compareMcpDiscoveryProviderContributes));
     const installablesResult = resolveInstallableContributions(
         inputs.installables ?? [],
@@ -238,8 +234,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             notificationChannels,
             executionRunProfiles,
             mcpServers,
-            mcpBackendClients,
-            mcpTools,
             mcpDiscoveryProviders,
             installables,
             scmHostingProviders,
@@ -261,8 +255,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         notificationChannels,
         executionRunProfiles,
         mcpServers,
-        mcpBackendClients,
-        mcpTools,
         mcpDiscoveryProviders,
         installables,
         scmHostingProviders,
@@ -776,8 +768,6 @@ function buildRegistryGenerationId(params: Readonly<{
     notificationChannels: readonly ResolvedNotificationChannelContribution[];
     executionRunProfiles: readonly ResolvedExecutionRunProfileContribution[];
     mcpServers: readonly ResolvedMcpServerContribution[];
-    mcpBackendClients: readonly ResolvedMcpBackendClientContribution[];
-    mcpTools: readonly ResolvedMcpToolContribution[];
     mcpDiscoveryProviders: readonly ResolvedMcpDiscoveryProviderContribution[];
     installables: readonly ResolvedInstallableContribution[];
     scmHostingProviders: readonly ResolvedScmHostingProviderContribution[];
@@ -801,8 +791,6 @@ function buildRegistryGenerationId(params: Readonly<{
         ...params.notificationChannels.map((channel) => `notificationChannel:${channel.provenance}:${channel.source.kind}:${channel.definition.id}:${channel.manifestDigest ?? ''}`),
         ...params.executionRunProfiles.map((profile) => `executionRunProfile:${profile.provenance}:${profile.source.kind}:${profile.definition.id}:${profile.manifestDigest ?? ''}`),
         ...params.mcpServers.map((server) => `mcpServer:${server.provenance}:${server.source.kind}:${server.definition.id}:${server.definition.name}:${server.manifestDigest ?? ''}`),
-        ...params.mcpBackendClients.map((client) => `mcpBackendClient:${client.provenance}:${client.source.kind}:${client.definition.id}:${client.definition.serverName}:${client.manifestDigest ?? ''}`),
-        ...params.mcpTools.map((tool) => `mcpTool:${tool.provenance}:${tool.source.kind}:${tool.definition.id}:${tool.definition.name}:${tool.manifestDigest ?? ''}`),
         ...params.mcpDiscoveryProviders.map((provider) => `mcpDiscoveryProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
         ...params.installables.map((installable) => `installable:${installable.provenance}:${installable.source.kind}:${installable.definition.key}:${installable.definition.capabilityId}:${installable.manifestDigest ?? ''}`),
         ...params.scmHostingProviders.map((provider) => `scmHostingProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
@@ -818,20 +806,6 @@ function buildRegistryGenerationId(params: Readonly<{
 function compareMcpServerContributes(
     left: ResolvedMcpServerContribution,
     right: ResolvedMcpServerContribution,
-): number {
-    return left.definition.id.localeCompare(right.definition.id);
-}
-
-function compareMcpBackendClientContributes(
-    left: ResolvedMcpBackendClientContribution,
-    right: ResolvedMcpBackendClientContribution,
-): number {
-    return left.definition.id.localeCompare(right.definition.id);
-}
-
-function compareMcpToolContributes(
-    left: ResolvedMcpToolContribution,
-    right: ResolvedMcpToolContribution,
 ): number {
     return left.definition.id.localeCompare(right.definition.id);
 }

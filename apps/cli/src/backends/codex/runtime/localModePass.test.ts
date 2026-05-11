@@ -46,6 +46,7 @@ describe('runCodexLocalModePass', () => {
       api: {},
       permissionMode: 'default',
       resumeId: null,
+      codexArgs: ['exec', '--sandbox', 'workspace-write'],
       discardController: vi.fn(),
       formatError: (error: unknown) => String(error),
     });
@@ -59,6 +60,7 @@ describe('runCodexLocalModePass', () => {
       messageQueue: queue,
       permissionMode: 'default',
       resumeId: null,
+      codexArgs: ['exec', '--sandbox', 'workspace-write'],
     });
   });
 

@@ -209,6 +209,44 @@ describe('startHappyServer (MCP integration)', () => {
     }
   });
 
+  it('snapshots tool names from account action settings when provided', async () => {
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
+      v: 1,
+      actions: {
+        'session.list': { enabled: true, disabledSurfaces: ['session_agent'], disabledPlacements: [] },
+      },
+    });
+
+    const rpcHandlerManager = new RpcHandlerManager({
+      scopePrefix: 'sess_mcp_account_tool_names_1',
+      encryptionKey: new Uint8Array([1, 2, 3, 4]),
+      encryptionVariant: 'legacy',
+    });
+
+    const fakeClient: HappyMcpSessionClient = {
+      sessionId: 'sess_mcp_account_tool_names_1',
+      rpcHandlerManager,
+      sendClaudeSessionMessage: () => {},
+      updateMetadata: () => {},
+    };
+
+    const server = await startHappyServer(fakeClient, {
+      accountSettings: {
+        actionsSettingsV1: {
+          v: 1,
+          actions: {
+            'session.list': { disabledSurfaces: [] },
+          },
+        },
+      },
+    } as any);
+    try {
+      expect(server.toolNames).toContain('session_list');
+    } finally {
+      server.stop();
+    }
+  });
+
   it('exposes execution_run_* tools and can start/get/action a review run over HTTP transport', async () => {
     const remote = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-remote-'));
     const workspace = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-workspace-'));

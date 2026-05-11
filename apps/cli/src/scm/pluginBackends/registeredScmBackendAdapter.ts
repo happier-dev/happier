@@ -5,9 +5,9 @@ import {
 import type {
     ScmBackendContribution,
     ScmCapabilities,
+    ScmPullRequestRunStackedResponse,
 } from '@happier-dev/protocol';
 import type {
-    ScmBackendCommandRunResult,
     ScmBackendRuntimeRegistration,
     ScmBackendRuntimeServices,
     ScmHostingProviderRuntimeServices,
@@ -20,6 +20,10 @@ import type { ScmBackend } from '../types';
 import { resolveScmBackendCapabilities } from '../capabilities/resolveScmBackendCapabilities';
 import type { ScmWorkspaceIntegrationPortableWorkspacePathClassification as HostPortableWorkspacePathClassification } from '../workspace/portableWorkspacePath';
 import { runScmCommand as runHostScmCommand } from '../runtime';
+import {
+    createScmInstallableCommandAuthorization,
+    rejectUnauthorizedScmInstallableCommand,
+} from '../commandAuthorization';
 
 type UnsupportedResult = Readonly<{
     success: false;
@@ -45,6 +49,15 @@ function unsupportedWorktreeCreate(): Promise<Awaited<ReturnType<ScmBackend['wor
     });
 }
 
+function unsupportedRunStackedPullRequest(): Promise<ScmPullRequestRunStackedResponse> {
+    return Promise.resolve({
+        success: false,
+        errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+        error: 'SCM backend operation is not implemented by this plugin backend',
+        events: [],
+    });
+}
+
 function useHandler<TInput, TResult>(
     services: ScmBackendRuntimeServices,
     hostingServices: ScmHostingProviderRuntimeServices,
@@ -63,23 +76,20 @@ function useHandler<TInput, TResult>(
     );
 }
 
-function unsupportedCommand(command: string): ScmBackendCommandRunResult {
-    return {
-        success: false,
-        stdout: '',
-        stderr: `Unsupported SCM backend command '${command}'`,
-        exitCode: -1,
-    };
-}
-
-function createScmBackendRuntimeServices(): ScmBackendRuntimeServices {
+function createScmBackendRuntimeServices(
+    definition: ScmBackendContribution,
+): ScmBackendRuntimeServices {
+    const commandAuthorization = createScmInstallableCommandAuthorization(definition.tooling.commands);
     return {
         async runCommand(input) {
-            if (input.command !== 'git' && input.command !== 'sl') {
-                return unsupportedCommand(input.command);
-            }
+            const unauthorizedCommand = rejectUnauthorizedScmInstallableCommand({
+                ...input,
+                authorization: commandAuthorization,
+            });
+            if (unauthorizedCommand) return unauthorizedCommand;
             return await runHostScmCommand({
                 bin: input.command,
+                installableKey: input.installableKey,
                 cwd: input.cwd,
                 args: [...input.args],
                 timeoutMs: input.timeoutMs,
@@ -106,16 +116,16 @@ function createWorkspaceIntegrationAdapter(
     hostingServices: ScmHostingProviderRuntimeServices,
     handlers: ScmBackendRuntimeRegistration['handlers']['workspaceIntegration'],
 ): ScmBackend['workspaceIntegration'] | undefined {
-    if (!handlers?.inspectWorkspaceLocation) return undefined;
+    if (!handlers) return undefined;
 
     return {
-        inspectWorkspaceLocation: async (input) => await runWithScmBackendRuntimeServices(
+        ...(handlers.inspectWorkspaceLocation ? { inspectWorkspaceLocation: async (input) => await runWithScmBackendRuntimeServices(
             services,
             async () => await runWithScmHostingProviderRuntimeServices(
                 hostingServices,
                 async () => await handlers.inspectWorkspaceLocation!(input),
             ),
-        ),
+        ) } : {}),
         ...(handlers.reconcilePostMaterialization ? {
             reconcilePostMaterialization: async (input) => {
                 await runWithScmBackendRuntimeServices(
@@ -205,7 +215,7 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
     hostingProviderRuntimeServices?: ScmHostingProviderRuntimeServices;
 }>): ScmBackend {
     const preferredMode = input.definition.repoModes[0] ?? '.git';
-    const runtimeServices = createScmBackendRuntimeServices();
+    const runtimeServices = createScmBackendRuntimeServices(input.definition);
     const hostingProviderRuntimeServices = input.hostingProviderRuntimeServices ?? {};
 
     function getCapabilities(inputOptions: Readonly<{
@@ -401,6 +411,23 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
         },
         async pullRequestOpenOrReuse({ context, request }) {
             return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.hosting?.pullRequestOpenOrReuse, { context, request });
+        },
+        async pullRequestCheckout({ context, request }) {
+            return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.hosting?.pullRequestCheckout, { context, request });
+        },
+        async pullRequestPrepareWorktree({ context, request }) {
+            return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.hosting?.pullRequestPrepareWorktree, { context, request });
+        },
+        async pullRequestRunStacked({ context, request }) {
+            const handler = input.registration.handlers.hosting?.pullRequestRunStacked;
+            if (!handler) return unsupportedRunStackedPullRequest();
+            return runWithScmBackendRuntimeServices(
+                runtimeServices,
+                () => runWithScmHostingProviderRuntimeServices(
+                    hostingProviderRuntimeServices,
+                    () => Promise.resolve(handler({ context, request })),
+                ),
+            );
         },
         workspaceIntegration: createWorkspaceIntegrationAdapter(
             runtimeServices,

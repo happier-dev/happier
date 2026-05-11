@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createSessionStateFieldMetadataUpdater } from '@happier-dev/agents/session/state/metadataPatch';
+import { applyAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 function writeAcpConfigOptionOverride(params: Readonly<{
   metadata: Record<string, unknown>;
@@ -8,12 +8,12 @@ function writeAcpConfigOptionOverride(params: Readonly<{
   value: string | number | boolean | null;
   updatedAt: number;
 }>): Record<string, unknown> {
-  return createSessionStateFieldMetadataUpdater('intent.acpConfigOption', {
+  return applyAcpConfigOptionIntentSessionMetadata(params.metadata, {
     v: 1,
     configId: params.configId,
     value: params.value,
     updatedAt: params.updatedAt,
-  })(params.metadata);
+  });
 }
 
 describe('session-state ACP config option metadata binding', () => {

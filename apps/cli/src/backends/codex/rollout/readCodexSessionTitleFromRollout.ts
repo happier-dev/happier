@@ -17,8 +17,20 @@ function readTitleFromToolInput(input: unknown): string | null {
   return readExternalSessionTitleCandidate(title);
 }
 
-function isHappierChangeTitleToolName(name: string): boolean {
-  return isChangeTitleToolNameAlias(name);
+function isHappierMcpServerName(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  return normalized === 'happier'
+    || normalized === 'happy'
+    || normalized === 'happier__happier'
+    || normalized === 'happy__happier';
+}
+
+function isHappierChangeTitleToolAction(action: Extract<ReturnType<typeof mapCodexRolloutEventToActions>[number], { type: 'tool-call' }>): boolean {
+  if (action.source?.kind !== 'mcp' || !isHappierMcpServerName(action.source.serverName)) {
+    return false;
+  }
+  return isChangeTitleToolNameAlias(action.source.toolName)
+    || isChangeTitleToolNameAlias(action.name);
 }
 
 export async function readCodexSessionTitleFromRollout(filePath: string): Promise<string | null> {
@@ -38,7 +50,7 @@ export async function readCodexSessionTitleFromRollout(filePath: string): Promis
     for (const line of page.items) {
       const actions = mapCodexRolloutEventToActions(line.value, { debug: false });
       for (const action of actions) {
-        if (action.type === 'tool-call' && isHappierChangeTitleToolName(action.name)) {
+        if (action.type === 'tool-call' && isHappierChangeTitleToolAction(action)) {
           const fromTool = readTitleFromToolInput(action.input);
           if (fromTool) return fromTool;
         }

@@ -4,7 +4,7 @@ import {
     readAcpSessionModeIntentFromMetadata,
     SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
-import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import { applyAcpSessionModeIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 export function normalizeLegacySessionModeMetadataCompat<TMetadata extends Metadata | null | undefined>(
     metadata: TMetadata,
@@ -26,7 +26,7 @@ export function normalizeLegacySessionModeMetadataCompat<TMetadata extends Metad
         if (!intent || !intent.modeId) {
             return metadata;
         }
-        return applySessionStateFieldMetadataPatch(metadata, 'intent.acpSessionMode', {
+        return applyAcpSessionModeIntentSessionMetadata(metadata, {
             v: 1,
             modeId: intent.modeId,
             updatedAt: intent.updatedAt,

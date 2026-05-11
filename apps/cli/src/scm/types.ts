@@ -34,6 +34,12 @@ import type {
     ScmPullRequestOpenComposeResponse,
     ScmPullRequestOpenOrReuseRequest,
     ScmPullRequestOpenOrReuseResponse,
+    ScmPullRequestCheckoutRequest,
+    ScmPullRequestCheckoutResponse,
+    ScmPullRequestPrepareWorktreeRequest,
+    ScmPullRequestPrepareWorktreeResponse,
+    ScmPullRequestRunStackedRequest,
+    ScmPullRequestRunStackedResponse,
     ScmHostingRepositoryDescribePublishTargetsRequest,
     ScmHostingRepositoryDescribePublishTargetsResponse,
     ScmHostingRepositoryPublishRequest,
@@ -174,7 +180,7 @@ export type ScmWorkspaceIntegrationAdministrativePathInput = Readonly<{
 export type ScmWorkspaceIntegrationPortableWorkspacePathInput = ScmWorkspaceIntegrationPortableWorkspacePathRequest;
 
 export type ScmWorkspaceIntegration = Readonly<{
-    inspectWorkspaceLocation: (input: Readonly<{
+    inspectWorkspaceLocation?: (input: Readonly<{
         context: ScmBackendContext;
     }>) => Promise<ScmWorkspaceIntegrationWorkspaceLocationInspection | null>;
     reconcilePostMaterialization?: (input: ScmWorkspaceIntegrationPostMaterializationInput) => Promise<void>;
@@ -332,6 +338,18 @@ export interface ScmBackend {
         context: ScmBackendContext;
         request: ScmPullRequestOpenOrReuseRequest;
     }): Promise<ScmPullRequestOpenOrReuseResponse>;
+    pullRequestCheckout?(input: {
+        context: ScmBackendContext;
+        request: ScmPullRequestCheckoutRequest;
+    }): Promise<ScmPullRequestCheckoutResponse>;
+    pullRequestPrepareWorktree?(input: {
+        context: ScmBackendContext;
+        request: ScmPullRequestPrepareWorktreeRequest;
+    }): Promise<ScmPullRequestPrepareWorktreeResponse>;
+    pullRequestRunStacked?(input: {
+        context: ScmBackendContext;
+        request: ScmPullRequestRunStackedRequest;
+    }): Promise<ScmPullRequestRunStackedResponse>;
     hostingRepositoryDescribePublishTargets?(input: {
         context: ScmBackendContext;
         request: ScmHostingRepositoryDescribePublishTargetsRequest;

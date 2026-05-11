@@ -50,6 +50,7 @@ import {
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { stopDaemon } from '@/daemon/controlClient';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
+import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 
 import { discoverInstalledDaemonServiceEntries } from './discoverInstalledDaemonServiceEntries';
 import { isValidInstalledDaemonServiceFile } from './discoverInstalledDaemonServiceEntries';
@@ -550,6 +551,7 @@ async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
 async function assertExpectedDaemonServiceOwnership(params: Readonly<{
   action: 'install' | 'start' | 'restart';
   platform: SupportedPlatform;
+  commandPath: string;
   expectedServiceLabel: string;
   expectedInstalledServiceContents?: string | null;
   installedServicePath?: string | null;
@@ -620,7 +622,7 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
 
   let message =
     `Background service ${params.action} completed, but the expected background service did not become the active daemon for the selected relay ` +
-    `within ${effectiveTimeoutMs}ms. Run \`happier service status\` to inspect the active owner and system service state.`;
+    `within ${effectiveTimeoutMs}ms. Run \`${params.commandPath} status\` to inspect the active owner and system service state.`;
 
   if (params.platform === 'win32' && params.windowsLaunchDiagnostics) {
     const diagnostics = collectWindowsServiceLaunchDiagnostics({
@@ -1359,6 +1361,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
   }
   const paths = resolveDaemonServicePaths(runtime, { mode });
   const action = parsed.action;
+  const commandPath = params.commandPath ?? `${resolveInvokerName() ?? 'happier'} service`;
 
   if (action === 'install' && params.argv.includes('--local-relay')) {
     await handleLocalRelayFlag({
@@ -1630,6 +1633,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
           await assertExpectedDaemonServiceOwnership({
             action: 'install',
             platform: installRuntime.platform,
+            commandPath,
             expectedServiceLabel: paths.label,
             expectedInstalledServiceContents: plan.files[0]?.content ?? null,
             installedServicePath: paths.installedPath,
@@ -2000,6 +2004,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
           await assertExpectedDaemonServiceOwnership({
             action,
             platform: runtime.platform,
+            commandPath,
             expectedServiceLabel: paths.label,
             healthCommand: resolveDaemonServiceOwnershipHealthCommand({
               runtime,

@@ -96,7 +96,6 @@ export class ClaudePermissionApprovalState {
         const { response, toolName, sourceLocalId, pendingRequests, applyPermissionResponse } = params;
         if (response.approved) {
             if (response.mode) {
-                this.session.setLastPermissionMode(response.mode);
                 this.handleModeChange(response.mode, pendingRequests, applyPermissionResponse);
             }
             applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, response.updatedPermissions);

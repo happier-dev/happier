@@ -5,6 +5,7 @@ import type { ExternalSessionsSource, ExternalSessionTranscriptRawMessageV1 } fr
 
 import { readJsonlFileForward } from '../../../../api/session/fileBackedTranscripts/jsonl/readJsonlForward';
 import { readJsonlFileForwardLines } from '../../../../api/session/fileBackedTranscripts/jsonl/readJsonlForwardLines';
+import { readJsonlFileBackwardPage } from '../../../../api/session/fileBackedTranscripts/jsonl/pageJsonlBackward';
 
 import {
     decodeCodexDirectForwardCursor,
@@ -34,7 +35,16 @@ type CodexBackwardMergedCursorV3 = Readonly<{
     beforeId: string | null;
 }>;
 
-type CodexBackwardMergedCursor = CodexBackwardMergedCursorV2 | CodexBackwardMergedCursorV3;
+type CodexBackwardStreamVectorCursorV4 = Readonly<{
+    v: 4;
+    kind: 'codexBackwardStreamVector';
+    streams: readonly Readonly<{
+        fileRelPath: string;
+        endOffsetBytes: number;
+    }>[];
+}>;
+
+type CodexBackwardCursor = CodexBackwardMergedCursorV2 | CodexBackwardMergedCursorV3 | CodexBackwardStreamVectorCursorV4;
 
 type CodexDirectTranscriptRolloutStream = CodexRolloutFile & Readonly<{
     threadId: string;
@@ -53,6 +63,7 @@ type CodexProjectedTranscriptRecord = Readonly<{
     lineStartOffsetBytes: number;
     lineEndOffsetBytes: number;
     subIndex: number;
+    lineRecordCount: number;
 }>;
 
 type CodexRolloutReadProgressEntry = Readonly<{
@@ -84,6 +95,11 @@ type CodexRolloutDirectTranscriptSnapshot = Readonly<{
     createdAtMs: number | null;
     primaryRolloutFilePath: string | null;
     streamStates: readonly CodexRolloutDirectTranscriptStreamState[];
+}>;
+
+type CodexRolloutDirectTranscriptSnapshotOptions = Readonly<{
+    allowRolloutCwdAppServerFallback: boolean;
+    resolveTitle: boolean;
 }>;
 
 type CodexResolvedStreamState = Readonly<{
@@ -119,11 +135,11 @@ export type CodexRolloutExternalSessionTranscriptReadAfterResult = Readonly<{
     truncated: boolean;
 }>;
 
-function encodeBackwardCursor(value: CodexBackwardMergedCursor): string {
+function encodeBackwardCursor(value: CodexBackwardCursor): string {
     return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
 }
 
-function decodeBackwardCursor(raw: string | undefined): CodexBackwardMergedCursor | null {
+function decodeBackwardCursor(raw: string | undefined): CodexBackwardCursor | null {
     if (typeof raw !== 'string' || raw.trim().length === 0) return null;
     try {
         const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
@@ -142,6 +158,25 @@ function decodeBackwardCursor(raw: string | undefined): CodexBackwardMergedCurso
                 ? record.beforeId
                 : null;
             return { v: 3, kind: 'codexBackwardMerged', beforeId };
+        }
+        if (record.v === 4 && record.kind === 'codexBackwardStreamVector') {
+            const rawStreams = Array.isArray(record.streams) ? record.streams : [];
+            const streams = rawStreams
+                .map((entry) => {
+                    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+                    const streamRecord = entry as Record<string, unknown>;
+                    const fileRelPath = typeof streamRecord.fileRelPath === 'string' ? streamRecord.fileRelPath.trim() : '';
+                    const endOffsetBytes =
+                        typeof streamRecord.endOffsetBytes === 'number' && Number.isFinite(streamRecord.endOffsetBytes)
+                            ? Math.trunc(streamRecord.endOffsetBytes)
+                            : NaN;
+                    if (!fileRelPath || !Number.isFinite(endOffsetBytes) || endOffsetBytes < 0) {
+                        return null;
+                    }
+                    return { fileRelPath, endOffsetBytes };
+                })
+                .filter((entry): entry is { fileRelPath: string; endOffsetBytes: number } => entry !== null);
+            return { v: 4, kind: 'codexBackwardStreamVector', streams };
         }
         return null;
     } catch {
@@ -204,6 +239,19 @@ function buildStreamVectorCursor(
         })),
         allowEmpty,
     );
+}
+
+async function buildStreamVectorTailCursorFromStreams(
+    streams: readonly CodexDirectTranscriptRolloutStream[],
+): Promise<string | null> {
+    const entries = await Promise.all(
+        streams.map(async (stream): Promise<CodexRolloutStreamVectorEntry> => ({
+            fileRelPath: stream.fileRelPath,
+            nextOffsetBytes: await statFileSize(stream.filePath) ?? 0,
+            subIndex: 0,
+        })),
+    );
+    return buildStreamVectorCursorFromEntries(entries, false);
 }
 
 function decodeStreamVectorCursor(
@@ -274,6 +322,7 @@ function buildInvalidJsonRecord(params: Readonly<{
         lineStartOffsetBytes: params.lineStartOffsetBytes,
         lineEndOffsetBytes: params.lineEndOffsetBytes,
         subIndex: 0,
+        lineRecordCount: 1,
         item: {
             id: stableId,
             localId: stableId,
@@ -399,6 +448,7 @@ async function readCodexStreamRecords(params: Readonly<{
                     lineStartOffsetBytes: line.startOffsetBytes,
                     lineEndOffsetBytes: line.endOffsetBytes,
                     subIndex,
+                    lineRecordCount: mappedItems.length,
                 });
             });
         }
@@ -419,6 +469,120 @@ async function readCodexStreamRecords(params: Readonly<{
         discoveredChildThreadIds: [...discoveredChildThreadIds],
         sessionMetaCwd,
         sessionMetaTimestampMs,
+    };
+}
+
+const CHILD_DISCOVERY_MAX_BYTES = 1024 * 1024;
+const CHILD_DISCOVERY_MAX_ITEMS = 512;
+
+async function discoverSpawnedThreadIdsFromFilesBounded(files: readonly CodexRolloutFile[]): Promise<readonly string[]> {
+    const discovered = new Set<string>();
+    const semanticTracker = createCodexRolloutSemanticTracker();
+    for (const file of files) {
+        let offsetBytes = 0;
+        let scannedBytes = 0;
+        let scannedItems = 0;
+        while (scannedBytes < CHILD_DISCOVERY_MAX_BYTES && scannedItems < CHILD_DISCOVERY_MAX_ITEMS) {
+            const page = await readJsonlFileForward({
+                filePath: file.filePath,
+                offsetBytes,
+                maxBytes: Math.min(128 * 1024, CHILD_DISCOVERY_MAX_BYTES - scannedBytes),
+                maxItems: Math.min(64, CHILD_DISCOVERY_MAX_ITEMS - scannedItems),
+            });
+            for (const line of page.items) {
+                const normalizedActions = mapCodexRolloutEventToActions(line.value, { debug: true })
+                    .flatMap((action) => semanticTracker.consume(action));
+                for (const action of normalizedActions) {
+                    if (action.type === 'subagent-spawn') {
+                        discovered.add(action.threadId);
+                    }
+                }
+            }
+            if (page.reachedEnd || page.nextOffsetBytes <= offsetBytes) break;
+            scannedBytes += Math.max(0, page.nextOffsetBytes - offsetBytes);
+            scannedItems += page.items.length;
+            offsetBytes = page.nextOffsetBytes;
+        }
+    }
+    return [...discovered];
+}
+
+async function collectCodexDirectTranscriptRolloutStreams(params: Readonly<{
+    codexHome: string;
+    remoteSessionId: string;
+    initialRolloutFiles?: readonly CodexRolloutFile[];
+}>): Promise<readonly CodexDirectTranscriptRolloutStream[]> {
+    const queue = [{ threadId: params.remoteSessionId, sidechainId: null as string | null }];
+    const seenThreadIds = new Set<string>();
+    const streams: CodexDirectTranscriptRolloutStream[] = [];
+
+    while (queue.length > 0) {
+        const current = queue.shift()!;
+        if (seenThreadIds.has(current.threadId)) continue;
+        seenThreadIds.add(current.threadId);
+
+        const files = current.threadId === params.remoteSessionId && current.sidechainId === null && params.initialRolloutFiles
+            ? [...params.initialRolloutFiles]
+            : await collectCodexSessionRolloutFiles({
+                codexHome: params.codexHome,
+                remoteSessionId: current.threadId,
+            });
+        if (files.length === 0) continue;
+
+        streams.push(...files.map((file) => ({
+            ...file,
+            threadId: current.threadId,
+            sidechainId: current.sidechainId,
+        })));
+
+        const discoveredChildThreadIds = await discoverSpawnedThreadIdsFromFilesBounded(files);
+        for (const threadId of discoveredChildThreadIds) {
+            if (!seenThreadIds.has(threadId)) {
+                queue.push({ threadId, sidechainId: threadId });
+            }
+        }
+    }
+
+    streams.sort((left, right) =>
+        left.sortMs - right.sortMs
+        || left.mtimeMs - right.mtimeMs
+        || left.fileRelPath.localeCompare(right.fileRelPath),
+    );
+    return streams;
+}
+
+function projectCodexRolloutParsedLine(params: Readonly<{
+    stream: CodexDirectTranscriptRolloutStream;
+    lineStartOffsetBytes: number;
+    lineEndOffsetBytes: number;
+    lineValue: unknown;
+    semanticTracker: ReturnType<typeof createCodexRolloutSemanticTracker>;
+}>): Readonly<{
+    records: readonly CodexProjectedTranscriptRecord[];
+    discoveredChildThreadIds: readonly string[];
+}> {
+    const actions = mapCodexRolloutEventToActions(params.lineValue, { debug: true });
+    const normalizedActions = actions.flatMap((action) => params.semanticTracker.consume(action));
+    const discoveredChildThreadIds = normalizedActions
+        .filter((action) => action.type === 'subagent-spawn')
+        .map((action) => action.threadId);
+    const mappedItems = mapCodexRolloutLineToDirectMessages({
+        fileRelPath: params.stream.fileRelPath,
+        lineStartOffsetBytes: params.lineStartOffsetBytes,
+        lineValue: params.lineValue,
+        actions: normalizedActions,
+        sidechainId: params.stream.sidechainId,
+    });
+    return {
+        records: mappedItems.map((item, subIndex) => ({
+            item,
+            streamId: params.stream.fileRelPath,
+            lineStartOffsetBytes: params.lineStartOffsetBytes,
+            lineEndOffsetBytes: params.lineEndOffsetBytes,
+            subIndex,
+            lineRecordCount: mappedItems.length,
+        })),
+        discoveredChildThreadIds,
     };
 }
 
@@ -522,8 +686,9 @@ function buildRolloutSignature(streams: readonly CodexDirectTranscriptRolloutStr
 function selectBestCodexHomeWithFiles<TEntry extends Readonly<{ codexHome: string }>>(
     entries: readonly TEntry[],
     perHomeFiles: readonly (readonly CodexRolloutFile[])[],
-): TEntry | null {
+): Readonly<{ entry: TEntry; files: readonly CodexRolloutFile[] }> | null {
     let bestEntry: TEntry | null = null;
+    let bestFiles: readonly CodexRolloutFile[] = [];
     let bestLatestMtimeMs = -1;
     for (let index = 0; index < entries.length; index += 1) {
         const entry = entries[index]!;
@@ -533,15 +698,17 @@ function selectBestCodexHomeWithFiles<TEntry extends Readonly<{ codexHome: strin
         if (latestMtimeMs > bestLatestMtimeMs) {
             bestLatestMtimeMs = latestMtimeMs;
             bestEntry = entry;
+            bestFiles = files;
         }
     }
-    return bestEntry;
+    return bestEntry ? { entry: bestEntry, files: bestFiles } : null;
 }
 
 async function collectCodexDirectTranscriptStreamStates(params: Readonly<{
     codexHome: string;
     remoteSessionId: string;
     previousSnapshot?: CodexRolloutDirectTranscriptSnapshot | null;
+    initialRolloutFiles?: readonly CodexRolloutFile[];
 }>): Promise<readonly CodexResolvedStreamState[]> {
     const previousStateByStreamId = new Map(
         (params.previousSnapshot?.streamStates ?? []).map((state) => [state.stream.fileRelPath, state] as const),
@@ -555,10 +722,12 @@ async function collectCodexDirectTranscriptStreamStates(params: Readonly<{
         if (seenThreadIds.has(current.threadId)) continue;
         seenThreadIds.add(current.threadId);
 
-        const files = await collectCodexSessionRolloutFiles({
-            codexHome: params.codexHome,
-            remoteSessionId: current.threadId,
-        });
+        const files = current.threadId === params.remoteSessionId && current.sidechainId === null && params.initialRolloutFiles
+            ? [...params.initialRolloutFiles]
+            : await collectCodexSessionRolloutFiles({
+                codexHome: params.codexHome,
+                remoteSessionId: current.threadId,
+            });
         if (files.length === 0) continue;
 
         const sortedStreams = files
@@ -731,8 +900,13 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
     env?: NodeJS.ProcessEnv;
     remoteSessionId: string;
     previousSnapshot?: CodexRolloutDirectTranscriptSnapshot | null;
+    options?: Partial<CodexRolloutDirectTranscriptSnapshotOptions>;
 }>): Promise<CodexRolloutDirectTranscriptSnapshot> {
     const env = params.env ?? process.env;
+    const options: CodexRolloutDirectTranscriptSnapshotOptions = {
+        allowRolloutCwdAppServerFallback: params.options?.allowRolloutCwdAppServerFallback !== false,
+        resolveTitle: params.options?.resolveTitle !== false,
+    };
     const homeEntries = await resolveHomeEntries({
         source: params.source,
         activeServerDir: params.activeServerDir,
@@ -770,18 +944,31 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
     }
 
     const resolvedStates = await collectCodexDirectTranscriptStreamStates({
-        codexHome: bestEntry.codexHome,
+        codexHome: bestEntry.entry.codexHome,
         remoteSessionId: params.remoteSessionId,
         previousSnapshot:
-            params.previousSnapshot?.rolloutHome === bestEntry.codexHome
+            params.previousSnapshot?.rolloutHome === bestEntry.entry.codexHome
                 ? params.previousSnapshot
                 : null,
+        initialRolloutFiles: bestEntry.files,
     });
     const streamStates = resolvedStates.map((resolved) => resolved.state);
     const rolloutSignature = buildRolloutSignature(streamStates.map((state) => state.stream));
+    const previousSnapshotNeedsCwdFallback =
+        options.allowRolloutCwdAppServerFallback
+        && params.previousSnapshot?.rolloutHome
+        && params.previousSnapshot.workingDirectory === null
+        && params.previousSnapshot.appServerMetadata === null;
+    const previousSnapshotNeedsTitle =
+        options.resolveTitle
+        && params.previousSnapshot?.rolloutHome
+        && params.previousSnapshot.title === null;
+    const canReusePreviousSnapshot = !(previousSnapshotNeedsCwdFallback || previousSnapshotNeedsTitle);
     if (
+        canReusePreviousSnapshot
+        &&
         params.previousSnapshot
-        && params.previousSnapshot.rolloutHome === bestEntry.codexHome
+        && params.previousSnapshot.rolloutHome === bestEntry.entry.codexHome
         && params.previousSnapshot.rolloutSignature === rolloutSignature
     ) {
         return params.previousSnapshot;
@@ -789,15 +976,19 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
 
     const mergedRecords = buildMergedRecords({
         previousSnapshot:
-            params.previousSnapshot?.rolloutHome === bestEntry.codexHome
+            params.previousSnapshot?.rolloutHome === bestEntry.entry.codexHome
                 ? params.previousSnapshot
                 : null,
         resolvedStates,
-        rolloutHome: bestEntry.codexHome,
+        rolloutHome: bestEntry.entry.codexHome,
     });
-    const title = await resolveSnapshotTitle(streamStates);
+    const title = options.resolveTitle
+        ? await resolveSnapshotTitle(streamStates)
+        : params.previousSnapshot?.rolloutHome === bestEntry.entry.codexHome
+            ? params.previousSnapshot.title
+            : null;
     const workingDirectoryFromRollout = resolveSnapshotWorkingDirectory(streamStates);
-    const appServerMetadata = workingDirectoryFromRollout
+    const appServerMetadata = workingDirectoryFromRollout || !options.allowRolloutCwdAppServerFallback
         ? null
         : await resolveCodexExternalSessionAppServerMetadata({
             source: params.source,
@@ -808,8 +999,8 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
     return {
         remoteSessionId: params.remoteSessionId,
         mergedRecords,
-        rolloutHome: bestEntry.codexHome,
-        rolloutSource: bestEntry.source,
+        rolloutHome: bestEntry.entry.codexHome,
+        rolloutSource: bestEntry.entry.source,
         rolloutSignature,
         appServerMetadata,
         title,
@@ -818,6 +1009,362 @@ export async function resolveCodexRolloutDirectTranscriptSnapshot(params: Readon
         createdAtMs: resolveSnapshotCreatedAtMs(streamStates),
         primaryRolloutFilePath: resolvePrimaryRolloutFilePath(streamStates),
         streamStates,
+    };
+}
+
+export async function pageCodexRolloutDirectTranscriptHistory(params: Readonly<{
+    source: ExternalSessionsSource;
+    activeServerDir: string;
+    env?: NodeJS.ProcessEnv;
+    remoteSessionId: string;
+} & CodexRolloutExternalSessionTranscriptPageParams>): Promise<CodexRolloutExternalSessionTranscriptPageResult> {
+    const env = params.env ?? process.env;
+    const homeEntries = await resolveHomeEntries({
+        source: params.source,
+        activeServerDir: params.activeServerDir,
+        env,
+    });
+    const perHomeFiles = await Promise.all(
+        homeEntries.map((entry) => collectCodexSessionRolloutFiles({ codexHome: entry.codexHome, remoteSessionId: params.remoteSessionId })),
+    );
+    const bestEntry = selectBestCodexHomeWithFiles(homeEntries, perHomeFiles);
+
+    if (bestEntry === null) {
+        const appServerMetadata = await resolveCodexExternalSessionAppServerMetadata({
+            source: params.source,
+            activeServerDir: params.activeServerDir,
+            remoteSessionId: params.remoteSessionId,
+            env,
+        });
+        const previewItem = appServerMetadata
+            ? mapCodexExternalSessionAppServerPreviewToMessage({
+                remoteSessionId: params.remoteSessionId,
+                metadata: appServerMetadata,
+            })
+            : null;
+        return {
+            items: previewItem ? [previewItem] : [],
+            nextCursor: null,
+            tailCursor: appServerMetadata ? buildAppServerPreviewCursor(appServerMetadata) : null,
+            hasMore: false,
+            truncated: false,
+        };
+    }
+
+    const streams = await collectCodexDirectTranscriptRolloutStreams({
+        codexHome: bestEntry.entry.codexHome,
+        remoteSessionId: params.remoteSessionId,
+        initialRolloutFiles: bestEntry.files,
+    });
+    const tailCursor = await buildStreamVectorTailCursorFromStreams(streams);
+    if (params.direction !== 'older') {
+        return { items: [], nextCursor: null, tailCursor, hasMore: false, truncated: false };
+    }
+
+    const decoded = decodeBackwardCursor(params.cursor);
+    const endByStreamId = new Map(
+        decoded?.kind === 'codexBackwardStreamVector'
+            ? decoded.streams.map((entry) => [entry.fileRelPath, entry.endOffsetBytes] as const)
+            : [],
+    );
+    const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
+    const maxItems = Math.max(1, Math.trunc(params.maxItems));
+    const candidateRecords: CodexProjectedTranscriptRecord[] = [];
+    const reachedStartByStreamId = new Map<string, boolean>();
+    const initialEndByStreamId = new Map<string, number>();
+    const pageNextEndByStreamId = new Map<string, number>();
+    const hasLoadedCandidateByStreamId = new Map<string, boolean>();
+
+    for (const stream of streams) {
+        const fileSize = await statFileSize(stream.filePath) ?? 0;
+        const endOffsetBytes = Math.min(fileSize, Math.max(0, Math.trunc(endByStreamId.get(stream.fileRelPath) ?? fileSize)));
+        initialEndByStreamId.set(stream.fileRelPath, endOffsetBytes);
+        if (endOffsetBytes <= 0) continue;
+        const page = await readJsonlFileBackwardPage({
+            filePath: stream.filePath,
+            endOffsetBytes,
+            maxBytes,
+            maxItems: maxItems * 2,
+        });
+        const pageNextEndOffsetBytes = page.items.length === 0 && !page.reachedStart
+            ? Math.max(0, endOffsetBytes - maxBytes)
+            : page.nextEndOffsetBytes;
+        reachedStartByStreamId.set(stream.fileRelPath, page.reachedStart);
+        pageNextEndByStreamId.set(stream.fileRelPath, pageNextEndOffsetBytes);
+        const semanticTracker = createCodexRolloutSemanticTracker();
+        const forwardWindow = await readJsonlFileForwardLines({
+            filePath: stream.filePath,
+            offsetBytes: pageNextEndOffsetBytes,
+            maxBytes: Math.max(1, endOffsetBytes - pageNextEndOffsetBytes),
+            maxItems: Math.max(maxItems * 4, 64),
+        });
+        for (const line of forwardWindow.items) {
+            if (line.startOffsetBytes >= endOffsetBytes) break;
+            if (line.value === null) {
+                candidateRecords.push(buildInvalidJsonRecord({
+                    stream,
+                    lineStartOffsetBytes: line.startOffsetBytes,
+                    lineEndOffsetBytes: line.endOffsetBytes,
+                    rawLine: line.rawLine,
+                }));
+                hasLoadedCandidateByStreamId.set(stream.fileRelPath, true);
+                continue;
+            }
+            const projected = projectCodexRolloutParsedLine({
+                stream,
+                lineStartOffsetBytes: line.startOffsetBytes,
+                lineEndOffsetBytes: line.endOffsetBytes,
+                lineValue: line.value,
+                semanticTracker,
+            });
+            if (projected.records.length > 0) {
+                hasLoadedCandidateByStreamId.set(stream.fileRelPath, true);
+            }
+            candidateRecords.push(...projected.records);
+        }
+    }
+
+    candidateRecords.sort(compareProjectedRecordsOldestFirst);
+    const selectedReversed: CodexProjectedTranscriptRecord[] = [];
+    let usedBytes = 0;
+    for (let index = candidateRecords.length - 1; index >= 0; index -= 1) {
+        const record = candidateRecords[index]!;
+        const itemBytes = measureDirectTranscriptItemBytes(record.item);
+        if (selectedReversed.length > 0 && (selectedReversed.length >= maxItems || usedBytes + itemBytes > maxBytes)) {
+            break;
+        }
+        selectedReversed.push(record);
+        usedBytes += itemBytes;
+        if (selectedReversed.length >= maxItems || usedBytes >= maxBytes) {
+            break;
+        }
+    }
+
+    const selected = selectedReversed.reverse();
+    const nextEndByStreamId = new Map<string, number>();
+    for (const stream of streams) {
+        const initialEndOffsetBytes = initialEndByStreamId.get(stream.fileRelPath) ?? 0;
+        const pageNextEndOffsetBytes = pageNextEndByStreamId.get(stream.fileRelPath) ?? initialEndOffsetBytes;
+        nextEndByStreamId.set(
+            stream.fileRelPath,
+            hasLoadedCandidateByStreamId.get(stream.fileRelPath) === true
+                ? initialEndOffsetBytes
+                : pageNextEndOffsetBytes,
+        );
+    }
+    for (const record of selected) {
+        const current = nextEndByStreamId.get(record.streamId);
+        if (current == null || record.lineStartOffsetBytes < current) {
+            nextEndByStreamId.set(record.streamId, record.lineStartOffsetBytes);
+        }
+    }
+
+    const selectedIds = new Set(selected.map((record) => record.item.id));
+    const hasUndeliveredLoadedRecord = candidateRecords.some((record) => !selectedIds.has(record.item.id));
+    const mayHaveUndeliveredRecordBeforeLoadedWindow = streams.some((stream) => {
+        const endOffsetBytes = nextEndByStreamId.get(stream.fileRelPath) ?? 0;
+        return endOffsetBytes > 0 && reachedStartByStreamId.get(stream.fileRelPath) === false;
+    });
+    const hasMore = hasUndeliveredLoadedRecord || mayHaveUndeliveredRecordBeforeLoadedWindow;
+    const nextCursor = hasMore
+        ? encodeBackwardCursor({
+            v: 4,
+            kind: 'codexBackwardStreamVector',
+            streams: [...nextEndByStreamId.entries()]
+                .map(([fileRelPath, endOffsetBytes]) => ({ fileRelPath, endOffsetBytes }))
+                .sort((left, right) => left.fileRelPath.localeCompare(right.fileRelPath)),
+        })
+        : null;
+
+    return {
+        items: selected.map((record) => record.item),
+        nextCursor,
+        tailCursor,
+        hasMore,
+        truncated: decoded === null && typeof params.cursor === 'string' && params.cursor.trim().length > 0,
+    };
+}
+
+export async function readAfterCodexRolloutDirectTranscriptHistory(params: Readonly<{
+    source: ExternalSessionsSource;
+    activeServerDir: string;
+    env?: NodeJS.ProcessEnv;
+    remoteSessionId: string;
+} & CodexRolloutExternalSessionTranscriptReadAfterParams>): Promise<CodexRolloutExternalSessionTranscriptReadAfterResult> {
+    const env = params.env ?? process.env;
+    const homeEntries = await resolveHomeEntries({
+        source: params.source,
+        activeServerDir: params.activeServerDir,
+        env,
+    });
+    const perHomeFiles = await Promise.all(
+        homeEntries.map((entry) => collectCodexSessionRolloutFiles({ codexHome: entry.codexHome, remoteSessionId: params.remoteSessionId })),
+    );
+    const bestEntry = selectBestCodexHomeWithFiles(homeEntries, perHomeFiles);
+
+    if (bestEntry === null) {
+        const appServerMetadata = await resolveCodexExternalSessionAppServerMetadata({
+            source: params.source,
+            activeServerDir: params.activeServerDir,
+            remoteSessionId: params.remoteSessionId,
+            env,
+        });
+        if (params.cursor === 'tail' && appServerMetadata) {
+            return { items: [], nextCursor: buildAppServerPreviewCursor(appServerMetadata), truncated: false };
+        }
+
+        const decodedEmpty = params.cursor === 'tail' ? null : decodeCodexDirectForwardCursor(params.cursor);
+        if (decodedEmpty?.kind === 'codexForwardAppServer') {
+            const changed = appServerMetadata
+                ? appServerMetadata.updatedAtMs !== decodedEmpty.updatedAtMs || appServerMetadata.previewText !== decodedEmpty.previewText
+                : false;
+            const previewItem = changed && appServerMetadata
+                ? mapCodexExternalSessionAppServerPreviewToMessage({
+                    remoteSessionId: params.remoteSessionId,
+                    metadata: appServerMetadata,
+                })
+                : null;
+            return {
+                items: previewItem ? [previewItem] : [],
+                nextCursor: encodeCodexDirectForwardCursor({
+                    v: 2,
+                    kind: 'codexForwardAppServer',
+                    updatedAtMs: appServerMetadata?.updatedAtMs ?? decodedEmpty.updatedAtMs,
+                    previewText: appServerMetadata?.previewText ?? decodedEmpty.previewText,
+                }),
+                truncated: false,
+            };
+        }
+
+        return { items: [], nextCursor: null, truncated: false };
+    }
+
+    const streams = await collectCodexDirectTranscriptRolloutStreams({
+        codexHome: bestEntry.entry.codexHome,
+        remoteSessionId: params.remoteSessionId,
+        initialRolloutFiles: bestEntry.files,
+    });
+    if (params.cursor === 'tail') {
+        return {
+            items: [],
+            nextCursor: await buildStreamVectorTailCursorFromStreams(streams),
+            truncated: false,
+        };
+    }
+
+    const decoded = decodeCodexDirectForwardCursor(params.cursor);
+    const cursorProgressByStreamId = decodeStreamVectorCursor(decoded);
+    if (!cursorProgressByStreamId) {
+        return {
+            items: [],
+            nextCursor: await buildStreamVectorTailCursorFromStreams(streams),
+            truncated: true,
+        };
+    }
+
+    const streamsById = new Map(streams.map((stream) => [stream.fileRelPath, stream] as const));
+    const streamQueue = [...streams];
+    const seenThreadIds = new Set(streams.map((stream) => stream.threadId));
+    const records: CodexProjectedTranscriptRecord[] = [];
+    const baseProgressByStreamId = new Map(cursorProgressByStreamId);
+    const semanticTrackerByStreamId = new Map<string, ReturnType<typeof createCodexRolloutSemanticTracker>>();
+    const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
+    const maxItems = Math.max(1, Math.trunc(params.maxItems));
+
+    for (let queueIndex = 0; queueIndex < streamQueue.length; queueIndex += 1) {
+        const stream = streamQueue[queueIndex]!;
+        const fileSize = await statFileSize(stream.filePath) ?? 0;
+        const progress = cursorProgressByStreamId.get(stream.fileRelPath) ?? { nextOffsetBytes: 0, subIndex: 0 };
+        const offsetBytes = Math.min(fileSize, normalizeOffsetBytes(progress.nextOffsetBytes));
+        if (offsetBytes >= fileSize) continue;
+
+        const semanticTracker = semanticTrackerByStreamId.get(stream.fileRelPath) ?? createCodexRolloutSemanticTracker();
+        semanticTrackerByStreamId.set(stream.fileRelPath, semanticTracker);
+        const page = await readJsonlFileForward({
+            filePath: stream.filePath,
+            offsetBytes,
+            maxBytes,
+            maxItems: Math.max(maxItems * 2, 1),
+        });
+
+        for (const line of page.items) {
+            const projected = projectCodexRolloutParsedLine({
+                stream,
+                lineStartOffsetBytes: line.startOffsetBytes,
+                lineEndOffsetBytes: line.endOffsetBytes,
+                lineValue: line.value,
+                semanticTracker,
+            });
+            if (projected.records.length === 0) {
+                baseProgressByStreamId.set(stream.fileRelPath, {
+                    nextOffsetBytes: line.endOffsetBytes,
+                    subIndex: 0,
+                });
+            }
+            for (const record of projected.records) {
+                if (record.lineStartOffsetBytes === offsetBytes && record.subIndex < progress.subIndex) continue;
+                records.push(record);
+            }
+            for (const threadId of projected.discoveredChildThreadIds) {
+                if (seenThreadIds.has(threadId)) continue;
+                seenThreadIds.add(threadId);
+                const childFiles = await collectCodexSessionRolloutFiles({ codexHome: bestEntry.entry.codexHome, remoteSessionId: threadId });
+                for (const file of childFiles) {
+                    const childStream: CodexDirectTranscriptRolloutStream = { ...file, threadId, sidechainId: threadId };
+                    if (streamsById.has(childStream.fileRelPath)) continue;
+                    streamsById.set(childStream.fileRelPath, childStream);
+                    streamQueue.push(childStream);
+                }
+            }
+        }
+    }
+
+    records.sort(compareProjectedRecordsOldestFirst);
+    const orderedStreams = [...streamsById.values()].sort((left, right) =>
+        left.sortMs - right.sortMs
+        || left.mtimeMs - right.mtimeMs
+        || left.fileRelPath.localeCompare(right.fileRelPath),
+    );
+    const items: ExternalSessionTranscriptRawMessageV1[] = [];
+    let usedBytes = 0;
+    let truncated = false;
+    const progressByStreamId = new Map(baseProgressByStreamId);
+
+    for (let index = 0; index < records.length; index += 1) {
+        const record = records[index]!;
+        const itemBytes = measureDirectTranscriptItemBytes(record.item);
+        if (items.length > 0 && (items.length >= maxItems || usedBytes + itemBytes > maxBytes)) {
+            truncated = true;
+            break;
+        }
+        items.push(record.item);
+        usedBytes += itemBytes;
+        progressByStreamId.set(
+            record.streamId,
+            record.subIndex + 1 >= record.lineRecordCount
+                ? { nextOffsetBytes: record.lineEndOffsetBytes, subIndex: 0 }
+                : { nextOffsetBytes: record.lineStartOffsetBytes, subIndex: record.subIndex + 1 },
+        );
+        if (items.length >= maxItems || usedBytes >= maxBytes) {
+            truncated = index + 1 < records.length;
+            break;
+        }
+    }
+
+    return {
+        items,
+        nextCursor: buildStreamVectorCursorFromEntries(
+            orderedStreams.map((stream): CodexRolloutStreamVectorEntry => {
+                const progress = progressByStreamId.get(stream.fileRelPath);
+                return {
+                    fileRelPath: stream.fileRelPath,
+                    nextOffsetBytes: progress?.nextOffsetBytes ?? 0,
+                    subIndex: progress?.subIndex ?? 0,
+                };
+            }),
+            true,
+        ),
+        truncated,
     };
 }
 
@@ -995,10 +1542,22 @@ export function readAfterCodexRolloutDirectTranscriptSnapshot(
         }
     }
 
+    if (!truncated) {
+        for (const state of snapshot.streamStates) {
+            progressByStreamId.set(state.stream.fileRelPath, {
+                nextOffsetBytes: state.nextOffsetBytes,
+                subIndex: 0,
+            });
+        }
+    }
+
     if (items.length === 0) {
         return {
             items,
-            nextCursor: params.cursor,
+            nextCursor: buildReadAfterCursorFromProgress({
+                snapshot,
+                progressByStreamId,
+            }),
             truncated,
         };
     }

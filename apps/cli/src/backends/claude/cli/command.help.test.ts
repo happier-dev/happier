@@ -90,6 +90,14 @@ function createHelpContext(): CommandContext {
   } satisfies CommandContext;
 }
 
+function createClaudeSubcommandHelpContext(): CommandContext {
+  return {
+    args: ['claude', 'agents', '--permission-mode', 'plan', '--help'],
+    rawArgv: ['happier', 'claude', 'agents', '--permission-mode', 'plan', '--help'],
+    terminalRuntime: null,
+  } satisfies CommandContext;
+}
+
 describe('happier (default claude) help output', () => {
   it('includes global server selection flags', async () => {
     const root = createTempRoot('happier-claude-help-default-');
@@ -235,6 +243,35 @@ describe('happier (default claude) help output', () => {
         runtimePath,
         [claudePath, '--help'],
         expect.objectContaining({ encoding: 'utf8', windowsHide: true }),
+      );
+    } finally {
+      output.restore();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('passes provider subcommand help context through to Claude while stripping Happier-owned flags', async () => {
+    const root = createTempRoot('happier-claude-help-subcommand-');
+    const claudePath = createExecutable(
+      root,
+      process.platform === 'win32' ? 'claude.cmd' : 'claude',
+      process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n',
+    );
+    process.env.HAPPIER_CLAUDE_PATH = claudePath;
+
+    const exitSpy = createExitSpy();
+    const output = captureConsoleLogAndMuteStdout();
+
+    try {
+      await expect(handleClaudeCliCommand(createClaudeSubcommandHelpContext())).rejects.toThrow('exit:0');
+
+      expect(execFileSyncSpy).toHaveBeenCalledWith(
+        claudePath,
+        ['agents', '--help'],
+        expect.objectContaining({
+          encoding: 'utf8',
+          windowsHide: true,
+        }),
       );
     } finally {
       output.restore();

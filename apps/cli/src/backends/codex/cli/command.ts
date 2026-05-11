@@ -1,6 +1,5 @@
 import chalk from 'chalk';
 
-import { readOptionalFlagValue, readOptionalFlagValueFromAliases } from '@/cli/sessionStartArgs';
 import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 import {
   codexRuntimeModeToHostStartingMode,
@@ -14,16 +13,15 @@ export async function handleCodexCliCommand(context: CommandContext): Promise<vo
     context,
     backendIdForSessionRuntime: 'codex',
     agentIdForAccountSettings: 'codex',
-    resolveExtraOptions: (args) => {
-      const startingRuntimeModeRaw = readOptionalFlagValue(args, '--happy-starting-mode');
+    directoryFlags: ['-C', '--cd'],
+    forwardModelFlag: true,
+    versionFlags: ['-V', '--version'],
+    resolveExtraOptions: (_args, parsed) => {
+      const startingRuntimeModeRaw = parsed.startingMode;
       const startingRuntimeMode: CodexRuntimeMode | undefined =
         startingRuntimeModeRaw === 'terminal' || startingRuntimeModeRaw === 'remote'
           ? startingRuntimeModeRaw
           : undefined;
-      const directoryRaw = readOptionalFlagValueFromAliases(args, ['-C', '--cd']);
-      const directory = typeof directoryRaw === 'string' && directoryRaw.trim().length > 0
-        ? directoryRaw.trim()
-        : undefined;
       if (startingRuntimeModeRaw && !startingRuntimeMode) {
         console.error(
           chalk.red(`Invalid --happy-starting-mode: ${startingRuntimeModeRaw}. Use "terminal" or "remote".`),
@@ -34,7 +32,8 @@ export async function handleCodexCliCommand(context: CommandContext): Promise<vo
         startingMode: startingRuntimeMode
           ? codexRuntimeModeToHostStartingMode(startingRuntimeMode)
           : undefined,
-        directory,
+        directory: parsed.directory,
+        ...(parsed.providerArgs.length > 0 ? { codexArgs: parsed.providerArgs } : {}),
       };
     },
   });

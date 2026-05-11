@@ -8,6 +8,7 @@ import type {
   SessionStateCapabilitiesV1,
   SessionStateFieldId,
 } from '@happier-dev/protocol';
+import { HOST_SESSION_STATE_METADATA_CAPABILITIES } from './sessionStateMetadataCapabilities';
 
 type HostSessionStateMetadataPortParams<F extends SessionStateFieldId> = Readonly<{
   sessionId: string;
@@ -18,22 +19,6 @@ type HostSessionStateMetadataPortParams<F extends SessionStateFieldId> = Readonl
   metadataReason: string;
   postprocess?: (metadata: Metadata) => Metadata;
 }>;
-
-const HOST_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV1 = {
-  identity: {
-    runtimeDescriptor: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-    vendorSessionId: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-  },
-  intent: {
-    model: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-    permissionMode: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-    acpSessionMode: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-    acpConfigOption: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-  },
-  display: {
-    title: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-  },
-};
 
 function isForbiddenMetadataUpdateError(error: unknown): boolean {
   const record = error && typeof error === 'object'

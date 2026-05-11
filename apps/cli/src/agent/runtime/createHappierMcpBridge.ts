@@ -2,19 +2,54 @@ import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappySe
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand'
 import type { McpServerConfig } from '@/agent'
 import type { Credentials } from '@/persistence'
+import type { AccountSettings, ActionsSettingsV1 } from '@happier-dev/protocol'
 
 function isTruthyEnvFlag(raw: string | undefined): boolean {
   const normalized = (raw ?? '').trim().toLowerCase()
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y'
 }
 
-async function resolveHappierMcpServerConfig(url: string, _commandMode: 'direct-script' | 'current-process'): Promise<McpServerConfig> {
-  return await resolveNodeBackedMcpServerCommand({
+function serializeActionSettingsForEnv(accountSettings: AccountSettings | null | undefined): string | null {
+  const actionSettings = accountSettings?.actionsSettingsV1 as ActionsSettingsV1 | undefined
+  if (actionSettings) {
+    try {
+      return JSON.stringify(actionSettings)
+    } catch {
+      return null
+    }
+  }
+
+  const actionSettingsEnv = process.env.HAPPIER_ACTIONS_SETTINGS_V1
+  return typeof actionSettingsEnv === 'string' && actionSettingsEnv.length > 0 ? actionSettingsEnv : null
+}
+
+function withActionSettingsEnv(config: McpServerConfig, accountSettings?: AccountSettings | null): McpServerConfig {
+  const actionSettings = serializeActionSettingsForEnv(accountSettings)
+  if (typeof actionSettings !== 'string' || actionSettings.length === 0) {
+    return config
+  }
+
+  return {
+    ...config,
+    env: {
+      ...(config.env ?? {}),
+      HAPPIER_ACTIONS_SETTINGS_V1: actionSettings,
+    },
+  }
+}
+
+async function resolveHappierMcpServerConfig(
+  url: string,
+  _commandMode: 'direct-script' | 'current-process',
+  accountSettings?: AccountSettings | null,
+): Promise<McpServerConfig> {
+  const config = await resolveNodeBackedMcpServerCommand({
     distEntrypointSegments: ['backends', 'codex', 'mcp', 'happierStdioBridge.mjs'],
     sourceEntrypointSegments: ['backends', 'codex', 'mcp', 'happierStdioBridge.ts'],
     args: ['--url', url],
     preferSourceEntrypoint: isTruthyEnvFlag(process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT),
   })
+  return withActionSettingsEnv(config, accountSettings)
 }
 
 export async function createHappierMcpBridge(
@@ -22,6 +57,7 @@ export async function createHappierMcpBridge(
   opts: {
     commandMode?: 'direct-script' | 'current-process'
     credentials?: Credentials | null
+    accountSettings?: AccountSettings | null
   } = {},
 ): Promise<{
   happierMcpServer: { url: string; stop: () => void }
@@ -35,6 +71,7 @@ export async function createHappierMcpBridgeWithOptions(
   opts: {
     commandMode?: 'direct-script' | 'current-process'
     credentials?: Credentials | null
+    accountSettings?: AccountSettings | null
   } = {},
 ): Promise<{
   happierMcpServer: { url: string; stop: () => void }
@@ -42,10 +79,11 @@ export async function createHappierMcpBridgeWithOptions(
 }> {
   const happierMcpServer = await startHappyServer(session, {
     credentials: opts.credentials ?? null,
+    accountSettings: opts.accountSettings ?? null,
   })
   const commandMode = opts.commandMode ?? 'direct-script'
   const mcpServers: Record<string, McpServerConfig> = {
-    happier: await resolveHappierMcpServerConfig(happierMcpServer.url, commandMode),
+    happier: await resolveHappierMcpServerConfig(happierMcpServer.url, commandMode, opts.accountSettings ?? null),
   }
 
   return {

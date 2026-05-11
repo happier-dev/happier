@@ -1,5 +1,5 @@
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { access, rm, rename as renameMock } from 'node:fs/promises';
+import { access, copyFile as copyFileMock, rm, rename as renameMock } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -9,14 +9,23 @@ let renameAttemptCount = 0;
 let firstRenameErrorCode: string | null = 'EXDEV';
 let failingRmPath: string | null = null;
 let failingRmCode: string | null = null;
+let createDestinationBeforeExclusiveCopy = false;
 
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
   const actualRename = actual.rename;
   const actualRm = actual.rm;
+  const actualCopyFile = actual.copyFile;
 
   return {
     ...actual,
+    copyFile: vi.fn(async (from: string, to: string, mode?: number) => {
+      if (createDestinationBeforeExclusiveCopy) {
+        createDestinationBeforeExclusiveCopy = false;
+        writeFileSync(to, 'raced-destination', 'utf8');
+      }
+      await actualCopyFile(from, to, mode);
+    }),
     rename: vi.fn(async (from: string, to: string) => {
       renameAttemptCount += 1;
       if (renameAttemptCount === 1 && firstRenameErrorCode) {
@@ -48,6 +57,7 @@ describe('finalizeWorkspaceFileUpload', () => {
     firstRenameErrorCode = 'EXDEV';
     failingRmPath = null;
     failingRmCode = null;
+    createDestinationBeforeExclusiveCopy = false;
     vi.clearAllMocks();
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -130,5 +140,34 @@ describe('finalizeWorkspaceFileUpload', () => {
     });
     expect(readFileSync(destPath, 'utf8')).toBe('payload');
     await expect(access(tempPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not overwrite a destination created after the no-overwrite preflight check', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-finalize-upload-race-'));
+    tempDirs.push(root);
+    const tempPath = join(root, 'temp.txt');
+    const destPath = join(root, 'dest', 'file.txt');
+    mkdirSync(dirname(destPath), { recursive: true });
+    writeFileSync(tempPath, 'payload', 'utf8');
+    firstRenameErrorCode = null;
+    createDestinationBeforeExclusiveCopy = true;
+
+    const result = await finalizeWorkspaceFileUpload({
+      tempPath,
+      destPath,
+      destDisplayPath: '~/dest/file.txt',
+      overwrite: false,
+      sizeBytes: 7,
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Destination already exists',
+      keepSession: true,
+    });
+    expect(readFileSync(destPath, 'utf8')).toBe('raced-destination');
+    expect(readFileSync(tempPath, 'utf8')).toBe('payload');
+    expect(renameMock).not.toHaveBeenCalled();
+    expect(copyFileMock).toHaveBeenCalled();
   });
 });

@@ -16,6 +16,10 @@ vi.mock('./service/repair/handleServiceRepairCliCommand', () => ({
     handleServiceRepairCliCommand: handleServiceRepairCliCommandMock,
 }));
 
+vi.mock('@/cli/runtime/resolveInvokerName', () => ({
+    resolveInvokerName: () => 'happier',
+}));
+
 import { handleServiceCliCommand } from './service';
 import { handleDaemonCliCommand } from './daemon';
 

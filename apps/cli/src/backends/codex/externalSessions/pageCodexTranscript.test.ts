@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, unlink, writeFile, utimes } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, unlink, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,6 +9,7 @@ import { readJsonlFileBackwardPage } from '@/api/session/fileBackedTranscripts/j
 import type { FileBackedTranscriptSessionStore } from '@/api/session/fileBackedTranscripts/store';
 import {
   createCodexAppServerProcessEnv,
+  writeFakeCodexAppServerScript,
   writeFakeCodexAppServerThreadListScript,
 } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import type { CodexRolloutSessionStorePageResult } from '../rollout/sessionStore/codexRolloutSessionStoreTypes';
@@ -187,7 +188,83 @@ describe('pageCodexTranscript', () => {
     expect(result.hasMore).toBe(false);
   });
 
-  it('reuses cached direct-session history across older-page requests after the rollout file disappears', async () => {
+  it('does not start the Codex app-server metadata fallback when paging rollout-backed history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-page-no-app-server-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = 'page-existing-rollout-session';
+    const markerPath = join(root, 'app-server-started');
+    const fakeAppServer = await writeFakeCodexAppServerScript({
+      dir: root,
+      setupLines: [
+        'import("node:fs/promises").then(({ writeFile }) => writeFile(process.env.APP_SERVER_MARKER, "started"));',
+      ],
+      bodyLines: ['for await (const _line of rl) {}'],
+    });
+
+    await writeFile(
+      join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`),
+      sessionMetaLine({ id: sessionId, timestamp: '2026-01-02T00:00:00.000Z' })
+        + responseItemLine({
+          timestamp: '2026-01-02T00:00:01.000Z',
+          payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'from rollout' }] },
+        }),
+      'utf8',
+    );
+
+    const result = await pageCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: createCodexAppServerProcessEnv(fakeAppServer, {
+        CODEX_HOME: codexHome,
+        APP_SERVER_MARKER: markerPath,
+      }),
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      direction: 'older',
+      maxBytes: 1024 * 1024,
+      maxItems: 10,
+    });
+
+    expect(result.items).toHaveLength(1);
+    await expect(access(markerPath)).rejects.toThrow();
+  });
+
+  it('pages newest rollout messages without depending on a full forward read from the start', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-page-bounded-tail-'));
+    const codexHome = join(root, 'codex-home');
+    const sessionsDir = join(codexHome, 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+
+    const sessionId = 'page-bounded-tail-session';
+    const hugeUnrenderablePrefix = `${'x'.repeat(2 * 1024 * 1024)}\n`;
+    await writeFile(
+      join(sessionsDir, `rollout-2026-01-02T00-00-00-${sessionId}.jsonl`),
+      hugeUnrenderablePrefix
+        + responseItemLine({
+          timestamp: '2026-01-02T00:00:01.000Z',
+          payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'tail survives bounded paging' }] },
+        }),
+      'utf8',
+    );
+
+    const result = await pageCodexTranscript({
+      source: { kind: 'codexHome', home: 'user' },
+      env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+      activeServerDir: join(root, 'servers', 'cloud'),
+      remoteSessionId: sessionId,
+      direction: 'older',
+      maxBytes: 64 * 1024,
+      maxItems: 10,
+    });
+
+    expect(result.items).toHaveLength(1);
+    expect((result.items[0]?.raw as any)?.content?.data?.message).toBe('tail survives bounded paging');
+    expect(result.tailCursor).toBeTruthy();
+  });
+
+  it('returns an empty older page when the rollout file disappears between bounded page reads', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-direct-page-cache-'));
     const codexHome = join(root, 'codex-home');
     const sessionsDir = join(codexHome, 'sessions');
@@ -241,9 +318,9 @@ describe('pageCodexTranscript', () => {
       maxItems: 1,
     });
 
-    expect(second.items).toHaveLength(1);
-    expect(JSON.stringify(second.items[0] ?? null)).toContain('second');
-    expect(second.hasMore).toBe(true);
+    expect(second.items).toHaveLength(0);
+    expect(second.hasMore).toBe(false);
+    expect(second.nextCursor).toBeNull();
   });
 
   it('maps Codex collaboration rollout events into generic SubAgent tool rows for direct transcripts', async () => {

@@ -73,6 +73,106 @@ describe('ACP update message handlers', () => {
     expect(emitted).toEqual([{ type: 'model-output', textDelta: text }]);
   });
 
+  it('emits ACP image content blocks as session media without interrupting text streaming', () => {
+    const { ctx, emitted } = createHandlerContext();
+
+    const result = handleAgentMessageChunk(
+      {
+        content: [
+          { type: 'text', text: 'Generated image:' },
+          { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png', uri: 'file:///tmp/generated.png' },
+        ],
+      },
+      ctx,
+    );
+
+    expect(result.handled).toBe(true);
+    expect(emitted[0]).toEqual({ type: 'model-output', textDelta: 'Generated image:' });
+    expect(emitted[1]).toMatchObject({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        localId: expect.any(String),
+        role: 'output',
+        category: 'generated',
+        media: [
+          {
+            source: {
+              kind: 'base64',
+              data: 'iVBORw0KGgo=',
+              mimeType: 'image/png',
+              fileNameHint: 'generated.png',
+            },
+            origin: {
+              source: 'acp-content',
+              providerEventId: expect.any(String),
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  it('records unsupported ACP media blocks diagnostically without failing the turn', () => {
+    const { ctx, emitted } = createHandlerContext();
+
+    const result = handleAgentMessageChunk(
+      { content: [{ type: 'audio', data: 'AAAA', mimeType: 'audio/wav' }] },
+      ctx,
+    );
+
+    expect(result.handled).toBe(true);
+    expect(emitted).toEqual([
+      expect.objectContaining({
+        type: 'event',
+        name: 'session_media_diagnostics',
+        payload: {
+          diagnostics: [
+            expect.objectContaining({
+              code: 'unsupported_audio',
+              contentIndex: 0,
+            }),
+          ],
+        },
+      }),
+    ]);
+  });
+
+  it('extracts ACP resource and blob image blocks through the same provider-agnostic mapper', () => {
+    const { ctx, emitted } = createHandlerContext();
+
+    const result = handleAgentMessageChunk(
+      {
+        content: {
+          content: [
+            { type: 'resource', resource: { blob: 'iVBORw0KGgo=', mime_type: 'image/png', name: 'resource.png' } },
+            { type: 'blob', data: 'iVBORw0KGgo=', mimeType: 'image/png', filename: 'blob.png' },
+          ],
+        },
+      },
+      ctx,
+    );
+
+    expect(result.handled).toBe(true);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        media: [
+          {
+            source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'resource.png' },
+            origin: { source: 'acp-content' },
+          },
+          {
+            source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'blob.png' },
+            origin: { source: 'acp-content' },
+          },
+        ],
+      },
+    });
+  });
+
   it('keeps explicit thought chunks mapped to thinking events', () => {
     const { ctx, emitted } = createHandlerContext();
     const text = 'reasoning content';

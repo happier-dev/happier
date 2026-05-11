@@ -332,7 +332,9 @@ export class Session {
 
         if (!this.happierMcpBridgePromise) {
             this.happierMcpBridgePromise = (async () => {
-                const bridge = await createHappierMcpBridge(this.client);
+                const bridge = await createHappierMcpBridge(this.client, {
+                    accountSettings: this.accountSettings,
+                });
                 const mcpConfigJson = JSON.stringify({ mcpServers: bridge.mcpServers });
                 const stored = {
                     mcpServers: bridge.mcpServers,

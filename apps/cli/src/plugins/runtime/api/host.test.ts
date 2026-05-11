@@ -543,7 +543,7 @@ describe('createPluginApiHost', () => {
         ]);
     });
 
-    it('records MCP registrations and removes them through disposable handles', async () => {
+    it('records MCP server and discovery registrations and removes them through disposable handles', async () => {
         const host = createPluginApiHost({
             pluginId: 'acme',
         });
@@ -553,60 +553,30 @@ describe('createPluginApiHost', () => {
             name: 'acme-hosted',
             transport: { kind: 'hosted' },
         });
-        const backendClientDisposable = host.api.registerMcpBackendClient({
-            id: 'acme.backendClient',
-            serverName: 'acme-hosted',
-            toolNamespace: 'codex.github',
-        });
-        const toolDisposable = host.api.registerMcpTool({
-            id: 'acme.tool',
-            name: 'ext.acme.search',
-            inputSchema: { type: 'object' },
-            handler: async () => ({ ok: true }),
-        });
         const discoveryDisposable = host.api.registerMcpDiscoveryProvider({
             id: 'acme.discovery',
             discover: async () => [],
         });
 
         expect(host.registrations().mcpServers.map((entry) => entry.id)).toEqual(['acme.hosted']);
-        expect(host.registrations().mcpBackendClients.map((entry) => entry.id)).toEqual(['acme.backendClient']);
-        expect(host.registrations().mcpTools.map((entry) => entry.name)).toEqual(['ext.acme.search']);
         expect(host.registrations().mcpDiscoveryProviders.map((entry) => entry.id)).toEqual(['acme.discovery']);
 
         await disposePluginDisposable(serverDisposable);
-        await disposePluginDisposable(backendClientDisposable);
-        await disposePluginDisposable(toolDisposable);
         await disposePluginDisposable(discoveryDisposable);
 
         expect(host.registrations().mcpServers).toEqual([]);
-        expect(host.registrations().mcpBackendClients).toEqual([]);
-        expect(host.registrations().mcpTools).toEqual([]);
         expect(host.registrations().mcpDiscoveryProviders).toEqual([]);
     });
 
-    it('rejects unprefixed MCP tools and same-namespace collisions', () => {
+    it('does not expose retired MCP backend-client or direct-tool registration methods', () => {
         const host = createPluginApiHost({
             pluginId: 'acme',
         });
 
-        expect(() => host.api.registerMcpTool({
-            id: 'acme.bad',
-            name: 'search',
-            handler: async () => null,
-        })).toThrow(/canonical MCP tool prefix/);
-
-        host.api.registerMcpTool({
-            id: 'acme.search',
-            name: 'ext.acme.search',
-            handler: async () => null,
-        });
-
-        expect(() => host.api.registerMcpTool({
-            id: 'acme.create',
-            name: 'ext.acme.create',
-            handler: async () => null,
-        })).toThrow(/MCP tool namespace collision/);
+        expect('registerMcpBackendClient' in host.api).toBe(false);
+        expect('registerMcpTool' in host.api).toBe(false);
+        expect('mcpBackendClients' in host.registrations()).toBe(false);
+        expect('mcpTools' in host.registrations()).toBe(false);
     });
 
     it('rejects secret-shaped runtime MCP server registration fields before storing them', () => {
@@ -625,40 +595,18 @@ describe('createPluginApiHost', () => {
         expect(host.registrations().mcpServers).toEqual([]);
     });
 
-    it('rejects secret-shaped runtime MCP tool and discovery registrations before storing them', () => {
+    it('rejects secret-shaped runtime MCP discovery registrations before storing them', () => {
         const host = createPluginApiHost({
             pluginId: 'acme',
         });
-        const rawSecretToolRegistration = {
-            id: 'acme.tool',
-            name: 'ext.acme.search',
-            handler: async () => null,
-            headers: { Authorization: 'Bearer raw-token' },
-        };
         const rawSecretDiscoveryRegistration = {
             id: 'acme.discovery',
             discover: async () => [],
             token: 'raw-token',
         };
 
-        expect(() => host.api.registerMcpTool(rawSecretToolRegistration)).toThrow(/raw secret material/);
         expect(() => host.api.registerMcpDiscoveryProvider(rawSecretDiscoveryRegistration)).toThrow(/raw secret material/);
 
-        expect(host.registrations().mcpTools).toEqual([]);
         expect(host.registrations().mcpDiscoveryProviders).toEqual([]);
-    });
-
-    it('rejects invalid MCP backend-client namespaces at the runtime registration seam', () => {
-        const host = createPluginApiHost({
-            pluginId: 'acme',
-        });
-
-        expect(() => host.api.registerMcpBackendClient({
-            id: 'acme.backendClient',
-            serverName: 'acme-hosted',
-            toolNamespace: 'search',
-        })).toThrow(/canonical MCP tool namespace/);
-
-        expect(host.registrations().mcpBackendClients).toEqual([]);
     });
 });

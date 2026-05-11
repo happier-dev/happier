@@ -64,6 +64,43 @@ describe('mapPiRpcEventToAgentMessages', () => {
     expect(output).toEqual([{ type: 'model-output', fullText: 'final' }]);
   });
 
+  it('maps Pi assistant image output blocks to provider-generated session media events', () => {
+    const output = mapPiRpcEventToAgentMessages({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        id: 'pi-message-1',
+        content: [
+          { type: 'text', text: 'final' },
+          { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png', name: 'pi-image.png' },
+        ],
+      },
+    });
+
+    expect(output).toEqual([
+      { type: 'model-output', fullText: 'final' },
+      {
+        type: 'event',
+        name: 'session_media',
+        payload: {
+          localId: 'pi-media-pi-message-1',
+          role: 'output',
+          category: 'generated',
+          media: [
+            {
+              source: { kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'pi-image.png' },
+              suggestedName: 'pi-image.png',
+              origin: {
+                source: 'provider-generated',
+                providerEventId: 'pi-message-1',
+              },
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
   it('maps turn lifecycle events to status messages', () => {
     expect(mapPiRpcEventToAgentMessages({ type: 'turn_start' })).toEqual([{ type: 'status', status: 'running' }]);
     expect(mapPiRpcEventToAgentMessages({ type: 'turn_end' })).toEqual([{ type: 'status', status: 'idle' }]);

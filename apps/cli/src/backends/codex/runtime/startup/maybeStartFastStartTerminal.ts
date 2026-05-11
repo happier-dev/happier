@@ -19,6 +19,7 @@ type TerminalRuntimeLaunch<TMessageQueue> = (params: Readonly<{
     messageQueue: TMessageQueue;
     permissionMode: PermissionMode;
     resumeId: string | null;
+    codexArgs?: readonly string[];
 }>) => Promise<CodexTerminalRuntimeLaunchResult>;
 
 export async function maybeStartCodexFastStartTerminal<TMessageQueue>(params: Readonly<{
@@ -31,6 +32,7 @@ export async function maybeStartCodexFastStartTerminal<TMessageQueue>(params: Re
     timing: StartupTiming | null;
     messageQueue: TMessageQueue;
     initialPermissionMode: PermissionMode;
+    codexArgs?: readonly string[];
     requireCodexTerminalRuntimeLaunch: () => Promise<TerminalRuntimeLaunch<TMessageQueue>>;
 }>): Promise<Readonly<{
     deferredSession: DeferredApiSessionClient | null;
@@ -85,6 +87,7 @@ export async function maybeStartCodexFastStartTerminal<TMessageQueue>(params: Re
                 messageQueue: params.messageQueue,
                 permissionMode: params.initialPermissionMode,
                 resumeId: params.resumeIdFromArgs,
+                ...(params.codexArgs && params.codexArgs.length > 0 ? { codexArgs: params.codexArgs } : {}),
             });
         },
     };

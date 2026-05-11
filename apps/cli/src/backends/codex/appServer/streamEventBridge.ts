@@ -1,6 +1,8 @@
 import { extractMcpToolCallResultOutput } from '../runtime/sessionTurnLifecycle';
 import { readCodexMessageContentText } from '../utils/readCodexMessageContentText';
 import { canonicalizeCodexMcpToolName } from '../utils/canonicalizeCodexMcpToolName';
+import { extractCodexGeneratedMedia } from './media/extractCodexGeneratedMedia';
+import type { SessionMediaBridgeInput } from '@/api/session/client/transcript/sessionMediaBridge';
 
 type RecordLike = Record<string, unknown>;
 
@@ -30,6 +32,7 @@ export type CodexAppServerStreamUpdate =
     | Readonly<{ type: 'reasoning-delta'; itemId: string; text: string }>
     | Readonly<{ type: 'reasoning-final'; itemId: string; text: string }>
     | Readonly<{ type: 'turn-diff-updated'; turnId: string | null; unifiedDiff: string }>
+    | Readonly<{ type: 'session-media'; itemId: string; media: readonly SessionMediaBridgeInput[]; meta?: Record<string, unknown> }>
     | Readonly<{ type: 'tool-call'; toolKind: ToolKind; callId: string; name: string; input: unknown }>
     | Readonly<{ type: 'tool-result'; toolKind: ToolKind; callId: string; name?: string; input?: unknown; output: unknown }>
     | Readonly<{
@@ -254,6 +257,18 @@ export function createCodexAppServerStreamEventBridge(): Readonly<{
             if (itemType === 'reasoning') {
                 const text = readFinalReasoningText(item);
                 return text ? [{ type: 'reasoning-final', itemId, text }] : [];
+            }
+
+            if (itemType === 'imagegenerationcall' || itemType === 'imagegeneration') {
+                const generatedMedia = extractCodexGeneratedMedia(itemId, item);
+                return generatedMedia
+                    ? [{
+                        type: 'session-media',
+                        itemId: generatedMedia.itemId,
+                        media: generatedMedia.media,
+                        ...(generatedMedia.meta ? { meta: generatedMedia.meta } : {}),
+                    }]
+                    : [];
             }
 
             const rememberedToolContext = toolContextByCallId.get(itemId) ?? null;

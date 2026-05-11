@@ -1,6 +1,7 @@
 import { logger } from '@/ui/logger';
 import { summarizeValueShapeForLog } from '@/diagnostics/eventShapeForLog';
 
+import { extractAcpMediaContentBlocks } from '../media/extractAcpMediaContentBlocks';
 // A.15.2 marker: ACP runtime definition normalization lives in
 // agent/acp/runtime/definition; this update mapper remains message-shape logic only.
 import {
@@ -86,6 +87,42 @@ function clearToolCallExecutionTimeout(toolCallId: string, ctx: HandlerContext):
   if (!timeout) return;
   clearTimeout(timeout);
   ctx.toolCallTimeouts.delete(toolCallId);
+}
+
+function inferToolMediaOriginSource(toolKind: string, toolName: string): 'mcp-content' | 'tool-output' {
+  return toolKind === 'mcp' || toolName.startsWith('mcp__') ? 'mcp-content' : 'tool-output';
+}
+
+function emitToolOutputSessionMedia(params: Readonly<{
+  toolCallId: string;
+  toolKind: string;
+  toolName: string;
+  outputRaw: unknown;
+  ctx: HandlerContext;
+}>): void {
+  const result = extractAcpMediaContentBlocks(params.outputRaw, {
+    originSource: inferToolMediaOriginSource(params.toolKind, params.toolName),
+    toolCallId: params.toolCallId,
+  });
+  if (result.media.length > 0) {
+    params.ctx.emit({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        localId: `acp-media-${params.toolCallId}`,
+        role: 'output',
+        category: 'tool-artifact',
+        media: result.media,
+      },
+    });
+  }
+  if (result.diagnostics.length > 0) {
+    params.ctx.emit({
+      type: 'event',
+      name: 'session_media_diagnostics',
+      payload: { diagnostics: result.diagnostics },
+    });
+  }
 }
 
 function setToolCallLifecycleState(
@@ -493,6 +530,14 @@ export function completeToolCall(
     toolName: resolvedToolName,
     result: output,
     callId: toolCallId,
+  });
+
+  emitToolOutputSessionMedia({
+    toolCallId,
+    toolKind: toolKindStr,
+    toolName: resolvedToolName,
+    outputRaw,
+    ctx,
   });
 
   // If no more active tool calls, emit idle.

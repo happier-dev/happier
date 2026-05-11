@@ -40,6 +40,12 @@ import type {
     ScmPullRequestOpenComposeResponse,
     ScmPullRequestOpenOrReuseRequest,
     ScmPullRequestOpenOrReuseResponse,
+    ScmPullRequestCheckoutRequest,
+    ScmPullRequestCheckoutResponse,
+    ScmPullRequestPrepareWorktreeRequest,
+    ScmPullRequestPrepareWorktreeResponse,
+    ScmPullRequestRunStackedRequest,
+    ScmPullRequestRunStackedResponse,
     ScmHostingRepositoryDescribePublishTargetsRequest,
     ScmHostingRepositoryDescribePublishTargetsResponse,
     ScmHostingRepositoryPublishRequest,
@@ -477,6 +483,48 @@ export function registerScmHandlers(
                     selection.backend.pullRequestOpenOrReuse
                         ? selection.backend.pullRequestOpenOrReuse({ context, request })
                         : notRepositoryResponse<ScmPullRequestOpenOrReuseResponse>(),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse>(
+        RPC_METHODS.SCM_PULL_REQUEST_CHECKOUT,
+        async (request) =>
+            runScmRoute<ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmPullRequestCheckoutResponse>(),
+                runWithBackend: async ({ context, selection }) =>
+                    selection.backend.pullRequestCheckout
+                        ? selection.backend.pullRequestCheckout({ context, request })
+                        : notRepositoryResponse<ScmPullRequestCheckoutResponse>(),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse>(
+        RPC_METHODS.SCM_PULL_REQUEST_PREPARE_WORKTREE,
+        async (request) =>
+            runScmRoute<ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmPullRequestPrepareWorktreeResponse>(),
+                runWithBackend: async ({ context, selection }) =>
+                    selection.backend.pullRequestPrepareWorktree
+                        ? selection.backend.pullRequestPrepareWorktree({ context, request })
+                        : notRepositoryResponse<ScmPullRequestPrepareWorktreeResponse>(),
+            })
+    );
+
+    rpcHandlerManager.registerHandler<ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse>(
+        RPC_METHODS.SCM_PULL_REQUEST_RUN_STACKED,
+        async (request) =>
+            runScmRoute<ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse>({
+                request,
+                ...routeBase,
+                onNonRepository: async () => notRepositoryResponse<ScmPullRequestRunStackedResponse>(),
+                runWithBackend: async ({ context, selection }) =>
+                    selection.backend.pullRequestRunStacked
+                        ? selection.backend.pullRequestRunStacked({ context, request })
+                        : notRepositoryResponse<ScmPullRequestRunStackedResponse>(),
             })
     );
 

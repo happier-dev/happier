@@ -2,12 +2,22 @@ import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/ag
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import type { AgentMessage } from '@/agent';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
+import type { SendAgentSessionMediaCommittedRequest } from '@/api/session/client/transcript/sessionMediaBridge';
 
 type EventAgentMessage = Extract<AgentMessage, { type: 'event' }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
+}
+
+function isSessionMediaCommittedRequest(value: unknown): value is SendAgentSessionMediaCommittedRequest {
+    const record = asRecord(value);
+    if (!record) return false;
+    return typeof record.localId === 'string'
+        && (record.role === 'input' || record.role === 'output')
+        && (record.category === 'attachment' || record.category === 'generated' || record.category === 'tool-artifact')
+        && Array.isArray(record.media);
 }
 
 type NormalizedConfigOptionValue = string | number | boolean | null;
@@ -90,6 +100,15 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
     msg: EventAgentMessage;
 }>): void {
     const name = params.msg.name;
+
+    if (name === 'session_media') {
+        if (!isSessionMediaCommittedRequest(params.msg.payload)) return;
+        void params.session.sendAgentSessionMediaCommitted?.(
+            params.provider,
+            params.msg.payload,
+        );
+        return;
+    }
 
     if (name === 'available_commands_update') {
         const payload = params.msg.payload;

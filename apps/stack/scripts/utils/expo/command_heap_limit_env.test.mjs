@@ -4,7 +4,9 @@ import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { expoExec, expoSpawn } from './command.mjs';
+import * as expoCommand from './command.mjs';
+
+const { expoExec, expoSpawn } = expoCommand;
 
 async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
@@ -241,4 +243,26 @@ test('expoSpawn applies the same heap limit behavior', async (t) => {
 
   const logged = await readFile(outputPath, 'utf-8');
   assert.match(logged, /--max-old-space-size=8192/);
+});
+
+test('resolveExpoBin prefers the Windows cmd shim when both Expo shims exist', async (t) => {
+  assert.equal(typeof expoCommand.resolveExpoBin, 'function');
+
+  const root = await mkdtemp(join(tmpdir(), 'hs-expo-resolve-cmd-shim-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(join(root, 'node_modules', '.bin'), { recursive: true });
+  const expoPath = join(root, 'node_modules', '.bin', 'expo');
+  await writeFile(expoPath, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await writeFile(`${expoPath}.cmd`, '@echo off\r\nexit /b 0\r\n', 'utf-8');
+
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  assert.ok(descriptor);
+  Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' });
+  t.after(() => {
+    Object.defineProperty(process, 'platform', descriptor);
+  });
+
+  assert.equal(await expoCommand.resolveExpoBin(root), `${expoPath}.cmd`);
 });

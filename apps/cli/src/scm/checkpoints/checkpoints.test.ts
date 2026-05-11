@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resolveRepositoryCheckpointAvailability } from './availability';
 import { pruneRepositoryCheckpointRefs } from './cleanup';
+import { diffGitRepositoryCheckpoints } from './gitRepositoryCheckpointDiff';
 import { REPOSITORY_CHECKPOINT_RECEIPT_IDS } from './receipts';
 import { buildRepositoryCheckpointRef, buildRepositoryCheckpointRefs } from './refs';
+import type { RepositoryCheckpointRef } from './types';
 import { scmDiffSummaryCacheStore } from '@/agent/executionRuns/tasks/scmDiffSummary/cache/cacheStore';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -90,6 +92,37 @@ describe('repository checkpoint primitives', () => {
                 detection: { isRepo: true, rootPath: '/repo', mode: '.git' },
             },
         })).toMatchObject({ available: true, repoRoot: '/repo' });
+    });
+
+    it('returns structured invalid-ref diff failure for malformed checkpoint refs', async () => {
+        const refs = buildRepositoryCheckpointRefs({ scopeId: 'session-safe', turnId: 'turn-1' });
+        const malformedBaseRef: RepositoryCheckpointRef = {
+            scopeId: refs.scopeId,
+            encodedScope: refs.encodedScope,
+            phase: 'turn-start',
+            checkpointId: 'bad:turn',
+            ref: `${refs.turnStart!.ref}:bad`,
+        };
+
+        await expect(diffGitRepositoryCheckpoints({
+            context: {
+                cwd: '/repo',
+                projectKey: 'project:/repo',
+                detection: { isRepo: true, rootPath: '/repo', mode: '.git' },
+            },
+            baseRef: malformedBaseRef,
+            finalRef: refs.turnFinal!,
+            baseRefSource: 'turn_start',
+            attributionScope: 'exclusive_worktree',
+        })).resolves.toMatchObject({
+            success: false,
+            kind: 'failed',
+            reason: 'invalid_ref',
+            baseRefSource: 'turn_start',
+            contentConfidence: 'unavailable',
+            attributionScope: 'exclusive_worktree',
+            receipts: [],
+        });
     });
 
     it('prunes only refs inside the requested checkpoint scope and retention window', async () => {

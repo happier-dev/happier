@@ -1,5 +1,5 @@
 import type { AgentId, VendorResumeIdField } from '@happier-dev/agents';
-import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import { applyVendorSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 import type { SessionClientPort } from '../../../../api/session/sessionClientPort';
 import { findHappyProcessByPid } from '../../../../daemon/doctor';
@@ -33,14 +33,14 @@ async function refreshTrackedSessionMarkerProviderSessionId(params: Readonly<{
 
   const snapshot = params.session.getMetadataSnapshot();
   const metadata = isRecord(snapshot) ? snapshot : {};
-  const nextMetadata = applySessionStateFieldMetadataPatch({
+  const nextMetadata = applyVendorSessionIdSessionMetadata({
     ...(isRecord(currentMarker?.metadata) ? currentMarker.metadata : {}),
     ...metadata,
     flavor: params.agentId,
-  }, 'identity.vendorSessionId', {
+  } as Record<string, unknown>, {
     metadataKey: params.vendorResumeIdField,
     value: params.providerSessionId,
-  }) as Record<string, unknown>;
+  });
   const liveProcess =
     !currentMarker?.processCommandHash || !currentMarker?.processCommand
       ? await findHappyProcessByPid(pid).catch(() => null)

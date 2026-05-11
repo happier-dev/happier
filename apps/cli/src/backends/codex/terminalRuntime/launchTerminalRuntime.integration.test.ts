@@ -339,6 +339,139 @@ describe('launchCodexTerminalRuntime', () => {
     }
   });
 
+  it('passes provider-native Codex arguments after Happier runtime arguments', async () => {
+    const fixture = await createCodexBinaryFixture();
+    const argsPath = join(fixture.binDir, 'argv.json');
+    const sessionId = randomUUID();
+    const nowIso = new Date().toISOString();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      recordArgv: true,
+    });
+
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+      TEST_CODEX_SESSION_ID: sessionId,
+      TEST_CODEX_TIMESTAMP: nowIso,
+      TEST_CODEX_ARGV_PATH: argsPath,
+    });
+
+    try {
+      const launcherPromise = launchCodexTerminalRuntime({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        resumeId: sessionId,
+        codexArgs: ['exec', '--sandbox', 'workspace-write'],
+      });
+
+      await waitFor(() => {
+        expect(existsSync(argsPath)).toBe(true);
+      });
+      const argv = JSON.parse(await readFile(argsPath, 'utf8')) as string[];
+      const cdIndex = argv.indexOf('--cd');
+      const execIndex = argv.indexOf('exec');
+      expect(cdIndex).toBeGreaterThanOrEqual(0);
+      expect(execIndex).toBeGreaterThan(cdIndex);
+      expect(argv.slice(execIndex)).toEqual(['exec', '--sandbox', 'workspace-write']);
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: sessionId });
+      await waitFor(() => {
+        expect(existsSync(fixture.terminatedFlag)).toBe(true);
+      });
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
+  it('switches a fresh terminal session to remote when no rollout is discovered', async () => {
+    const fixture = await createCodexBinaryFixture();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      writeSessionMeta: false,
+      exitAfterMs: 500,
+      recordArgv: false,
+      handleSigint: false,
+    });
+
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+    });
+
+    try {
+      const launcherPromise = launchCodexTerminalRuntime({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        rolloutDiscovery: {
+          initialTimeoutMs: 50,
+          initialPollIntervalMs: 20,
+          extendedPollIntervalMs: 20,
+        },
+      });
+
+      messageQueue.push('hi', { permissionMode: 'default' });
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch', resumeId: null });
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
+  it('keeps native Codex argument invocations local when no rollout is discovered', async () => {
+    const fixture = await createCodexBinaryFixture();
+
+    await writeFakeCodexScript(fixture.fakeCodex, {
+      terminatedFlag: fixture.terminatedFlag,
+      writeSessionMeta: false,
+      exitAfterMs: 120,
+      recordArgv: false,
+      handleSigint: false,
+    });
+
+    const { session } = createLocalSessionHarness();
+    const messageQueue = createLocalMessageQueue();
+    const restoreEnv = applyCodexLauncherEnv({
+      HAPPIER_CODEX_SESSIONS_DIR: fixture.sessionsRoot,
+      HAPPIER_CODEX_TUI_BIN: fixture.fakeCodex,
+    });
+
+    try {
+      const result = await launchCodexTerminalRuntime({
+        path: fixture.sessionsRoot,
+        api: {},
+        session,
+        messageQueue,
+        permissionMode: 'default',
+        codexArgs: ['--help'],
+        rolloutDiscovery: {
+          initialTimeoutMs: 50,
+          initialPollIntervalMs: 20,
+          extendedPollIntervalMs: 20,
+        },
+      });
+
+      expect(result).toEqual({ type: 'exit', code: 0 });
+    } finally {
+      restoreEnv();
+      await cleanupCodexBinaryFixture(fixture);
+    }
+  });
+
   it('maps read-only permission mode to never approvalPolicy', async () => {
     const fixture = await createCodexBinaryFixture();
     const argsPath = join(fixture.binDir, 'argv.json');

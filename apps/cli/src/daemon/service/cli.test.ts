@@ -49,6 +49,7 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS',
   'HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS',
   'HAPPIER_DAEMON_START_WAIT_POLL_MS',
+  'HAPPIER_CLI_INVOKER_NAME',
   'PATH',
 ] as const;
 
@@ -1329,7 +1330,7 @@ describe('runDaemonServiceCliCommand', () => {
       writeValidInstalledWindowsDaemonServiceFile(paths.installedPath);
       await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(1), token: 'token-win32-wait-budget' });
 
-      await expect(runDaemonServiceCliCommand({ argv: ['restart', '--json'] })).rejects.toThrow(/did not become the active daemon/i);
+      await expect(runDaemonServiceCliCommand({ argv: ['restart', '--json'], commandPath: 'hdev service' })).rejects.toThrow(/hdev service status/i);
       expect(observedWaitTimeouts).toEqual([120_000, 60_000]);
     });
   });

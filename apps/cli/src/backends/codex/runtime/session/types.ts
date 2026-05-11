@@ -29,6 +29,7 @@ export function codexRuntimeModeToHostStartingMode(
 export type CodexSessionRuntimeOptions = HostSessionRuntimeRunOptions & Readonly<{
     startingMode?: CodexHostStartingMode;
     codexBackendMode?: CodexBackendMode;
+    codexArgs?: readonly string[];
 }>;
 
 export type CodexRuntimeFactoryParams = Parameters<NonNullable<HostSessionRuntimeConfig['createSessionRuntime']>>[0];

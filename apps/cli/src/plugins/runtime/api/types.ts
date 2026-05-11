@@ -7,10 +7,8 @@ import type {
     PluginApiExecutionRunProfileRegistrationV1,
     PluginApiHookRegistrationV1,
     PluginApiLifecycleHandlerRegistrationV1,
-    PluginApiMcpBackendClientRegistrationV1,
     PluginApiMcpDiscoveryProviderRegistrationV1,
     PluginApiMcpServerRegistrationV1,
-    PluginApiMcpToolRegistrationV1,
     PluginApiNotificationCategoryRegistrationV1,
     PluginApiNotificationChannelRegistrationV1,
     PluginApiRequestInterceptorRegistrationV1,
@@ -85,8 +83,6 @@ export type PluginApiRequestInterceptorRegistration = PluginApiRequestIntercepto
 export type PluginApiScmHostingProviderRegistration = ScmHostingProviderRuntimeRegistration;
 export type PluginApiScmBackendRegistration = ScmBackendRuntimeRegistration;
 export type PluginApiMcpServerRegistration = PluginApiMcpServerRegistrationV1;
-export type PluginApiMcpBackendClientRegistration = PluginApiMcpBackendClientRegistrationV1;
-export type PluginApiMcpToolRegistration = PluginApiMcpToolRegistrationV1;
 export type PluginApiMcpDiscoveryProviderRegistration = PluginApiMcpDiscoveryProviderRegistrationV1;
 
 export type PluginApiRegistrations = Readonly<{
@@ -102,8 +98,6 @@ export type PluginApiRegistrations = Readonly<{
     scmHostingProviders: readonly PluginApiScmHostingProviderRegistration[];
     scmBackends: readonly PluginApiScmBackendRegistration[];
     mcpServers: readonly PluginApiMcpServerRegistration[];
-    mcpBackendClients: readonly PluginApiMcpBackendClientRegistration[];
-    mcpTools: readonly PluginApiMcpToolRegistration[];
     mcpDiscoveryProviders: readonly PluginApiMcpDiscoveryProviderRegistration[];
     requestInterceptors: readonly PluginApiRequestInterceptorRegistration[];
     hooks: readonly PluginApiHookRegistration[];

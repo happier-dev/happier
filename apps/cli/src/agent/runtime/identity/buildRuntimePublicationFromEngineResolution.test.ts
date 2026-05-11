@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
 
 import { createEmptyBackendExecutionSurfaces, type EngineAdapterResolution } from '@/agent/runtime/registry/engineRegistryTypes';
 import { buildRuntimePublicationFromEngineResolution } from './buildRuntimePublicationFromEngineResolution';
@@ -51,9 +52,9 @@ function createEngineResolution(
 describe('buildRuntimePublicationFromEngineResolution', () => {
   it('uses nested backend execution-run capability as canonical publication support', () => {
     const publication = buildRuntimePublicationFromEngineResolution(
-      createEngineResolution({
+      createEngineResolution(normalizePluginBackendCapabilitiesV1({
         executionRun: { supported: false },
-      }),
+      })),
       { includeExecutionRun: true },
     );
 
@@ -61,6 +62,13 @@ describe('buildRuntimePublicationFromEngineResolution', () => {
       executionRun: { supported: false },
       backend: {
         executionRun: { supported: false },
+        session: {
+          media: {
+            acceptsImageInput: { supported: false },
+            emitsSessionMedia: { supported: false },
+            nativeImageGeneration: { supported: false },
+          },
+        },
       },
     });
   });

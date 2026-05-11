@@ -9,7 +9,13 @@ import {
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
-import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import {
+  applyAcpConfigOptionIntentSessionMetadata,
+  applyAcpSessionModeIntentSessionMetadata,
+  applyDisplayTitleSessionMetadata,
+  applyModelIntentSessionMetadata,
+  applyPermissionModeIntentSessionMetadata,
+} from '@happier-dev/agents/session/state/metadataWriters';
 
 type ForkInheritedSpawnOverrides = {
   permissionMode?: PermissionMode;
@@ -212,7 +218,7 @@ export function resolveForkInheritedOverridesFromMetadata(
   if (displayTitle?.value) {
     Object.assign(
       metadataOverrides,
-      applySessionStateFieldMetadataPatch(metadataOverrides, 'display.title', {
+      applyDisplayTitleSessionMetadata(metadataOverrides, {
         title: displayTitle.value,
         updatedAt: displayTitle.updatedAt ?? Date.now(),
       }),
@@ -225,7 +231,7 @@ export function resolveForkInheritedOverridesFromMetadata(
     spawn.permissionModeUpdatedAt = permission.updatedAt;
     Object.assign(
       metadataOverrides,
-      applySessionStateFieldMetadataPatch(metadataOverrides, 'intent.permissionMode', {
+      applyPermissionModeIntentSessionMetadata(metadataOverrides, {
         v: 1,
         permissionMode: permission.intent,
         updatedAt: permission.updatedAt,
@@ -243,7 +249,7 @@ export function resolveForkInheritedOverridesFromMetadata(
   if (modelOverrideRaw.success) {
     Object.assign(
       metadataOverrides,
-      applySessionStateFieldMetadataPatch(metadataOverrides, 'intent.model', {
+      applyModelIntentSessionMetadata(metadataOverrides, {
         v: 1,
         modelId: modelOverrideRaw.data.modelId,
         updatedAt: modelOverrideRaw.data.updatedAt,
@@ -270,7 +276,7 @@ export function resolveForkInheritedOverridesFromMetadata(
   if (sessionModeOverride) {
     Object.assign(
       metadataOverrides,
-      applySessionStateFieldMetadataPatch(metadataOverrides, 'intent.acpSessionMode', {
+      applyAcpSessionModeIntentSessionMetadata(metadataOverrides, {
         v: 1,
         modeId: sessionModeOverride.modeId,
         updatedAt: sessionModeOverride.updatedAt,
@@ -285,7 +291,7 @@ export function resolveForkInheritedOverridesFromMetadata(
   for (const entry of readAcpConfigOptionOverrides(metadata)) {
     Object.assign(
       metadataOverrides,
-      applySessionStateFieldMetadataPatch(metadataOverrides, 'intent.acpConfigOption', {
+      applyAcpConfigOptionIntentSessionMetadata(metadataOverrides, {
         v: 1,
         configId: entry.configId,
         value: entry.value,

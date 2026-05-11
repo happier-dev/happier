@@ -1,4 +1,5 @@
-import { mkdir, stat } from 'fs/promises';
+import { constants } from 'fs';
+import { copyFile, mkdir, rm, stat } from 'fs/promises';
 import { dirname } from 'path';
 
 import {
@@ -31,6 +32,34 @@ export async function finalizeWorkspaceFileUpload(input: Readonly<{
     if (!input.overwrite) {
       return { success: false, error: 'Destination already exists', keepSession: true };
     }
+  }
+
+  if (!input.overwrite) {
+    try {
+      await copyFile(input.tempPath, input.destPath, constants.COPYFILE_EXCL);
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: unknown }).code : null;
+      if (code === 'EEXIST') {
+        return { success: false, error: 'Destination already exists', keepSession: true };
+      }
+      throw error;
+    }
+    try {
+      await rm(input.tempPath, { force: true });
+    } catch (error) {
+      await rm(input.destPath, { force: true }).catch(() => undefined);
+      throw new CrossDeviceMoveSourceCleanupError({
+        sourcePath: input.tempPath,
+        destPath: input.destPath,
+        destinationRolledBack: true,
+        cause: error,
+      });
+    }
+    return {
+      success: true,
+      path: input.destDisplayPath,
+      sizeBytes: input.sizeBytes,
+    };
   }
 
   try {

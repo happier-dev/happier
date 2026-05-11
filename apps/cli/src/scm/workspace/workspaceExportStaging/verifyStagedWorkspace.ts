@@ -8,7 +8,7 @@ import type { WorkspaceManifest } from '@happier-dev/protocol';
 import { compareWorkspaceManifests, type WorkspaceManifestComparison } from '../workspaceExportPackaging/compareWorkspaceManifests';
 import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile';
 import { scanWorkspaceManifest } from '../workspaceExportPackaging/scanWorkspaceManifest';
-import { inferWorkspaceManifestSafeFilterPolicyFromEntries } from '../workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import { resolveWorkspaceManifestSafeFilterPolicyFromEntries } from '../workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 
 const workspaceManifestDigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 
@@ -77,7 +77,7 @@ export async function verifyStagedWorkspace(params: Readonly<{
 }>): Promise<VerifyStagedWorkspaceResult> {
     const scannedManifest = await scanWorkspaceManifest({
         workspaceRoot: params.workspaceDirectory,
-        safeFilterPolicy: inferWorkspaceManifestSafeFilterPolicyFromEntries(params.expectedManifest.entries),
+        safeFilterPolicy: await resolveWorkspaceManifestSafeFilterPolicyFromEntries(params.expectedManifest.entries),
     });
     const actualManifest: WorkspaceManifest = {
         entries: [...scannedManifest.entries],

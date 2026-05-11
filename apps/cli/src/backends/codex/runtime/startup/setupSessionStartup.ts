@@ -33,6 +33,7 @@ export async function setupCodexSessionStartup<TMessageQueue>(params: Readonly<{
     messageQueue: TMessageQueue;
     messageBuffer: MessageBuffer;
     initialPermissionMode: PermissionMode;
+    codexArgs?: readonly string[];
     nowMs: () => number;
     timing: StartupTiming | null;
     requireCodexTerminalRuntimeLaunch: () => Promise<
@@ -43,6 +44,7 @@ export async function setupCodexSessionStartup<TMessageQueue>(params: Readonly<{
             messageQueue: TMessageQueue;
             permissionMode: PermissionMode;
             resumeId: string | null;
+            codexArgs?: readonly string[];
         }>) => Promise<CodexTerminalRuntimeLaunchResult>
     >;
     logger: { debug: (message: string, ...args: unknown[]) => void };
@@ -90,6 +92,7 @@ export async function setupCodexSessionStartup<TMessageQueue>(params: Readonly<{
         timing: params.timing,
         messageQueue: params.messageQueue as never,
         initialPermissionMode: params.initialPermissionMode,
+        codexArgs: params.codexArgs,
         requireCodexTerminalRuntimeLaunch: params.requireCodexTerminalRuntimeLaunch,
     });
 

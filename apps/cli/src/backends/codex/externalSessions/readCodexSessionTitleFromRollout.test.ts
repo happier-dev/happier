@@ -89,6 +89,8 @@ describe('readCodexSessionTitleFromRollout', () => {
           payload: {
             type: 'function_call',
             call_id: 'call-title',
+            server: 'happier',
+            tool: 'change_title',
             name: 'mcp__happier__change_title',
             arguments: JSON.stringify({ title: 'Canonical MCP title' }),
           },
@@ -118,6 +120,8 @@ describe('readCodexSessionTitleFromRollout', () => {
           payload: {
             type: 'function_call',
             call_id: 'call-central-title',
+            server: 'happier',
+            tool: 'session_title_set',
             name: 'mcp__happier__session_title_set',
             arguments: JSON.stringify({ title: 'Central Alias Title' }),
           },
@@ -127,6 +131,95 @@ describe('readCodexSessionTitleFromRollout', () => {
     );
 
     await expect(readCodexSessionTitleFromRollout(filePath)).resolves.toBe('Central Alias Title');
+  });
+
+  it('ignores non-centralized change_title aliases when reading rollout titles', async () => {
+    const filePath = join(tmpdir(), `codex-title-collision-${Date.now()}-${Math.random()}.jsonl`);
+    await writeFile(
+      filePath,
+      [
+        responseItemLine({
+          timestamp: '2026-03-06T00:00:01.000Z',
+          payload: {
+            type: 'function_call',
+            call_id: 'call-colliding-title',
+            name: 'mcp__happy__change_title',
+            arguments: JSON.stringify({ title: 'Colliding Alias Title' }),
+          },
+        }),
+        responseItemLine({
+          timestamp: '2026-03-06T00:00:02.000Z',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Fallback user task' }],
+          },
+        }),
+      ].join('\n'),
+      'utf8',
+    );
+
+    await expect(readCodexSessionTitleFromRollout(filePath)).resolves.toBe('Fallback user task');
+  });
+
+  it('requires the rollout source envelope to identify the Happier MCP server before adopting title tool aliases', async () => {
+    const filePath = join(tmpdir(), `codex-title-source-collision-${Date.now()}-${Math.random()}.jsonl`);
+    await writeFile(
+      filePath,
+      [
+        responseItemLine({
+          timestamp: '2026-03-06T00:00:01.000Z',
+          payload: {
+            type: 'function_call',
+            call_id: 'call-spoofed-title',
+            server: 'acme',
+            tool: 'change_title',
+            name: 'mcp__happier__change_title',
+            arguments: JSON.stringify({ title: 'Spoofed Title' }),
+          },
+        }),
+        responseItemLine({
+          timestamp: '2026-03-06T00:00:02.000Z',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Fallback user task after spoofed title' }],
+          },
+        }),
+      ].join('\n'),
+      'utf8',
+    );
+
+    await expect(readCodexSessionTitleFromRollout(filePath)).resolves.toBe('Fallback user task after spoofed title');
+  });
+
+  it('ignores bare change_title function calls when reading rollout titles', async () => {
+    const filePath = join(tmpdir(), `codex-title-bare-change-title-${Date.now()}-${Math.random()}.jsonl`);
+    await writeFile(
+      filePath,
+      [
+        responseItemLine({
+          timestamp: '2026-03-06T00:00:01.000Z',
+          payload: {
+            type: 'function_call',
+            call_id: 'call-bare-title',
+            name: 'change_title',
+            arguments: JSON.stringify({ title: 'Bare Function Title' }),
+          },
+        }),
+        responseItemLine({
+          timestamp: '2026-03-06T00:00:02.000Z',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'Fallback user task wins' }],
+          },
+        }),
+      ].join('\n'),
+      'utf8',
+    );
+
+    await expect(readCodexSessionTitleFromRollout(filePath)).resolves.toBe('Fallback user task wins');
   });
 
   it('exposes rollout title adoption through the Codex session-state facet', async () => {

@@ -1,6 +1,6 @@
 import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '@/daemon/types';
-import { buildSessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import { buildVendorSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 import { resolveConfiguredClaudeConfigDir } from '../externalSessions/resolveClaudeConfigDir';
 import { resolveClaudeProjectId } from '../utils/path';
@@ -32,7 +32,7 @@ export function buildClaudeRuntimeLocalHandoffMetadata(params: Readonly<{
 
     Object.assign(
         runtimeLocalMetadata,
-        buildSessionStateFieldMetadataPatch('identity.vendorSessionId', {
+        buildVendorSessionIdSessionMetadata({
             metadataKey: 'claudeSessionId',
             value: vendorResumeId,
         }),

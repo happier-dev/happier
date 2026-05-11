@@ -24,6 +24,7 @@ export function handleSessionNewMessageUpdate(params: {
     pendingMessages: UserMessage[];
     shouldDeliverUserMessageToAgentQueue?: (message: UserMessage, update: Update) => boolean;
     emit: (event: 'user-message' | 'message', payload: unknown) => void;
+    observeMessage?: (message: unknown, seq: number | null) => void;
     debug: (message: string, data?: unknown) => void;
     debugLargeJson: (message: string, data: unknown) => void;
 }): {
@@ -129,6 +130,10 @@ export function handleSessionNewMessageUpdate(params: {
         // Attach server timestamps so downstream consumers can make clock-safe decisions.
         createdAt: typeof params.update.createdAt === 'number' ? params.update.createdAt : undefined,
     };
+    params.observeMessage?.(
+        bodyWithTransportFields,
+        typeof msgSeq === 'number' && Number.isFinite(msgSeq) ? msgSeq : null,
+    );
 
     params.debugLargeJson('[SOCKET] [UPDATE] Received update:', bodyWithTransportFields);
     let shouldMarkReceivedMessageId = !hasMessageId;

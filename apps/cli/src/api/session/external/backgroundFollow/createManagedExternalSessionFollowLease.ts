@@ -1,6 +1,7 @@
 import type { ExternalSessionTranscriptDeltaEphemeral } from '@happier-dev/protocol';
 
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
+import { resolveReadyNotificationAssistantText } from '@/agent/runtime/notifications/resolveReadyNotificationAssistantText';
 import type { ExternalSessionFollowLease, ExternalSessionFollowLeaseReason } from '@/session/external/providerOps';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { Credentials } from '@/persistence';
@@ -118,7 +119,9 @@ export async function createManagedExternalSessionFollowLease(params: Readonly<{
             }).catch(() => undefined);
         }
 
-        const previewText = buildExternalSessionReadyNotificationPreview(update.items);
+        const previewText = resolveReadyNotificationAssistantText({
+            explicitAssistantText: buildExternalSessionReadyNotificationPreview(update.items),
+        });
         if (!previewText) {
             return;
         }

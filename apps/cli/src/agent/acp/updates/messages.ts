@@ -1,8 +1,74 @@
 import { logger } from '@/ui/logger';
 
+import { extractAcpMediaContentBlocks } from '../media/extractAcpMediaContentBlocks';
 import { extractTextFromContentBlock } from './content';
 import { DEFAULT_IDLE_TIMEOUT_MS, type HandlerContext, type HandlerResult, type SessionUpdate } from './types';
 import { resolvePostToolCallIdleTimeoutMs } from '../timeouts/acpBackendTimeouts';
+
+let acpMessageMediaSequence = 0;
+
+function nextAcpMessageMediaId(): string {
+  acpMessageMediaSequence += 1;
+  return `acp-media-message-${acpMessageMediaSequence}`;
+}
+
+function extractTextFromMessageContent(content: unknown): string | null {
+  const direct = extractTextFromContentBlock(content);
+  if (direct !== null) return direct;
+
+  const items =
+    Array.isArray(content)
+      ? content
+      : (content && typeof content === 'object' && !Array.isArray(content) && Array.isArray((content as { content?: unknown }).content)
+        ? (content as { content: unknown[] }).content
+        : null);
+  if (!items) return null;
+
+  const parts: string[] = [];
+  for (const item of items) {
+    if (typeof item === 'string') {
+      parts.push(item);
+      continue;
+    }
+    const text = extractTextFromContentBlock(item);
+    if (typeof text === 'string') parts.push(text);
+  }
+  return parts.length > 0 ? parts.join('') : null;
+}
+
+function extractSessionMediaFromMessageContent(update: SessionUpdate): ReturnType<typeof extractAcpMediaContentBlocks> {
+  const providerEventId = typeof update.id === 'string' ? update.id : nextAcpMessageMediaId();
+  return extractAcpMediaContentBlocks(update.content, {
+    originSource: 'acp-content',
+    providerEventId,
+  });
+}
+
+function emitSessionMediaExtractionResult(
+  result: ReturnType<typeof extractAcpMediaContentBlocks>,
+  ctx: HandlerContext,
+): boolean {
+  if (result.media.length > 0) {
+    ctx.emit({
+      type: 'event',
+      name: 'session_media',
+      payload: {
+        localId: nextAcpMessageMediaId(),
+        role: 'output',
+        category: 'generated',
+        media: result.media,
+      },
+    });
+  }
+  if (result.diagnostics.length > 0) {
+    ctx.emit({
+      type: 'event',
+      name: 'session_media_diagnostics',
+      payload: { diagnostics: result.diagnostics },
+    });
+  }
+  return result.media.length > 0 || result.diagnostics.length > 0;
+}
 
 /**
  * Handle agent_message_chunk update (text output from model).
@@ -11,10 +77,15 @@ export function handleAgentMessageChunk(
   update: SessionUpdate,
   ctx: HandlerContext,
 ): HandlerResult {
-  const text = extractTextFromContentBlock(update.content);
-  if (typeof text !== 'string' || text.length === 0) return { handled: false };
+  const text = extractTextFromMessageContent(update.content);
+  const mediaResult = extractSessionMediaFromMessageContent(update);
+  const mediaHandled = mediaResult.media.length > 0 || mediaResult.diagnostics.length > 0;
+  if (typeof text !== 'string' || text.length === 0) {
+    if (mediaHandled) emitSessionMediaExtractionResult(mediaResult, ctx);
+    return { handled: mediaHandled };
+  }
   // Some ACP providers emit whitespace-only chunks (often "\n") as keepalives.
-  // Dropping these avoids spammy blank lines and reduces unnecessary UI churn.
+  // Dropping these avoids spammy blank lines and reduces unnecessary UI churn while preserving media diagnostics.
   if (!text.trim()) return { handled: true };
 
   logger.debug(`[AcpBackend] Received message chunk (length: ${text.length})`);
@@ -22,6 +93,7 @@ export function handleAgentMessageChunk(
     type: 'model-output',
     textDelta: text,
   });
+  emitSessionMediaExtractionResult(mediaResult, ctx);
 
   // Reset idle timeout - more chunks are coming.
   ctx.clearIdleTimeout();

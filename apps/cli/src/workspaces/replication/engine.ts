@@ -31,7 +31,7 @@ import { listWorkspaceReplicationJobs } from './engine/listWorkspaceReplicationJ
 import { executeWorkspaceReplicationJobWithLocalRuntime } from './orchestration/jobExecution/localRuntime';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import type { WorkspaceReplicationJobRecord } from './jobs/workspaceReplicationJobStore';
-import { inferWorkspaceManifestSafeFilterPolicyFromEntries } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
+import { resolveWorkspaceManifestSafeFilterPolicyFromEntries } from '@/scm/workspace/workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 
 type ReadonlyWorkspaceManifest = Readonly<{
     entries: readonly WorkspaceManifest['entries'][number][];
@@ -113,7 +113,7 @@ export function createWorkspaceReplicationEngine(
         }>): Promise<WorkspaceReplicationPlanResult> {
             const relationship = await stores.relationships.ensureRelationship(params.scope);
             const baseline = await stores.baselines.load(params.scope);
-            const safeFilterPolicy = inferWorkspaceManifestSafeFilterPolicyFromEntries(
+            const safeFilterPolicy = await resolveWorkspaceManifestSafeFilterPolicyFromEntries(
                 params.sourceManifest.entries,
                 input.scmRegistry,
             );

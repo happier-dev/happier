@@ -1,15 +1,17 @@
 import type { AccountSettings } from '@happier-dev/protocol';
 
 import { emitReadyIfIdle } from '@/agent/runtime/emitReadyIfIdle';
-import type { MessageBuffer } from '@/ui/ink/messageBuffer';
+import type { TurnAssistantTextSnapshotStore } from '@/api/session/turns/assistantTextSnapshot';
 
-import { getLatestAssistantMessagePreview, getSessionNotificationTitle } from './readyNotificationContext';
+import { getSessionNotificationTitle } from './readyNotificationContext';
+import { resolveReadyNotificationAssistantText } from './resolveReadyNotificationAssistantText';
 import { sendReadyWithPushNotification } from './sendReadyWithPushNotification';
 
 type ReadyNotificationSession = Readonly<{
   sessionId: string;
   sendSessionEvent: (event: { type: 'ready' }) => void;
   getMetadataSnapshot?: () => unknown;
+  getTurnAssistantTextSnapshotStore?: () => TurnAssistantTextSnapshotStore;
 }>;
 
 type ReadyNotificationPushSender = Parameters<typeof sendReadyWithPushNotification>[0]['pushSender'];
@@ -19,7 +21,7 @@ type ReadyNotificationDispatcherParams = Readonly<{
   pushSender: ReadyNotificationPushSender | null;
   waitingForCommandLabel: string;
   logPrefix: string;
-  messageBuffer?: Pick<MessageBuffer, 'getMessages'>;
+  turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore | null;
   includeAssistantPreviewText?: boolean;
   shouldSendPush?: () => boolean;
   accountSettings?: AccountSettings | null;
@@ -56,7 +58,12 @@ export function createReadyNotificationDispatcher(
           ? () => params.session.getMetadataSnapshot?.()
           : null,
       ),
-      assistantPreviewText: params.messageBuffer ? getLatestAssistantMessagePreview(params.messageBuffer) : null,
+      assistantPreviewText: resolveReadyNotificationAssistantText({
+        includeAssistantPreviewText: params.includeAssistantPreviewText,
+        snapshotStore: params.turnAssistantTextSnapshotStore
+          ?? params.session.getTurnAssistantTextSnapshotStore?.()
+          ?? null,
+      }),
       accountSettings: params.accountSettings ?? null,
       settingsSecretsReadKeys: params.settingsSecretsReadKeys,
       includeAssistantPreviewText: params.includeAssistantPreviewText,

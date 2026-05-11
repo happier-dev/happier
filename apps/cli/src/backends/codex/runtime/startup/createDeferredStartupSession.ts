@@ -133,6 +133,7 @@ export async function createCodexDeferredStartupSession(params: Readonly<{
             messageQueue: CodexRuntimeFactoryParams['messageQueue'];
             permissionMode: PermissionMode;
             resumeId: string | null;
+            codexArgs?: readonly string[];
         }, CodexTerminalRuntimeLaunchResult>('codex');
         const startupMessageQueue = new MessageQueue2(() => 'codex-terminal-startup');
         bootstrap.markVendorSpawnInvoked();
@@ -143,6 +144,7 @@ export async function createCodexDeferredStartupSession(params: Readonly<{
             messageQueue: startupMessageQueue as unknown as NonNullable<CodexRuntimeFactoryParams['messageQueue']>,
             permissionMode: initialPermissionMode,
             resumeId: typeof opts.resume === 'string' && opts.resume.trim().length > 0 ? opts.resume.trim() : null,
+            ...(opts.codexArgs && opts.codexArgs.length > 0 ? { codexArgs: opts.codexArgs } : {}),
         });
     }
 

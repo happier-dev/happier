@@ -13,7 +13,6 @@ export function createCliActionExecutorHarness(
 }> {
   const deps: ActionExecutorDeps = {
     ...createCliActionDeps(params),
-    ...(overrides ?? {}),
     isActionEnabled: (id, ctx) => isActionEnabledByEnv(id, {
       surface: ctx.surface ?? 'cli',
       placement: ctx.placement ?? null,
@@ -21,6 +20,7 @@ export function createCliActionExecutorHarness(
     isActionApprovalRequired: (id, ctx) => isActionApprovalRequiredByEnv(id, {
       surface: ctx.surface ?? null,
     }),
+    ...(overrides ?? {}),
   };
 
   return {

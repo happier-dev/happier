@@ -5,10 +5,8 @@ import type {
   PluginExecutionRunProfileContributionV2,
   PluginHookContributionV2,
   PluginLifecycleHandlerContributionV2,
-  PluginMcpBackendClientContributionV1,
   PluginMcpDiscoveryProviderContributionV1,
   PluginMcpServerContributionV1,
-  PluginMcpToolContributionV1,
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
   PluginResourceContributionV2,
@@ -62,8 +60,6 @@ export type PluginContributionRegistry = Readonly<{
   notificationChannels: readonly PluginOwnedContribution<PluginNotificationChannelContributionV2>[];
   executionRunProfiles: readonly PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[];
   mcpServers: readonly PluginOwnedContribution<PluginMcpServerContributionV1>[];
-  mcpBackendClients: readonly PluginOwnedContribution<PluginMcpBackendClientContributionV1>[];
-  mcpTools: readonly PluginOwnedContribution<PluginMcpToolContributionV1>[];
   mcpDiscoveryProviders: readonly PluginOwnedContribution<PluginMcpDiscoveryProviderContributionV1>[];
   scmHostingProviders: readonly PluginOwnedContribution<ScmHostingProviderContribution>[];
   scmBackends: readonly PluginOwnedContribution<ScmBackendContribution>[];
@@ -241,8 +237,6 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const notificationChannels: PluginOwnedContribution<PluginNotificationChannelContributionV2>[] = [];
   const executionRunProfiles: PluginOwnedContribution<PluginExecutionRunProfileContributionV2>[] = [];
   const mcpServers: PluginOwnedContribution<PluginMcpServerContributionV1>[] = [];
-  const mcpBackendClients: PluginOwnedContribution<PluginMcpBackendClientContributionV1>[] = [];
-  const mcpTools: PluginOwnedContribution<PluginMcpToolContributionV1>[] = [];
   const mcpDiscoveryProviders: PluginOwnedContribution<PluginMcpDiscoveryProviderContributionV1>[] = [];
   const scmHostingProviders: PluginOwnedContribution<ScmHostingProviderContribution>[] = [];
   const scmBackends: PluginOwnedContribution<ScmBackendContribution>[] = [];
@@ -433,30 +427,6 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginMcpBackendClientContributionV1>(mcp, 'backendClients')) {
-      mcpBackendClients.push({
-        pluginId: plugin.pluginId,
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        manifestDigest: plugin.manifestDigest,
-        daemonEntryPath: plugin.daemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition,
-      });
-    }
-
-    for (const definition of readContributionArray<PluginMcpToolContributionV1>(mcp, 'tools')) {
-      mcpTools.push({
-        pluginId: plugin.pluginId,
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        manifestDigest: plugin.manifestDigest,
-        daemonEntryPath: plugin.daemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition,
-      });
-    }
-
     for (const definition of readContributionArray<PluginMcpDiscoveryProviderContributionV1>(mcp, 'discoveryProviders')) {
       mcpDiscoveryProviders.push({
         pluginId: plugin.pluginId,
@@ -559,8 +529,6 @@ export function buildPluginContributionRegistry(params: Readonly<{
     notificationChannels: Object.freeze(notificationChannels),
     executionRunProfiles: Object.freeze(executionRunProfiles),
     mcpServers: Object.freeze(mcpServers),
-    mcpBackendClients: Object.freeze(mcpBackendClients),
-    mcpTools: Object.freeze(mcpTools),
     mcpDiscoveryProviders: Object.freeze(mcpDiscoveryProviders),
     scmHostingProviders: Object.freeze(scmHostingProviders),
     scmBackends: Object.freeze(scmBackends),

@@ -22,7 +22,7 @@ import { CodexTerminalRuntimeMirror } from './codexTerminalRuntimeMirror';
 import { discoverCodexRolloutFileOnce } from '../rollout/discovery/rolloutDiscovery';
 import { resolveCodexMcpPolicyForPermissionMode } from '../utils/permissionModePolicy';
 
-export type CodexTerminalRuntimeLaunchResult = { type: 'switch'; resumeId: string } | { type: 'exit'; code: number };
+export type CodexTerminalRuntimeLaunchResult = { type: 'switch'; resumeId: string | null } | { type: 'exit'; code: number };
 
 export type CodexRolloutDiscoveryConfig = Readonly<{
   /**
@@ -79,6 +79,7 @@ async function resolveCodexTuiInvocation(opts: {
   cwd: string;
   resumeId?: string | null;
   permissionMode: PermissionMode;
+  codexArgs?: readonly string[];
 }): Promise<{ command: string; args: string[] }> {
   return await resolveCodexCliInvocation({
     args: buildCodexTuiArgs(opts),
@@ -120,7 +121,12 @@ function buildCodexTuiChildEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function buildCodexTuiArgs(opts: { cwd: string; resumeId?: string | null; permissionMode: PermissionMode }): string[] {
+function buildCodexTuiArgs(opts: {
+  cwd: string;
+  resumeId?: string | null;
+  permissionMode: PermissionMode;
+  codexArgs?: readonly string[];
+}): string[] {
   const args: string[] = [];
 
   const resumeId = typeof opts.resumeId === 'string' && opts.resumeId.trim().length > 0 ? opts.resumeId.trim() : null;
@@ -141,6 +147,8 @@ function buildCodexTuiArgs(opts: { cwd: string; resumeId?: string | null; permis
     args.push('--sandbox', sandbox);
   }
 
+  args.push(...(opts.codexArgs ?? []));
+
   return args;
 }
 
@@ -156,6 +164,7 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
   messageQueue: MessageQueue2<TMode>;
   permissionMode?: PermissionMode;
   resumeId?: string | null;
+  codexArgs?: readonly string[];
   debugMirroring?: boolean;
   rolloutDiscovery?: Partial<CodexRolloutDiscoveryConfig>;
 }): Promise<CodexTerminalRuntimeLaunchResult> {
@@ -186,6 +195,7 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
 
   let exitReason: CodexTerminalRuntimeLaunchResult | null = null;
   let switchRequested = false;
+  const hasNativeCodexArgs = (opts.codexArgs?.length ?? 0) > 0;
   let switchNotified = false;
   let mirror: CodexTerminalRuntimeMirror | null = null;
   let child: ReturnType<typeof spawn> | null = null;
@@ -210,6 +220,20 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
     if (!next) return;
     knownResumeId.value = next;
     pendingMetadataSessionId.value = next;
+  };
+
+  const stopChildIfRunning = (): void => {
+    if (!child || child.exitCode !== null) return;
+    childStopRequested = true;
+    if (isWindows) {
+      void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
+      return;
+    }
+    try {
+      child.kill('SIGTERM');
+    } catch {
+      // ignore
+    }
   };
 
   const maybePublishPendingCodexSessionId = (): void => {
@@ -312,6 +336,7 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
       cwd: opts.path,
       resumeId: opts.resumeId,
       permissionMode: opts.permissionMode ?? 'default',
+      codexArgs: opts.codexArgs,
     });
 
     const invocation = resolveWindowsCommandInvocation({
@@ -418,6 +443,15 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
       });
       if (candidateFile) break;
 
+      if (switchRequested && !opts.resumeId && !hasNativeCodexArgs && now >= deadline) {
+        logger.debug('[codex] switch: starting fresh remote because no local rollout was discovered', {
+          elapsedSinceStartMs: now - startedAtMs,
+        });
+        exitReason = { type: 'switch', resumeId: null };
+        stopChildIfRunning();
+        break;
+      }
+
       const intervalMs =
         now < deadline || switchRequested
           ? rolloutDiscovery.initialPollIntervalMs
@@ -434,6 +468,12 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
     }
 
     if (!candidateFile) {
+      if (exitReason) {
+        await childExitPromise.catch(() => undefined);
+        publishRemoteControlState('switch');
+        return exitReason;
+      }
+
       logger.debug('[codex] rollout discovery: aborted without candidate', {
         elapsedMs: Date.now() - startedAtMs,
         childExited,
@@ -478,18 +518,7 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
         // We can now safely switch because the session id is known.
         exitReason = { type: 'switch', resumeId };
       }
-      if (child && child.exitCode === null) {
-        childStopRequested = true;
-        if (isWindows) {
-          void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-        } else {
-          try {
-            child.kill('SIGTERM');
-          } catch {
-            // ignore
-          }
-        }
-      }
+      stopChildIfRunning();
     }
 
     const codexHome = typeof process.env.CODEX_HOME === 'string' && process.env.CODEX_HOME.trim().length > 0
@@ -542,18 +571,7 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
               elapsedSinceStartMs: Date.now() - startedAtMs,
             });
             exitReason = { type: 'switch', resumeId };
-            if (child && child.exitCode === null) {
-              childStopRequested = true;
-              if (isWindows) {
-                void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-              } else {
-                try {
-                  child.kill('SIGTERM');
-                } catch {
-                  // ignore
-                }
-              }
-            }
+            stopChildIfRunning();
           }
           await delay(50);
         }
@@ -588,17 +606,6 @@ export async function launchCodexTerminalRuntime<TMode>(opts: {
     } catch {
       // ignore
     }
-    if (child && child.exitCode === null) {
-      childStopRequested = true;
-      if (isWindows) {
-        void killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-      } else {
-        try {
-          child.kill('SIGTERM');
-        } catch {
-          // ignore
-        }
-      }
-    }
+    stopChildIfRunning();
   }
 }

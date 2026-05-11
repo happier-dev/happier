@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
-import { defaultScmBackendRegistry, resolveScmBackendRegistry } from '../scmBackendCatalog';
+import { resolveScmBackendRegistry } from '../scmBackendCatalog';
 import type { ScmBackendRegistry } from '../registry';
 import { resolveScmSelection } from '../resolveScmSelection';
 import {
@@ -22,7 +22,7 @@ import {
 } from './workspaceExportFallbackEntries';
 import {
     DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
-    inferWorkspaceManifestSafeFilterPolicyFromEntries,
+    resolveWorkspaceManifestSafeFilterPolicyFromEntries,
     type WorkspaceManifestSafeFilterPolicy,
 } from './workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 import {
@@ -55,6 +55,7 @@ async function resolveWorkspaceTransferStateWithScmWorkspace(
 ): Promise<Readonly<{
     transfer: ScmWorkspaceIntegrationWorkspaceTransferResult | null;
     isNestedRepoSourcePath: boolean;
+    registry: ScmBackendRegistry;
 }>> {
     const registry = await resolveScmBackendRegistry(input.registry);
     const resolved = await resolveScmSelection({
@@ -66,6 +67,7 @@ async function resolveWorkspaceTransferStateWithScmWorkspace(
         return {
             transfer: null,
             isNestedRepoSourcePath: false,
+            registry,
         };
     }
 
@@ -102,6 +104,7 @@ async function resolveWorkspaceTransferStateWithScmWorkspace(
         return {
             transfer,
             isNestedRepoSourcePath,
+            registry,
         };
     }
 
@@ -113,6 +116,7 @@ async function resolveWorkspaceTransferStateWithScmWorkspace(
         return {
             transfer: null,
             isNestedRepoSourcePath,
+            registry,
         };
     }
 
@@ -122,6 +126,7 @@ async function resolveWorkspaceTransferStateWithScmWorkspace(
             metadata,
         }),
         isNestedRepoSourcePath,
+        registry,
     };
 }
 
@@ -129,7 +134,8 @@ export function classifyPortableWorkspaceTransferEntryWithScmWorkspace(input: Re
     entry: ScmWorkspaceIntegrationWorkspaceTransferEntry;
     registry?: ScmBackendRegistry;
 }>): ScmWorkspaceIntegrationPortableWorkspacePathClassification {
-    const registry = input.registry ?? defaultScmBackendRegistry;
+    const registry = input.registry;
+    if (!registry) return 'unknown';
     const transferEntry = createScmWorkspaceIntegrationWorkspaceTransferEntry(input.entry);
 
     for (const backend of registry.listBackends()) {
@@ -155,8 +161,9 @@ export async function assertPortableWorkspaceTransferEntriesWithScmWorkspace(inp
     entries: readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[];
     registry?: ScmBackendRegistry;
 }>): Promise<void> {
+    const registry = await resolveScmBackendRegistry(input.registry);
     for (const entry of input.entries) {
-        if (classifyPortableWorkspaceTransferEntryWithScmWorkspace({ entry, registry: input.registry }) === 'non_portable') {
+        if (classifyPortableWorkspaceTransferEntryWithScmWorkspace({ entry, registry }) === 'non_portable') {
             throw buildNonPortableWorkspacePathError(entry.relativePath);
         }
     }
@@ -258,12 +265,12 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
         const entries = resolved.transfer.entries.map((entry) => createScmWorkspaceIntegrationWorkspaceTransferEntry(entry));
         await assertPortableWorkspaceTransferEntriesWithScmWorkspace({
             entries,
-            registry: input.registry,
+            registry: resolved.registry,
         });
         return {
             entries,
             workspaceIntegrationMetadata: resolved.transfer.metadata ?? null,
-            safeFilterPolicy: inferWorkspaceManifestSafeFilterPolicyFromEntries(entries, input.registry),
+            safeFilterPolicy: await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry),
             isNestedRepoSourcePath: resolved.isNestedRepoSourcePath,
         };
     }
@@ -288,7 +295,7 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
         entries,
         workspaceIntegrationMetadata: null,
         safeFilterPolicy: entries.length > 0
-            ? inferWorkspaceManifestSafeFilterPolicyFromEntries(entries, input.registry)
+            ? await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry)
             : DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
         isNestedRepoSourcePath: resolved.isNestedRepoSourcePath,
     };

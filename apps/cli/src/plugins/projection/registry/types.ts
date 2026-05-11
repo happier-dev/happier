@@ -12,10 +12,8 @@ import type {
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
   PluginExecutionRunProfileContributionV2,
-  PluginMcpBackendClientContributionV1,
   PluginMcpDiscoveryProviderContributionV1,
   PluginMcpServerContributionV1,
-  PluginMcpToolContributionV1,
   InstallableDependencyDescriptor,
   ScmBackendContribution,
   PluginSettingsContributionV2,
@@ -308,28 +306,6 @@ export type ResolvedMcpServerContribution = Readonly<{
     definition: PluginMcpServerContributionV1;
 }>;
 
-export type ResolvedMcpBackendClientContribution = Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
-    pluginId?: string;
-    manifestPath?: string;
-    manifestDigest?: string;
-    daemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-    definition: PluginMcpBackendClientContributionV1;
-}>;
-
-export type ResolvedMcpToolContribution = Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
-    pluginId?: string;
-    manifestPath?: string;
-    manifestDigest?: string;
-    daemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-    definition: PluginMcpToolContributionV1;
-}>;
-
 export type ResolvedMcpDiscoveryProviderContribution = Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
@@ -440,8 +416,6 @@ export type ResolvedContributionInputs = Readonly<{
     notificationChannels?: readonly ResolvedNotificationChannelContribution[];
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
-    mcpBackendClients?: readonly ResolvedMcpBackendClientContribution[];
-    mcpTools?: readonly ResolvedMcpToolContribution[];
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
     installables?: readonly ResolvedInstallableContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
@@ -467,8 +441,6 @@ export type ResolvedContributionRegistry = Readonly<{
     notificationChannels?: readonly ResolvedNotificationChannelContribution[];
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
-    mcpBackendClients?: readonly ResolvedMcpBackendClientContribution[];
-    mcpTools?: readonly ResolvedMcpToolContribution[];
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
     installables?: readonly ResolvedInstallableContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];

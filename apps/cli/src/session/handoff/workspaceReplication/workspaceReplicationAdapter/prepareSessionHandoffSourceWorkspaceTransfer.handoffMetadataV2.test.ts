@@ -89,6 +89,78 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
     }
   });
 
+  it('includes referenced ignored session media paths from transcript metadata in workspace replication', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-source-transfer-'));
+    const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-handoff-source-root-'));
+    try {
+      await mkdir(join(sourceRootPath, '.happier', 'uploads', 'generated', 'session-1', 'message-1'), { recursive: true });
+      await mkdir(join(sourceRootPath, '.happier', 'uploads', 'generated', 'session-1', 'message-2'), { recursive: true });
+      await writeFile(join(sourceRootPath, '.gitignore'), '.happier/uploads/**\n');
+      await writeFile(join(sourceRootPath, 'README.md'), 'hello\n');
+      await writeFile(
+        join(sourceRootPath, '.happier', 'uploads', 'generated', 'session-1', 'message-1', 'image[1].png'),
+        'referenced\n',
+      );
+      await writeFile(
+        join(sourceRootPath, '.happier', 'uploads', 'generated', 'session-1', 'message-2', 'unrelated.png'),
+        'unrelated\n',
+      );
+      await runGit(sourceRootPath, ['init']);
+      await configureGitRepo(sourceRootPath);
+      await runGit(sourceRootPath, ['add', 'README.md', '.gitignore']);
+      await runGit(sourceRootPath, ['commit', '-m', 'initial']);
+
+      const workspaceTransfer: SessionHandoffWorkspaceTransfer = {
+        enabled: true,
+        strategy: 'transfer_snapshot',
+        conflictPolicy: 'replace_existing',
+        includeIgnoredMode: 'exclude',
+        ignoredIncludeGlobs: [],
+      };
+
+      const result = await prepareSessionHandoffSourceWorkspaceTransfer({
+        handoffId: 'handoff_1',
+        activeServerDir,
+        negotiatedTransportStrategy: 'server_routed_stream',
+        workspaceTransfer,
+        sourceRootPath,
+        sessionTranscriptRecords: [
+          {
+            meta: {
+              happierMedia: {
+                kind: 'session_media.v1',
+                payload: {
+                  media: [
+                    {
+                      id: 'media-1',
+                      role: 'output',
+                      category: 'generated',
+                      mediaKind: 'image',
+                      mimeType: 'image/png',
+                      name: 'image.png',
+                      path: '.happier/uploads/generated/session-1/message-1/image[1].png',
+                      sizeBytes: 11,
+                      origin: { source: 'provider-generated' },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      } as Parameters<typeof prepareSessionHandoffSourceWorkspaceTransfer>[0] & {
+        sessionTranscriptRecords: readonly unknown[];
+      });
+
+      const manifestPaths = result.workspaceReplicationMetadata?.manifest.entries.map((entry) => entry.relativePath) ?? [];
+      expect(manifestPaths).toContain('.happier/uploads/generated/session-1/message-1/image[1].png');
+      expect(manifestPaths).not.toContain('.happier/uploads/generated/session-1/message-2/unrelated.png');
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+      await rm(sourceRootPath, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('includes endpoint candidates in the manifest transfer publication when negotiated transport is direct_peer', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-source-transfer-'));
     const sourceRootPath = await mkdtemp(join(tmpdir(), 'happier-handoff-source-root-'));

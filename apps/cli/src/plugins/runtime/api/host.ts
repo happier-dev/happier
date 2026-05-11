@@ -12,10 +12,8 @@ import type {
     PluginApiHostPolicy,
     PluginApiHookRegistration,
     PluginApiLifecycleHandlerRegistration,
-    PluginApiMcpBackendClientRegistration,
     PluginApiMcpDiscoveryProviderRegistration,
     PluginApiMcpServerRegistration,
-    PluginApiMcpToolRegistration,
     PluginApiNotificationCategoryRegistration,
     PluginApiNotificationChannelRegistration,
     PluginApiRequestInterceptorRegistration,
@@ -30,13 +28,6 @@ import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnos
 import { createPluginDisposableRegistry } from '../lifecycle/disposables';
 import { isPluginApiScmBackendRegistration } from './scmBackends';
 import { isPluginApiScmHostingProviderRegistration } from './scmHostingProviders';
-import {
-    claimPluginMcpToolNamespacePrefix,
-    claimPluginMcpToolNamespace,
-    createPluginMcpToolNamespaceRegistry,
-    releasePluginMcpToolNamespacePrefix,
-    releasePluginMcpToolNamespace,
-} from '@/mcp/pluginMcpToolNamespaces';
 
 const NOOP_DISPOSABLE: PluginDisposable = () => undefined;
 
@@ -128,10 +119,7 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
     const scmHostingProviders: PluginApiScmHostingProviderRegistration[] = [];
     const scmBackends: PluginApiScmBackendRegistration[] = [];
     const mcpServers: PluginApiMcpServerRegistration[] = [];
-    const mcpBackendClients: PluginApiMcpBackendClientRegistration[] = [];
-    const mcpTools: PluginApiMcpToolRegistration[] = [];
     const mcpDiscoveryProviders: PluginApiMcpDiscoveryProviderRegistration[] = [];
-    const mcpToolNamespaces = createPluginMcpToolNamespaceRegistry();
     const requestInterceptors: PluginApiRequestInterceptorRegistration[] = [];
     const hooks: PluginApiHookRegistration[] = [];
     const lifecycleHandlers: PluginApiLifecycleHandlerRegistration[] = [];
@@ -561,72 +549,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 }
             });
         },
-        registerMcpBackendClient(registration) {
-            const blocked = isRegistrationAllowed({
-                family: 'mcp',
-                methodName: 'registerMcpBackendClient',
-            });
-            if (blocked) {
-                return blocked;
-            }
-            assertMcpRuntimeRegistrationSecretFree(registration);
-            claimPluginMcpToolNamespacePrefix(mcpToolNamespaces, {
-                pluginId: policy?.pluginId ?? '',
-                namespace: registration.toolNamespace,
-                registrationId: registration.id,
-            });
-            if (mcpBackendClients.some((entry) => entry.id === registration.id)) {
-                releasePluginMcpToolNamespacePrefix(mcpToolNamespaces, {
-                    pluginId: policy?.pluginId ?? '',
-                    namespace: registration.toolNamespace,
-                    registrationId: registration.id,
-                });
-                appendDiagnostic({
-                    code: 'plugin_manifest_semantic_invalid',
-                    message: `${formatPluginLabel(policy?.pluginId)} registered duplicate MCP backend client '${registration.id}'`,
-                });
-                throw new Error(`Duplicate MCP backend client '${registration.id}'`);
-            }
-            mcpBackendClients.push(registration);
-            return addDisposable(() => {
-                const index = mcpBackendClients.indexOf(registration);
-                if (index >= 0) {
-                    mcpBackendClients.splice(index, 1);
-                }
-                releasePluginMcpToolNamespacePrefix(mcpToolNamespaces, {
-                    pluginId: policy?.pluginId ?? '',
-                    namespace: registration.toolNamespace,
-                    registrationId: registration.id,
-                });
-            });
-        },
-        registerMcpTool(registration) {
-            const blocked = isRegistrationAllowed({
-                family: 'mcp',
-                methodName: 'registerMcpTool',
-            });
-            if (blocked) {
-                return blocked;
-            }
-            assertMcpRuntimeRegistrationSecretFree(registration);
-            claimPluginMcpToolNamespace(mcpToolNamespaces, {
-                pluginId: policy?.pluginId ?? '',
-                toolName: registration.name,
-                registrationId: registration.id,
-            });
-            mcpTools.push(registration);
-            return addDisposable(() => {
-                const index = mcpTools.indexOf(registration);
-                if (index >= 0) {
-                    mcpTools.splice(index, 1);
-                }
-                releasePluginMcpToolNamespace(mcpToolNamespaces, {
-                    pluginId: policy?.pluginId ?? '',
-                    toolName: registration.name,
-                    registrationId: registration.id,
-                });
-            });
-        },
         registerMcpDiscoveryProvider(registration) {
             const blocked = isRegistrationAllowed({
                 family: 'mcp',
@@ -777,8 +699,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             scmHostingProviders: Object.freeze([...scmHostingProviders]),
             scmBackends: Object.freeze([...scmBackends]),
             mcpServers: Object.freeze([...mcpServers]),
-            mcpBackendClients: Object.freeze([...mcpBackendClients]),
-            mcpTools: Object.freeze([...mcpTools]),
             mcpDiscoveryProviders: Object.freeze([...mcpDiscoveryProviders]),
             requestInterceptors: Object.freeze([...requestInterceptors]),
             hooks: Object.freeze([...hooks]),

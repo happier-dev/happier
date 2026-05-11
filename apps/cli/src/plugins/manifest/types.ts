@@ -43,8 +43,6 @@ export type CanonicalPluginManifestContributes = Readonly<{
   executionRunProfiles?: readonly PluginExecutionRunProfileContributionV2[];
   mcp?: Readonly<{
     servers: ReadonlyArray<PluginMcpContributesV1['servers'][number]>;
-    backendClients: ReadonlyArray<PluginMcpContributesV1['backendClients'][number]>;
-    tools: ReadonlyArray<PluginMcpContributesV1['tools'][number]>;
     discoveryProviders: ReadonlyArray<PluginMcpContributesV1['discoveryProviders'][number]>;
   }>;
   scmHostingProviders?: readonly ScmHostingProviderContribution[];

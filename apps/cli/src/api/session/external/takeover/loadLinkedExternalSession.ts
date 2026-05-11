@@ -12,7 +12,7 @@ import {
   resolvePersistedCodexRuntimeIdentity,
   type CodexBackendMode,
 } from '@happier-dev/agents';
-import { applySessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import * as z from 'zod';
 
 import type { Credentials } from '@/persistence';
@@ -32,11 +32,10 @@ function applyRuntimeDescriptorSessionStateBinding(
   metadata: Readonly<Record<string, unknown>>,
   runtimeDescriptor: RuntimeDescriptorV1 | null,
 ): Record<string, unknown> {
-  return applySessionStateFieldMetadataPatch(
+  return applyRuntimeDescriptorSessionMetadata(
     metadata as Record<string, unknown>,
-    'identity.runtimeDescriptor',
     runtimeDescriptor,
-  ) as Record<string, unknown>;
+  );
 }
 
 function canonicalizeExternalSessionRuntimeDescriptorIngress(value: unknown): unknown {

@@ -2,6 +2,7 @@ import { HAPPIER_BUILT_IN_TOOLS } from './catalog';
 import { filterBuiltInToolsForSurface, listPluginActionBackedTools } from './actionToolCatalog';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
+import type { ActionId } from '@happier-dev/protocol';
 
 export type BuiltInHappierToolsSurface = 'mcp' | 'cli' | 'session_agent';
 
@@ -19,15 +20,17 @@ function dedupeToolsByName<T extends Readonly<{ name: string }>>(tools: readonly
 export function listBuiltInHappierTools(params?: Readonly<{
   surface?: BuiltInHappierToolsSurface;
   registry?: ResolvedContributionRegistry;
+  isActionEnabled?: (id: ActionId) => boolean;
 }>) {
   const surface = params?.surface ?? 'session_agent';
+  const isActionEnabled = params?.isActionEnabled ?? ((id: ActionId) => isActionEnabledByEnv(id, { surface }));
   return dedupeToolsByName([
     ...filterBuiltInToolsForSurface(
       HAPPIER_BUILT_IN_TOOLS,
-      { surface, isActionEnabled: (id) => isActionEnabledByEnv(id, { surface }), registry: params?.registry },
+      { surface, isActionEnabled, registry: params?.registry },
     ),
     ...listPluginActionBackedTools({ registry: params?.registry }).filter(
-      (tool) => filterBuiltInToolsForSurface([tool], { surface, registry: params?.registry }).length === 1,
+      (tool) => filterBuiltInToolsForSurface([tool], { surface, isActionEnabled, registry: params?.registry }).length === 1,
     ),
   ]);
 }

@@ -15,6 +15,12 @@ import {
   resolveProviderPromptWithReplaySeed,
 } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
+import {
+  beginAssistantTextSnapshotTurnScope,
+  completeAssistantTextSnapshotTurnScope,
+  resetAssistantTextSnapshotTurnScope,
+  type AssistantTextSnapshotTurnScope,
+} from '@/agent/runtime/turns/assistantTextSnapshotTurnScope';
 
 export type PermissionModePromptLoopTurnOperations = RuntimeTurnOperations & Readonly<{
   sendPromptWithMeta?: (params: { text: string; localId?: string | null }) => Promise<void>;
@@ -349,6 +355,7 @@ export async function runPermissionModePromptLoop(opts: {
 
       opts.messageBuffer.addMessage(`Restarting ${opts.providerName} session (permission settings changed)…`, 'status');
       await opts.onBeforeReset?.({ reason: 'mode_change' });
+      resetAssistantTextSnapshotTurnScope(opts.session, 'mode_change');
       await opts.runtime.resetOrDisposeRuntime();
       wasStarted = false;
       pendingFreshSessionSystemPrompt = false;
@@ -375,6 +382,7 @@ export async function runPermissionModePromptLoop(opts: {
     if (special.type === 'clear') {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
       await opts.onBeforeReset?.({ reason: 'clear' });
+      resetAssistantTextSnapshotTurnScope(opts.session, 'clear');
       await opts.runtime.resetOrDisposeRuntime();
       wasStarted = false;
       pendingFreshSessionSystemPrompt = false;
@@ -392,6 +400,7 @@ export async function runPermissionModePromptLoop(opts: {
     let suppressFlushTurnFailure = false;
     let beganTurn = false;
     let currentCheckpointMessageId: string | null = null;
+    let assistantTextSnapshotScope: AssistantTextSnapshotTurnScope | null = null;
     try {
       turnInFlight = true;
       let shouldApplyFreshSessionSystemPrompt = pendingFreshSessionSystemPrompt;
@@ -405,6 +414,7 @@ export async function runPermissionModePromptLoop(opts: {
         shouldApplyFreshSessionSystemPrompt =
           runtimeStart.startedFreshSessionForTurn || shouldApplyFreshSessionSystemPrompt;
       }
+      assistantTextSnapshotScope = beginAssistantTextSnapshotTurnScope(opts.session);
       opts.runtime.beginTurnLifecycle();
       beganTurn = true;
 
@@ -500,11 +510,13 @@ export async function runPermissionModePromptLoop(opts: {
         if (shouldSendReady) {
           opts.sendReady();
         }
+        completeAssistantTextSnapshotTurnScope(opts.session, assistantTextSnapshotScope);
       }
     }
   }
 
   } finally {
+    resetAssistantTextSnapshotTurnScope(opts.session, 'session_end');
     unsubscribeCheckpointRuntimeMessages();
     await runCheckpointHook(() => opts.checkpointLifecycle?.onSessionEnd?.());
   }

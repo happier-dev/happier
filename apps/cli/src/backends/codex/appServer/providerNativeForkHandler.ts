@@ -1,5 +1,13 @@
-import { buildCodexAgentRuntimeDescriptor, resolvePersistedCodexRuntimeIdentity, resolveVendorResumeIdFromSessionMetadata, readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
-import { buildSessionStateFieldMetadataPatch } from '@happier-dev/agents/session/state/metadataPatch';
+import {
+  buildCodexAgentRuntimeDescriptor,
+  resolvePersistedCodexRuntimeIdentity,
+  resolveVendorResumeIdFromSessionMetadata,
+  readSessionMetadataRuntimeDescriptor,
+} from '@happier-dev/agents';
+import {
+  buildRuntimeDescriptorSessionMetadata,
+  buildVendorSessionIdSessionMetadata,
+} from '@happier-dev/agents/session/state/metadataWriters';
 import type { ProviderNativeForkHandler } from '@/session/fork/providerNativeForkHandler';
 
 import { forkCodexAppServerConversationNative } from './nativeFork';
@@ -21,7 +29,7 @@ export const codexAppServerProviderNativeForkHandler: ProviderNativeForkHandler 
   }).catch(() => null);
   const vendorSessionId = typeof forked?.vendorSessionId === 'string' ? forked.vendorSessionId.trim() : '';
   if (!vendorSessionId) return null;
-  const vendorSessionMetadata = buildSessionStateFieldMetadataPatch('identity.vendorSessionId', {
+  const vendorSessionMetadata = buildVendorSessionIdSessionMetadata({
     metadataKey: 'codexSessionId',
     value: vendorSessionId,
   });
@@ -36,8 +44,7 @@ export const codexAppServerProviderNativeForkHandler: ProviderNativeForkHandler 
       })
     : null;
   const runtimeDescriptorMetadata = runtimeDescriptor
-    ? buildSessionStateFieldMetadataPatch(
-        'identity.runtimeDescriptor',
+    ? buildRuntimeDescriptorSessionMetadata(
         runtimeDescriptor,
       )
     : {};

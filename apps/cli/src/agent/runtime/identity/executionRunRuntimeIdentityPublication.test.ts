@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
 
 import type { AgentMessage } from '@/agent/core';
 import type {
@@ -87,15 +88,22 @@ function createEngineResolution(
 describe('withExecutionRunRuntimeIdentityPublication', () => {
   it('derives top-level execution-run publication from nested backend capabilities', () => {
     const identity = buildExecutionRunRuntimeIdentityPublication(
-      createEngineResolution({
+      createEngineResolution(normalizePluginBackendCapabilitiesV1({
         executionRun: { supported: false },
-      }),
+      })),
     );
 
     expect(identity.runtimeCapabilities).toEqual({
       executionRun: { supported: false },
       backend: {
         executionRun: { supported: false },
+        session: {
+          media: {
+            acceptsImageInput: { supported: false },
+            emitsSessionMedia: { supported: false },
+            nativeImageGeneration: { supported: false },
+          },
+        },
       },
     });
   });

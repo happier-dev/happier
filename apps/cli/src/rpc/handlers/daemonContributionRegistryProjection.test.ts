@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
@@ -123,7 +124,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                             },
                         },
                         runtimeKind: 'native',
-                        capabilities: { executionRun: { supported: true } },
+                        capabilities: normalizePluginBackendCapabilitiesV1({ executionRun: { supported: true } }),
                         runtimeCoreHooks: [],
                     },
                 ],
@@ -412,7 +413,7 @@ describe('daemon contribution registry projection rpc handler', () => {
                         },
                     },
                     runtimeKind: 'x',
-                    capabilities: { executionRun: { supported: true } },
+                    capabilities: normalizePluginBackendCapabilitiesV1({ executionRun: { supported: true } }),
                     runtimeCoreHooks: [],
                 },
             ],

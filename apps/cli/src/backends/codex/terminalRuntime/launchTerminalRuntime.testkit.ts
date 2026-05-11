@@ -127,6 +127,7 @@ export async function writeFakeCodexScript(path: string, opts: {
   handleSigterm?: boolean;
   selfTerminateSignal?: NodeJS.Signals;
   selfTerminateAfterMs?: number;
+  writeSessionMeta?: boolean;
 }): Promise<void> {
   const sessionMetaDelayMs = typeof opts.sessionMetaDelayMs === 'number' ? opts.sessionMetaDelayMs : 0;
   const assistantText = typeof opts.assistantText === 'string' ? opts.assistantText : null;
@@ -137,6 +138,7 @@ export async function writeFakeCodexScript(path: string, opts: {
   const recordCodexEnv = opts.recordCodexEnv === true;
   const selfTerminateSignal = typeof opts.selfTerminateSignal === 'string' ? opts.selfTerminateSignal : null;
   const selfTerminateAfterMs = typeof opts.selfTerminateAfterMs === 'number' ? opts.selfTerminateAfterMs : null;
+  const writeSessionMetaEnabled = opts.writeSessionMeta !== false;
 
 const script = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -189,9 +191,9 @@ function writeSessionMeta() {
   ${assistantText ? `write(JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: ${JSON.stringify(assistantText)} }] } }));` : ''}
 }
 
-if (${sessionMetaDelayMs} > 0) {
+if (${writeSessionMetaEnabled ? 'true' : 'false'} && ${sessionMetaDelayMs} > 0) {
   setTimeout(writeSessionMeta, ${sessionMetaDelayMs});
-} else {
+} else if (${writeSessionMetaEnabled ? 'true' : 'false'}) {
   writeSessionMeta();
 }
 

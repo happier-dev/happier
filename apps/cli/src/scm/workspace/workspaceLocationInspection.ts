@@ -47,7 +47,7 @@ export async function inspectWorkspaceLocationWithScmWorkspace(input: Readonly<{
     }
 
     const workspaceIntegration = resolved.selection.backend.workspaceIntegration;
-    if (!workspaceIntegration) {
+    if (!workspaceIntegration?.inspectWorkspaceLocation) {
         return null;
     }
 

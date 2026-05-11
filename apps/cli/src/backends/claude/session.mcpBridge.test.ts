@@ -45,6 +45,38 @@ function createSessionClientStub(overrides?: Partial<SessionClientPort>): Sessio
 }
 
 describe('Session (MCP bridge)', () => {
+  it('passes the current account settings to the lazily created MCP bridge', async () => {
+    const client = createSessionClientStub();
+    const accountSettings = {
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.list': { disabledSurfaces: [] },
+        },
+      },
+    } as any;
+    const session = new Session({
+      client,
+      accountSettings,
+      path: '/tmp',
+      logPath: '/tmp/log',
+      sessionId: null,
+      claudeArgs: [],
+      messageQueue: new MessageQueue2<EnhancedMode>(() => 'mode'),
+      onModeChange: () => {},
+      hookSettingsPath: '/tmp/hooks.json',
+    } as any);
+
+    try {
+      await session.getOrCreateHappierMcpBridge();
+      expect(createHappierMcpBridgeSpy).toHaveBeenCalledWith(client, expect.objectContaining({
+        accountSettings,
+      }));
+    } finally {
+      session.cleanup();
+    }
+  });
+
   it('uses a precomputed MCP bridge when provided', async () => {
     const client = createSessionClientStub();
     const session = new Session({
