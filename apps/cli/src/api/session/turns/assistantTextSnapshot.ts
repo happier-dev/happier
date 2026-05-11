@@ -32,6 +32,7 @@ export type TurnAssistantTextSnapshotInput = Readonly<{
 export interface TurnAssistantTextSnapshotStore {
   beginTurn(input: { turnToken: string; startSeqExclusive: number | null; startedAtMs: number }): void;
   observe(input: TurnAssistantTextSnapshotInput): void;
+  clearSnapshot(input?: { turnToken?: string | null; reason: 'media_only_commit' | 'clear' }): void;
   getCurrentTurnSnapshot(input?: { turnToken?: string | null }): TurnAssistantTextSnapshot | null;
   getSnapshotAfter(input: { turnToken?: string | null; startSeqExclusive: number | null }): TurnAssistantTextSnapshot | null;
   completeTurn(input: { turnToken: string }): void;

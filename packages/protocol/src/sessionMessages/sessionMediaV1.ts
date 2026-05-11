@@ -93,6 +93,11 @@ export function createSessionMediaFailureV1Schema(zod: typeof z) {
       code: safeString,
       role: zod.enum(['input', 'output']),
       category: zod.enum(['attachment', 'generated', 'tool-artifact']),
+      mediaKind: zod.literal('image'),
+      name: safeString,
+      mimeType: zod.enum(INLINE_SESSION_MEDIA_IMAGE_MIME_TYPES).optional(),
+      origin: createSessionMediaOriginV1Schema(zod),
+      createdAtMs: zod.number().int().nonnegative().optional(),
     })
     .passthrough()
     .superRefine((value, ctx) => {
