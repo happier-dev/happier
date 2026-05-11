@@ -259,7 +259,12 @@ describe('runCodex fast-start', () => {
     const credentials = { token: 'test' } as Credentials;
 
     let testError: unknown = null;
-    const runPromise = runCodex({ credentials, startedBy: 'terminal', startingMode: 'local' }).catch((e) => {
+    const runPromise = runCodex({
+      credentials,
+      startedBy: 'terminal',
+      startingMode: 'local',
+      codexArgs: ['resume', 'native-thread-1'],
+    }).catch((e) => {
       testError = e;
     });
 
@@ -290,6 +295,9 @@ describe('runCodex fast-start', () => {
     if (testError) {
       throw testError;
     }
+
+    const firstCall = codexLocalLauncherSpy.mock.calls[0]?.[0];
+    expect(firstCall?.codexArgs).toEqual(['resume', 'native-thread-1']);
 
   });
 
@@ -339,6 +347,7 @@ describe('runCodex fast-start', () => {
       startedBy: 'terminal',
       startingMode: 'local',
       resume: 'resume-123',
+      codexArgs: ['resume', 'native-thread-2'],
     } as any).catch((e) => {
       testError = e;
     });
@@ -355,6 +364,7 @@ describe('runCodex fast-start', () => {
 
     const firstCall = codexLocalLauncherSpy.mock.calls[0]?.[0];
     expect(firstCall?.resumeId).toBe('resume-123');
+    expect(firstCall?.codexArgs).toEqual(['resume', 'native-thread-2']);
 
     if (testError) {
       throw testError;

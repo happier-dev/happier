@@ -10,7 +10,7 @@ export async function writeExpoShimPairCaptureInvocation({ binDir, outputPath })
     [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
-      'echo "shim=posix bin=$0 args=$*" >> "${OUTPUT_PATH:?}"',
+      `echo "shim=posix bin=$0 args=$*" >> ${JSON.stringify(outputPath)}`,
       'exit 0',
     ].join('\n') + '\n',
     'utf-8',

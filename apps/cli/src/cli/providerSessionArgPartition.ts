@@ -1,3 +1,12 @@
+/**
+ * Partitions Happier-owned session flags from provider-native CLI arguments.
+ *
+ * The parser validates shared session metadata such as permission modes,
+ * profiles, model hints, resume flags, and provider-specific aliases, then
+ * leaves unrecognized tokens in providerArgs for the provider executable.
+ * Invalid Happier-owned values use the CLI failure path so provider wrappers
+ * stop before launching a session with ambiguous intent.
+ */
 import chalk from 'chalk';
 
 import { isPermissionMode, type PermissionMode } from '@/api/types';
@@ -6,35 +15,35 @@ import {
   parsePermissionModeAlias as parsePermissionModeAliasShared,
 } from '@happier-dev/agents';
 
-export type ProviderSessionArgPartitionResult = Readonly<{
-  startedBy?: 'daemon' | 'terminal';
-  refreshSettings: boolean;
-  profileQuery?: string;
-  permissionMode?: PermissionMode;
-  permissionModeUpdatedAt?: number;
-  agentModeId?: string;
-  agentModeUpdatedAt?: number;
-  modelId?: string;
-  modelUpdatedAt?: number;
-  existingSessionId?: string;
-  resume?: string;
-  startingMode?: 'local' | 'remote' | string;
-  directory?: string;
-  providerArgs: string[];
-  helpRequested: boolean;
-  versionRequested: boolean;
-  versionFlag?: string;
-}>;
+export interface ProviderSessionArgPartitionResult {
+  readonly startedBy?: 'daemon' | 'terminal';
+  readonly refreshSettings: boolean;
+  readonly profileQuery?: string;
+  readonly permissionMode?: PermissionMode;
+  readonly permissionModeUpdatedAt?: number;
+  readonly agentModeId?: string;
+  readonly agentModeUpdatedAt?: number;
+  readonly modelId?: string;
+  readonly modelUpdatedAt?: number;
+  readonly existingSessionId?: string;
+  readonly resume?: string;
+  readonly startingMode?: 'local' | 'remote' | string;
+  readonly directory?: string;
+  readonly providerArgs: string[];
+  readonly helpRequested: boolean;
+  readonly versionRequested: boolean;
+  readonly versionFlag?: string;
+}
 
-export type ProviderSessionArgPartitionOptions = Readonly<{
-  args: readonly string[];
-  providerSubcommand?: string | null;
-  directoryFlags?: readonly string[];
-  forwardModelFlag?: boolean;
-  forwardResumeFlag?: boolean;
-  yoloProviderArgs?: readonly string[];
-  versionFlags?: readonly string[];
-}>;
+export interface ProviderSessionArgPartitionOptions {
+  readonly args: readonly string[];
+  readonly providerSubcommand?: string | null;
+  readonly directoryFlags?: readonly string[];
+  readonly forwardModelFlag?: boolean;
+  readonly forwardResumeFlag?: boolean;
+  readonly yoloProviderArgs?: readonly string[];
+  readonly versionFlags?: readonly string[];
+}
 
 const PERMISSION_MODE_EXAMPLES = [
   '--permission-mode read-only',
@@ -58,10 +67,14 @@ function readRequiredValue(args: readonly string[], index: number, label: string
     fail(`Missing value for ${label}`);
   }
   const value = args[index + 1];
-  if (typeof value !== 'string' || value.length === 0) {
+  if (typeof value !== 'string' || value.length === 0 || value.startsWith('-')) {
     fail(`Missing value for ${label}`);
   }
   return value;
+}
+
+function isNumericOptionValue(value: string | undefined): boolean {
+  return typeof value === 'string' && /^-?\d+$/.test(value.trim());
 }
 
 function readOptionalValue(args: readonly string[], index: number): string | undefined {
@@ -220,7 +233,7 @@ export function partitionProviderSessionArgs(options: ProviderSessionArgPartitio
       continue;
     }
     if (arg === '--account-settings-version-hint') {
-      if (readOptionalValue(args, i)) {
+      if (isNumericOptionValue(args[i + 1])) {
         i += 1;
       }
       continue;

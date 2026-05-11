@@ -195,6 +195,7 @@ export async function codexLocalLauncher<TMode>(opts: {
   let exitReason: CodexLauncherResult | null = null;
   let switchRequested = false;
   let remoteSwitchIntentObserved = false;
+  const hasNativeCodexArgs = (opts.codexArgs?.length ?? 0) > 0;
   let switchNotified = false;
   let mirror: CodexRolloutMirror | null = null;
   let pendingQueueWatcher: { stop: () => void } | null = null;
@@ -482,7 +483,7 @@ export async function codexLocalLauncher<TMode>(opts: {
         });
       }
 
-      if (remoteSwitchIntentObserved && !opts.resumeId && now >= deadline) {
+      if (remoteSwitchIntentObserved && !opts.resumeId && !hasNativeCodexArgs && now >= deadline) {
         logger.debug('[codex] switch: starting fresh remote because no local rollout was discovered', {
           elapsedSinceStartMs: now - startedAtMs,
         });

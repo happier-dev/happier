@@ -90,6 +90,10 @@ function extractClaudeWrapperFlags(args: readonly string[]): {
     }
     if (arg === '--js-runtime') {
       const runtime = args[i + 1];
+      if (typeof runtime !== 'string' || runtime.startsWith('-')) {
+        console.error(chalk.red('Missing value for --js-runtime. Expected: node|bun'));
+        process.exit(1);
+      }
       if (runtime !== 'node' && runtime !== 'bun') {
         console.error(chalk.red(`Invalid --js-runtime value: ${runtime}. Must be 'node' or 'bun'`));
         process.exit(1);

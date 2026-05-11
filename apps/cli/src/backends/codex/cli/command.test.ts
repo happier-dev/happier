@@ -118,4 +118,22 @@ describe('handleCodexCliCommand', () => {
       codexArgs: ['resume', '--all'],
     }));
   });
+
+  it('passes lowercase -v through as a Codex-native argument', async () => {
+    process.env.HAPPIER_ACCOUNT_SETTINGS_MODE = 'never';
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(null);
+    vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
+    const runSpy = vi.spyOn(runCodexModule, 'runCodex').mockResolvedValue();
+
+    await handleCodexCliCommand({
+      args: ['-v'],
+      terminalRuntime: null,
+    } as any);
+
+    expect(runSpy).toHaveBeenCalledWith(expect.objectContaining({
+      credentials,
+      codexArgs: ['-v'],
+    }));
+  });
 });

@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { partitionProviderSessionArgs } from './providerSessionArgPartition';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('partitionProviderSessionArgs', () => {
   it('consumes common Happier session flags and preserves provider args', () => {
@@ -110,5 +114,29 @@ describe('partitionProviderSessionArgs', () => {
 
     expect(result.helpRequested).toBe(true);
     expect(result.providerArgs).toEqual(['exec']);
+  });
+
+  it('rejects option-like values for required Happier-owned flags', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null): never => {
+      throw new Error(`exit:${code ?? 0}`);
+    });
+
+    expect(() => {
+      partitionProviderSessionArgs({
+        args: ['codex', '--model', '--help'],
+        providerSubcommand: 'codex',
+        forwardModelFlag: true,
+      });
+    }).toThrow('exit:1');
+  });
+
+  it('consumes numeric account settings version hints without forwarding them', () => {
+    const result = partitionProviderSessionArgs({
+      args: ['codex', '--account-settings-version-hint', '-1', 'exec', '--json'],
+      providerSubcommand: 'codex',
+    });
+
+    expect(result.providerArgs).toEqual(['exec', '--json']);
   });
 });

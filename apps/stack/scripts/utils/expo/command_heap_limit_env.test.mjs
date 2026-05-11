@@ -278,7 +278,7 @@ test('expoExec prefers the Windows cmd shim when both Expo shims exist', async (
 
   withPatchedProcessEnv(t, {
     PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
-    OUTPUT_PATH: outputPath,
+    OUTPUT_PATH: null,
     HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
     HAPPIER_STACK_ENV_FILE: null,
   });

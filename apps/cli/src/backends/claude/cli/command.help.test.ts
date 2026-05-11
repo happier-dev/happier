@@ -8,7 +8,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { writeTextFileSync } from '@/testkit/fs/fileHelpers';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
-import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { captureConsoleLogAndMuteStdout, captureConsoleText } from '@/testkit/logger/captureOutput';
 
 const { execFileSyncSpy, runtimeState } = vi.hoisted(() => ({
   execFileSyncSpy: vi.fn(() => 'claude help output'),
@@ -338,6 +338,25 @@ describe('happier (default claude) help output', () => {
 
       expect(execFileSyncSpy).not.toHaveBeenCalled();
       expect(output.logs.join('\n')).toContain('HAPPIER_CLAUDE_PATH');
+    } finally {
+      output.restore();
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('treats an option after --js-runtime as a missing runtime value', async () => {
+    const exitSpy = createExitSpy();
+    const output = captureConsoleText();
+
+    try {
+      await expect(handleClaudeCliCommand({
+        args: ['claude', '--js-runtime', '--permission-mode', 'default'],
+        rawArgv: [],
+        terminalRuntime: null,
+      })).rejects.toThrow('exit:1');
+
+      expect(output.text()).toContain('Missing value for --js-runtime');
+      expect(execFileSyncSpy).not.toHaveBeenCalled();
     } finally {
       output.restore();
       exitSpy.mockRestore();
