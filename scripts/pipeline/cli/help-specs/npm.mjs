@@ -31,7 +31,7 @@ export const COMMAND_HELP_NPM = {
       '--keychain-account <name>',
     ],
     bullets: [
-      'Dev/preview publishes temporary versions (no commit) using the rolling release-ring suffix (for example X.Y.Z-dev.<run>.<attempt>).',
+      'Dev/preview publishes temporary versions (no commit) using the rolling release-ring suffix (for example X.Y.Z-dev.<sequence>).',
       'Local auth: uses NPM_TOKEN if set, otherwise falls back to your local npm login state.',
     ],
     examples: [

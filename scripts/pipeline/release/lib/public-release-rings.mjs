@@ -130,8 +130,6 @@ export function resolveRollingVersionSuffix(channel) {
   if (channel === 'stable') return '';
   const base = resolveRollingReleaseTagSuffix(channel);
   const runNumber = parseOptionalPositiveInt(process.env.GITHUB_RUN_NUMBER);
-  const attemptNumber = parseOptionalPositiveInt(process.env.GITHUB_RUN_ATTEMPT);
   const run = runNumber ?? Math.floor(Date.now() / 1000);
-  const attempt = Math.max(1, attemptNumber ?? Math.floor(process.pid));
-  return `${base}.${run}.${attempt}`;
+  return `${base}.${run}`;
 }

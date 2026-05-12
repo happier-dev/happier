@@ -24,6 +24,7 @@ function readJson(dir, rel) {
 test('pipeline run exposes npm-set-preview-versions (write=false compute-only)', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'happier-preview-versions-'));
   writeJson(dir, 'apps/cli/package.json', { name: '@happier-dev/cli', version: '1.2.3' });
+  writeJson(dir, 'packages/support/package.json', { name: '@happier-dev/support', version: '0.1.5' });
 
   const out = execFileSync(
     process.execPath,
@@ -38,12 +39,19 @@ test('pipeline run exposes npm-set-preview-versions (write=false compute-only)',
       'false',
       '--publish-server',
       'false',
+      '--publish-support',
+      'true',
       '--write',
       'false',
     ],
     {
       cwd: repoRoot,
-      env: { ...process.env, GITHUB_RUN_NUMBER: '123', GITHUB_RUN_ATTEMPT: '2' },
+      env: {
+        ...process.env,
+        GITHUB_RUN_NUMBER: '123',
+        GITHUB_RUN_ATTEMPT: '2',
+        HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({ github: {}, npm: {} }),
+      },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -51,6 +59,8 @@ test('pipeline run exposes npm-set-preview-versions (write=false compute-only)',
   ).trim();
 
   const parsed = JSON.parse(out);
-  assert.equal(parsed.cli, '1.2.3-preview.123.2');
+  assert.equal(parsed.cli, '1.2.3-preview.1');
+  assert.equal(parsed.support, '0.1.5-preview.1');
   assert.equal(readJson(dir, 'apps/cli/package.json').version, '1.2.3');
+  assert.equal(readJson(dir, 'packages/support/package.json').version, '0.1.5');
 });

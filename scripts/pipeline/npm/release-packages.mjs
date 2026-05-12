@@ -10,8 +10,8 @@ import {
   formatPublicReleaseChannel,
   formatPublicReleaseChannelChoices,
   normalizePublicReleaseChannel,
-  resolveRollingVersionSuffix,
 } from '../release/lib/public-release-rings.mjs';
+import { resolveRollingPublishVersion } from '../release/lib/rolling-version-allocation.mjs';
 
 function fail(message) {
   console.error(message);
@@ -245,14 +245,13 @@ function readPackageVersion(repoRoot, pkgDir) {
 }
 
 /**
- * @param {import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId} channel
+ * @param {'cli' | 'stack' | 'server'} packageKey
  */
-function resolvePreviewSuffix(channel) {
-  if (channel === 'stable') return '';
-  return resolveRollingVersionSuffix(channel);
+function rollingProductIdForPackage(packageKey) {
+  return packageKey === 'stack' ? 'hstack' : packageKey;
 }
 
-function main() {
+async function main() {
   const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
     options: {
@@ -263,6 +262,9 @@ function main() {
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
       'run-tests': { type: 'string', default: 'auto' },
       mode: { type: 'string', default: 'pack+publish' },
+      'cli-version': { type: 'string', default: '' },
+      'stack-version': { type: 'string', default: '' },
+      'server-version': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -285,6 +287,11 @@ function main() {
   const runTests = resolveAutoBool(values['run-tests'], '--run-tests', process.env.GITHUB_ACTIONS === 'true');
   const mode = String(values.mode ?? '').trim() || 'pack+publish';
   const dryRun = values['dry-run'] === true;
+  const explicitVersions = {
+    cli: String(values['cli-version'] ?? '').trim(),
+    stack: String(values['stack-version'] ?? '').trim(),
+    server: String(values['server-version'] ?? '').trim(),
+  };
 
   const opts = { dryRun };
   if (mode !== 'pack' && mode !== 'pack+publish') {
@@ -337,7 +344,6 @@ function main() {
     fail('At least one of --publish-cli/--publish-stack/--publish-server must be true');
   }
 
-  const previewSuffix = resolvePreviewSuffix(channelId);
   const publishTarget =
     channelId === 'publicdev'
       ? { channel: 'preview', tag: 'dev' }
@@ -355,7 +361,21 @@ function main() {
 
       const originalVersion = readPackageVersion(repoRoot, pkg.dir);
       const base = normalizeBase(originalVersion);
-      const nextVersion = channelId === 'stable' ? originalVersion : `${base}-${previewSuffix}`;
+      const nextVersion =
+        channelId === 'stable'
+          ? originalVersion
+          : (
+              await resolveRollingPublishVersion({
+                repoRoot,
+                productId: rollingProductIdForPackage(pkg.key),
+                channel: channelId,
+                baseVersion: base,
+                explicitVersion: explicitVersions[pkg.key],
+                publishSurface: 'npm',
+                dryRun,
+                env: process.env,
+              })
+            ).version;
 
       console.log(`\n==> ${pkg.dir} (${pkg.key})`);
       console.log(`version: ${originalVersion}${channelId !== 'stable' ? ` -> ${nextVersion}` : ''}`);
@@ -391,4 +411,6 @@ function main() {
   }
 }
 
-main();
+main().catch((err) => {
+  fail(err instanceof Error ? err.message : String(err));
+});

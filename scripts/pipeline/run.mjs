@@ -1245,7 +1245,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'publish-cli': { type: 'string', default: 'false' },
         'publish-stack': { type: 'string', default: 'false' },
         'publish-server': { type: 'string', default: 'false' },
+        'publish-support': { type: 'string', default: 'false' },
         'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
+        'cli-version': { type: 'string', default: '' },
+        'stack-version': { type: 'string', default: '' },
+        'server-version': { type: 'string', default: '' },
+        'support-version': { type: 'string', default: '' },
         write: { type: 'string', default: 'true' },
       },
       allowPositionals: false,
@@ -1255,7 +1260,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishCli = String(values['publish-cli'] ?? '').trim() || 'false';
     const publishStack = String(values['publish-stack'] ?? '').trim() || 'false';
     const publishServer = String(values['publish-server'] ?? '').trim() || 'false';
+    const publishSupport = String(values['publish-support'] ?? '').trim() || 'false';
     const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
+    const cliVersion = String(values['cli-version'] ?? '').trim();
+    const stackVersion = String(values['stack-version'] ?? '').trim();
+    const serverVersion = String(values['server-version'] ?? '').trim();
+    const supportVersion = String(values['support-version'] ?? '').trim();
     const write = String(values.write ?? '').trim() || 'true';
 
     runNpmSetPreviewVersions({
@@ -1270,8 +1280,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         publishStack,
         '--publish-server',
         publishServer,
+        '--publish-support',
+        publishSupport,
         '--server-runner-dir',
         serverRunnerDir,
+        ...(cliVersion ? ['--cli-version', cliVersion] : []),
+        ...(stackVersion ? ['--stack-version', stackVersion] : []),
+        ...(serverVersion ? ['--server-version', serverVersion] : []),
+        ...(supportVersion ? ['--support-version', supportVersion] : []),
         '--write',
         write,
       ],
@@ -1367,6 +1383,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
           'run-tests': { type: 'string', default: 'auto' },
           mode: { type: 'string', default: 'pack+publish' },
+          'cli-version': { type: 'string', default: '' },
+          'stack-version': { type: 'string', default: '' },
+          'server-version': { type: 'string', default: '' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -1410,14 +1429,17 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const publishCli = String(values['publish-cli'] ?? '').trim();
     const publishStack = String(values['publish-stack'] ?? '').trim();
     const publishServer = String(values['publish-server'] ?? '').trim();
-      const runnerDir = String(values['server-runner-dir'] ?? '').trim();
-      const runTests = String(values['run-tests'] ?? '').trim();
-      const mode = String(values.mode ?? '').trim();
-      const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
-      const dryRun = values['dry-run'] === true;
-      if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
+    const cliVersion = String(values['cli-version'] ?? '').trim();
+    const stackVersion = String(values['stack-version'] ?? '').trim();
+    const serverVersion = String(values['server-version'] ?? '').trim();
+    const runnerDir = String(values['server-runner-dir'] ?? '').trim();
+    const runTests = String(values['run-tests'] ?? '').trim();
+    const mode = String(values.mode ?? '').trim();
+    const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
+    const dryRun = values['dry-run'] === true;
+    if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
 
-      console.log(`[pipeline] npm release: channel=${channel}`);
+    console.log(`[pipeline] npm release: channel=${channel}`);
 
     runNpmReleasePackages({
       repoRoot,
@@ -1429,6 +1451,9 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ...(publishCli ? ['--publish-cli', publishCli] : []),
         ...(publishStack ? ['--publish-stack', publishStack] : []),
         ...(publishServer ? ['--publish-server', publishServer] : []),
+        ...(cliVersion ? ['--cli-version', cliVersion] : []),
+        ...(stackVersion ? ['--stack-version', stackVersion] : []),
+        ...(serverVersion ? ['--server-version', serverVersion] : []),
         ...(runnerDir ? ['--server-runner-dir', runnerDir] : []),
         ...(runTests ? ['--run-tests', runTests] : []),
         ...(mode ? ['--mode', mode] : []),
@@ -1448,6 +1473,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'release-message': { type: 'string', default: '' },
           'run-contracts': { type: 'string', default: 'auto' },
           'check-installers': { type: 'string', default: 'true' },
+          version: { type: 'string', default: '' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -1494,6 +1520,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const releaseMessage = String(values['release-message'] ?? '').trim();
       const runContracts = String(values['run-contracts'] ?? '').trim();
       const checkInstallers = String(values['check-installers'] ?? '').trim();
+      const version = String(values.version ?? '').trim();
       const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
       const dryRun = values['dry-run'] === true;
       if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
@@ -1513,6 +1540,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         runContracts || 'auto',
         '--check-installers',
         checkInstallers || 'true',
+        ...(version ? ['--version', version] : []),
         ...(dryRun ? ['--dry-run'] : []),
       ],
     });
@@ -1529,6 +1557,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             'release-message': { type: 'string', default: '' },
             'run-contracts': { type: 'string', default: 'auto' },
             'check-installers': { type: 'string', default: 'true' },
+            version: { type: 'string', default: '' },
             'allow-dirty': { type: 'string', default: 'false' },
             'dry-run': { type: 'boolean', default: false },
             'secrets-source': { type: 'string', default: 'auto' },
@@ -1575,6 +1604,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         const releaseMessage = String(values['release-message'] ?? '').trim();
         const runContracts = String(values['run-contracts'] ?? '').trim();
         const checkInstallers = String(values['check-installers'] ?? '').trim();
+        const version = String(values.version ?? '').trim();
         const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
         const dryRun = values['dry-run'] === true;
         if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
@@ -1594,6 +1624,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           runContracts || 'auto',
           '--check-installers',
           checkInstallers || 'true',
+          ...(version ? ['--version', version] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
       });
@@ -1610,6 +1641,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             'release-message': { type: 'string', default: '' },
             'run-contracts': { type: 'string', default: 'auto' },
             'check-installers': { type: 'string', default: 'true' },
+            version: { type: 'string', default: '' },
             'allow-dirty': { type: 'string', default: 'false' },
             'dry-run': { type: 'boolean', default: false },
             'secrets-source': { type: 'string', default: 'auto' },
@@ -1656,6 +1688,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         const releaseMessage = String(values['release-message'] ?? '').trim();
         const runContracts = String(values['run-contracts'] ?? '').trim();
         const checkInstallers = String(values['check-installers'] ?? '').trim();
+        const version = String(values.version ?? '').trim();
         const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
         const dryRun = values['dry-run'] === true;
         if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
@@ -1675,6 +1708,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           runContracts || 'auto',
           '--check-installers',
           checkInstallers || 'true',
+          ...(version ? ['--version', version] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
       });
@@ -1691,6 +1725,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'release-message': { type: 'string', default: '' },
           'run-contracts': { type: 'string', default: 'auto' },
           'check-installers': { type: 'string', default: 'true' },
+          version: { type: 'string', default: '' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -1737,6 +1772,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const releaseMessage = String(values['release-message'] ?? '').trim();
       const runContracts = String(values['run-contracts'] ?? '').trim();
       const checkInstallers = String(values['check-installers'] ?? '').trim();
+      const version = String(values.version ?? '').trim();
       const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
       const dryRun = values['dry-run'] === true;
       if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
@@ -1756,6 +1792,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         runContracts || 'auto',
         '--check-installers',
         checkInstallers || 'true',
+        ...(version ? ['--version', version] : []),
         ...(dryRun ? ['--dry-run'] : []),
       ],
     });
@@ -4235,17 +4272,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const releaseRing = resolveReleaseEnvironmentChannel(deployEnvironment);
 
           if (releaseRing.rollingVersionPrefix) {
-            // Ensure all rolling release steps compute the same <ring>.<run>.<attempt> suffix.
+            // Ensure all rolling release steps have the same local sequence seed.
             // Locally we synthesize the missing run vars; in GitHub Actions we rely on the provided ones.
             const runNumberRaw = String(releaseEnv.GITHUB_RUN_NUMBER ?? '').trim();
             const runNumber = runNumberRaw || String(Math.floor(Date.now() / 1000));
             if (!runNumberRaw) releaseEnv.GITHUB_RUN_NUMBER = runNumber;
 
-            const attemptRaw = String(releaseEnv.GITHUB_RUN_ATTEMPT ?? '').trim();
-            const attempt = attemptRaw || '1';
-            if (!attemptRaw) releaseEnv.GITHUB_RUN_ATTEMPT = attempt;
-
-            console.log(`[pipeline] rolling version suffix: ${releaseRing.rollingVersionPrefix}.${runNumber}.${attempt}`);
+            console.log(`[pipeline] rolling version suffix: ${releaseRing.rollingVersionPrefix}.${runNumber}`);
           }
 
             // Plan: compute changed components (main..dev) and resolve bump/publish plan.

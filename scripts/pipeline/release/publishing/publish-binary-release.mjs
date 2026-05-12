@@ -15,8 +15,8 @@ import {
   resolveRollingPrerelease,
   resolveRollingReleaseLabel,
   resolveRollingReleaseTagSuffix,
-  resolveRollingVersionSuffix,
 } from '../lib/public-release-rings.mjs';
+import { resolveRollingPublishVersion } from '../lib/rolling-version-allocation.mjs';
 import { withCurrentVersionLine } from '../lib/rolling-release-notes.mjs';
 import { resolveGitHubRepoSlug } from '../../github/resolve-github-repo-slug.mjs';
 import { prepareBinaryReleaseAssets } from './prepare-binary-assets.mjs';
@@ -78,19 +78,6 @@ function run(opts, cmd, args, extra) {
     stdio: extra?.stdio ?? 'inherit',
     timeout: 30 * 60_000,
   });
-}
-
-/**
- * @param {string} version
- */
-function normalizeBaseVersion(version) {
-  const match = String(version ?? '')
-    .trim()
-    .match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!match) {
-    throw new Error(`Invalid version: ${version}`);
-  }
-  return `${match[1]}.${match[2]}.${match[3]}`;
 }
 
 /**
@@ -162,12 +149,21 @@ async function preflightMinisignKey(productSpec, opts) {
  * @param {ReturnType<typeof getBinaryPublishProductSpec>} productSpec
  * @param {import('@happier-dev/release-runtime/releaseRings').PublicReleaseRingId} channel
  * @param {string} baseVersion
+ * @param {{ repoRoot: string; explicitVersion?: string; dryRun: boolean }} opts
  */
-function computePublishVersion(productSpec, channel, baseVersion) {
-  if (channel === 'stable') {
-    return baseVersion;
-  }
-  return `${normalizeBaseVersion(baseVersion)}-${resolveRollingVersionSuffix(channel)}`;
+async function computePublishVersion(productSpec, channel, baseVersion, opts) {
+  return (
+    await resolveRollingPublishVersion({
+      repoRoot: opts.repoRoot,
+      productId: productSpec.id,
+      channel,
+      baseVersion,
+      explicitVersion: opts.explicitVersion,
+      publishSurface: 'github',
+      dryRun: opts.dryRun,
+      env: process.env,
+    })
+  ).version;
 }
 
 /**
@@ -183,6 +179,7 @@ function parsePublishBinaryReleaseArgs(argv) {
       'release-message': { type: 'string', default: '' },
       'run-contracts': { type: 'string', default: 'auto' },
       'check-installers': { type: 'string', default: 'true' },
+      version: { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -222,11 +219,16 @@ export async function publishBinaryReleaseMain(options = {}) {
   const runContracts = resolveAutoBool(values['run-contracts'], '--run-contracts', process.env.GITHUB_ACTIONS === 'true');
   const checkInstallers = parseBool(values['check-installers'], '--check-installers');
   const releaseMessage = String(values['release-message'] ?? '').trim();
+  const explicitVersion = String(values.version ?? '').trim();
 
   const releaseRing = getPublicReleaseRingEntry(channel);
   const embeddedPolicy = resolveEmbeddedPolicyForChannel(channel);
   const baseVersion = readBaseVersion(repoRoot, productSpec);
-  const version = computePublishVersion(productSpec, channel, baseVersion);
+  const version = await computePublishVersion(productSpec, channel, baseVersion, {
+    repoRoot,
+    explicitVersion,
+    dryRun: opts.dryRun,
+  });
   const rollingTag = `${productSpec.rollingTagPrefix}-${resolveRollingReleaseTagSuffix(channel)}`;
   const rollingTitle = `${productSpec.releaseTitleBase} ${resolveRollingReleaseLabel(channel)}`;
   const prerelease = resolveRollingPrerelease(channel);

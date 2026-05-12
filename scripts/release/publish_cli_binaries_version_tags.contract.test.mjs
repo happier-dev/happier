@@ -43,6 +43,7 @@ for (const { channel, rollingTag, versionSuffix } of [
           GH_TOKEN: '',
           GH_REPO: '',
           GITHUB_REPOSITORY: '',
+          HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({ github: {}, npm: {} }),
         },
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -93,4 +94,49 @@ test('publish-cli-binaries fails fast with helpful message when MINISIGN_SECRET_
   assert.match(stderr, /MINISIGN_SECRET_KEY/i);
   assert.match(stderr, /truncated|dotenv|multiline|file|path/i);
   assert.doesNotMatch(String(result.stdout ?? ''), /build-cli-binaries\.mjs/i, 'should fail before running the heavy build');
+});
+
+test('publish-cli-binaries allocates dev versions from the published CLI channel instead of workflow run number', async () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      sharedPublishScriptPath,
+      '--product',
+      'cli',
+      '--channel',
+      'dev',
+      '--allow-stable',
+      'false',
+      '--run-contracts',
+      'false',
+      '--check-installers',
+      'false',
+      '--dry-run',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        GH_TOKEN: '',
+        GH_REPO: '',
+        GITHUB_REPOSITORY: '',
+        GITHUB_RUN_NUMBER: '16',
+        GITHUB_RUN_ATTEMPT: '1',
+        HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({
+          github: {
+            cli: ['0.2.0-dev.125.1'],
+          },
+          npm: {
+            '@happier-dev/cli': ['0.2.0-dev.124.1'],
+          },
+        }),
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /cli-v0\.2\.0-dev\.126\b/);
+  assert.doesNotMatch(out, /cli-v0\.2\.0-dev\.16\.1\b/);
 });

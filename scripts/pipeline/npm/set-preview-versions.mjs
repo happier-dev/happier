@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
+import { resolveRollingPublishVersion } from '../release/lib/rolling-version-allocation.mjs';
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -55,7 +57,14 @@ function readPackageVersion(repoRoot, pkgPath) {
   return version;
 }
 
-function main() {
+/**
+ * @param {'cli' | 'stack' | 'server' | 'support'} packageKey
+ */
+function rollingProductIdForPackage(packageKey) {
+  return packageKey === 'stack' ? 'hstack' : packageKey;
+}
+
+async function main() {
   const { values } = parseArgs({
     options: {
       'repo-root': { type: 'string', default: '' },
@@ -64,6 +73,10 @@ function main() {
       'publish-server': { type: 'string', default: 'false' },
       'publish-support': { type: 'string', default: 'false' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
+      'cli-version': { type: 'string', default: '' },
+      'stack-version': { type: 'string', default: '' },
+      'server-version': { type: 'string', default: '' },
+      'support-version': { type: 'string', default: '' },
       write: { type: 'string', default: 'true' },
     },
     allowPositionals: false,
@@ -76,22 +89,29 @@ function main() {
   const publishSupport = parseBoolString(values['publish-support'], '--publish-support');
   const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
   const shouldWrite = parseBoolString(values.write, '--write');
-
-  const runRaw = String(process.env.GITHUB_RUN_NUMBER ?? '').trim();
-  const attemptRaw = String(process.env.GITHUB_RUN_ATTEMPT ?? '').trim();
-
-  const runNumber = runRaw ? Number(runRaw) : NaN;
-  const attemptNumber = attemptRaw ? Number(attemptRaw) : NaN;
-
-  const run = Number.isFinite(runNumber) ? Math.max(0, Math.floor(runNumber)) : Math.floor(Date.now() / 1000);
-  const attempt = Number.isFinite(attemptNumber) ? Math.max(1, Math.floor(attemptNumber)) : Math.max(1, Math.floor(process.pid));
+  const explicitVersions = {
+    cli: String(values['cli-version'] ?? '').trim(),
+    stack: String(values['stack-version'] ?? '').trim(),
+    server: String(values['server-version'] ?? '').trim(),
+    support: String(values['support-version'] ?? '').trim(),
+  };
 
   /** @type {Record<string, string>} */
   const versions = {};
 
   if (publishCli) {
     const base = normalizeBase(readPackageVersion(repoRoot, path.join('apps', 'cli', 'package.json')));
-    versions.cli = `${base}-preview.${run}.${attempt}`;
+    versions.cli = (
+      await resolveRollingPublishVersion({
+        repoRoot,
+        productId: rollingProductIdForPackage('cli'),
+        channel: 'preview',
+        baseVersion: base,
+        explicitVersion: explicitVersions.cli,
+        publishSurface: 'npm',
+        env: process.env,
+      })
+    ).version;
     if (shouldWrite) {
       writePackageVersion(repoRoot, path.join('apps', 'cli', 'package.json'), versions.cli);
     }
@@ -99,7 +119,17 @@ function main() {
 
   if (publishStack) {
     const base = normalizeBase(readPackageVersion(repoRoot, path.join('apps', 'stack', 'package.json')));
-    versions.stack = `${base}-preview.${run}.${attempt}`;
+    versions.stack = (
+      await resolveRollingPublishVersion({
+        repoRoot,
+        productId: rollingProductIdForPackage('stack'),
+        channel: 'preview',
+        baseVersion: base,
+        explicitVersion: explicitVersions.stack,
+        publishSurface: 'npm',
+        env: process.env,
+      })
+    ).version;
     if (shouldWrite) {
       writePackageVersion(repoRoot, path.join('apps', 'stack', 'package.json'), versions.stack);
     }
@@ -108,7 +138,17 @@ function main() {
   if (publishServer) {
     if (!serverRunnerDir) fail('--server-runner-dir is required when --publish-server true');
     const base = normalizeBase(readPackageVersion(repoRoot, path.join(serverRunnerDir, 'package.json')));
-    versions.server = `${base}-preview.${run}.${attempt}`;
+    versions.server = (
+      await resolveRollingPublishVersion({
+        repoRoot,
+        productId: rollingProductIdForPackage('server'),
+        channel: 'preview',
+        baseVersion: base,
+        explicitVersion: explicitVersions.server,
+        publishSurface: 'npm',
+        env: process.env,
+      })
+    ).version;
     if (shouldWrite) {
       writePackageVersion(repoRoot, path.join(serverRunnerDir, 'package.json'), versions.server);
     }
@@ -116,7 +156,17 @@ function main() {
 
   if (publishSupport) {
     const base = normalizeBase(readPackageVersion(repoRoot, path.join('packages', 'support', 'package.json')));
-    versions.support = `${base}-preview.${run}.${attempt}`;
+    versions.support = (
+      await resolveRollingPublishVersion({
+        repoRoot,
+        productId: rollingProductIdForPackage('support'),
+        channel: 'preview',
+        baseVersion: base,
+        explicitVersion: explicitVersions.support,
+        publishSurface: 'npm',
+        env: process.env,
+      })
+    ).version;
     if (shouldWrite) {
       writePackageVersion(repoRoot, path.join('packages', 'support', 'package.json'), versions.support);
     }
@@ -125,4 +175,6 @@ function main() {
   process.stdout.write(`${JSON.stringify(versions)}\n`);
 }
 
-main();
+main().catch((err) => {
+  fail(err instanceof Error ? err.message : String(err));
+});

@@ -375,6 +375,9 @@ jobs:
             --publish-stack "${{ inputs.publish_stack }}" \
             --publish-server "${{ inputs.publish_server }}" \
             --server-runner-dir "${SERVER_RUNNER_DIR}" \
+            --cli-version "${{ steps.meta.outputs.cli_version }}" \
+            --stack-version "${{ steps.meta.outputs.stack_version }}" \
+            --server-version "${{ steps.meta.outputs.server_version }}" \
             --run-tests "${{ inputs.run_tests }}" \
             --mode pack
 

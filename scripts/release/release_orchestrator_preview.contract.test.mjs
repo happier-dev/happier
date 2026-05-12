@@ -246,8 +246,8 @@ test('release-npm derives unique preview prerelease versions from base versions'
   assert.match(raw, /node scripts\/pipeline\/run\.mjs npm-release[\s\S]*?--server-runner-dir "\$\{SERVER_RUNNER_DIR\}"/);
 
   const script = await loadFile('scripts/pipeline/npm/set-preview-versions.mjs');
-  assert.match(script, /GITHUB_RUN_NUMBER/);
-  assert.match(script, /-preview\./);
+  assert.match(script, /resolveRollingPublishVersion/);
+  assert.doesNotMatch(script, /GITHUB_RUN_NUMBER/);
 });
 
 test('stack version bumps use shared bump-version script across release workflows', async () => {

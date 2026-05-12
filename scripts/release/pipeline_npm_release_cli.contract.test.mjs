@@ -64,6 +64,7 @@ test('npm-release local preview suffix does not default to preview.0.1 when GitH
         NPM_TOKEN: 'npm-token',
         GITHUB_RUN_NUMBER: '',
         GITHUB_RUN_ATTEMPT: '',
+        HAPPIER_RELEASE_PUBLISHED_VERSIONS_JSON: JSON.stringify({ github: {}, npm: {} }),
       },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -72,5 +73,5 @@ test('npm-release local preview suffix does not default to preview.0.1 when GitH
   );
 
   assert.doesNotMatch(out, /-preview\.0\.1\b/, 'local preview suffix must be non-trivial to avoid npm publish collisions');
-  assert.match(out, /-preview\.[1-9]\d{5,}\.[1-9]\d*\b/, 'local preview suffix should include timestamp seconds and a non-zero attempt');
+  assert.match(out, /-preview\.1\b/, 'local preview suffix should start at the first unpublished rolling version');
 });
