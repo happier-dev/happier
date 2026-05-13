@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    color-scheme: dark light;
+    --bg: #050507;
+    --fg: #FAFAFC;
+    --fg-primary: #FFFFFF;
+    --fg-primary-soft: rgba(255, 255, 255, 0.55);
+    --muted: #9A9AA5;
+    --line: rgba(255, 255, 255, 0.08);
+    --card: rgba(255, 255, 255, 0.04);
+    --card-border: rgba(255, 255, 255, 0.08);
+    --accent: #F5B547;
+}
+
+html.light {
+    --bg: #F7F5F0;
+    --fg: #0A0A0B;
+    --fg-primary: #000000;
+    --fg-primary-soft: rgba(0, 0, 0, 0.55);
+    --muted: #5C5C66;
+    --line: rgba(10, 10, 11, 0.08);
+    --card: rgba(10, 10, 11, 0.04);
+    --card-border: rgba(10, 10, 11, 0.08);
+}
+
+* {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+}
+
+body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Inter', system-ui, sans-serif;
+    overflow-x: hidden;
+}
+
+.font-display {
+    font-family: 'Inter Tight', Inter, system-ui, sans-serif;
+    letter-spacing: -0.035em;
+    line-height: 1.02;
+}
+
+/* Word-reveal animation, applied per-word with custom CSS delays. */
+.reveal-word {
+    display: inline-block;
+    opacity: 0;
+    filter: blur(10px);
+    transform: translateY(18px) scale(0.94);
+    transform-origin: center bottom;
+    animation: reveal-word 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: var(--delay, 0ms);
+    will-change: transform, opacity, filter;
+}
+
+@keyframes reveal-word {
+    to {
+        opacity: 1;
+        filter: blur(0);
+        transform: translateY(0) scale(1);
+    }
+}
+
+.text-balance {
+    text-wrap: balance;
+}
+
+.hero-grid {
+    background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: radial-gradient(ellipse 80% 80% at 50% 30%, black 30%, transparent 70%);
+}
+
+html.light .hero-grid {
+    background-image:
+        linear-gradient(to right, rgba(10, 10, 11, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(10, 10, 11, 0.05) 1px, transparent 1px);
+}
+
+/* Smooth scrolling for in-page anchors. */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Hide scrollbar but allow scroll (used by logo strip). */
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+.no-scrollbar {
+    scrollbar-width: none;
+}
+
+/* Subtle floating animation for provider logos. */
+@keyframes provider-float {
+    0%,
+    100% {
+        transform: translateY(0) rotate(var(--tilt, 0deg));
+    }
+    50% {
+        transform: translateY(-6px) rotate(calc(var(--tilt, 0deg) + 0.5deg));
+    }
+}
+.provider-float {
+    animation: provider-float 6s ease-in-out infinite;
+    animation-delay: var(--delay, 0ms);
+}
+
+/* Glass card */
+.glass {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    backdrop-filter: blur(20px);
+}

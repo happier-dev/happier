@@ -1,33 +1,26 @@
-import { MotionConfig } from 'framer-motion';
-import { Nav } from './sections/Nav';
+import { ThemeProvider } from './components/ThemeContext';
+import { TerminalBackground } from './components/TerminalBackground';
 import { Hero } from './sections/Hero';
-import { ProviderStrip } from './sections/ProviderStrip';
-import { RemoteLaunchPillar } from './sections/RemoteLaunchPillar';
-import { DirectSessionsPillar } from './sections/DirectSessionsPillar';
-import { VoicePillar } from './sections/VoicePillar';
-import { ParallelPillar } from './sections/ParallelPillar';
-import { SelfHostSecurity } from './sections/SelfHostSecurity';
-import { GetStarted } from './sections/GetStarted';
+import { AlternatingFeatures } from './sections/AlternatingFeatures';
+import { CallToAction } from './sections/CallToAction';
 import { Footer } from './sections/Footer';
-import { TerminalBackground } from './sections/TerminalBackground';
 
 export function App() {
     return (
-        <MotionConfig reducedMotion="user">
-            <TerminalBackground />
-            <div className="grain-overlay" aria-hidden />
-            <Nav />
-            <main className="relative z-[2]">
-                <Hero />
-                <RemoteLaunchPillar />
-                <DirectSessionsPillar />
-                <VoicePillar />
-                <ParallelPillar />
-                <ProviderStrip />
-                <SelfHostSecurity />
-                <GetStarted />
-            </main>
-            <Footer />
-        </MotionConfig>
+        <ThemeProvider>
+            <div className="relative min-h-screen">
+                {/* Ambient matrix-style noise behind the page. The hero section's own
+                    opaque planet image covers this in the hero region; the matrix
+                    reads through in the sections below. */}
+                <TerminalBackground />
+                {/* Nav lives inside the Hero so it floats over the planet background. */}
+                <main className="relative z-[2]">
+                    <Hero />
+                    <AlternatingFeatures />
+                    <CallToAction />
+                </main>
+                <Footer />
+            </div>
+        </ThemeProvider>
     );
 }

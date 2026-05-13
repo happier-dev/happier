@@ -1,71 +1,57 @@
-import { useEffect, useState } from 'react';
-import { cn } from '@/utils/cn';
-import { copy } from '@/theme/copy';
-import { ThemeToggle } from '@/components/ThemeToggle';
-import { ThemedLogotype } from '@/components/ThemedLogotype';
+import { HappierMark } from '../components/HappierMark';
+import { ThemeToggle } from '../components/ThemeToggle';
 
+/**
+ * Top nav. Transparent over the hero.
+ *
+ * - Mobile (< md): only GitHub + Docs (keeps the header light; "Open the app"
+ *   is duplicated as a prominent CTA below the headline, theme toggle is
+ *   rarely needed on phones).
+ * - md+: GitHub + Docs + "Open the app" + theme toggle.
+ */
 export function Nav() {
-    const [scrolled, setScrolled] = useState(false);
-
-    useEffect(() => {
-        const onScroll = () => setScrolled(window.scrollY > 8);
-        window.addEventListener('scroll', onScroll, { passive: true });
-        return () => window.removeEventListener('scroll', onScroll);
-    }, []);
-
     return (
-        <nav
-            className={cn(
-                'fixed inset-x-0 top-0 z-40 transition-[background-color,border-color,backdrop-filter] duration-300',
-                scrolled
-                    ? 'border-b border-[color:var(--border-subtle)] bg-[color:var(--page-bg)]/80 backdrop-blur-xl'
-                    : 'border-b border-transparent bg-transparent',
-            )}
-        >
-            <div className="mx-auto flex h-14 w-full max-w-[1180px] items-center justify-between px-4 sm:px-6">
-                <a href="#top" aria-label="Happier" className="flex min-w-0 items-center gap-2">
-                    <ThemedLogotype imageClassName="h-5 w-auto max-w-[94px] sm:max-w-none" />
-                </a>
-                <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-                    <ThemeToggle />
+        <header className="absolute inset-x-0 top-0 z-30">
+            <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 pt-5 md:px-10 md:pt-7">
+                <HappierMark />
+
+                <div className="flex items-center gap-4 md:gap-5">
                     <a
-                        href="https://github.com/happier-dev"
-                        aria-label="GitHub"
-                        className="press inline-flex h-9 w-9 items-center justify-center rounded-full border border-[color:var(--border-subtle)] bg-[color:var(--border-subtle)] text-[color:var(--fg-primary)] hover:brightness-110 sm:hidden"
+                        href="https://github.com/happier-dev/happier"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 text-[14px] font-medium transition-opacity hover:opacity-100"
+                        style={{ color: 'var(--fg)', opacity: 0.85 }}
+                        aria-label="Star on GitHub"
                     >
-                        <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                            aria-hidden
-                        >
-                            <path d="M12 .5C5.65.5.5 5.65.5 12a11.49 11.49 0 0 0 7.85 10.92c.57.1.78-.25.78-.55v-2.07c-3.2.7-3.87-1.36-3.87-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.04 1.77 2.72 1.26 3.39.96.1-.75.4-1.26.74-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.3 1.2-3.1-.12-.3-.52-1.48.11-3.08 0 0 .98-.31 3.2 1.18a11.1 11.1 0 0 1 5.83 0c2.22-1.49 3.2-1.18 3.2-1.18.63 1.6.23 2.78.11 3.08.75.8 1.2 1.84 1.2 3.1 0 4.43-2.69 5.4-5.25 5.69.41.36.78 1.05.78 2.12v3.14c0 .3.2.65.79.54A11.49 11.49 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+                        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor" aria-hidden>
+                            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
                         </svg>
+                        GitHub
                     </a>
                     <a
-                        href="https://github.com/happier-dev"
-                        className="press hidden h-9 items-center gap-1.5 rounded-full border border-[color:var(--border-subtle)] bg-[color:var(--border-subtle)] px-3.5 text-[13px] font-medium text-[color:var(--fg-primary)] hover:brightness-110 sm:inline-flex"
+                        href="https://docs.happier.dev"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[14px] font-medium transition-opacity hover:opacity-100"
+                        style={{ color: 'var(--fg)', opacity: 0.85 }}
                     >
-                        <svg
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                            aria-hidden
-                        >
-                            <path d="M12 .5C5.65.5.5 5.65.5 12a11.49 11.49 0 0 0 7.85 10.92c.57.1.78-.25.78-.55v-2.07c-3.2.7-3.87-1.36-3.87-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.04 1.77 2.72 1.26 3.39.96.1-.75.4-1.26.74-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.3 1.2-3.1-.12-.3-.52-1.48.11-3.08 0 0 .98-.31 3.2 1.18a11.1 11.1 0 0 1 5.83 0c2.22-1.49 3.2-1.18 3.2-1.18.63 1.6.23 2.78.11 3.08.75.8 1.2 1.84 1.2 3.1 0 4.43-2.69 5.4-5.25 5.69.41.36.78 1.05.78 2.12v3.14c0 .3.2.65.79.54A11.49 11.49 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
-                        </svg>
-                        {copy.nav.github}
+                        Docs
                     </a>
                     <a
-                        href="#get-started"
-                        className="press inline-flex h-9 items-center rounded-full bg-[color:var(--fg-primary)] px-3 text-[12px] font-semibold text-[color:var(--page-bg)] hover:brightness-95 sm:px-4 sm:text-[13px]"
+                        href="https://app.happier.dev/"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hidden items-center gap-2 rounded-full px-4 py-2 text-[14px] font-medium transition-transform hover:-translate-y-[1px] md:inline-flex"
+                        style={{ background: 'var(--fg)', color: 'var(--bg)' }}
                     >
-                        Get started
+                        Open the web app
                     </a>
+                    <span className="hidden md:inline-flex">
+                        <ThemeToggle />
+                    </span>
                 </div>
             </div>
-        </nav>
+        </header>
     );
 }
