@@ -73,8 +73,8 @@ vi.mock('@/components/ui/forms/SearchHeader', () => ({
     SearchHeader: () => null,
 }));
 
-vi.mock('@/components/sessions/new/components/PathSelector', () => ({
-    PathSelector: () => null,
+vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({
+    PathSelectionList: () => null,
 }));
 
 vi.mock('@/utils/sessions/recentPaths', () => ({

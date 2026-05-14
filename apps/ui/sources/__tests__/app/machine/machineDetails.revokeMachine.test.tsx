@@ -14,14 +14,25 @@ testGlobal.expo = { EventEmitter: class {} } as unknown as NonNullable<typeof te
 
 const {
     confirmSpy,
+    showSpy,
     itemSpy,
+    machineState,
+    clearReplacementSpy,
+    replaceSpy,
     refreshMachinesThrottledSpy,
     revokeSpy,
     routerBackSpy,
     routerMock,
 } = vi.hoisted(() => ({
     confirmSpy: vi.fn<(..._args: any[]) => Promise<boolean>>(async () => true),
+    showSpy: vi.fn<(..._args: any[]) => string>(() => 'replacement-picker-modal'),
     itemSpy: vi.fn(),
+    machineState: {
+        currentMachine: null as any,
+        machinesByServerId: {} as Record<string, any[] | null>,
+    },
+    clearReplacementSpy: vi.fn(async (_machineId: string) => ({ ok: true as const })),
+    replaceSpy: vi.fn(async (_params: any) => ({ ok: true as const })),
     refreshMachinesThrottledSpy: vi.fn(async () => {}),
     revokeSpy: vi.fn(async (_machineId: string) => ({ ok: true as const })),
     routerBackSpy: vi.fn(),
@@ -43,7 +54,7 @@ installMachineDetailsCommonModuleMocks({
                 alert: vi.fn(),
                 confirm: confirmSpy,
                 prompt: vi.fn(),
-                show: vi.fn(),
+                show: showSpy,
             },
         }).module;
     },
@@ -51,19 +62,8 @@ installMachineDetailsCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useSessions: () => [],
-            useMachine: () => ({
-                id: 'machine-1',
-                active: true,
-                activeAt: Date.now(),
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-                seq: 0,
-                metadata: { displayName: 'My Machine', host: 'host', platform: 'darwin' },
-                metadataVersion: 1,
-                daemonState: null,
-                daemonStateVersion: 0,
-                revokedAt: null,
-            }),
+            useMachine: () => machineState.currentMachine,
+            useMachineListByServerId: () => machineState.machinesByServerId,
             useSetting: () => false,
             useSettingMutable: () => [null, vi.fn()],
             useSettings: () => ({}),
@@ -112,6 +112,8 @@ vi.mock('@/sync/ops', () => ({
     machineStopSession: vi.fn(async () => ({ ok: true })),
     machineUpdateMetadata: vi.fn(async () => ({})),
     machineExecutionRunsList: vi.fn(async () => ({ ok: true, runs: [] })),
+    machineClearReplacementFromAccount: clearReplacementSpy,
+    machineReplaceInAccount: replaceSpy,
     machineRevokeFromAccount: revokeSpy,
 }));
 
@@ -167,10 +169,45 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
 describe('MachineDetailScreen (revoke/forget machine)', () => {
     beforeEach(() => {
         itemSpy.mockReset();
+        showSpy.mockReset();
         confirmSpy.mockReset();
+        clearReplacementSpy.mockReset();
+        replaceSpy.mockReset();
         refreshMachinesThrottledSpy.mockReset();
         revokeSpy.mockReset();
         routerBackSpy.mockReset();
+        machineState.currentMachine = {
+            id: 'machine-1',
+            active: true,
+            activeAt: Date.now(),
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 0,
+            metadata: { displayName: 'My Machine', host: 'host', platform: 'darwin' },
+            metadataVersion: 1,
+            daemonState: null,
+            daemonStateVersion: 0,
+            revokedAt: null,
+        };
+        machineState.machinesByServerId = {
+            'server-a': [
+                machineState.currentMachine,
+                {
+                    id: 'machine-2',
+                    active: true,
+                    activeAt: Date.now(),
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    seq: 0,
+                    metadata: { displayName: 'Replacement Machine', host: 'replacement', platform: 'darwin' },
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                    revokedAt: null,
+                    spawnReadinessStatus: 'ready',
+                },
+            ],
+        };
     });
 
     it('confirms and revokes the machine', async () => {
@@ -194,5 +231,134 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         expect(revokeSpy).toHaveBeenCalledWith('machine-1');
         expect(refreshMachinesThrottledSpy).toHaveBeenCalled();
         expect(routerBackSpy).toHaveBeenCalled();
+    });
+
+    it('renders one replacement repair action that opens a candidate picker', async () => {
+        machineState.machinesByServerId = {
+            'server-a': [
+                machineState.currentMachine,
+                ...Array.from({ length: 5 }, (_, index) => ({
+                    id: `machine-${index + 2}`,
+                    active: index === 0,
+                    activeAt: Date.now() - index,
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    seq: 0,
+                    metadata: { displayName: index % 2 === 0 ? 'leeroy-mbp' : 'L-C-005', host: 'replacement', platform: 'darwin' },
+                    metadataVersion: 1,
+                    daemonState: null,
+                    daemonStateVersion: 0,
+                    revokedAt: null,
+                })),
+            ],
+        };
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+
+        await renderScreen(React.createElement(MachineDetailScreen));
+
+        const replacementItems = itemSpy.mock.calls
+            .map(([props]) => props)
+            .filter((props) => String(props?.testID ?? '').startsWith('machine-replacement-repair'));
+        expect([...new Set(replacementItems.map((item) => item.testID))]).toEqual(['machine-replacement-repair-open']);
+
+        const replacementItem = replacementItems[0];
+        expect(replacementItem).toBeTruthy();
+        expect(replacementItem.detail).toBeUndefined();
+        expect(replacementItem.detailTestID).toBeUndefined();
+
+        await act(async () => {
+            await replacementItem.onPress();
+        });
+
+        expect(showSpy).toHaveBeenCalledTimes(1);
+        expect(showSpy.mock.calls[0]?.[0]).toMatchObject({
+            props: expect.objectContaining({
+                onSelectCandidate: expect.any(Function),
+            }),
+            chrome: expect.objectContaining({
+                testID: 'machine-replacement-picker-modal',
+            }),
+        });
+        expect(showSpy.mock.calls[0]?.[0]?.props?.candidates).toHaveLength(5);
+        expect(replaceSpy).not.toHaveBeenCalled();
+    });
+
+    it('opens the replacement picker with candidates regardless of spawn readiness', async () => {
+        machineState.machinesByServerId['server-a'] = machineState.machinesByServerId['server-a']!.map((machine) =>
+            machine.id === 'machine-2'
+                ? { ...machine, active: false, activeAt: 0, spawnReadinessStatus: 'unknown' }
+                : machine,
+        );
+        machineState.machinesByServerId['server-loading'] = null;
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+
+        await renderScreen(React.createElement(MachineDetailScreen));
+
+        const replacementItem = itemSpy.mock.calls
+            .map(([props]) => props)
+            .find((props) => props?.testID === 'machine-replacement-repair-open');
+        expect(replacementItem).toBeTruthy();
+        expect(replacementItem.detail).toBeUndefined();
+
+        await act(async () => {
+            await replacementItem.onPress();
+        });
+
+        expect(showSpy.mock.calls[0]?.[0]?.props?.candidates).toEqual([
+            expect.objectContaining({ id: 'machine-2' }),
+        ]);
+    });
+
+    it('selects a replacement candidate from the picker', async () => {
+        confirmSpy.mockResolvedValueOnce(true);
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+
+        await renderScreen(React.createElement(MachineDetailScreen));
+
+        const replacementItem = itemSpy.mock.calls
+            .map(([props]) => props)
+            .find((props) => props?.testID === 'machine-replacement-repair-open');
+        expect(replacementItem).toBeTruthy();
+
+        await act(async () => {
+            await replacementItem.onPress();
+            await showSpy.mock.calls[0]?.[0]?.props?.onSelectCandidate('machine-2', 'Replacement Machine');
+        });
+
+        expect(confirmSpy).toHaveBeenCalled();
+        expect(replaceSpy).toHaveBeenCalledWith({
+            oldMachineId: 'machine-1',
+            replacementMachineId: 'machine-2',
+            confirmActiveOldMachine: true,
+        });
+        expect(refreshMachinesThrottledSpy).toHaveBeenCalled();
+    });
+
+    it('clears an existing explicit replacement relation', async () => {
+        confirmSpy.mockResolvedValueOnce(true);
+        machineState.currentMachine = {
+            ...machineState.currentMachine,
+            replacedByMachineId: 'machine-2',
+        };
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+
+        await renderScreen(React.createElement(MachineDetailScreen));
+
+        const undoItem = itemSpy.mock.calls
+            .map(([props]) => props)
+            .find((props) => props?.testID === 'machine-replacement-repair-undo');
+        expect(undoItem).toBeTruthy();
+
+        await act(async () => {
+            await undoItem.onPress();
+        });
+
+        expect(confirmSpy).toHaveBeenCalled();
+        expect(clearReplacementSpy).toHaveBeenCalledWith('machine-1');
+        expect(refreshMachinesThrottledSpy).toHaveBeenCalled();
     });
 });

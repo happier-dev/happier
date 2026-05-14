@@ -24,6 +24,10 @@ const machineGetBugReportLogTailMock = vi.fn(async (_machineId?: string, _params
     path: '/tmp/.happier/logs/session.log',
     tail: 'tail line',
 }));
+const readMachineTargetForSessionMock = vi.fn((_sessionId: string) => ({
+    machineId: 'machine-1',
+    basePath: '/tmp',
+}));
 
 let sessionLogPath: string | null = null;
 let sessionMachineId: string | null = null;
@@ -96,6 +100,10 @@ vi.mock('@/sync/ops', () => ({
         machineGetBugReportLogTailMock(machineId, params, options),
 }));
 
+vi.mock('@/sync/ops/sessionMachineTarget', () => ({
+    readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionMock(sessionId),
+}));
+
 describe('Session log screen', () => {
     beforeEach(() => {
         sessionLogPath = null;
@@ -103,6 +111,11 @@ describe('Session log screen', () => {
         sessionHydrated = true;
         machineReadSessionLogTailMock.mockClear();
         machineGetBugReportLogTailMock.mockClear();
+        readMachineTargetForSessionMock.mockClear();
+        readMachineTargetForSessionMock.mockReturnValue({
+            machineId: 'machine-1',
+            basePath: '/tmp',
+        });
     });
 
     it('does not fetch log tail until session hydration is ready', async () => {
@@ -133,6 +146,20 @@ describe('Session log screen', () => {
         await renderScreen(React.createElement(SessionLogScreen));
 
         expect(machineReadSessionLogTailMock).toHaveBeenCalledWith('machine-1', { path: sessionLogPath, maxBytes: 200000 }, undefined);
+    });
+
+    it('fetches session log tail from the resolved live machine target instead of stale metadata', async () => {
+        sessionLogPath = '/tmp/.happier/logs/session.log';
+        sessionMachineId = 'old-machine';
+        readMachineTargetForSessionMock.mockReturnValue({
+            machineId: 'replacement-machine',
+            basePath: '/tmp',
+        });
+        const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
+
+        await renderScreen(React.createElement(SessionLogScreen));
+
+        expect(machineReadSessionLogTailMock).toHaveBeenCalledWith('replacement-machine', { path: sessionLogPath, maxBytes: 200000 }, undefined);
     });
 
     it('does not call bug report log tail RPC for session logs', async () => {

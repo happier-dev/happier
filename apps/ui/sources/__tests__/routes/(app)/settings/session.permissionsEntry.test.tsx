@@ -53,6 +53,19 @@ describe('Session settings (Permissions entry)', () => {
         expect(sessionSettingsEntryState.settingsState.rememberLastProjectSessionSelections).toBe(false);
     });
 
+    it('renders remembered engine selections in the new-session modal group', async () => {
+        const mod = await import('@/app/(app)/settings/session');
+        const SessionSettingsScreen = mod.default;
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
+
+        const row = screen.findRowByTitle('settingsSession.sessionCreation.rememberLastEngineSelectionsTitle');
+        expect(row).toBeTruthy();
+        expect(row?.props?.subtitle).toBe('settingsSession.sessionCreation.rememberLastEngineSelectionsEnabledSubtitle');
+
+        screen.pressRowByTitle('settingsSession.sessionCreation.rememberLastEngineSelectionsTitle');
+        expect(sessionSettingsEntryState.settingsState.rememberLastEngineSelectionsV1).toBe(false);
+    });
+
     it('renders wizard mode as a toggle in the new-session modal group', async () => {
         sessionSettingsEntryState.settingsState.useEnhancedSessionWizard = false;
 

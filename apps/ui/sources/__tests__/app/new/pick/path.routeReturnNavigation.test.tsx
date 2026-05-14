@@ -55,7 +55,7 @@ const pickerMachine = createMachineFixture({
     id: 'machine-1',
     metadata: pickerMachineMetadata,
 });
-let capturedPathSelectorProps: {
+let capturedPathSelectionListProps: {
     onSubmitSelectedPath: (path: string) => void;
     selectedPath?: string;
 } | null = null;
@@ -162,10 +162,19 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/components/sessions/new/components/PathSelector', () => ({
-    PathSelector: (props: any) => {
-        capturedPathSelectorProps = props;
-        return React.createElement('PathSelector', props);
+vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({
+    PathSelectionList: (props: any) => {
+        capturedPathSelectionListProps = {
+            ...props,
+            selectedPath: props.initialValue,
+            onSubmitSelectedPath: props.onCommit,
+            machineBrowse: {
+                enabled: true,
+                machineId: props.machineId,
+                serverId: props.serverId,
+            },
+        };
+        return React.createElement('PathSelectionList', props);
     },
 }));
 
@@ -197,7 +206,7 @@ describe('PathPickerScreen', () => {
 
     beforeEach(() => {
         vi.resetModules();
-        capturedPathSelectorProps = null;
+        capturedPathSelectionListProps = null;
         localSearchParams = {
             machineId: 'machine-1',
             selectedPath: '/repo/current',
@@ -233,10 +242,10 @@ describe('PathPickerScreen', () => {
         await renderPathPicker();
         await flushHookEffects({ cycles: 1, turns: 2 });
 
-        expect(capturedPathSelectorProps).toBeTruthy();
+        expect(capturedPathSelectionListProps).toBeTruthy();
 
         await act(async () => {
-            await capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+            await capturedPathSelectionListProps?.onSubmitSelectedPath('/repo/selected');
         });
 
         expect(routerMock.replace).toHaveBeenCalledWith({
@@ -277,10 +286,10 @@ describe('PathPickerScreen', () => {
             await Promise.resolve();
         });
 
-        expect(capturedPathSelectorProps).toBeTruthy();
+        expect(capturedPathSelectionListProps).toBeTruthy();
 
         await act(async () => {
-            await capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+            await capturedPathSelectionListProps?.onSubmitSelectedPath('/repo/selected');
         });
 
         expect(navigationMock.dispatch).not.toHaveBeenCalled();
@@ -325,10 +334,10 @@ describe('PathPickerScreen', () => {
 
         await renderPathPicker();
 
-        expect(capturedPathSelectorProps).toBeTruthy();
+        expect(capturedPathSelectionListProps).toBeTruthy();
 
         await act(async () => {
-            await capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+            await capturedPathSelectionListProps?.onSubmitSelectedPath('/repo/selected');
         });
 
         expect(routerMock.replace).toHaveBeenCalledTimes(1);
@@ -410,10 +419,10 @@ describe('PathPickerScreen', () => {
 
         await renderPathPicker();
 
-        expect(capturedPathSelectorProps).toBeTruthy();
+        expect(capturedPathSelectionListProps).toBeTruthy();
 
         await act(async () => {
-            await capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+            await capturedPathSelectionListProps?.onSubmitSelectedPath('/repo/selected');
         });
 
         expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith('machine-1', expect.objectContaining({
@@ -465,10 +474,10 @@ describe('PathPickerScreen', () => {
 
         await renderPathPicker();
 
-        expect(capturedPathSelectorProps).toBeTruthy();
+        expect(capturedPathSelectionListProps).toBeTruthy();
 
         await act(async () => {
-            await capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+            await capturedPathSelectionListProps?.onSubmitSelectedPath('/repo/selected');
         });
 
         expect(routerMock.replace).toHaveBeenCalledWith({
@@ -539,10 +548,10 @@ describe('PathPickerScreen', () => {
 
         await renderPathPicker();
 
-        expect(capturedPathSelectorProps).toBeTruthy();
+        expect(capturedPathSelectionListProps).toBeTruthy();
 
         await act(async () => {
-            await capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+            await capturedPathSelectionListProps?.onSubmitSelectedPath('/repo/selected');
         });
 
         expect(routerMock.replace).toHaveBeenCalledWith({
@@ -590,10 +599,10 @@ describe('PathPickerScreen', () => {
 
         await renderPathPicker();
 
-        expect(capturedPathSelectorProps).toBeTruthy();
+        expect(capturedPathSelectionListProps).toBeTruthy();
 
         await act(async () => {
-            await capturedPathSelectorProps?.onSubmitSelectedPath('/repo/selected');
+            await capturedPathSelectionListProps?.onSubmitSelectedPath('/repo/selected');
         });
 
         expect(navigationMock.dispatch).toHaveBeenCalledWith(expect.objectContaining({
@@ -616,13 +625,13 @@ describe('PathPickerScreen', () => {
 
         await renderPathPicker();
 
-        expect(capturedPathSelectorProps?.selectedPath).toBe('/repo/direct-entry');
+        expect(capturedPathSelectionListProps?.selectedPath).toBe('/repo/direct-entry');
     });
 
     it('updates the selected path when route params change after mount', async () => {
         await renderPathPicker();
 
-        expect(capturedPathSelectorProps?.selectedPath).toBe('/repo/current');
+        expect(capturedPathSelectionListProps?.selectedPath).toBe('/repo/current');
 
         localSearchParams = {
             machineId: 'machine-1',
@@ -633,6 +642,6 @@ describe('PathPickerScreen', () => {
             emitLocalSearchParamsChange();
         });
 
-        expect(capturedPathSelectorProps?.selectedPath).toBe('/repo/updated');
+        expect(capturedPathSelectionListProps?.selectedPath).toBe('/repo/updated');
     });
 });

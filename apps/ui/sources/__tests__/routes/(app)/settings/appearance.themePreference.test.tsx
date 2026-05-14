@@ -3,32 +3,29 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
-import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
+import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState, sessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean };
+testGlobal.IS_REACT_ACT_ENVIRONMENT = true;
 
 const shared = vi.hoisted(() => ({
     settingsState: {
-        themePreference: 'adaptive',
-        themeProfiles: { activeProfileId: null, profiles: [] },
+        themePreference: 'light',
         uiFontScale: 1,
-        uiContentWidthMode: 'compact',
         uiItemDensity: 'comfortable',
         uiMultiPanePanelsEnabled: true,
         detailsPaneTabsBehavior: 'preview',
-        settingsNavSidebarEnabled: true,
         avatarStyle: 'gradient',
         showFlavorIcons: true,
         preferredLanguage: null,
+        themeProfiles: { activeProfileId: null, profiles: [] },
     } as Record<string, unknown>,
     setAdaptiveThemes: vi.fn(),
     setTheme: vi.fn(),
     setRootViewBackgroundColor: vi.fn(),
     setStatusBarStyle: vi.fn(),
-    startViewTransition: vi.fn((update: () => void) => {
-        update();
-        return { ready: Promise.resolve() };
-    }),
+    setSystemBackgroundColorAsync: vi.fn(),
+    startViewTransition: vi.fn(),
     documentElementAnimate: vi.fn(),
 }));
 
@@ -90,10 +87,7 @@ installSessionSettingsEntryModuleMocks({
 
 vi.mock('expo-localization', () => ({ getLocales: () => [{ languageTag: 'en-US' }] }));
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: shared.setStatusBarStyle }));
-vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn() }));
-vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
-    useReducedMotionPreference: () => false,
-}));
+vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: shared.setSystemBackgroundColorAsync }));
 vi.mock('@/theme', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/theme')>();
     return {
@@ -119,14 +113,14 @@ afterEach(() => {
     standardCleanup();
     resetSessionSettingsEntryState();
     Reflect.deleteProperty(globalThis, 'document');
-    shared.settingsState.themePreference = 'adaptive';
+    shared.settingsState.themePreference = 'light';
     shared.settingsState.themeProfiles = { activeProfileId: null, profiles: [] };
-    shared.settingsState.uiContentWidthMode = 'compact';
-    shared.settingsState.uiItemDensity = 'comfortable';
     shared.setAdaptiveThemes.mockClear();
     shared.setTheme.mockClear();
     shared.setRootViewBackgroundColor.mockClear();
     shared.setStatusBarStyle.mockClear();
+    shared.setSystemBackgroundColorAsync.mockClear();
+    shared.startViewTransition.mockClear();
     shared.startViewTransition.mockImplementation((update: () => void) => {
         update();
         return { ready: Promise.resolve() };
@@ -134,24 +128,93 @@ afterEach(() => {
     shared.documentElementAnimate.mockClear();
 });
 
-describe('Appearance settings item density', () => {
+describe('Appearance settings theme preference', () => {
     it('renders theme selection as an explicit dropdown including curated themes', async () => {
-        shared.settingsState.themePreference = 'light';
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default));
+        const screen = await renderSettingsView(React.createElement(mod.default), {
+            flushOptions: { cycles: 0 },
+        });
 
-        const themeDropdown = screen.findAllByType('DropdownMenu' as any)[0];
+        const themeDropdown = screen.findAllByType('DropdownMenu' as any)
+            .find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.theme');
+
         expect(themeDropdown).toBeTruthy();
-        expect(themeDropdown?.props?.selectedId).toBe('light');
-        expect(themeDropdown?.props?.items.map((item: any) => item.id)).toEqual(['adaptive', 'light', 'dark', 'premiumDark', 'premiumLight']);
+        expect(themeDropdown?.props.selectedId).toBe('light');
+        expect(themeDropdown?.props.items.map((item: any) => item.id)).toEqual([
+            'adaptive',
+            'light',
+            'dark',
+            'premiumDark',
+            'nightDark',
+            'catppuccinMocha',
+            'catppuccinMacchiato',
+            'catppuccinFrappe',
+            'oneDarkPro',
+            'monokaiPro',
+            'githubDark',
+            'darkModern',
+            'premiumLight',
+            'catppuccinLatte',
+            'githubLight',
+        ]);
+    });
+
+    it('applies status bar style immediately when selecting dark mode', async () => {
+        const mod = await import('@/app/(app)/settings/appearance');
+        const screen = await renderSettingsView(React.createElement(mod.default), {
+            flushOptions: { cycles: 0 },
+        });
+
+        const themeDropdown = screen.findAllByType('DropdownMenu' as any)
+            .find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.theme');
+
+        await act(async () => {
+            themeDropdown!.props.onSelect('dark');
+        });
+
+        expect(shared.settingsState.themePreference).toBe('dark');
+        expect(shared.setTheme).toHaveBeenCalledWith('dark');
+        expect(shared.setStatusBarStyle).toHaveBeenCalledWith('light', true);
+    });
+
+    it('wraps web theme changes in a view transition', async () => {
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                documentElement: {
+                    animate: shared.documentElementAnimate,
+                },
+                startViewTransition: shared.startViewTransition,
+            } as unknown as Document,
+        });
+
+        const mod = await import('@/app/(app)/settings/appearance');
+        const screen = await renderSettingsView(React.createElement(mod.default), {
+            flushOptions: { cycles: 0 },
+        });
+
+        const themeDropdown = screen.findAllByType('DropdownMenu' as any)
+            .find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.theme');
+
+        await act(async () => {
+            themeDropdown!.props.onSelect('dark');
+        });
+
+        expect(shared.startViewTransition).toHaveBeenCalledOnce();
+        expect(shared.documentElementAnimate).toHaveBeenCalledWith(
+            { clipPath: ['inset(0 0 100% 0)', 'inset(0)'] },
+            expect.objectContaining({ pseudoElement: '::view-transition-new(root)' }),
+        );
     });
 
     it('activates a curated dark theme from the theme dropdown', async () => {
-        shared.settingsState.themePreference = 'light';
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default));
+        const screen = await renderSettingsView(React.createElement(mod.default), {
+            flushOptions: { cycles: 0 },
+        });
 
-        const themeDropdown = screen.findAllByType('DropdownMenu' as any)[0];
+        const themeDropdown = screen.findAllByType('DropdownMenu' as any)
+            .find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.theme');
 
         await act(async () => {
             themeDropdown!.props.onSelect('premiumDark');
@@ -164,26 +227,33 @@ describe('Appearance settings item density', () => {
         expect(shared.setTheme).toHaveBeenCalledWith('dark');
     });
 
-    it('applies status bar style immediately when switching to dark mode', async () => {
-        shared.settingsState.themePreference = 'light';
+    it('activates Night Dark as a curated dark theme from the theme dropdown', async () => {
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default));
-
-        const themeDropdown = screen.findAllByType('DropdownMenu' as any)[0];
-        expect(themeDropdown).toBeTruthy();
-        expect(themeDropdown?.props?.selectedId).toBe('light');
-
-        await act(async () => {
-            themeDropdown!.props.onSelect('dark');
+        const screen = await renderSettingsView(React.createElement(mod.default), {
+            flushOptions: { cycles: 0 },
         });
 
+        const themeDropdown = screen.findAllByType('DropdownMenu' as any)
+            .find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.theme');
+
+        await act(async () => {
+            themeDropdown!.props.onSelect('nightDark');
+        });
+
+        const themeProfiles = shared.settingsState.themeProfiles as { activeProfileId: string | null; profiles: Array<{ id: string }> };
         expect(shared.settingsState.themePreference).toBe('dark');
+        expect(themeProfiles.activeProfileId).toBe('nightDark');
+        expect(themeProfiles.profiles).toEqual([]);
         expect(shared.setTheme).toHaveBeenCalledWith('dark');
-        expect(shared.setStatusBarStyle).toHaveBeenCalledWith('light', true);
     });
 
-    it('wraps web theme changes in a view transition', async () => {
-        shared.settingsState.themePreference = 'light';
+    it('animates same-mode built-in theme switches from the theme dropdown', async () => {
+        shared.settingsState.themePreference = 'dark';
+        shared.settingsState.themeProfiles = { activeProfileId: 'premiumDark', profiles: [] };
+        shared.startViewTransition.mockImplementation((mutation: () => void) => {
+            mutation();
+            return { ready: Promise.resolve() };
+        });
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
             value: {
@@ -195,86 +265,32 @@ describe('Appearance settings item density', () => {
         });
 
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default));
-
-        const themeDropdown = screen.findAllByType('DropdownMenu' as any)[0];
-        expect(themeDropdown).toBeTruthy();
-        expect(themeDropdown?.props?.selectedId).toBe('light');
-
-        await act(async () => {
-            themeDropdown!.props.onSelect('dark');
+        const screen = await renderSettingsView(React.createElement(mod.default), {
+            flushOptions: { cycles: 0 },
         });
 
-        expect(shared.settingsState.themePreference).toBe('dark');
+        const themeDropdown = screen.findAllByType('DropdownMenu' as any)
+            .find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.theme');
+
+        await act(async () => {
+            themeDropdown!.props.onSelect('nightDark');
+        });
+
         expect(shared.startViewTransition).toHaveBeenCalledOnce();
-        expect(shared.documentElementAnimate).toHaveBeenCalledWith(
-            { clipPath: ['inset(0 0 100% 0)', 'inset(0)'] },
-            expect.objectContaining({
-                pseudoElement: '::view-transition-new(root)',
-            }),
-        );
+        expect(shared.documentElementAnimate).toHaveBeenCalled();
+        expect((shared.settingsState.themeProfiles as { activeProfileId: string | null }).activeProfileId).toBe('nightDark');
     });
 
-    it('renders the item density dropdown and updates the local setting', async () => {
+    it('opens theme profile management from the theme group', async () => {
         const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default));
-
-        const dropdowns = screen.findAllByType('DropdownMenu' as any);
-        const itemDensityDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.itemDensity');
-        expect(itemDensityDropdown).toBeTruthy();
-        expect(itemDensityDropdown?.props?.selectedId).toBe('comfortable');
-
-        const itemIds = itemDensityDropdown?.props?.items?.map((item: any) => item.id) ?? [];
-        expect(itemIds).toEqual(['comfortable', 'cozy', 'compact']);
-
-        await act(async () => {
-            itemDensityDropdown!.props.onSelect('cozy');
+        const screen = await renderSettingsView(React.createElement(mod.default), {
+            flushOptions: { cycles: 0 },
         });
 
-        expect(shared.settingsState.uiItemDensity).toBe('cozy');
-    });
-
-    it('renders the content width dropdown and updates the local setting', async () => {
-        const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default));
-
-        const dropdowns = screen.findAllByType('DropdownMenu' as any);
-        const contentWidthDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.contentWidth');
-        expect(contentWidthDropdown).toBeTruthy();
-        expect(contentWidthDropdown?.props?.selectedId).toBe('compact');
-
-        const itemIds = contentWidthDropdown?.props?.items?.map((item: any) => item.id) ?? [];
-        expect(itemIds).toEqual(['compact', 'medium', 'full']);
-
         await act(async () => {
-            contentWidthDropdown!.props.onSelect('full');
+            screen.pressByTestId('settings-appearance-themeProfiles');
         });
 
-        expect(shared.settingsState.uiContentWidthMode).toBe('full');
-    });
-
-    it('renders the settings navigation sidebar toggle and updates the local setting', async () => {
-        const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default));
-
-        const row = screen.findRow('settings-appearance-settings-nav-sidebar-enabled') as any;
-        expect(row).toBeTruthy();
-        expect(row.props?.rightElement).toBeTruthy();
-        expect(row.props.rightElement.props?.value).toBe(true);
-
-        await act(async () => {
-            row.props.rightElement.props.onValueChange(false);
-        });
-
-        expect(shared.settingsState.settingsNavSidebarEnabled).toBe(false);
-    });
-
-    it('does not surface the mobile workspace experience setting from appearance settings', async () => {
-        const mod = await import('@/app/(app)/settings/appearance');
-        const screen = await renderSettingsView(React.createElement(mod.default));
-
-        const dropdowns = screen.findAllByType('DropdownMenu' as any);
-        const workspaceModeDropdown = dropdowns.find((node: any) => node.props?.itemTrigger?.title === 'settingsAppearance.mobileWorkspaceExperience');
-        expect(workspaceModeDropdown).toBeUndefined();
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/appearance/themes');
     });
 });

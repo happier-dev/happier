@@ -2,9 +2,6 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
-import {
-    clearPendingMobileSurfaceTransition,
-} from '@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -330,7 +327,6 @@ afterEach(() => {
     activeServerId = 'server-active';
     globalSearchParamsState = {};
     stackNavigatorScreenOptionsHistory = [];
-    clearPendingMobileSurfaceTransition();
 });
 
 describe('RootLayout hooks order', () => {
@@ -398,38 +394,29 @@ describe('RootLayout stack options', () => {
         }
     }, 60_000);
 
-    it('applies pending mobile surface transition options to the target route', async () => {
+    it('disables stack screen animations for main tab routes', async () => {
         stubFeatureFetch();
 
         const { default: RootLayout } = await import('@/app/(app)/_layout');
-        const mobileTransition = await import('@/components/navigation/mobile/transition/mobileSurfaceTransitionIntent');
-        mobileTransition.prepareMobileSurfaceTransition({
-            currentPathname: '/session/s1/files',
-            targetHref: '/session/s1/git',
-            operation: 'replace',
-        });
 
         let tree: renderer.ReactTestRenderer | undefined;
         try {
             tree = (await renderScreen(React.createElement(RootLayout))).tree;
-            const screenOptions = stackNavigatorScreenOptionsHistory.at(-1);
+            const mainTabRouteNames = new Set(['index', 'inbox/index', 'friends/index', 'settings']);
+            const mainTabScreens = tree.root
+                .findAllByType('StackScreen')
+                .filter((node) => mainTabRouteNames.has(node.props?.name));
 
-            expect(typeof screenOptions).toBe('function');
-            const resolvedOptions = (screenOptions as (props: { route: { name?: string } }) => Record<string, unknown>)({
-                route: { name: 'session/[id]/git' },
-            });
-
-            expect(resolvedOptions).toMatchObject({
-                animation: 'slide_from_right',
-                animationTypeForReplace: 'push',
-            });
+            expect(mainTabScreens).toHaveLength(mainTabRouteNames.size);
+            for (const screen of mainTabScreens) {
+                expect(screen.props?.options).toMatchObject({ animation: 'none' });
+            }
         } finally {
             if (tree) {
                 act(() => {
                     tree!.unmount();
                 });
             }
-            mobileTransition.clearPendingMobileSurfaceTransition();
         }
     }, 60_000);
 });

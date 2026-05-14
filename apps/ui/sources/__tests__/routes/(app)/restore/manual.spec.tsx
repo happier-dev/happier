@@ -12,6 +12,7 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 const routerBackSpy = vi.hoisted(() => vi.fn());
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
+const routerDismissToSpy = vi.hoisted(() => vi.fn());
 const authLoginSpy = vi.hoisted(() => vi.fn(async () => {}));
 const normalizeSecretKeySpy = vi.hoisted(() => vi.fn((input: string) => input.trim()));
 
@@ -23,7 +24,7 @@ installRestoreRouteCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const routerMock = createExpoRouterMock({
-            router: { back: routerBackSpy, replace: routerReplaceSpy },
+            router: { back: routerBackSpy, replace: routerReplaceSpy, dismissTo: routerDismissToSpy },
         });
         return routerMock.module;
     },
@@ -87,7 +88,7 @@ describe('/restore/manual', () => {
         expect(revealedInput?.props?.secureTextEntry).toBe(false);
     });
 
-    it('replaces navigation to home after a successful restore (does not return to link-new-device QR screen)', async () => {
+    it('dismisses to home after a successful restore without dispatching a nested replace action', async () => {
         const screen = await renderManualRestoreScreen();
 
         const submit = screen.findByTestId('restore-manual-submit');
@@ -104,6 +105,7 @@ describe('/restore/manual', () => {
         expect(authLoginSpy).toHaveBeenCalled();
         expect(normalizeSecretKeySpy).toHaveBeenCalled();
         expect(routerBackSpy).not.toHaveBeenCalled();
-        expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(routerDismissToSpy).toHaveBeenCalledWith('/');
     });
 });

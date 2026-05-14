@@ -17,17 +17,14 @@ import {
     type PickerNavigationState,
 } from './testHarness';
 
-type PathSelectorProps = {
-    favoriteDirectories: string[];
-    onChangeFavoriteDirectories: (next: string[]) => void;
-    onSubmitSelectedPath: (path: string) => void;
-    machineBrowse?: {
-        enabled: boolean;
-        machineId: string | null;
-    };
+type PathSelectionListProps = {
+    favorites: ReadonlyArray<{ path: string }>;
+    onToggleFavorite: (path: string) => void;
+    onCommit: (path: string) => void;
+    machineId: string | null;
 };
 
-let lastPathSelectorProps: PathSelectorProps | null = null;
+let lastPathSelectionListProps: PathSelectionListProps | null = null;
 const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 let navigationState: PickerNavigationState = cloneNavigationState({
@@ -125,9 +122,9 @@ vi.mock('@/components/ui/forms/SearchHeader', () => ({
     SearchHeader: () => null,
 }));
 
-vi.mock('@/components/sessions/new/components/PathSelector', () => ({
-    PathSelector: (props: PathSelectorProps) => {
-        lastPathSelectorProps = props;
+vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({
+    PathSelectionList: (props: PathSelectionListProps) => {
+        lastPathSelectionListProps = props;
         return null;
     },
 }));
@@ -138,7 +135,7 @@ describe('PathPickerScreen', () => {
     });
 
     beforeEach(() => {
-        lastPathSelectorProps = null;
+        lastPathSelectionListProps = null;
         localSearchParams = { machineId: 'm1', selectedPath: '/tmp' };
         navigationState = {
             index: 2,
@@ -164,26 +161,23 @@ describe('PathPickerScreen', () => {
     it('defaults favoriteDirectories to an empty array when setting is undefined', async () => {
         await renderPathPicker();
 
-        expect(lastPathSelectorProps).toBeTruthy();
-        expect(lastPathSelectorProps?.favoriteDirectories).toEqual([]);
-        expect(typeof lastPathSelectorProps?.onChangeFavoriteDirectories).toBe('function');
+        expect(lastPathSelectionListProps).toBeTruthy();
+        expect(lastPathSelectionListProps?.favorites).toEqual([]);
+        expect(typeof lastPathSelectionListProps?.onToggleFavorite).toBe('function');
     });
 
-    it('passes machine browse config to PathSelector for the current machine', async () => {
+    it('passes machine browse config to PathSelectionList for the current machine', async () => {
         await renderPathPicker();
 
-        expect(lastPathSelectorProps?.machineBrowse).toEqual({
-            enabled: true,
-            machineId: 'm1',
-        });
+        expect(lastPathSelectionListProps?.machineId).toBe('m1');
     });
 
     it('sets the selected path on the previous route params when confirming', async () => {
         await renderPathPicker();
 
-        expect(lastPathSelectorProps).toBeTruthy();
+        expect(lastPathSelectionListProps).toBeTruthy();
         await act(async () => {
-            await lastPathSelectorProps?.onSubmitSelectedPath('/Users/leeroy/Documents/Development/happier/dev/apps/stack');
+            await lastPathSelectionListProps?.onCommit('/Users/leeroy/Documents/Development/happier/dev/apps/stack');
         });
 
         expect(navigationMock.dispatch).toHaveBeenCalledWith(expect.objectContaining({
@@ -208,9 +202,9 @@ describe('PathPickerScreen', () => {
         };
         await renderPathPicker();
 
-        expect(lastPathSelectorProps).toBeTruthy();
+        expect(lastPathSelectionListProps).toBeTruthy();
         await act(async () => {
-            await lastPathSelectorProps?.onSubmitSelectedPath('');
+            await lastPathSelectionListProps?.onCommit('');
         });
 
         expect(navigationMock.dispatch).not.toHaveBeenCalled();

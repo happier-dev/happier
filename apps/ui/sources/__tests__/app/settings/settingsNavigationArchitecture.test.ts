@@ -7,6 +7,7 @@ const UI_SOURCES_ROOT = join(__dirname, '..', '..', '..');
 const APP_ROUTES_ROOT = join(UI_SOURCES_ROOT, 'app', '(app)');
 const SETTINGS_ROUTES_ROOT = join(APP_ROUTES_ROOT, 'settings');
 const SETTINGS_LAYOUT_PATH = join(SETTINGS_ROUTES_ROOT, '_layout.tsx');
+const SETTINGS_THEME_PROFILES_ROUTE_ROOT = join(SETTINGS_ROUTES_ROOT, 'appearance', 'themes');
 const SETTINGS_NAVIGATION_REGISTRY_PATH = join(
     UI_SOURCES_ROOT,
     'components',
@@ -24,6 +25,7 @@ const MAIN_VIEW_PATH = join(
 
 const ALLOWED_SETTINGS_STACK_SCREEN_FILES = new Set([
     'app/(app)/settings/_layout.tsx',
+    'components/settings/actions/ActionSettingsDetailView.tsx',
 ]);
 
 function walkFiles(root: string): string[] {
@@ -51,6 +53,12 @@ describe('settings navigation architecture', () => {
     it('centralizes settings route chrome in the settings layout registry', () => {
         expect(existsSync(SETTINGS_LAYOUT_PATH)).toBe(true);
         expect(existsSync(SETTINGS_NAVIGATION_REGISTRY_PATH)).toBe(true);
+        expect(existsSync(join(SETTINGS_ROUTES_ROOT, 'appearance.tsx'))).toBe(true);
+        expect(existsSync(join(SETTINGS_ROUTES_ROOT, 'keyboard.tsx'))).toBe(true);
+        expect(existsSync(join(SETTINGS_ROUTES_ROOT, 'appearance', 'themes.tsx'))).toBe(true);
+        expect(existsSync(join(SETTINGS_THEME_PROFILES_ROUTE_ROOT, '[profileId].tsx'))).toBe(true);
+        expect(existsSync(join(SETTINGS_THEME_PROFILES_ROUTE_ROOT, 'import.tsx'))).toBe(true);
+        expect(existsSync(join(SETTINGS_THEME_PROFILES_ROUTE_ROOT, 'export.tsx'))).toBe(true);
 
         const appLayout = readFileSync(join(APP_ROUTES_ROOT, '_layout.tsx'), 'utf8');
         expect(appLayout).not.toMatch(/name=["']settings\/[^"']+["']/);
@@ -65,8 +73,21 @@ describe('settings navigation architecture', () => {
             .map(toSettingsRouteName)
             .sort();
 
+        expect(routeNames).toContain('appearance');
+        expect(routeNames).toContain('keyboard');
+        expect(routeNames).toContain('appearance/themes');
+        expect(routeNames).toContain('appearance/themes/[profileId]');
+        expect(routeNames).toContain('appearance/themes/import');
+        expect(routeNames).toContain('appearance/themes/export');
+
         const missingRoutes = routeNames.filter((routeName) => !registry.includes(`name: '${routeName}'`));
         expect(missingRoutes).toEqual([]);
+
+        expect(registry).toContain("name: 'appearance/themes'");
+        expect(registry).toContain("name: 'appearance/themes/[profileId]'");
+        expect(registry).toContain("name: 'appearance/themes/import'");
+        expect(registry).toContain("name: 'appearance/themes/export'");
+        expect(registry).toContain("name: 'keyboard'");
     });
 
     it('keeps settings screens from declaring their own static Stack.Screen chrome', () => {

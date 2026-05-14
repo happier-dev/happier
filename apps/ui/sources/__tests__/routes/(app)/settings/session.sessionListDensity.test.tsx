@@ -8,6 +8,10 @@ import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState 
 
 const setSessionListDensity = vi.fn();
 const setSessionListOrderingMode = vi.fn();
+const setWorkspacePathDisplayMode = vi.fn();
+const setWorkspaceFaviconsEnabled = vi.fn();
+const setWorkspaceMachineSubtitlesEnabled = vi.fn();
+const setSessionListWorkingIndicatorStyle = vi.fn();
 let translationPrefix = 'en';
 
 installSessionSettingsEntryModuleMocks({
@@ -28,6 +32,10 @@ installSessionSettingsEntryModuleMocks({
                     if (key === 'sessionTagsEnabled') return [true, vi.fn()];
                     if (key === 'sessionListDensity') return ['cozy', setSessionListDensity];
                     if (key === 'sessionListOrderingModeV1') return ['custom', setSessionListOrderingMode];
+                    if (key === 'workspacePathDisplayModeV1') return ['name', setWorkspacePathDisplayMode];
+                    if (key === 'workspaceFaviconsEnabled') return [true, setWorkspaceFaviconsEnabled];
+                    if (key === 'workspaceMachineSubtitlesEnabled') return [true, setWorkspaceMachineSubtitlesEnabled];
+                    if (key === 'sessionListNarrowWorkingIndicatorStyle') return ['spinner', setSessionListWorkingIndicatorStyle];
                     if (key === 'hideInactiveSessions') return [false, vi.fn()];
                     if (key === 'sessionListActiveGroupingV1') return ['project', vi.fn()];
                     if (key === 'sessionListInactiveGroupingV1') return ['date', vi.fn()];
@@ -64,6 +72,10 @@ afterEach(() => {
     standardCleanup();
     setSessionListDensity.mockClear();
     setSessionListOrderingMode.mockClear();
+    setWorkspacePathDisplayMode.mockClear();
+    setWorkspaceFaviconsEnabled.mockClear();
+    setWorkspaceMachineSubtitlesEnabled.mockClear();
+    setSessionListWorkingIndicatorStyle.mockClear();
     resetSessionSettingsEntryState();
     translationPrefix = 'en';
 });
@@ -153,5 +165,52 @@ describe('Session settings session list density', () => {
             'fr:settingsFeatures.sessionListGrouping.projectTitle',
             'fr:settingsFeatures.sessionListGrouping.dateTitle',
         ]);
+    });
+
+    it('exposes workspace name and favicon controls in the session list settings', async () => {
+        const mod = await import('../../../../app/(app)/settings/session');
+        const SessionSettingsScreen = (mod.default as unknown as {
+            type: React.ComponentType<Record<string, never>>;
+        }).type;
+
+        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
+        const dropdowns = screen.findAllByType('DropdownMenu' as any);
+        const workspaceNameDropdown = dropdowns.find((node: any) =>
+            node.props?.itemTrigger?.itemProps?.testID === 'settings-session-workspacePathDisplay-trigger');
+        expect(workspaceNameDropdown).toBeTruthy();
+        expect(workspaceNameDropdown?.props?.selectedId).toBe('name');
+        expect(workspaceNameDropdown?.props?.items?.map((item: any) => item.id)).toEqual(['name', 'path']);
+
+        await act(async () => {
+            workspaceNameDropdown!.props.onSelect('path');
+        });
+        expect(setWorkspacePathDisplayMode).toHaveBeenCalledWith('path');
+
+        const faviconItem = screen.findAllByType('Item' as any).find((node: any) =>
+            node.props?.title === 'en:settingsSession.sessionList.workspaceFaviconsTitle');
+        expect(faviconItem).toBeTruthy();
+        await act(async () => {
+            faviconItem!.props.onPress();
+        });
+        expect(setWorkspaceFaviconsEnabled).toHaveBeenCalledWith(false);
+
+        const machineSubtitleItem = screen.findAllByType('Item' as any).find((node: any) =>
+            node.props?.title === 'en:settingsSession.sessionList.workspaceMachineSubtitlesTitle');
+        expect(machineSubtitleItem).toBeTruthy();
+        await act(async () => {
+            machineSubtitleItem!.props.onPress();
+        });
+        expect(setWorkspaceMachineSubtitlesEnabled).toHaveBeenCalledWith(false);
+
+        const workingIndicatorDropdown = dropdowns.find((node: any) =>
+            node.props?.itemTrigger?.itemProps?.testID === 'settings-session-workingIndicator-trigger');
+        expect(workingIndicatorDropdown).toBeTruthy();
+        expect(workingIndicatorDropdown?.props?.selectedId).toBe('spinner');
+        expect(workingIndicatorDropdown?.props?.itemTrigger?.title).toBe('en:settingsSession.sessionList.workingIndicatorTitle');
+
+        await act(async () => {
+            workingIndicatorDropdown!.props.onSelect('pulse');
+        });
+        expect(setSessionListWorkingIndicatorStyle).toHaveBeenCalledWith('pulse');
     });
 });

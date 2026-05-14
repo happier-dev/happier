@@ -20,6 +20,7 @@ function createMachineRecord() {
     daemonState: null,
     daemonStateVersion: 0,
     revokedAt: null,
+    spawnReadinessStatus: 'ready',
     };
 }
 
@@ -59,7 +60,7 @@ installMachineDetailsCommonModuleMocks({
         return createStorageModuleStub({
             useSessions: () => mockState.sessionsState,
             useAllMachines: () => [],
-            useMachine: () => createMachineRecord(),
+            useMachine: () => mockState.machinesState[String(mockState.routeParamsRef.current.id ?? '')] ?? null,
             storage: {
                 getState: () => ({
                     settings: mockState.settingsState,
@@ -186,6 +187,10 @@ vi.mock('@/sync/ops/sessionMachineTarget', () => ({
                 machineId: project.key.machineId ?? null,
                 basePath: project.key.rootPath ?? null,
             };
+    },
+    readDisplayMachineIdForSession: ({ sessionId, metadata }: { sessionId: string; metadata?: any }) => {
+        const project = mockState.projectForSession[sessionId];
+        return project?.key?.machineId ?? metadata?.machineId ?? null;
     },
 }));
 
@@ -329,6 +334,35 @@ describe('MachineDetailScreen path browser', () => {
                 configuredBackendId: 'review-bot',
             },
         }));
+    });
+
+    it('does not spawn when exact machine readiness is unknown even if the machine appears online', async () => {
+        mockState.machinesState['machine-1'] = {
+            ...createMachineRecord(),
+            active: true,
+            activeAt: Date.now(),
+            spawnReadinessStatus: 'unknown',
+        };
+
+        const { default: MachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+        const screen = await renderScreen(React.createElement(MachineDetailScreen));
+
+        const browseButton = screen.findByTestId('path-browser-trigger');
+        expect(browseButton?.props.disabled).toBe(true);
+
+        const startButtons = screen.findAll((node) =>
+            String(node.type) === 'Pressable'
+            && typeof node.props?.onPress === 'function'
+            && typeof node.props?.disabled === 'boolean',
+        );
+
+        expect(startButtons[0]?.props.disabled).toBe(true);
+
+        await act(async () => {
+            await startButtons[0]?.props.onPress();
+        });
+
+        expect(mockState.machineSpawnNewSessionMock).not.toHaveBeenCalled();
     });
 
     it('falls back to the preferred built-in target when the stored configured backend is stale', async () => {
