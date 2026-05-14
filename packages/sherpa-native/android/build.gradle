@@ -59,6 +59,7 @@ tasks.register("prepareSherpaOnnxAndroid") {
     sherpaChecksumFile.eachLine { line ->
       def parts = line.trim().split("\\s+")
       if (parts.length >= 2 && parts[1] == sherpaArchive) expected = parts[0]
+      if (parts.length >= 2 && parts[0] == sherpaArchive) expected = parts[1]
     }
     if (expected == null || expected.toString().trim().isEmpty()) {
       throw new GradleException("[HappierSherpaNative] sha256 not found for ${sherpaArchive}")
@@ -75,9 +76,9 @@ tasks.register("prepareSherpaOnnxAndroid") {
     def marker = new File(sherpaExtractDir, ".extracted")
     if (!marker.exists()) {
       logger.lifecycle("[HappierSherpaNative] Extracting ${sherpaArchive}")
-      exec {
-        workingDir sherpaExtractDir
-        commandLine "tar", "-xf", sherpaArchiveFile.absolutePath
+      project.copy {
+        from project.tarTree(project.resources.bzip2(sherpaArchiveFile))
+        into sherpaExtractDir
       }
       marker.text = "ok"
     }

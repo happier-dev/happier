@@ -69,6 +69,42 @@ function copyDir(repoRoot, fromDir, toDir, opts) {
 
 /**
  * @param {string} repoRoot
+ * @param {string} fromDir
+ * @param {string} toDir
+ * @param {{ search: string; replacement: string }} replacement
+ * @param {{ dryRun: boolean }} opts
+ */
+function copyDirWithRenamedBasenames(repoRoot, fromDir, toDir, replacement, opts) {
+  const src = path.resolve(repoRoot, fromDir);
+  const dst = path.resolve(repoRoot, toDir);
+  if (opts.dryRun) {
+    console.log(`[dry-run] copy dir: ${path.relative(repoRoot, src)} -> ${path.relative(repoRoot, dst)}`);
+    return;
+  }
+
+  const queue = [src];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const fromPath = path.join(current, entry.name);
+      const relativeParent = path.relative(src, current);
+      if (entry.isDirectory()) {
+        queue.push(fromPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+
+      const toName = entry.name.replace(replacement.search, replacement.replacement);
+      const toPath = path.join(dst, relativeParent, toName);
+      fs.mkdirSync(path.dirname(toPath), { recursive: true });
+      fs.copyFileSync(fromPath, toPath);
+    }
+  }
+}
+
+/**
+ * @param {string} repoRoot
  * @param {string} fromFile
  * @param {string} toFile
  * @param {{ dryRun: boolean }} opts
@@ -198,6 +234,13 @@ function main() {
     copyDir(repoRoot, artifactsDir, publicdevDir, opts);
   } else {
     copyFile(repoRoot, latestJsonRel, path.join(stableDir, 'latest.json'), opts);
+    copyDirWithRenamedBasenames(
+      repoRoot,
+      artifactsDir,
+      stableDir,
+      { search: `-v${uiVersion}`, replacement: '' },
+      opts,
+    );
     copyDir(repoRoot, artifactsDir, versionedDir, opts);
   }
 }
