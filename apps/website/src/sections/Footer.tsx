@@ -59,7 +59,7 @@ export function Footer() {
                                     <li key={link.label}>
                                         <a
                                             href={link.href}
-                                            className="text-[14px] transition-colors hover:opacity-100"
+                                            className="text-[14px] transition-opacity hover:opacity-100"
                                             style={{ color: 'var(--fg)', opacity: 0.7 }}
                                         >
                                             {link.label}

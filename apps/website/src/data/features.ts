@@ -4,7 +4,9 @@ export type Feature = {
     title: string;
     body: string;
     visual: 'mobile' | 'desktop' | 'mobileAndDesktop';
-    accent: 'sun' | 'coral' | 'blue' | 'indigo';
+    /** Each accent samples 1-2 adjacent bands of the hero planet so the
+     *  feature glows feel like slices of the same image as the visitor scrolls. */
+    accent: 'sun' | 'coral' | 'rose' | 'magenta' | 'blue' | 'indigo';
 };
 
 // Adapted from `releaseNotes.onboardingShowcase.cards` in
@@ -25,7 +27,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'Use what you already pay for.',
         body: 'Claude Code, Codex, OpenCode — your subscriptions, your usage. No new bill. No double billing. No login required if you don’t want one.',
         visual: 'mobile',
-        accent: 'coral',
+        accent: 'blue',
     },
     {
         id: 'terminalTuis',
@@ -33,7 +35,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'You love the terminal? We do too.',
         body: 'Keep running Claude Code, Codex, or OpenCode in their native TUI. Happier mirrors them to every device — follow along, send messages, and approve permissions from your phone.',
         visual: 'desktop',
-        accent: 'indigo',
+        accent: 'coral',
     },
     {
         id: 'cockpit',
@@ -41,7 +43,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'Everything you need. One tap away.',
         body: 'Chat, files, Git, editor, terminal. Browse and edit code, review diffs, manage branches, open PRs — straight from your pocket.',
         visual: 'mobile',
-        accent: 'sun',
+        accent: 'indigo',
     },
     {
         id: 'existingSessions',
@@ -49,7 +51,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'Existing sessions? Already there.',
         body: 'Any Claude, Codex, or OpenCode session running on your machine — open it in Happier, live. Nothing to migrate, nothing to learn.',
         visual: 'mobileAndDesktop',
-        accent: 'blue',
+        accent: 'sun',
     },
     {
         id: 'voice',
@@ -57,7 +59,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'A colleague you can talk to.',
         body: 'The voice assistant watches every running session. Brainstorm the next change, approve permissions, send a message — all without picking up the phone.',
         visual: 'mobile',
-        accent: 'coral',
+        accent: 'magenta',
     },
     {
         id: 'review',
@@ -65,7 +67,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'Review the diff. Send notes.',
         body: 'Browse your agent’s changes. Mark the exact lines you want to address. Choose which notes to send, and hand them straight back — same session, or a new one.',
         visual: 'desktop',
-        accent: 'indigo',
+        accent: 'rose',
     },
     {
         id: 'subagents',
@@ -73,7 +75,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'One session. Many agents.',
         body: 'Launch Codex subagents from a Claude session. Route messages between sessions. Use the strength of each provider — together, in one place.',
         visual: 'desktop',
-        accent: 'blue',
+        accent: 'indigo',
     },
     {
         id: 'inbox',
@@ -81,7 +83,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'One inbox. Every session.',
         body: 'Pending approvals, permission prompts, unread activity — across every session and every machine, in one inbox. Nothing falls through the cracks.',
         visual: 'mobile',
-        accent: 'sun',
+        accent: 'coral',
     },
     {
         id: 'mcp',
@@ -89,7 +91,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'One config. Every provider.',
         body: 'Define MCP servers once. They work across every backend — even ones that don’t natively support MCP. Skills, prompts, profiles, all in sync.',
         visual: 'desktop',
-        accent: 'indigo',
+        accent: 'blue',
     },
     {
         id: 'queue',
@@ -97,7 +99,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'Queue. Steer. Fork. Rollback.',
         body: 'Queue messages while the agent is busy. Steer a running turn. Fork from any message. Roll back if things go sideways.',
         visual: 'mobile',
-        accent: 'coral',
+        accent: 'rose',
     },
     {
         id: 'automations',
@@ -105,7 +107,7 @@ export const FEATURES: ReadonlyArray<Feature> = [
         title: 'Your agent, on a schedule.',
         body: 'Schedule recurring sessions to monitor pull requests, watch issues, or run any task on a regular cadence. Wake up to results.',
         visual: 'mobileAndDesktop',
-        accent: 'blue',
+        accent: 'magenta',
     },
     {
         id: 'accounts',

@@ -2,6 +2,61 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Register each theme color token as a typed CSS property so the value
+ * itself becomes interpolatable on transitions. Without @property, CSS
+ * custom properties flip instantly between values; with it, the browser
+ * smoothly animates the value over the transition duration and every
+ * descendant reading `var(--xxx)` sees the interpolated color each frame.
+ *
+ * This is what lets the entire theme switch — body bg, text colors,
+ * provider tile fills, AND the gradient text stops on the headline —
+ * animate as one synchronised motion instead of half-instant flips.
+ *
+ * Browser support: Chrome 85+, Safari 16.4+, Firefox 128+. Older
+ * browsers degrade to instant change.
+ */
+@property --bg {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: #050507;
+}
+@property --fg {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: #FAFAFC;
+}
+@property --fg-primary {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: #FFFFFF;
+}
+@property --fg-primary-soft {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: rgba(255, 255, 255, 0.55);
+}
+@property --muted {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: #9A9AA5;
+}
+@property --line {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: rgba(255, 255, 255, 0.08);
+}
+@property --card {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: rgba(255, 255, 255, 0.04);
+}
+@property --card-border {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: rgba(255, 255, 255, 0.08);
+}
+
 :root {
     color-scheme: dark light;
     --bg: #050507;
@@ -13,6 +68,18 @@
     --card: rgba(255, 255, 255, 0.04);
     --card-border: rgba(255, 255, 255, 0.08);
     --accent: #F5B547;
+
+    /* Single source of truth for theme transitions — every themed token
+       animates here in lockstep, so the whole page changes as one. */
+    transition:
+        --bg 700ms ease,
+        --fg 700ms ease,
+        --fg-primary 700ms ease,
+        --fg-primary-soft 700ms ease,
+        --muted 700ms ease,
+        --line 700ms ease,
+        --card 700ms ease,
+        --card-border 700ms ease;
 }
 
 html.light {
@@ -43,6 +110,10 @@ body {
     color: var(--fg);
     font-family: 'Inter', system-ui, sans-serif;
     overflow-x: hidden;
+    /* No transition here on color/background-color — @property on --bg and --fg
+       already animates the source values, and adding a redundant transition
+       creates a "transition chasing transition" lag where the element's color
+       takes ~1.4s to settle instead of 700ms. */
 }
 
 .font-display {
@@ -122,4 +193,19 @@ html {
     background: var(--card);
     border: 1px solid var(--card-border);
     backdrop-filter: blur(20px);
+}
+
+/* Top-to-bottom curtain reveal — matches the in-app theme transition:
+   600ms cubic-bezier(0.4, 0, 0.2, 1) with clip-path from full bottom-inset
+   (nothing visible) to no inset (fully visible). Used by the clickable
+   hero screenshots when toggling between dark and light theme previews. */
+@keyframes theme-reveal-down {
+    from {
+        -webkit-clip-path: inset(0 0 100% 0);
+        clip-path: inset(0 0 100% 0);
+    }
+    to {
+        -webkit-clip-path: inset(0);
+        clip-path: inset(0);
+    }
 }

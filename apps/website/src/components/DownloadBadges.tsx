@@ -1,26 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useTheme } from './ThemeContext';
 
 /**
  * Download badges row.
  *
- * Three pill-shaped CTAs styled like the well-known store badges
- * ("Download on the App Store" / "GET IT ON Google Play") plus a desktop
- * companion. Rendered as glass pills so they sit cleanly on the planet
- * background without fighting it.
+ * App Store + Google Play render as simple links. The Desktop badge is a
+ * split button:
+ *   • Click the main area → direct-download the smart-detected variant
+ *     (or open the popover if arch detection is uncertain — e.g. Safari
+ *     on Mac, where Apple freezes the UA).
+ *   • Click the chevron → always opens the popover with all four desktop
+ *     variants (macOS Apple Silicon / Intel, Windows, Linux). The
+ *     detected one is highlighted with a "Detected" chip.
  *
- * Desktop binaries live on GitHub under the rolling tag
- * `ui-desktop-stable` with stable, version-less filenames (the pipeline
- * strips the version suffix), so URLs of the form
- *   .../releases/download/ui-desktop-stable/happier-ui-desktop-<platform>-<arch>.<ext>
- * keep working across releases.
- *
- * We detect the visitor's OS synchronously (UA string is enough) and
- * refine the architecture asynchronously via `navigator.userAgentData`
- * (Chromium only — Safari/Firefox freeze the UA, so we default to
- * Apple Silicon on Mac since >85% of active Macs are now ARM). A small
- * "Other downloads" link sits below the row for anyone who needs a
- * different variant.
+ * Filenames target the rolling `ui-desktop-stable` tag with version-less
+ * names, so URLs remain valid across future releases.
  */
 
 type Os = 'mac' | 'win' | 'linux' | 'unknown';
@@ -29,22 +24,26 @@ type Arch = 'arm64' | 'x86_64' | 'unknown';
 const ASSET_BASE = 'https://github.com/happier-dev/happier/releases/download/ui-desktop-stable';
 const RELEASES_PAGE = 'https://github.com/happier-dev/happier/releases/tag/ui-desktop-stable';
 
-// Filename suffixes after `happier-ui-desktop-`.
-const ASSET_FILE: Record<string, string> = {
-    'mac-arm64': 'happier-ui-desktop-darwin-aarch64.dmg',
-    'mac-x86_64': 'happier-ui-desktop-darwin-x86_64.dmg',
-    'win-arm64': 'happier-ui-desktop-windows-x86_64.exe', // no ARM build yet — fall back to x64
-    'win-x86_64': 'happier-ui-desktop-windows-x86_64.exe',
-    'linux-arm64': 'happier-ui-desktop-linux-x86_64.AppImage', // no ARM build yet — fall back to x64
-    'linux-x86_64': 'happier-ui-desktop-linux-x86_64.AppImage',
-};
-
 const DESKTOP_LABEL: Record<Os, string> = {
     mac: 'macOS',
     win: 'Windows',
     linux: 'Linux',
     unknown: 'Desktop',
 };
+
+type PlatformOption = {
+    id: string;
+    label: string;
+    sublabel: string;
+    file: string;
+};
+
+const PLATFORM_OPTIONS: ReadonlyArray<PlatformOption> = [
+    { id: 'mac-arm64', label: 'macOS', sublabel: 'Apple Silicon', file: 'happier-ui-desktop-darwin-aarch64.dmg' },
+    { id: 'mac-x86_64', label: 'macOS', sublabel: 'Intel', file: 'happier-ui-desktop-darwin-x86_64.dmg' },
+    { id: 'win-x86_64', label: 'Windows', sublabel: 'x64 · .exe installer', file: 'happier-ui-desktop-windows-x86_64.exe' },
+    { id: 'linux-x86_64', label: 'Linux', sublabel: 'x64 · AppImage', file: 'happier-ui-desktop-linux-x86_64.AppImage' },
+];
 
 function detectOs(): Os {
     if (typeof navigator === 'undefined') return 'unknown';
@@ -66,18 +65,10 @@ function detectArchFromUserAgent(): Arch {
 
 function buildDesktopHref(os: Os, arch: Arch): string {
     if (os === 'unknown') return RELEASES_PAGE;
-    // For Mac with unknown arch, default to Apple Silicon (the modern default,
-    // and Safari/Firefox refuse to disclose the arch).
-    const resolvedArch =
-        arch !== 'unknown'
-            ? arch
-            : os === 'mac'
-              ? 'arm64'
-              : 'x86_64';
+    const resolvedArch = arch !== 'unknown' ? arch : os === 'mac' ? 'arm64' : 'x86_64';
     const key = `${os}-${resolvedArch}`;
-    const file = ASSET_FILE[key];
-    if (!file) return RELEASES_PAGE;
-    return `${ASSET_BASE}/${file}`;
+    const platform = PLATFORM_OPTIONS.find((p) => p.id === key);
+    return platform ? `${ASSET_BASE}/${platform.file}` : RELEASES_PAGE;
 }
 
 type BadgeSpec = {
@@ -85,7 +76,6 @@ type BadgeSpec = {
     eyebrow: string;
     label: string;
     icon: ReactNode;
-    external?: boolean;
 };
 
 const AppleIcon = (
@@ -111,23 +101,66 @@ const DesktopIcon = (
     </svg>
 );
 
+function ChevronIcon({ open }: { open: boolean }) {
+    return (
+        <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+            className="h-3.5 w-3.5 transition-transform duration-200"
+            style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}
+        >
+            <path d="M4 6l4 4 4-4" />
+        </svg>
+    );
+}
+
+// borderColor / background / color all reference @property-animated tokens
+// (--card-border, --card, --fg). No explicit transition needed — adding one
+// would cause a "transition chasing transition" lag where the badge's color
+// trails the rest of the page on theme switch.
+const BADGE_STYLE = {
+    borderColor: 'var(--card-border)',
+    background: 'var(--card)',
+    color: 'var(--fg)',
+} as const;
+
 export function DownloadBadges() {
+    const { theme } = useTheme();
+    const isDark = theme === 'dark';
+
     const [os, setOs] = useState<Os>('unknown');
     const [arch, setArch] = useState<Arch>('unknown');
+    const [archDetected, setArchDetected] = useState(false);
+    const [popoverOpen, setPopoverOpen] = useState(false);
+    const desktopWrapperRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         setOs(detectOs());
-        setArch(detectArchFromUserAgent());
 
-        // Refine arch async via Chromium's userAgentData (the only reliable
-        // way to tell Apple Silicon from Intel in a privacy-conscious browser).
-        const uaData = (navigator as unknown as { userAgentData?: { getHighEntropyValues?: (k: string[]) => Promise<{ architecture?: string }> } }).userAgentData;
+        const syncArch = detectArchFromUserAgent();
+        if (syncArch !== 'unknown') {
+            setArch(syncArch);
+            setArchDetected(true);
+        }
+
+        type UAData = { getHighEntropyValues?: (keys: string[]) => Promise<{ architecture?: string }> };
+        const uaData = (navigator as unknown as { userAgentData?: UAData }).userAgentData;
         if (uaData?.getHighEntropyValues) {
             uaData
                 .getHighEntropyValues(['architecture'])
                 .then((data) => {
-                    if (data?.architecture === 'arm') setArch('arm64');
-                    else if (data?.architecture === 'x86') setArch('x86_64');
+                    if (data?.architecture === 'arm') {
+                        setArch('arm64');
+                        setArchDetected(true);
+                    } else if (data?.architecture === 'x86') {
+                        setArch('x86_64');
+                        setArchDetected(true);
+                    }
                 })
                 .catch(() => {
                     /* not supported */
@@ -135,74 +168,194 @@ export function DownloadBadges() {
         }
     }, []);
 
-    const desktopHref = buildDesktopHref(os, arch);
+    // Click-outside to dismiss the popover.
+    useEffect(() => {
+        if (!popoverOpen) return;
+        function handleClickOutside(event: MouseEvent) {
+            if (desktopWrapperRef.current && !desktopWrapperRef.current.contains(event.target as Node)) {
+                setPopoverOpen(false);
+            }
+        }
+        function handleEscape(event: KeyboardEvent) {
+            if (event.key === 'Escape') setPopoverOpen(false);
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        document.addEventListener('keydown', handleEscape);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+            document.removeEventListener('keydown', handleEscape);
+        };
+    }, [popoverOpen]);
 
-    const badges: ReadonlyArray<BadgeSpec> = [
+    const resolvedArch: Arch = arch !== 'unknown' ? arch : os === 'mac' ? 'arm64' : 'x86_64';
+    const detectedHref = buildDesktopHref(os, resolvedArch);
+    const detectedId = `${os}-${resolvedArch}`;
+    const canDetectPrecisely = os !== 'unknown' && archDetected;
+
+    function handleMainClick(event: React.MouseEvent<HTMLAnchorElement>) {
+        if (!canDetectPrecisely) {
+            event.preventDefault();
+            setPopoverOpen(true);
+        }
+    }
+
+    const storeBadges: ReadonlyArray<BadgeSpec> = [
         {
             href: 'https://apps.apple.com/app/happier-claude-codex-opencode/id6758554297',
             eyebrow: 'Download on the',
             label: 'App Store',
             icon: AppleIcon,
-            external: true,
         },
         {
             href: 'https://play.google.com/store/apps/details?id=dev.happier',
             eyebrow: 'Get it on',
             label: 'Google Play',
             icon: PlayIcon,
-            external: true,
-        },
-        {
-            href: desktopHref,
-            eyebrow: 'Download for',
-            label: DESKTOP_LABEL[os],
-            icon: DesktopIcon,
-            external: true,
         },
     ];
 
     return (
-        <div className="mt-4 flex flex-col items-start gap-2.5">
-            <div className="flex flex-wrap items-center gap-2.5">
-                {badges.map((badge) => (
+        <div className="mt-4 flex flex-wrap items-center gap-2.5">
+            {storeBadges.map((badge) => (
+                <a
+                    key={badge.label + badge.eyebrow}
+                    href={badge.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group inline-flex items-center gap-2.5 rounded-2xl border px-3.5 py-2 transition-transform hover:-translate-y-[1px]"
+                    style={BADGE_STYLE}
+                >
+                    <span className="shrink-0" aria-hidden>
+                        {badge.icon}
+                    </span>
+                    <span className="flex flex-col leading-[1.1]">
+                        <span
+                            className="text-[9.5px] font-medium uppercase tracking-[0.12em]"
+                            style={{ color: 'var(--muted)' }}
+                        >
+                            {badge.eyebrow}
+                        </span>
+                        <span className="text-[14px] font-semibold tracking-tight">{badge.label}</span>
+                    </span>
+                </a>
+            ))}
+
+            {/* Desktop split button + popover */}
+            <div ref={desktopWrapperRef} className="relative">
+                <div
+                    className="inline-flex items-stretch overflow-hidden rounded-2xl border"
+                    style={BADGE_STYLE}
+                >
                     <a
-                        key={badge.label + badge.eyebrow}
-                        href={badge.href}
-                        target={badge.external ? '_blank' : undefined}
-                        rel={badge.external ? 'noreferrer' : undefined}
-                        className="group inline-flex items-center gap-2.5 rounded-2xl border px-3.5 py-2 transition-transform hover:-translate-y-[1px]"
-                        style={{
-                            borderColor: 'var(--card-border)',
-                            background: 'var(--card)',
-                            color: 'var(--fg)',
-                        }}
+                        href={detectedHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={handleMainClick}
+                        className="group flex items-center gap-2.5 px-3.5 py-2 transition-transform hover:-translate-y-[1px]"
+                        style={{ color: 'var(--fg)' }}
+                        aria-label={canDetectPrecisely ? `Download for ${DESKTOP_LABEL[os]}` : 'Show desktop download options'}
                     >
                         <span className="shrink-0" aria-hidden>
-                            {badge.icon}
+                            {DesktopIcon}
                         </span>
                         <span className="flex flex-col leading-[1.1]">
                             <span
                                 className="text-[9.5px] font-medium uppercase tracking-[0.12em]"
                                 style={{ color: 'var(--muted)' }}
                             >
-                                {badge.eyebrow}
+                                Download for
                             </span>
                             <span className="text-[14px] font-semibold tracking-tight">
-                                {badge.label}
+                                {DESKTOP_LABEL[os]}
                             </span>
                         </span>
                     </a>
-                ))}
+
+                    <div
+                        className="my-2 w-px self-stretch"
+                        style={{ background: 'var(--card-border)' }}
+                        aria-hidden
+                    />
+
+                    <button
+                        onClick={() => setPopoverOpen((prev) => !prev)}
+                        className="grid place-items-center px-2.5 transition-opacity hover:opacity-80"
+                        style={{ color: 'var(--fg)' }}
+                        aria-label="Show all desktop download options"
+                        aria-expanded={popoverOpen}
+                        aria-haspopup="menu"
+                    >
+                        <ChevronIcon open={popoverOpen} />
+                    </button>
+                </div>
+
+                {popoverOpen && (
+                    <div
+                        role="menu"
+                        className="absolute left-0 top-full z-50 mt-2 min-w-[260px] rounded-2xl border p-1.5"
+                        style={{
+                            background: isDark ? 'rgba(15,15,18,0.92)' : 'rgba(252,250,245,0.96)',
+                            borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(10,10,11,0.08)',
+                            backdropFilter: 'blur(24px)',
+                            WebkitBackdropFilter: 'blur(24px)',
+                            boxShadow: isDark
+                                ? '0 24px 60px -10px rgba(0,0,0,0.6)'
+                                : '0 24px 60px -10px rgba(10,10,11,0.18)',
+                            transition: 'background-color 700ms ease, border-color 700ms ease, box-shadow 700ms ease',
+                        }}
+                    >
+                        {PLATFORM_OPTIONS.map((p) => {
+                            const isDetected = canDetectPrecisely && p.id === detectedId;
+                            return (
+                                <a
+                                    key={p.id}
+                                    href={`${ASSET_BASE}/${p.file}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={() => setPopoverOpen(false)}
+                                    role="menuitem"
+                                    className="flex items-center justify-between gap-3 rounded-xl px-3 py-2.5"
+                                    style={
+                                        isDetected
+                                            ? {
+                                                  background: isDark
+                                                      ? 'rgba(255,255,255,0.06)'
+                                                      : 'rgba(10,10,11,0.05)',
+                                              }
+                                            : undefined
+                                    }
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <span
+                                            className="text-[14px] font-medium tracking-tight"
+                                            style={{ color: 'var(--fg)' }}
+                                        >
+                                            {p.label}
+                                        </span>
+                                        {isDetected && (
+                                            <span
+                                                className="rounded-full px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-[0.12em]"
+                                                style={{
+                                                    color: isDark ? '#0A0A0B' : '#F7F5F0',
+                                                    background: 'var(--fg)',
+                                                }}
+                                            >
+                                                Detected
+                                            </span>
+                                        )}
+                                    </span>
+                                    <span
+                                        className="text-[11.5px] font-medium"
+                                        style={{ color: 'var(--muted)' }}
+                                    >
+                                        {p.sublabel}
+                                    </span>
+                                </a>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
-            <a
-                href={RELEASES_PAGE}
-                target="_blank"
-                rel="noreferrer"
-                className="ml-0.5 text-[11.5px] font-medium transition-opacity hover:opacity-100"
-                style={{ color: 'var(--muted)' }}
-            >
-                Other downloads & older versions →
-            </a>
         </div>
     );
 }

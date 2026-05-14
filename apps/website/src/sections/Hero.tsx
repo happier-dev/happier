@@ -12,36 +12,61 @@ import { HeroStage } from './HeroStage';
  */
 export function Hero() {
     const { theme } = useTheme();
-    const bg = theme === 'dark' ? '/images/background5_black_jpg60.jpg' : '/images/background5_white_jpg60.jpg';
+    const isDark = theme === 'dark';
 
     return (
         <section className="relative isolate overflow-hidden">
-            {/* Full-bleed background image — covers nav + hero, anchored right. */}
+            {/* Theme-aware background layers — both rendered, cross-faded on toggle.
+                Gives the page a smooth day/night transition. */}
             <div className="pointer-events-none absolute inset-0 -z-10">
-                <img
-                    src={bg}
-                    alt=""
-                    aria-hidden
-                    className="absolute inset-0 h-full w-full object-cover"
-                    style={{ objectPosition: '80% center', filter: theme === 'dark' ? 'none' : 'saturate(0.95)' }}
-                />
-                {/* Left-edge fade so the headline always sits on a calm tone. */}
+                {/* Dark theme layer — planet over near-black bg */}
                 <div
-                    className="absolute inset-y-0 left-0 w-full md:w-[58%]"
-                    style={{
-                        background:
-                            theme === 'dark'
-                                ? 'linear-gradient(to right, var(--bg) 0%, rgba(5,5,7,0.92) 35%, rgba(5,5,7,0.45) 70%, rgba(5,5,7,0) 100%)'
-                                : 'linear-gradient(to right, var(--bg) 0%, rgba(247,245,240,0.92) 35%, rgba(247,245,240,0.45) 70%, rgba(247,245,240,0) 100%)',
-                    }}
-                />
-                {/* Bottom fade so the hero blends into the next section. */}
+                    className="absolute inset-0"
+                    style={{ opacity: isDark ? 1 : 0, transition: 'opacity 700ms ease' }}
+                >
+                    <img
+                        src="/images/background5_black_jpg60.jpg"
+                        alt=""
+                        aria-hidden
+                        className="absolute inset-0 h-full w-full object-cover"
+                        style={{ objectPosition: '80% center' }}
+                    />
+                    <div
+                        className="absolute inset-y-0 left-0 w-full md:w-[58%]"
+                        style={{
+                            background:
+                                'linear-gradient(to right, #050507 0%, rgba(5,5,7,0.92) 35%, rgba(5,5,7,0.45) 70%, rgba(5,5,7,0) 100%)',
+                        }}
+                    />
+                    <div
+                        className="absolute inset-x-0 bottom-0 h-1/3"
+                        style={{ background: 'linear-gradient(to bottom, transparent 0%, #050507 100%)' }}
+                    />
+                </div>
+                {/* Light theme layer — sunrise planet over cream bg */}
                 <div
-                    className="absolute inset-x-0 bottom-0 h-1/3"
-                    style={{
-                        background: 'linear-gradient(to bottom, transparent 0%, var(--bg) 100%)',
-                    }}
-                />
+                    className="absolute inset-0"
+                    style={{ opacity: isDark ? 0 : 1, transition: 'opacity 700ms ease' }}
+                >
+                    <img
+                        src="/images/background5_white_jpg60.jpg"
+                        alt=""
+                        aria-hidden
+                        className="absolute inset-0 h-full w-full object-cover"
+                        style={{ objectPosition: '80% center', filter: 'saturate(0.95)' }}
+                    />
+                    <div
+                        className="absolute inset-y-0 left-0 w-full md:w-[58%]"
+                        style={{
+                            background:
+                                'linear-gradient(to right, #F7F5F0 0%, rgba(247,245,240,0.92) 35%, rgba(247,245,240,0.45) 70%, rgba(247,245,240,0) 100%)',
+                        }}
+                    />
+                    <div
+                        className="absolute inset-x-0 bottom-0 h-1/3"
+                        style={{ background: 'linear-gradient(to bottom, transparent 0%, #F7F5F0 100%)' }}
+                    />
+                </div>
             </div>
 
             <Nav />
@@ -55,8 +80,8 @@ export function Hero() {
                         <RevealText
                             as="p"
                             text={'The mobile companion for your AI agents.\nOpen-source. End-to-end encrypted. Self-hostable.'}
-                            delay={840}
-                            stagger={45}
+                            delay={720}
+                            stagger={30}
                             className="font-sans tracking-normal"
                         />
                     </div>
@@ -70,10 +95,12 @@ export function Hero() {
                             style={{
                                 background: 'var(--fg)',
                                 color: 'var(--bg)',
-                                boxShadow:
-                                    theme === 'dark'
-                                        ? '0 20px 60px -20px rgba(255, 255, 255, 0.22)'
-                                        : '0 20px 60px -20px rgba(10, 10, 11, 0.35)',
+                                boxShadow: isDark
+                                    ? '0 20px 60px -20px rgba(255, 255, 255, 0.22)'
+                                    : '0 20px 60px -20px rgba(10, 10, 11, 0.35)',
+                                // background and color use @property-animated vars (--fg, --bg);
+                                // only transition box-shadow which is a hard-coded value.
+                                transition: 'box-shadow 700ms ease',
                             }}
                         >
                             <span>Open the web app</span>

@@ -6,7 +6,7 @@ export function ThemeToggle() {
     return (
         <button
             onClick={toggle}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border"
             style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
             aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
         >

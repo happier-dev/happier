@@ -1,16 +1,36 @@
 import { useTheme } from './ThemeContext';
 
 /**
- * Real Happier wordmark. The asset naming reflects the LOGO'S color, not the
- * intended background — so on a dark site we render the LIGHT (white) logo,
- * and on a light site we render the DARK (black) logo.
+ * Real Happier wordmark. Both PNG variants live in the DOM and we cross-fade
+ * their opacities on theme change — gives a smooth day/night transition
+ * instead of a harsh swap.
  */
 export function HappierMark({ className }: { className?: string }) {
     const { theme } = useTheme();
-    const src = theme === 'dark' ? '/images/logotype-light.png' : '/images/logotype-dark.png';
+    const isDark = theme === 'dark';
     return (
-        <a href="/" className={`inline-flex items-center ${className ?? ''}`} aria-label="Happier home">
-            <img src={src} alt="happier" className="h-7 w-auto md:h-8" draggable={false} />
+        <a
+            href="/"
+            className={`relative inline-block h-7 md:h-8 ${className ?? ''}`}
+            aria-label="Happier home"
+        >
+            {/* Light (white) logo — visible on dark theme. Block so it sets the wrapper width via aspect. */}
+            <img
+                src="/images/logotype-light.png"
+                alt="happier"
+                className="block h-full w-auto"
+                draggable={false}
+                style={{ opacity: isDark ? 1 : 0, transition: 'opacity 700ms ease' }}
+            />
+            {/* Dark (black) logo — visible on light theme. Absolute overlay, same dims. */}
+            <img
+                src="/images/logotype-dark.png"
+                alt=""
+                aria-hidden
+                className="absolute left-0 top-0 h-full w-auto"
+                draggable={false}
+                style={{ opacity: isDark ? 0 : 1, transition: 'opacity 700ms ease' }}
+            />
         </a>
     );
 }

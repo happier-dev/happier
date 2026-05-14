@@ -45,7 +45,7 @@ export function InstallCommand() {
     return (
         <button
             onClick={onCopy}
-            className="group inline-flex w-auto max-w-full items-center gap-2.5 rounded-2xl border px-4 py-3 font-mono text-[12.5px] transition-colors md:text-[13px]"
+            className="group inline-flex w-auto max-w-full items-center gap-2.5 rounded-2xl border px-4 py-3 font-mono text-[12.5px] md:text-[13px]"
             style={{
                 color: 'var(--fg)',
                 background: 'transparent',

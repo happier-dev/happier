@@ -30,16 +30,16 @@ const LINE_ONE: ReadonlyArray<WordSpec> = [
 const LINE_TWO: ReadonlyArray<WordSpec> = [
     { text: 'OpenCode,', gradient: true },
     { text: 'Pi', gradient: true },
-    { text: '& 12+ more', small: true },
+    { text: '& more', small: true },
 ];
 const LINE_THREE: ReadonlyArray<WordSpec> = [
     { text: 'Everywhere' },
     { text: 'you' },
-    { text: 'work.' },
+    { text: 'go.' },
 ];
 
 const BASE_DELAY = 120;
-const STAGGER = 70;
+const STAGGER = 45;
 
 const GRADIENT_STYLE = {
     backgroundImage:

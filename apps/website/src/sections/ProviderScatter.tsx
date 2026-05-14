@@ -44,12 +44,14 @@ export function ProviderScatter() {
     const { theme } = useTheme();
     const isDark = theme === 'dark';
     const tileStyle = {
-        background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(10,10,11,0.04)',
-        border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(10,10,11,0.10)'}`,
+        background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(10,10,11,0.035)',
+        border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(10,10,11,0.04)'}`,
         boxShadow: isDark
             ? '0 8px 24px -8px rgba(0,0,0,0.5)'
-            : '0 8px 24px -8px rgba(10,10,11,0.18)',
+            : '0 8px 24px -8px rgba(10,10,11,0.12)',
         color: isDark ? 'rgba(255,255,255,0.85)' : 'rgba(10,10,11,0.85)',
+        transition:
+            'background-color 700ms ease, border-color 700ms ease, color 700ms ease, box-shadow 700ms ease',
     } as const;
 
     return (
